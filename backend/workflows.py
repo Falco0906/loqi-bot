@@ -12,21 +12,25 @@ def _infer_tone(input: dict) -> str:
     if explicit_tone in VALID_TONES:
         return explicit_tone
 
+    text_parts = [
+        input.get("edit_request") or "",
+        * (input.get("conversation_context") or []),
+    ]
     combined_text = " ".join(
         part for part in [
-            input.get("edit_request") or "",
-            " ".join(input.get("conversation_context") or []),
+            *text_parts,
         ]
         if part
     ).lower()
+    word_count = len(combined_text.split())
 
+    if any(word in combined_text for word in ["sir", "madam", "regards", "sincerely", "professional", "formal"]):
+        return "formal"
+    if word_count and word_count <= 3:
+        return "aggressive"
     if "aggressive" in combined_text or "stronger" in combined_text or "hard sell" in combined_text:
         return "aggressive"
-    if "formal" in combined_text or "professional" in combined_text:
-        return "formal"
-    if "casual" in combined_text or "relaxed" in combined_text:
-        return "casual"
-    return "friendly"
+    return "casual"
 
 
 def _infer_length(input: dict) -> str:

@@ -11,6 +11,12 @@ from services.supabase import (
 from workflows import run_workflow
 
 POSITIVE_RESPONSES = ["yes", "y", "ok", "sure", "yeah", "yep", "send", "go"]
+TWEAK_EXAMPLES = (
+    "Say things like:\n"
+    "- make it shorter\n"
+    "- more aggressive\n"
+    "- rewrite for founders"
+)
 
 
 def _send_and_log(chat_id: int, user_id: str, text: str) -> None:
@@ -20,6 +26,11 @@ def _send_and_log(chat_id: int, user_id: str, text: str) -> None:
 
 def _format_selected_lead(lead: dict) -> str:
     return f"Selected: {lead['name']} — {lead['title']} @ {lead['company']}"
+
+
+def _send_draft_follow_up(chat_id: int, user_id: str) -> None:
+    _send_and_log(chat_id, user_id, "Want to tweak it or send?")
+    _send_and_log(chat_id, user_id, TWEAK_EXAMPLES)
 
 
 def _extract_previous_outreach(assistant_messages: list[str]) -> str:
@@ -145,7 +156,7 @@ def process_message(
                 }
             )
             _send_and_log(chat_id, user_id, workflow_result["message"])
-            _send_and_log(chat_id, user_id, "Want to tweak it or send?")
+            _send_draft_follow_up(chat_id, user_id)
             return
 
     classified_intent = classify_intent(
@@ -203,7 +214,7 @@ def process_message(
             }
         )
         _send_and_log(chat_id, user_id, workflow_result["message"])
-        _send_and_log(chat_id, user_id, "Want to tweak it or send?")
+        _send_draft_follow_up(chat_id, user_id)
         return
 
     _send_and_log(chat_id, user_id, "Operation cancelled. Type /start to try again.")

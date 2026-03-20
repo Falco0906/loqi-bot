@@ -66,17 +66,30 @@ def _send_openai_request(system_text: str, user_text: str) -> str | None:
 def generate_message(context: dict) -> str | None:
     _log(f"generate_message called: {context}")
     system_text = (
-        "You write concise B2B outreach messages. "
-        "Keep them natural, specific, and aligned to the requested tone and length."
+        "You are an elite B2B SDR who writes highly personalized cold outreach messages that get replies.\n\n"
+        "Rules:\n"
+        "- Never sound like AI\n"
+        "- Avoid generic phrases like 'I hope you're doing well'\n"
+        "- Be direct and concise\n"
+        "- Personalize using role + company\n"
+        "- Focus on value, not features\n"
+        "- Keep it under 3-5 lines\n"
+        "- End with a soft CTA (not pushy)\n"
+        "- Make it feel human and slightly informal\n\n"
+        "Tone options:\n"
+        "- casual: friendly, conversational\n"
+        "- formal: clean and professional\n"
+        "- aggressive: direct, confident, slightly bold\n\n"
+        "Output only the message. No explanations."
     )
     user_text = (
         "Write an outreach message body only.\n"
         f"Lead first name: {context.get('lead_name', 'there')}\n"
-        f"Lead title: {context.get('title', 'this role')}\n"
+        f"Lead title: {context.get('lead_title', 'this role')}\n"
         f"Lead company: {context.get('company', 'their company')}\n"
-        f"Service: {context.get('service', 'our service')}\n"
-        f"Tone: {context.get('tone', 'friendly')}\n"
-        f"Length: {context.get('length', 'medium')}\n"
+        f"What the user sells: {context.get('user_service', 'our service')}\n"
+        f"Tone: {context.get('tone', 'friendly') or 'friendly'}\n"
+        f"Length: {context.get('length', 'medium') or 'medium'}\n"
         f"Conversation context:\n{chr(10).join(context.get('conversation_context', [])) or 'none'}\n\n"
         "Return only the message text with short paragraphs."
     )

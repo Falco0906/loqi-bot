@@ -123,10 +123,10 @@ def draft_message(input: dict) -> dict:
     else:
         llm_message = generate_message(
             {
-                "service": service,
                 "lead_name": lead_name,
-                "title": title,
+                "lead_title": title,
                 "company": company,
+                "user_service": service,
                 "tone": tone,
                 "length": length,
                 "conversation_context": conversation_context,

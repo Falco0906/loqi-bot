@@ -75,7 +75,7 @@ def process_message(
                 "lead": selected_lead,
             }
         )
-        _send_and_log(chat_id, user_id, f"Here is the draft:\n\n\"{workflow_result['message']}\"")
+        _send_and_log(chat_id, user_id, workflow_result["message"])
         _send_and_log(chat_id, user_id, "Send this?")
         return
 

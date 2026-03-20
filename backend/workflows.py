@@ -33,14 +33,18 @@ def generate_leads(input: dict) -> dict:
 
 def draft_message(input: dict) -> dict:
     lead = input.get("lead") or {}
-    service = input.get("service") or "what we do"
-    target = input.get("target") or "this space"
-    lead_name = lead.get("name") or "there"
+    service = input.get("service") or "automate hiring workflows and reduce manual effort"
+    lead_name = (lead.get("first_name") or "").strip() or (lead.get("name") or "there").split()[0]
+    title = lead.get("title") or (input.get("target") or "this role")
     company = lead.get("company") or "your team"
 
     message = (
-        f"Hey {lead_name} — saw you're working on {target} at {company}. "
-        f"We help with {service}. Worth a quick chat?"
+        "Here’s your outreach message:\n\n"
+        "---\n"
+        f"Hey {lead_name} — saw you're working as an {title} at {company}.\n\n"
+        f"We help companies {service}.\n\n"
+        "Would love to connect.\n"
+        "---"
     )
 
     return {

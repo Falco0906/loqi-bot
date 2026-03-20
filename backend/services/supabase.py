@@ -54,10 +54,24 @@ def test_supabase_connection() -> None:
         return
 
     try:
-        payload = {"telegram_id": "test_123"}
-        _log(f"test_supabase_connection input insert payload: {payload}")
-        insert_result = client.table("users").upsert(payload).execute()
-        _log(f"test_supabase_connection insert success: {insert_result.data}")
+        telegram_id = "test_123"
+        _log(f"test_supabase_connection input query: telegram_id={telegram_id}")
+        existing_result = (
+            client.table("users")
+            .select("*")
+            .eq("telegram_id", telegram_id)
+            .limit(1)
+            .execute()
+        )
+        existing_user = _first_row(existing_result)
+
+        if existing_user:
+            _log(f"test_supabase_connection existing user found: {existing_user}")
+        else:
+            payload = {"telegram_id": telegram_id}
+            _log(f"test_supabase_connection input insert payload: {payload}")
+            insert_result = client.table("users").insert(payload).execute()
+            _log(f"test_supabase_connection insert success: {insert_result.data}")
 
         fetch_result = (
             client.table("users")

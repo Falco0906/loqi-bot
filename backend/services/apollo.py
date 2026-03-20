@@ -66,11 +66,15 @@ def _format_lead(index: int, lead: dict) -> str:
         part for part in [lead["first_name"], lead["last_name"]] if part
     ) or "Unknown"
 
-    return f"{index}. {full_name} — {lead['title']} at {lead['company']}"
+    return f"{index}. {full_name} — {lead['title']} @ {lead['company']}"
 
 def format_leads_message(leads: list[dict]) -> str:
     formatted_leads = [_format_lead(i, lead) for i, lead in enumerate(leads, 1)]
-    return "Found these leads:\n\n" + "\n".join(formatted_leads) + "\n\nApprove one?"
+    return (
+        "Found these leads:\n\n"
+        + "\n".join(formatted_leads)
+        + "\n\nReply with the number to select a lead."
+    )
 
 
 def search_leads(query: str) -> dict:

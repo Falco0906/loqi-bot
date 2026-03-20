@@ -9,19 +9,6 @@ from services.supabase import (
 from workflows import run_workflow
 
 POSITIVE_RESPONSES = ["yes", "y", "ok", "sure", "yeah", "yep", "send", "go"]
-EDIT_HINTS = [
-    "casual",
-    "formal",
-    "aggressive",
-    "friendly",
-    "shorter",
-    "longer",
-    "short",
-    "long",
-    "urgency",
-    "urgent",
-    "rewrite",
-]
 
 
 def _send_and_log(chat_id: int, user_id: str, text: str) -> None:
@@ -33,15 +20,18 @@ def _format_selected_lead(lead: dict) -> str:
     return f"Selected: {lead['name']} — {lead['title']} @ {lead['company']}"
 
 
-def _extract_previous_outreach(last_assistant_message: str | None) -> str:
-    if not last_assistant_message or "---" not in last_assistant_message:
-        return ""
+def _extract_previous_outreach(assistant_messages: list[str]) -> str:
+    for message in reversed(assistant_messages):
+        if "Draft ready:" not in message or "---" not in message:
+            continue
 
-    parts = last_assistant_message.split("---")
-    if len(parts) < 3:
-        return ""
+        parts = message.split("---")
+        if len(parts) < 3:
+            continue
 
-    return parts[1].strip()
+        return parts[1].strip()
+
+    return ""
 
 def process_message(
     chat_id: int,
@@ -133,19 +123,18 @@ def process_message(
         _send_and_log(chat_id, user_id, "Want to tweak it or send?")
         return
 
-    if normalized_text.lower() == "edit":
-        _send_and_log(chat_id, user_id, "What should I change?")
+    if any(word in normalized_text.lower() for word in POSITIVE_RESPONSES):
+        _send_and_log(chat_id, user_id, "Sent ✅ (mock)")
+        _send_and_log(chat_id, user_id, "Type /start when you are ready to reach out to more leads.")
         return
 
-    if last_assistant_message == "What should I change?" or any(
-        hint in normalized_text.lower() for hint in EDIT_HINTS
-    ):
+    previous_message = _extract_previous_outreach(assistant_messages)
+    if previous_message:
         selected_lead = get_selected_lead(user_id, since_timestamp=started_at)
         if selected_lead is None:
             _send_and_log(chat_id, user_id, "Couldn't find that lead. Try again.")
             return
 
-        previous_message = _extract_previous_outreach(last_assistant_message)
         workflow_result = run_workflow(
             {
                 "type": "draft_message",
@@ -159,11 +148,6 @@ def process_message(
         )
         _send_and_log(chat_id, user_id, workflow_result["message"])
         _send_and_log(chat_id, user_id, "Want to tweak it or send?")
-        return
-
-    if any(word in normalized_text.lower() for word in POSITIVE_RESPONSES):
-        _send_and_log(chat_id, user_id, "Sent ✅ (mock)")
-        _send_and_log(chat_id, user_id, "Type /start when you are ready to reach out to more leads.")
         return
 
     _send_and_log(chat_id, user_id, "Operation cancelled. Type /start to try again.")

@@ -6,10 +6,6 @@ load_dotenv()
 
 APOLLO_API_KEY = os.getenv("APOLLO_API_KEY", "")
 APOLLO_SEARCH_URL = "https://api.apollo.io/v1/mixed_people/search"
-MOCK_LEADS_ON_403 = [
-    {"name": "John Doe", "title": "HR Manager", "company": "TechCorp"},
-    {"name": "Sarah Lee", "title": "HR Lead", "company": "StartupX"},
-]
 
 
 def _log(message: str) -> None:
@@ -90,18 +86,20 @@ def search_leads(query: str) -> dict:
         }
 
     headers = {
+        "Authorization": f"Bearer {APOLLO_API_KEY}",
         "Content-Type": "application/json",
-        "X-Api-Key": APOLLO_API_KEY,
     }
 
     payload = {
+        "person_titles": _map_person_titles(query),
         "page": 1,
         "per_page": 5,
-        "person_titles": _map_person_titles(query),
     }
 
     try:
-        _log(f"search_leads request payload: {payload}")
+        _log(f"search_leads request url: {APOLLO_SEARCH_URL}")
+        _log(f"search_leads request headers: {headers}")
+        _log(f"search_leads full request payload: {payload}")
         response = requests.post(
             APOLLO_SEARCH_URL,
             headers=headers,
@@ -114,19 +112,15 @@ def search_leads(query: str) -> dict:
             data = None
 
         _log(f"search_leads response status: {response.status_code}")
+        _log(f"search_leads full response body: {response.text}")
         _log(f"search_leads response json: {data}")
 
-        if response.status_code == 403:
-            mock_leads = [_format_mock_lead(lead) for lead in MOCK_LEADS_ON_403]
-            _log(f"search_leads fallback triggered for 403: {mock_leads}")
-            return {
-                "ok": True,
-                "source": "mock",
-                "leads": mock_leads,
-                "error": None,
-            }
-
-        response.raise_for_status()
+        if response.status_code >= 400:
+            _log(
+                "search_leads error: "
+                f"Apollo returned {response.status_code} with body: {response.text}"
+            )
+            response.raise_for_status()
 
         if data is None:
             _log(f"search_leads error: non-JSON response body: {response.text}")
@@ -160,7 +154,7 @@ def search_leads(query: str) -> dict:
         response_text = None
         if "response" in locals():
             response_text = response.text
-        _log(f"search_leads request error: {e}")
+        _log(f"search_leads request error: {type(e).__name__}: {e}")
         _log(f"search_leads exact response body: {response_text}")
         return {
             "ok": False,

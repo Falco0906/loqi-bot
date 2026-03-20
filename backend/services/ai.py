@@ -63,6 +63,34 @@ def _send_openai_request(system_text: str, user_text: str) -> str | None:
         return None
 
 
+def classify_intent(user_message: str, context: dict) -> str | None:
+    _log(f"classify_intent called: user_message={user_message}, context={context}")
+    system_text = (
+        "Classify the user's intent into exactly one label.\n"
+        "Allowed labels only:\n"
+        "- new_search\n"
+        "- refine_message\n"
+        "- select_lead\n"
+        "- send\n\n"
+        "Return only the label. No explanation."
+    )
+    user_text = (
+        f"User message: {user_message}\n"
+        f"Context: {context}\n\n"
+        "Choose the best label."
+    )
+    result = _send_openai_request(system_text, user_text)
+    if not result:
+        return None
+
+    normalized = result.strip().lower()
+    if normalized in {"new_search", "refine_message", "select_lead", "send"}:
+        return normalized
+
+    _log(f"classify_intent error: unexpected model output {normalized}")
+    return None
+
+
 def generate_message(context: dict) -> str | None:
     _log(f"generate_message called: {context}")
     system_text = (

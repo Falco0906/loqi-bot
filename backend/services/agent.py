@@ -1,3 +1,4 @@
+from services.ai import classify_intent
 from services.telegram import send_message
 from services.supabase import (
     clear_session_context,
@@ -33,6 +34,22 @@ def _extract_previous_outreach(assistant_messages: list[str]) -> str:
         return parts[1].strip()
 
     return ""
+
+
+def _fallback_classify_intent(
+    user_message: str,
+    *,
+    has_draft: bool,
+) -> str:
+    lowered = user_message.lower().strip()
+
+    if any(word in lowered for word in POSITIVE_RESPONSES):
+        return "send"
+    if lowered.isdigit():
+        return "select_lead"
+    if has_draft:
+        return "refine_message"
+    return "new_search"
 
 def process_message(
     chat_id: int,
@@ -90,6 +107,8 @@ def process_message(
     target = context["target"]
     started_at = context["started_at"]
     selected_lead_id = context.get("selected_lead_id")
+    previous_message = _extract_previous_outreach(assistant_messages)
+    has_draft = bool(previous_message)
 
     if len(user_messages) == 1:
         _send_and_log(chat_id, user_id, "Who do you want to reach?")
@@ -113,32 +132,60 @@ def process_message(
             normalized_text,
             since_timestamp=started_at,
         )
-        if selected_lead is None:
-            _send_and_log(chat_id, user_id, "Couldn't find that lead. Try again.")
+        if selected_lead is not None:
+            _send_and_log(chat_id, user_id, _format_selected_lead(selected_lead))
+
+            workflow_result = run_workflow(
+                {
+                    "type": "draft_message",
+                    "service": service,
+                    "target": target,
+                    "lead": selected_lead,
+                    "conversation_context": conversation_context,
+                }
+            )
+            _send_and_log(chat_id, user_id, workflow_result["message"])
+            _send_and_log(chat_id, user_id, "Want to tweak it or send?")
             return
 
-        _send_and_log(chat_id, user_id, _format_selected_lead(selected_lead))
+    classified_intent = classify_intent(
+        normalized_text,
+        {
+            "service": service,
+            "target": target,
+            "selected_lead_id": selected_lead_id,
+            "has_draft": has_draft,
+            "user_message_count": len(user_messages),
+        },
+    ) or _fallback_classify_intent(normalized_text, has_draft=has_draft)
 
-        workflow_result = run_workflow(
-            {
-                "type": "draft_message",
-                "service": service,
-                "target": target,
-                "lead": selected_lead,
-                "conversation_context": conversation_context,
-            }
-        )
-        _send_and_log(chat_id, user_id, workflow_result["message"])
-        _send_and_log(chat_id, user_id, "Want to tweak it or send?")
-        return
-
-    if any(word in normalized_text.lower() for word in POSITIVE_RESPONSES):
+    if classified_intent == "send":
         _send_and_log(chat_id, user_id, "Sent ✅ (mock)")
         _send_and_log(chat_id, user_id, "Type /start when you are ready to reach out to more leads.")
         return
 
-    previous_message = _extract_previous_outreach(assistant_messages)
-    if previous_message:
+    if classified_intent == "select_lead":
+        _send_and_log(chat_id, user_id, "Reply with a lead number.")
+        return
+
+    if classified_intent == "new_search":
+        clear_session_context(user_id, since_timestamp=started_at)
+        if service:
+            workflow_result = run_workflow(
+                {
+                    "type": "generate_leads",
+                    "service": service,
+                    "target": normalized_text,
+                    "user_id": user_id,
+                }
+            )
+            _send_and_log(chat_id, user_id, workflow_result["message"])
+            return
+
+        _send_and_log(chat_id, user_id, "What do you sell?")
+        return
+
+    if classified_intent == "refine_message" and previous_message:
         selected_lead = get_lead_by_id(selected_lead_id) if selected_lead_id else None
         if selected_lead is None:
             _send_and_log(chat_id, user_id, "Couldn't find that lead. Try again.")

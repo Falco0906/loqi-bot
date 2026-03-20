@@ -1,6 +1,7 @@
 import os
 import requests
 from dotenv import load_dotenv
+from services.supabase import store_leads
 
 load_dotenv()
 
@@ -11,10 +12,13 @@ FALLBACK_MESSAGE = "Couldn't fetch leads right now. Try again."
 
 def _parse_person(person: dict) -> dict:
     organization = person.get("organization") or {}
+    first_name = (person.get("first_name") or "").strip()
+    last_name = (person.get("last_name") or "").strip()
 
     return {
-        "first_name": (person.get("first_name") or "").strip(),
-        "last_name": (person.get("last_name") or "").strip(),
+        "first_name": first_name,
+        "last_name": last_name,
+        "name": " ".join(part for part in [first_name, last_name] if part) or "Unknown",
         "title": (person.get("title") or "Professional").strip(),
         "company": (organization.get("name") or "Unknown Company").strip(),
         "email": (person.get("email") or "").strip(),
@@ -29,7 +33,7 @@ def _format_lead(index: int, lead: dict) -> str:
 
     return f"{index}. {full_name} — {lead['title']} at {lead['company']}"
 
-def search_leads(query: str) -> str:
+def search_leads(query: str, user_id: str) -> str:
     """Search Apollo for leads and return a conversational top-five list."""
     if not APOLLO_API_KEY:
         return FALLBACK_MESSAGE
@@ -61,6 +65,7 @@ def search_leads(query: str) -> str:
             return FALLBACK_MESSAGE
 
         parsed_leads = [_parse_person(person) for person in people[:5]]
+        store_leads(user_id, parsed_leads)
         formatted_leads = [_format_lead(i, lead) for i, lead in enumerate(parsed_leads, 1)]
             
         return "Found these leads:\n\n" + "\n".join(formatted_leads) + "\n\nApprove one?"

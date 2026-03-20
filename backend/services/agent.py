@@ -1,59 +1,79 @@
 from services.telegram import send_message
-from state.memory import get_session, update_session, clear_session
 from services.apollo import search_leads
+from services.supabase import approve_lead, get_or_create_user, get_session_context, log_conversation
 
-def process_message(chat_id: int, text: str) -> None:
-    session = get_session(chat_id)
-    step = session.get("step", 1)
-    
-    # Handle /start from any state
-    if text.strip().lower() == "/start":
-        clear_session(chat_id)
-        session = get_session(chat_id)
-        step = 1
+POSITIVE_RESPONSES = ["yes", "y", "ok", "sure", "yeah", "yep", "send"]
 
-    if step == 1:
-        # Step 1: Greeting
-        send_message(chat_id, "Hey — I’m Loqi. I’ll help you find leads and run outreach.")
-        # Automatically progress to Step 2
-        send_message(chat_id, "What do you sell?")
-        update_session(chat_id, {"step": 2})
 
-    elif step == 2:
-        # Step 2: Store service, ask who to reach
-        update_session(chat_id, {"service": text, "step": 3})
-        send_message(chat_id, "Who do you want to reach?")
+def _send_and_log(chat_id: int, user_id: str, text: str) -> None:
+    send_message(chat_id, text)
+    log_conversation(user_id, "assistant", text)
 
-    elif step == 3:
-        # Step 3: Store target, fetch and send Apollo leads
-        update_session(chat_id, {"target": text, "step": 4})
-        
-        # Step 4: Generate real leads from Apollo
-        leads_response = search_leads(text)
-        send_message(chat_id, leads_response)
 
-    elif step == 4:
-        # Wait for user confirmation, then drift to Step 5
-        service = session.get("service", "with our service")
-        target = session.get("target", "this space")
+def _build_outreach(service: str | None, target: str | None, lead: dict | None) -> str:
+    lead_name = (lead or {}).get("name") or "there"
+    company = (lead or {}).get("company") or "your team"
+    target_text = target or "this space"
+    service_text = service or "what we do"
+    return (
+        f"Hey {lead_name} — saw you're working on {target_text} at {company}. "
+        f"We help with {service_text}. Worth a quick chat?"
+    )
 
-        # Step 5: Draft outreach
-        outreach_text = (
-            f"Hey — saw you're working on {target}. "
-            f"We help {service}. Worth a quick chat?"
+
+def process_message(
+    chat_id: int,
+    telegram_id: str,
+    text: str,
+    username: str | None = None,
+) -> None:
+    user = get_or_create_user(telegram_id, username=username)
+    if user is None:
+        send_message(chat_id, "Couldn't process that right now. Try again.")
+        return
+
+    user_id = user["id"]
+    normalized_text = text.strip()
+    log_conversation(user_id, "user", normalized_text)
+
+    if normalized_text.lower() == "/start":
+        _send_and_log(chat_id, user_id, "Hey — I’m Loqi. I’ll help you find leads and run outreach.")
+        _send_and_log(chat_id, user_id, "What do you sell?")
+        return
+
+    context = get_session_context(user_id)
+    user_messages = context["user_messages"]
+    service = context["service"]
+    target = context["target"]
+    started_at = context["started_at"]
+
+    if len(user_messages) == 1:
+        _send_and_log(chat_id, user_id, "Who do you want to reach?")
+        return
+
+    if len(user_messages) == 2:
+        leads_response = search_leads(target or normalized_text, user_id)
+        _send_and_log(chat_id, user_id, leads_response)
+        return
+
+    if len(user_messages) == 3:
+        approved_lead = approve_lead(
+            user_id,
+            normalized_text,
+            since_timestamp=started_at,
         )
-        update_session(chat_id, {"outreach": outreach_text, "step": 5})
-        send_message(chat_id, f"Here is the draft:\n\n\"{outreach_text}\"")
-        # Step 6 setup: Ask to send
-        send_message(chat_id, "Send this?")
+        if approved_lead is None:
+            _send_and_log(chat_id, user_id, "Couldn't find that lead. Try again.")
+            return
 
-    elif step == 5:
-        # Step 6: User confirms sending
-        positive_responses = ["yes", "y", "ok", "sure", "yeah", "yep", "send"]
-        if any(word in text.strip().lower() for word in positive_responses):
-            send_message(chat_id, "Sent ✅ (mock)")
-            clear_session(chat_id)
-            send_message(chat_id, "Type /start when you are ready to reach out to more leads.")
-        else:
-            send_message(chat_id, "Operation cancelled. Type /start to try again.")
-            clear_session(chat_id)
+        outreach_text = _build_outreach(service, target, approved_lead)
+        _send_and_log(chat_id, user_id, f"Here is the draft:\n\n\"{outreach_text}\"")
+        _send_and_log(chat_id, user_id, "Send this?")
+        return
+
+    if any(word in normalized_text.lower() for word in POSITIVE_RESPONSES):
+        _send_and_log(chat_id, user_id, "Sent ✅ (mock)")
+        _send_and_log(chat_id, user_id, "Type /start when you are ready to reach out to more leads.")
+        return
+
+    _send_and_log(chat_id, user_id, "Operation cancelled. Type /start to try again.")

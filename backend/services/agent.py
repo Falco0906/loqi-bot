@@ -1,5 +1,5 @@
 from services.telegram import send_message
-from services.supabase import approve_lead, get_or_create_user, get_session_context, log_conversation
+from services.supabase import get_or_create_user, get_session_context, log_conversation, select_lead
 from workflows import run_workflow
 
 POSITIVE_RESPONSES = ["yes", "y", "ok", "sure", "yeah", "yep", "send"]
@@ -8,6 +8,10 @@ POSITIVE_RESPONSES = ["yes", "y", "ok", "sure", "yeah", "yep", "send"]
 def _send_and_log(chat_id: int, user_id: str, text: str) -> None:
     send_message(chat_id, text)
     log_conversation(user_id, "assistant", text)
+
+
+def _format_selected_lead(lead: dict) -> str:
+    return f"Selected: {lead['name']} — {lead['title']} @ {lead['company']}"
 
 def process_message(
     chat_id: int,
@@ -52,21 +56,23 @@ def process_message(
         return
 
     if len(user_messages) == 3:
-        approved_lead = approve_lead(
+        selected_lead = select_lead(
             user_id,
             normalized_text,
             since_timestamp=started_at,
         )
-        if approved_lead is None:
+        if selected_lead is None:
             _send_and_log(chat_id, user_id, "Couldn't find that lead. Try again.")
             return
+
+        _send_and_log(chat_id, user_id, _format_selected_lead(selected_lead))
 
         workflow_result = run_workflow(
             {
                 "type": "draft_message",
                 "service": service,
                 "target": target,
-                "lead": approved_lead,
+                "lead": selected_lead,
             }
         )
         _send_and_log(chat_id, user_id, f"Here is the draft:\n\n\"{workflow_result['message']}\"")

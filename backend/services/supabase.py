@@ -275,18 +275,18 @@ def get_pending_leads(
         return []
 
 
-def approve_lead(
+def select_lead(
     user_id: str,
     selection_text: str,
     since_timestamp: str | None = None,
 ) -> dict | None:
     _log(
-        "approve_lead called: "
+        "select_lead called: "
         f"user_id={user_id}, selection_text={selection_text}, since_timestamp={since_timestamp}"
     )
     pending_leads = get_pending_leads(user_id, since_timestamp=since_timestamp, limit=5)
     if not pending_leads:
-        _log("approve_lead aborted: no pending leads found")
+        _log("select_lead aborted: no pending leads found")
         return None
 
     selected_index = 0
@@ -295,26 +295,26 @@ def approve_lead(
         selected_index = int(match.group(1)) - 1
 
     if selected_index >= len(pending_leads):
-        _log(f"approve_lead error: selection index {selected_index} out of range")
+        _log(f"select_lead error: selection index {selected_index} out of range")
         return None
 
     selected_lead = pending_leads[selected_index]
-    _log(f"approve_lead selected lead: {selected_lead}")
+    _log(f"select_lead selected lead: {selected_lead}")
     client = get_supabase_client()
     if client is None:
-        _log("approve_lead aborted: no client")
+        _log("select_lead aborted: no client")
         return None
 
     try:
         result = (
             client.table("leads")
-            .update({"status": "approved"})
+            .update({"status": "selected"})
             .eq("id", selected_lead["id"])
             .execute()
         )
-        approved_lead = _first_row(result) or selected_lead
-        _log(f"approve_lead success: {approved_lead}")
-        return approved_lead
+        selected_lead_result = _first_row(result) or selected_lead
+        _log(f"select_lead success: {selected_lead_result}")
+        return selected_lead_result
     except Exception as error:
-        _log(f"approve_lead error: {error}")
+        _log(f"select_lead error: {error}")
         return None

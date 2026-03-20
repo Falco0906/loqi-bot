@@ -1,5 +1,5 @@
 from services.apollo import MOCK_LEADS_ON_403, format_leads_message, search_leads
-from services.openai_client import generate_outreach_message
+from services.ai import generate_message, rewrite_message
 from services.supabase import store_leads
 
 
@@ -116,17 +116,22 @@ def draft_message(input: dict) -> dict:
     tone = _infer_tone(input)
     length = _infer_length(input)
     conversation_context = input.get("conversation_context") or []
+    previous_message = input.get("previous_message") or ""
 
-    llm_message = generate_outreach_message(
-        service=service,
-        lead_name=lead_name,
-        title=title,
-        company=company,
-        tone=tone,
-        length=length,
-        edit_request=edit_request,
-        conversation_context=conversation_context,
-    )
+    if edit_request and previous_message:
+        llm_message = rewrite_message(edit_request, previous_message)
+    else:
+        llm_message = generate_message(
+            {
+                "service": service,
+                "lead_name": lead_name,
+                "title": title,
+                "company": company,
+                "tone": tone,
+                "length": length,
+                "conversation_context": conversation_context,
+            }
+        )
 
     if llm_message:
         message = f"Here’s your outreach message:\n\n---\n{llm_message}\n---"

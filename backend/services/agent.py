@@ -32,6 +32,17 @@ def _send_and_log(chat_id: int, user_id: str, text: str) -> None:
 def _format_selected_lead(lead: dict) -> str:
     return f"Selected: {lead['name']} — {lead['title']} @ {lead['company']}"
 
+
+def _extract_previous_outreach(last_assistant_message: str | None) -> str:
+    if not last_assistant_message or "---" not in last_assistant_message:
+        return ""
+
+    parts = last_assistant_message.split("---")
+    if len(parts) < 3:
+        return ""
+
+    return parts[1].strip()
+
 def process_message(
     chat_id: int,
     telegram_id: str,
@@ -134,6 +145,7 @@ def process_message(
             _send_and_log(chat_id, user_id, "Couldn't find that lead. Try again.")
             return
 
+        previous_message = _extract_previous_outreach(last_assistant_message)
         workflow_result = run_workflow(
             {
                 "type": "draft_message",
@@ -141,6 +153,7 @@ def process_message(
                 "target": target,
                 "lead": selected_lead,
                 "edit_request": normalized_text,
+                "previous_message": previous_message,
                 "conversation_context": conversation_context,
             }
         )

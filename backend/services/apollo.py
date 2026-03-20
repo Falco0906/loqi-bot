@@ -14,6 +14,18 @@ def _log(message: str) -> None:
     print(f"[apollo] {message}")
 
 
+def _map_person_titles(query: str) -> list[str]:
+    normalized_query = query.strip().lower()
+
+    if "student" in normalized_query:
+        return ["Intern"]
+
+    if "hr manager" in normalized_query or "hr managers" in normalized_query:
+        return ["HR Manager"]
+
+    return ["HR Manager"]
+
+
 def _parse_person(person: dict) -> dict:
     organization = person.get("organization") or {}
     first_name = (person.get("first_name") or "").strip()
@@ -45,16 +57,16 @@ def search_leads(query: str, user_id: str) -> str:
         return FALLBACK_MESSAGE
 
     headers = {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "X-Api-Key": APOLLO_API_KEY,
     }
-    
+
     payload = {
-        "api_key": APOLLO_API_KEY,
-        "q_keywords": query,
         "page": 1,
-        "per_page": 5
+        "per_page": 5,
+        "person_titles": _map_person_titles(query),
     }
-    
+
     try:
         _log(f"search_leads request payload: {payload}")
         response = requests.post(

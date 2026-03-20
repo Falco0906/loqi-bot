@@ -133,6 +133,18 @@ def process_message(
         _send_and_log(chat_id, user_id, "Who do you want to reach?")
         return
 
+    if not selected_lead_id and not normalized_text.isdigit():
+        workflow_result = run_workflow(
+            {
+                "type": "generate_leads",
+                "service": service,
+                "target": target,
+                "user_id": user_id,
+            }
+        )
+        _send_and_log(chat_id, user_id, workflow_result["message"])
+        return
+
     classified_intent = classify_intent(
         normalized_text,
         {

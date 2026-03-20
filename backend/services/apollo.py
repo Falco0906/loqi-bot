@@ -39,24 +39,6 @@ def _parse_person(person: dict) -> dict:
         "linkedin_url": (person.get("linkedin_url") or "").strip(),
     }
 
-
-def _format_mock_lead(lead: dict) -> dict:
-    name = (lead.get("name") or "Unknown").strip()
-    name_parts = name.split(maxsplit=1)
-    first_name = name_parts[0] if name_parts else "Unknown"
-    last_name = name_parts[1] if len(name_parts) > 1 else ""
-
-    return {
-        "first_name": first_name,
-        "last_name": last_name,
-        "name": name,
-        "title": (lead.get("title") or "Professional").strip(),
-        "company": (lead.get("company") or "Unknown Company").strip(),
-        "email": (lead.get("email") or "").strip(),
-        "linkedin_url": (lead.get("linkedin_url") or "").strip(),
-    }
-
-
 def _format_lead(index: int, lead: dict) -> str:
     full_name = " ".join(
         part for part in [lead.get("first_name", ""), lead.get("last_name", "")] if part
@@ -102,7 +84,7 @@ def search_leads(query: str) -> dict:
     try:
         _log(f"search_leads request url: {APOLLO_SEARCH_URL}")
         _log(f"search_leads request headers: {headers}")
-        _log(f"search_leads full request payload: {payload}")
+        print("[apollo] request payload:", payload)
         response = requests.post(
             APOLLO_SEARCH_URL,
             headers=headers,
@@ -114,8 +96,8 @@ def search_leads(query: str) -> dict:
         except ValueError:
             data = None
 
-        _log(f"search_leads response status: {response.status_code}")
-        _log(f"search_leads full response body: {response.text}")
+        print("[apollo] response status:", response.status_code)
+        print("[apollo] response body:", response.text)
         _log(f"search_leads response json: {data}")
 
         if response.status_code >= 400:

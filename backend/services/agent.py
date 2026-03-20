@@ -9,7 +9,19 @@ from services.supabase import (
 from workflows import run_workflow
 
 POSITIVE_RESPONSES = ["yes", "y", "ok", "sure", "yeah", "yep", "send", "go"]
-EDIT_HINTS = ["casual", "formal", "aggressive", "friendly", "shorter", "longer", "short", "long"]
+EDIT_HINTS = [
+    "casual",
+    "formal",
+    "aggressive",
+    "friendly",
+    "shorter",
+    "longer",
+    "short",
+    "long",
+    "urgency",
+    "urgent",
+    "rewrite",
+]
 
 
 def _send_and_log(chat_id: int, user_id: str, text: str) -> None:
@@ -62,7 +74,8 @@ def process_message(
 
     context = get_session_context(user_id)
     user_messages = context["user_messages"]
-    conversation_context = user_messages[-6:]
+    assistant_messages = context.get("assistant_messages", [])
+    conversation_context = (user_messages + assistant_messages)[-10:]
     last_assistant_message = context["last_assistant_message"]
     service = context["service"]
     target = context["target"]

@@ -49,6 +49,17 @@ def _infer_length(input: dict) -> str:
     return "medium"
 
 
+def _normalize_edit_request(edit_request: str) -> str:
+    normalized = edit_request.strip()
+    lowered = normalized.lower()
+
+    if lowered == "rewrite":
+        return "Rewrite the message from scratch using the same goal."
+    if "add urgency" in lowered:
+        return "Add urgency and make the call to action more time-sensitive."
+    return normalized
+
+
 def _build_fallback_draft(
     *,
     lead_name: str,
@@ -101,7 +112,7 @@ def draft_message(input: dict) -> dict:
     lead_name = (lead.get("first_name") or "").strip() or (lead.get("name") or "there").split()[0]
     title = lead.get("title") or (input.get("target") or "this role")
     company = lead.get("company") or "your team"
-    edit_request = (input.get("edit_request") or "").strip()
+    edit_request = _normalize_edit_request((input.get("edit_request") or "").strip())
     tone = _infer_tone(input)
     length = _infer_length(input)
     conversation_context = input.get("conversation_context") or []

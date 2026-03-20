@@ -72,11 +72,11 @@ def _build_fallback_draft(
     service: str,
 ) -> str:
     return (
-        "Here’s your outreach message:\n\n"
+        "Draft ready:\n\n"
         "---\n"
         f"Hey {lead_name} — saw you're working as an {title} at {company}.\n\n"
         f"We help companies {service}.\n\n"
-        "Would love to connect.\n"
+        "Worth a quick chat?\n"
         "---"
     )
 
@@ -138,7 +138,7 @@ def draft_message(input: dict) -> dict:
         )
 
     if llm_message:
-        message = f"Here’s your outreach message:\n\n---\n{llm_message}\n---"
+        message = f"Draft ready:\n\n---\n{llm_message}\n---"
     else:
         message = _build_fallback_draft(
             lead_name=lead_name,

@@ -130,7 +130,7 @@ def process_message(
             }
         )
         _send_and_log(chat_id, user_id, workflow_result["message"])
-        _send_and_log(chat_id, user_id, "Send this?")
+        _send_and_log(chat_id, user_id, "Want to tweak it or send?")
         return
 
     if normalized_text.lower() == "edit":
@@ -158,7 +158,7 @@ def process_message(
             }
         )
         _send_and_log(chat_id, user_id, workflow_result["message"])
-        _send_and_log(chat_id, user_id, "Send this?")
+        _send_and_log(chat_id, user_id, "Want to tweak it or send?")
         return
 
     if any(word in normalized_text.lower() for word in POSITIVE_RESPONSES):

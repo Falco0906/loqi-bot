@@ -86,7 +86,7 @@ def search_leads(query: str) -> dict:
         }
 
     headers = {
-        "Authorization": f"Bearer {APOLLO_API_KEY}",
+        "X-Api-Key": APOLLO_API_KEY,
         "Content-Type": "application/json",
     }
 

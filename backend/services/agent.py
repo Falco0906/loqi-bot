@@ -121,43 +121,13 @@ def process_message(
     previous_message = _extract_previous_outreach(assistant_messages)
     has_draft = bool(previous_message)
 
-    if len(user_messages) == 1:
+    if not service:
+        _send_and_log(chat_id, user_id, "What do you sell?")
+        return
+
+    if not target:
         _send_and_log(chat_id, user_id, "Who do you want to reach?")
         return
-
-    if len(user_messages) == 2:
-        workflow_result = run_workflow(
-            {
-                "type": "generate_leads",
-                "service": service,
-                "target": target or normalized_text,
-                "user_id": user_id,
-            }
-        )
-        _send_and_log(chat_id, user_id, workflow_result["message"])
-        return
-
-    if len(user_messages) == 3:
-        selected_lead = select_lead(
-            user_id,
-            normalized_text,
-            since_timestamp=started_at,
-        )
-        if selected_lead is not None:
-            _send_and_log(chat_id, user_id, _format_selected_lead(selected_lead))
-
-            workflow_result = run_workflow(
-                {
-                    "type": "draft_message",
-                    "service": service,
-                    "target": target,
-                    "lead": selected_lead,
-                    "conversation_context": conversation_context,
-                }
-            )
-            _send_and_log(chat_id, user_id, workflow_result["message"])
-            _send_draft_follow_up(chat_id, user_id)
-            return
 
     classified_intent = classify_intent(
         normalized_text,
@@ -176,7 +146,27 @@ def process_message(
         return
 
     if classified_intent == "select_lead":
-        _send_and_log(chat_id, user_id, "Reply with a lead number.")
+        selected_lead = select_lead(
+            user_id,
+            normalized_text,
+            since_timestamp=started_at,
+        )
+        if selected_lead is None:
+            _send_and_log(chat_id, user_id, "Reply with a lead number.")
+            return
+
+        _send_and_log(chat_id, user_id, _format_selected_lead(selected_lead))
+        workflow_result = run_workflow(
+            {
+                "type": "draft_message",
+                "service": service,
+                "target": target,
+                "lead": selected_lead,
+                "conversation_context": conversation_context,
+            }
+        )
+        _send_and_log(chat_id, user_id, workflow_result["message"])
+        _send_draft_follow_up(chat_id, user_id)
         return
 
     if classified_intent == "new_search":

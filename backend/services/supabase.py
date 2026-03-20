@@ -368,6 +368,29 @@ def get_selected_lead(
         return None
 
 
+def clear_session_context(
+    user_id: str,
+    since_timestamp: str | None = None,
+) -> None:
+    _log(
+        "clear_session_context called: "
+        f"user_id={user_id}, since_timestamp={since_timestamp}"
+    )
+    client = get_supabase_client()
+    if client is None:
+        _log("clear_session_context aborted: no client")
+        return
+
+    try:
+        query = client.table("leads").update({"status": "cleared"}).eq("user_id", user_id)
+        if since_timestamp:
+            query = query.gt("created_at", since_timestamp)
+        result = query.in_("status", ["pending", "selected"]).execute()
+        _log(f"clear_session_context success: {getattr(result, 'data', None) or []}")
+    except Exception as error:
+        _log(f"clear_session_context error: {error}")
+
+
 def get_lead_by_id(lead_id: str) -> dict | None:
     _log(f"get_lead_by_id called: lead_id={lead_id}")
     client = get_supabase_client()

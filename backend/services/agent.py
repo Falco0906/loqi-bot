@@ -1,5 +1,6 @@
 from services.telegram import send_message
 from services.supabase import (
+    clear_session_context,
     get_lead_by_id,
     get_or_create_user,
     get_session_context,
@@ -47,6 +48,13 @@ def process_message(
     user_id = user["id"]
     normalized_text = text.strip()
     existing_context = get_session_context(user_id)
+
+    if normalized_text.lower() == "/restart":
+        clear_session_context(user_id, since_timestamp=existing_context.get("started_at"))
+        log_conversation(user_id, "user", normalized_text)
+        _send_and_log(chat_id, user_id, "Hey — I’m Loqi. I’ll help you find leads and run outreach.")
+        _send_and_log(chat_id, user_id, "What do you sell?")
+        return
 
     if normalized_text.lower() == "/start":
         log_conversation(user_id, "user", normalized_text)

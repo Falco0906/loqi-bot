@@ -1,10 +1,65 @@
-from services.apollo import format_leads_message, search_leads
+from services.apollo import format_leads_message
 from services.ai import generate_message, rewrite_message
 from services.supabase import store_leads
 
 
 VALID_TONES = {"casual", "formal", "aggressive", "friendly"}
 VALID_LENGTHS = {"short", "medium", "long"}
+
+
+def _build_mock_lead(name: str, title: str, company: str) -> dict:
+    parts = name.split(maxsplit=1)
+    first_name = parts[0] if parts else "Unknown"
+    last_name = parts[1] if len(parts) > 1 else ""
+    company_slug = company.lower().replace(" ", "")
+    return {
+        "first_name": first_name,
+        "last_name": last_name,
+        "name": name,
+        "title": title,
+        "company": company,
+        "email": f"{first_name.lower()}@{company_slug}.com",
+        "linkedin_url": "",
+    }
+
+
+def _generate_mock_leads(target: str) -> list[dict]:
+    normalized_target = target.strip().lower()
+
+    if "hr" in normalized_target or "people" in normalized_target or "talent" in normalized_target:
+        raw_leads = [
+            ("Sarah Chen", "Head of HR", "GrowthLabs"),
+            ("Arjun Mehta", "HR Manager", "ScaleAI"),
+            ("Maya Patel", "People Operations Lead", "Northstar Health"),
+            ("Jordan Lee", "Talent Acquisition Manager", "CloudSpring"),
+            ("Nina Alvarez", "Director of People", "LaunchForge"),
+        ]
+    elif "founder" in normalized_target or "ceo" in normalized_target:
+        raw_leads = [
+            ("Daniel Kim", "Founder", "RevPilot"),
+            ("Priya Shah", "Co-Founder", "SignalStack"),
+            ("Marcus Reed", "CEO", "BrightLoop"),
+            ("Elena Rossi", "Founder", "CommerceFlow"),
+            ("Omar Hassan", "Co-Founder", "MetricLane"),
+        ]
+    elif "marketing" in normalized_target or "growth" in normalized_target:
+        raw_leads = [
+            ("Ava Thompson", "Head of Growth", "LiftGrid"),
+            ("Rohan Verma", "Growth Marketing Manager", "DriftCore"),
+            ("Camila Santos", "VP Marketing", "AcquireIQ"),
+            ("Ethan Brooks", "Demand Gen Lead", "SummitOS"),
+            ("Sophie Martin", "Performance Marketing Director", "MarketBloom"),
+        ]
+    else:
+        raw_leads = [
+            ("Ryan Cooper", "Operations Manager", "VectorWorks"),
+            ("Leah Park", "Chief of Staff", "Northbeam"),
+            ("Karan Malhotra", "Business Operations Lead", "StrideOne"),
+            ("Emily Foster", "Strategy Manager", "PeakLayer"),
+            ("Noah Bennett", "General Manager", "ClearPath"),
+        ]
+
+    return [_build_mock_lead(name, title, company) for name, title, company in raw_leads]
 
 
 def _infer_role_problem(title: str) -> str:
@@ -116,31 +171,18 @@ def _build_fallback_draft(
 def generate_leads(input: dict) -> dict:
     query = input.get("target") or ""
     user_id = input.get("user_id")
-
-    result = search_leads(query)
-    leads = result.get("leads", [])
-
-    if not leads:
-        return {
-            "ok": False,
-            "type": "generate_leads",
-            "source": result.get("source"),
-            "leads": [],
-            "stored_leads": [],
-            "message": "Couldn't fetch leads right now. Try again.",
-            "error": result.get("error") or "apollo_failed",
-        }
+    leads = _generate_mock_leads(query)
 
     stored_leads = store_leads(user_id, leads) if user_id else []
 
     return {
         "ok": True,
         "type": "generate_leads",
-        "source": result.get("source"),
+        "source": "mock",
         "leads": leads,
         "stored_leads": stored_leads,
         "message": format_leads_message(leads),
-        "error": result.get("error"),
+        "error": None,
     }
 
 

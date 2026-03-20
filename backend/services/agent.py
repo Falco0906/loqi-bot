@@ -9,6 +9,7 @@ from services.supabase import (
 from workflows import run_workflow
 
 POSITIVE_RESPONSES = ["yes", "y", "ok", "sure", "yeah", "yep", "send", "go"]
+EDIT_HINTS = ["casual", "formal", "aggressive", "friendly", "shorter", "longer", "short", "long"]
 
 
 def _send_and_log(chat_id: int, user_id: str, text: str) -> None:
@@ -61,6 +62,7 @@ def process_message(
 
     context = get_session_context(user_id)
     user_messages = context["user_messages"]
+    conversation_context = user_messages[-6:]
     last_assistant_message = context["last_assistant_message"]
     service = context["service"]
     target = context["target"]
@@ -100,6 +102,7 @@ def process_message(
                 "service": service,
                 "target": target,
                 "lead": selected_lead,
+                "conversation_context": conversation_context,
             }
         )
         _send_and_log(chat_id, user_id, workflow_result["message"])
@@ -110,7 +113,9 @@ def process_message(
         _send_and_log(chat_id, user_id, "What should I change?")
         return
 
-    if last_assistant_message == "What should I change?":
+    if last_assistant_message == "What should I change?" or any(
+        hint in normalized_text.lower() for hint in EDIT_HINTS
+    ):
         selected_lead = get_selected_lead(user_id, since_timestamp=started_at)
         if selected_lead is None:
             _send_and_log(chat_id, user_id, "Couldn't find that lead. Try again.")
@@ -123,6 +128,7 @@ def process_message(
                 "target": target,
                 "lead": selected_lead,
                 "edit_request": normalized_text,
+                "conversation_context": conversation_context,
             }
         )
         _send_and_log(chat_id, user_id, workflow_result["message"])

@@ -1,5 +1,69 @@
 from services.apollo import MOCK_LEADS_ON_403, format_leads_message, search_leads
+from services.openai_client import generate_outreach_message
 from services.supabase import store_leads
+
+
+VALID_TONES = {"casual", "formal", "aggressive", "friendly"}
+VALID_LENGTHS = {"short", "medium", "long"}
+
+
+def _infer_tone(input: dict) -> str:
+    explicit_tone = (input.get("tone") or "").strip().lower()
+    if explicit_tone in VALID_TONES:
+        return explicit_tone
+
+    combined_text = " ".join(
+        part for part in [
+            input.get("edit_request") or "",
+            " ".join(input.get("conversation_context") or []),
+        ]
+        if part
+    ).lower()
+
+    if "aggressive" in combined_text or "stronger" in combined_text or "hard sell" in combined_text:
+        return "aggressive"
+    if "formal" in combined_text or "professional" in combined_text:
+        return "formal"
+    if "casual" in combined_text or "relaxed" in combined_text:
+        return "casual"
+    return "friendly"
+
+
+def _infer_length(input: dict) -> str:
+    explicit_length = (input.get("length") or "").strip().lower()
+    if explicit_length in VALID_LENGTHS:
+        return explicit_length
+
+    combined_text = " ".join(
+        part for part in [
+            input.get("edit_request") or "",
+            " ".join(input.get("conversation_context") or []),
+        ]
+        if part
+    ).lower()
+
+    if "shorter" in combined_text or "short" in combined_text:
+        return "short"
+    if "longer" in combined_text or "long" in combined_text:
+        return "long"
+    return "medium"
+
+
+def _build_fallback_draft(
+    *,
+    lead_name: str,
+    title: str,
+    company: str,
+    service: str,
+) -> str:
+    return (
+        "Here’s your outreach message:\n\n"
+        "---\n"
+        f"Hey {lead_name} — saw you're working as an {title} at {company}.\n\n"
+        f"We help companies {service}.\n\n"
+        "Would love to connect.\n"
+        "---"
+    )
 
 
 def generate_leads(input: dict) -> dict:
@@ -38,21 +102,30 @@ def draft_message(input: dict) -> dict:
     title = lead.get("title") or (input.get("target") or "this role")
     company = lead.get("company") or "your team"
     edit_request = (input.get("edit_request") or "").strip()
+    tone = _infer_tone(input)
+    length = _infer_length(input)
+    conversation_context = input.get("conversation_context") or []
 
-    service_line = f"We help companies {service}."
-    connect_line = "Would love to connect."
-    if edit_request:
-        service_line = f"We help companies {service}. {edit_request}"
-        connect_line = "Happy to adjust this further if needed."
-
-    message = (
-        "Here’s your outreach message:\n\n"
-        "---\n"
-        f"Hey {lead_name} — saw you're working as an {title} at {company}.\n\n"
-        f"{service_line}\n\n"
-        f"{connect_line}\n"
-        "---"
+    llm_message = generate_outreach_message(
+        service=service,
+        lead_name=lead_name,
+        title=title,
+        company=company,
+        tone=tone,
+        length=length,
+        edit_request=edit_request,
+        conversation_context=conversation_context,
     )
+
+    if llm_message:
+        message = f"Here’s your outreach message:\n\n---\n{llm_message}\n---"
+    else:
+        message = _build_fallback_draft(
+            lead_name=lead_name,
+            title=title,
+            company=company,
+            service=service,
+        )
 
     return {
         "ok": True,
@@ -60,6 +133,8 @@ def draft_message(input: dict) -> dict:
         "message": message,
         "lead": lead,
         "edit_request": edit_request,
+        "tone": tone,
+        "length": length,
     }
 
 

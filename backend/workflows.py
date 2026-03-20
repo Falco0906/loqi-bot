@@ -7,6 +7,16 @@ VALID_TONES = {"casual", "formal", "aggressive", "friendly"}
 VALID_LENGTHS = {"short", "medium", "long"}
 
 
+def _infer_role_problem(title: str) -> str:
+    normalized_title = title.lower()
+
+    if any(word in normalized_title for word in ["hr", "people", "talent", "recruit"]):
+        return "hiring and onboarding without too much manual work"
+    if any(word in normalized_title for word in ["founder", "co-founder", "ceo"]):
+        return "growth and revenue without adding operational drag"
+    return "hitting team goals while reducing manual work"
+
+
 def _infer_tone(input: dict) -> str:
     explicit_tone = (input.get("tone") or "").strip().lower()
     if explicit_tone in VALID_TONES:
@@ -121,6 +131,7 @@ def draft_message(input: dict) -> dict:
     length = _infer_length(input)
     conversation_context = input.get("conversation_context") or []
     previous_message = input.get("previous_message") or ""
+    role_problem = _infer_role_problem(title)
 
     if edit_request and previous_message:
         llm_message = rewrite_message(edit_request, previous_message)
@@ -130,6 +141,7 @@ def draft_message(input: dict) -> dict:
                 "lead_name": lead_name,
                 "lead_title": title,
                 "company": company,
+                "role_problem": role_problem,
                 "user_service": service,
                 "tone": tone,
                 "length": length,

@@ -32,12 +32,32 @@ def process_message(
 
     user_id = user["id"]
     normalized_text = text.strip()
-    log_conversation(user_id, "user", normalized_text)
+    existing_context = get_session_context(user_id)
 
     if normalized_text.lower() == "/start":
+        log_conversation(user_id, "user", normalized_text)
         _send_and_log(chat_id, user_id, "Hey — I’m Loqi. I’ll help you find leads and run outreach.")
+
+        if existing_context["service"] and existing_context["target"]:
+            workflow_result = run_workflow(
+                {
+                    "type": "generate_leads",
+                    "service": existing_context["service"],
+                    "target": existing_context["target"],
+                    "user_id": user_id,
+                }
+            )
+            _send_and_log(chat_id, user_id, workflow_result["message"])
+            return
+
+        if existing_context["service"]:
+            _send_and_log(chat_id, user_id, "Who do you want to reach?")
+            return
+
         _send_and_log(chat_id, user_id, "What do you sell?")
         return
+
+    log_conversation(user_id, "user", normalized_text)
 
     context = get_session_context(user_id)
     user_messages = context["user_messages"]

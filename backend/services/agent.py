@@ -1,6 +1,6 @@
 from services.telegram import send_message
-from services.apollo import search_leads
 from services.supabase import approve_lead, get_or_create_user, get_session_context, log_conversation
+from workflows import run_workflow
 
 POSITIVE_RESPONSES = ["yes", "y", "ok", "sure", "yeah", "yep", "send"]
 
@@ -8,18 +8,6 @@ POSITIVE_RESPONSES = ["yes", "y", "ok", "sure", "yeah", "yep", "send"]
 def _send_and_log(chat_id: int, user_id: str, text: str) -> None:
     send_message(chat_id, text)
     log_conversation(user_id, "assistant", text)
-
-
-def _build_outreach(service: str | None, target: str | None, lead: dict | None) -> str:
-    lead_name = (lead or {}).get("name") or "there"
-    company = (lead or {}).get("company") or "your team"
-    target_text = target or "this space"
-    service_text = service or "what we do"
-    return (
-        f"Hey {lead_name} — saw you're working on {target_text} at {company}. "
-        f"We help with {service_text}. Worth a quick chat?"
-    )
-
 
 def process_message(
     chat_id: int,
@@ -52,8 +40,15 @@ def process_message(
         return
 
     if len(user_messages) == 2:
-        leads_response = search_leads(target or normalized_text, user_id)
-        _send_and_log(chat_id, user_id, leads_response)
+        workflow_result = run_workflow(
+            {
+                "type": "generate_leads",
+                "service": service,
+                "target": target or normalized_text,
+                "user_id": user_id,
+            }
+        )
+        _send_and_log(chat_id, user_id, workflow_result["message"])
         return
 
     if len(user_messages) == 3:
@@ -66,8 +61,15 @@ def process_message(
             _send_and_log(chat_id, user_id, "Couldn't find that lead. Try again.")
             return
 
-        outreach_text = _build_outreach(service, target, approved_lead)
-        _send_and_log(chat_id, user_id, f"Here is the draft:\n\n\"{outreach_text}\"")
+        workflow_result = run_workflow(
+            {
+                "type": "draft_message",
+                "service": service,
+                "target": target,
+                "lead": approved_lead,
+            }
+        )
+        _send_and_log(chat_id, user_id, f"Here is the draft:\n\n\"{workflow_result['message']}\"")
         _send_and_log(chat_id, user_id, "Send this?")
         return
 

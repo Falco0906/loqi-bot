@@ -1,13 +1,11 @@
 import os
 import requests
 from dotenv import load_dotenv
-from services.supabase import store_leads
 
 load_dotenv()
 
 APOLLO_API_KEY = os.getenv("APOLLO_API_KEY", "")
 APOLLO_SEARCH_URL = "https://api.apollo.io/v1/mixed_people/search"
-FALLBACK_MESSAGE = "Couldn't fetch leads right now. Try again."
 MOCK_LEADS_ON_403 = [
     {"name": "John Doe", "title": "HR Manager", "company": "TechCorp"},
     {"name": "Sarah Lee", "title": "HR Lead", "company": "StartupX"},
@@ -70,18 +68,22 @@ def _format_lead(index: int, lead: dict) -> str:
 
     return f"{index}. {full_name} — {lead['title']} at {lead['company']}"
 
-
-def _build_leads_response(user_id: str, leads: list[dict]) -> str:
-    store_leads(user_id, leads)
+def format_leads_message(leads: list[dict]) -> str:
     formatted_leads = [_format_lead(i, lead) for i, lead in enumerate(leads, 1)]
     return "Found these leads:\n\n" + "\n".join(formatted_leads) + "\n\nApprove one?"
 
-def search_leads(query: str, user_id: str) -> str:
-    """Search Apollo for leads and return a conversational top-five list."""
-    _log(f"search_leads called: query={query}, user_id={user_id}")
+
+def search_leads(query: str) -> dict:
+    """Search Apollo and return structured lead results."""
+    _log(f"search_leads called: query={query}")
     if not APOLLO_API_KEY:
         _log("search_leads error: missing APOLLO_API_KEY")
-        return FALLBACK_MESSAGE
+        return {
+            "ok": False,
+            "source": "apollo",
+            "leads": [],
+            "error": "missing_api_key",
+        }
 
     headers = {
         "Content-Type": "application/json",
@@ -113,22 +115,42 @@ def search_leads(query: str, user_id: str) -> str:
         if response.status_code == 403:
             mock_leads = [_format_mock_lead(lead) for lead in MOCK_LEADS_ON_403]
             _log(f"search_leads fallback triggered for 403: {mock_leads}")
-            return _build_leads_response(user_id, mock_leads)
+            return {
+                "ok": True,
+                "source": "mock",
+                "leads": mock_leads,
+                "error": None,
+            }
 
         response.raise_for_status()
 
         if data is None:
             _log(f"search_leads error: non-JSON response body: {response.text}")
-            return FALLBACK_MESSAGE
+            return {
+                "ok": False,
+                "source": "apollo",
+                "leads": [],
+                "error": "non_json_response",
+            }
 
         people = data.get("people", [])
         
         if not people:
             _log(f"search_leads empty response: {data}")
-            return FALLBACK_MESSAGE
+            return {
+                "ok": False,
+                "source": "apollo",
+                "leads": [],
+                "error": "empty_response",
+            }
 
         parsed_leads = [_parse_person(person) for person in people[:5]]
-        return _build_leads_response(user_id, parsed_leads)
+        return {
+            "ok": True,
+            "source": "apollo",
+            "leads": parsed_leads,
+            "error": None,
+        }
         
     except (requests.exceptions.RequestException, ValueError) as e:
         response_text = None
@@ -136,4 +158,9 @@ def search_leads(query: str, user_id: str) -> str:
             response_text = response.text
         _log(f"search_leads request error: {e}")
         _log(f"search_leads exact response body: {response_text}")
-        return FALLBACK_MESSAGE
+        return {
+            "ok": False,
+            "source": "apollo",
+            "leads": [],
+            "error": str(e),
+        }

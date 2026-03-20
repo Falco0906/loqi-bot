@@ -72,10 +72,10 @@ def search_leads(query: str) -> dict:
 
     headers = {
         "Content-Type": "application/json",
+        "X-Api-Key": APOLLO_API_KEY,
     }
 
     payload = {
-        "api_key": APOLLO_API_KEY,
         "person_titles": _map_person_titles(query),
         "page": 1,
         "per_page": 5,
@@ -83,7 +83,7 @@ def search_leads(query: str) -> dict:
 
     try:
         _log(f"search_leads request url: {APOLLO_SEARCH_URL}")
-        _log(f"search_leads request headers: {headers}")
+        print("[apollo] request headers:", headers)
         print("[apollo] request payload:", payload)
         response = requests.post(
             APOLLO_SEARCH_URL,

@@ -11,10 +11,32 @@ def _infer_role_problem(title: str) -> str:
     normalized_title = title.lower()
 
     if any(word in normalized_title for word in ["hr", "people", "talent", "recruit"]):
-        return "hiring and onboarding without too much manual work"
+        return "hiring bottlenecks, onboarding inefficiency"
     if any(word in normalized_title for word in ["founder", "co-founder", "ceo"]):
-        return "growth and revenue without adding operational drag"
+        return "growth, revenue, scaling"
     return "hitting team goals while reducing manual work"
+
+
+def _build_message_context(
+    *,
+    lead_name: str,
+    lead_title: str,
+    company: str,
+    user_service: str,
+    tone: str,
+    length: str,
+    conversation_context: list[str],
+) -> dict:
+    return {
+        "lead_name": lead_name,
+        "lead_title": lead_title,
+        "company": company,
+        "role_problem": _infer_role_problem(lead_title),
+        "user_service": user_service,
+        "tone": tone,
+        "length": length,
+        "conversation_context": conversation_context,
+    }
 
 
 def _infer_tone(input: dict) -> str:
@@ -133,23 +155,20 @@ def draft_message(input: dict) -> dict:
     length = _infer_length(input)
     conversation_context = input.get("conversation_context") or []
     previous_message = input.get("previous_message") or ""
-    role_problem = _infer_role_problem(title)
+    message_context = _build_message_context(
+        lead_name=lead_name,
+        lead_title=title,
+        company=company,
+        user_service=service,
+        tone=tone,
+        length=length,
+        conversation_context=conversation_context,
+    )
 
     if edit_request and previous_message:
         llm_message = rewrite_message(edit_request, previous_message)
     else:
-        llm_message = generate_message(
-            {
-                "lead_name": lead_name,
-                "lead_title": title,
-                "company": company,
-                "role_problem": role_problem,
-                "user_service": service,
-                "tone": tone,
-                "length": length,
-                "conversation_context": conversation_context,
-            }
-        )
+        llm_message = generate_message(message_context)
 
     if llm_message:
         message = f"Draft ready:\n\n---\n{llm_message}\n---"

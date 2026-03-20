@@ -197,10 +197,17 @@ def get_session_context(user_id: str) -> dict:
         for row in active_rows
         if row.get("role") == "user" and (row.get("message") or "").strip().lower() != "/start"
     ]
+    assistant_messages = [
+        (row.get("message") or "").strip()
+        for row in active_rows
+        if row.get("role") == "assistant"
+    ]
 
     context = {
         "started_at": boundary_time,
         "user_messages": user_messages,
+        "assistant_messages": assistant_messages,
+        "last_assistant_message": assistant_messages[-1] if assistant_messages else None,
         "service": user_messages[0] if len(user_messages) >= 1 else None,
         "target": user_messages[1] if len(user_messages) >= 2 else None,
     }
@@ -291,8 +298,11 @@ def select_lead(
 
     selected_index = 0
     match = re.search(r"\b([1-5])\b", selection_text)
-    if match:
-        selected_index = int(match.group(1)) - 1
+    if not match:
+        _log("select_lead error: selection text did not include a valid lead number")
+        return None
+
+    selected_index = int(match.group(1)) - 1
 
     if selected_index >= len(pending_leads):
         _log(f"select_lead error: selection index {selected_index} out of range")
@@ -317,4 +327,36 @@ def select_lead(
         return selected_lead_result
     except Exception as error:
         _log(f"select_lead error: {error}")
+        return None
+
+
+def get_selected_lead(
+    user_id: str,
+    since_timestamp: str | None = None,
+) -> dict | None:
+    _log(
+        "get_selected_lead called: "
+        f"user_id={user_id}, since_timestamp={since_timestamp}"
+    )
+    client = get_supabase_client()
+    if client is None:
+        _log("get_selected_lead aborted: no client")
+        return None
+
+    try:
+        query = (
+            client.table("leads")
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("status", "selected")
+        )
+        if since_timestamp:
+            query = query.gt("created_at", since_timestamp)
+
+        result = query.order("created_at", desc=True).limit(1).execute()
+        selected_lead = _first_row(result)
+        _log(f"get_selected_lead success: {selected_lead}")
+        return selected_lead
+    except Exception as error:
+        _log(f"get_selected_lead error: {error}")
         return None

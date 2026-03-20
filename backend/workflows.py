@@ -37,13 +37,20 @@ def draft_message(input: dict) -> dict:
     lead_name = (lead.get("first_name") or "").strip() or (lead.get("name") or "there").split()[0]
     title = lead.get("title") or (input.get("target") or "this role")
     company = lead.get("company") or "your team"
+    edit_request = (input.get("edit_request") or "").strip()
+
+    service_line = f"We help companies {service}."
+    connect_line = "Would love to connect."
+    if edit_request:
+        service_line = f"We help companies {service}. {edit_request}"
+        connect_line = "Happy to adjust this further if needed."
 
     message = (
         "Here’s your outreach message:\n\n"
         "---\n"
         f"Hey {lead_name} — saw you're working as an {title} at {company}.\n\n"
-        f"We help companies {service}.\n\n"
-        "Would love to connect.\n"
+        f"{service_line}\n\n"
+        f"{connect_line}\n"
         "---"
     )
 
@@ -52,6 +59,7 @@ def draft_message(input: dict) -> dict:
         "type": "draft_message",
         "message": message,
         "lead": lead,
+        "edit_request": edit_request,
     }
 
 

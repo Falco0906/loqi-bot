@@ -1,8 +1,14 @@
 from services.telegram import send_message
-from services.supabase import get_or_create_user, get_session_context, log_conversation, select_lead
+from services.supabase import (
+    get_or_create_user,
+    get_selected_lead,
+    get_session_context,
+    log_conversation,
+    select_lead,
+)
 from workflows import run_workflow
 
-POSITIVE_RESPONSES = ["yes", "y", "ok", "sure", "yeah", "yep", "send"]
+POSITIVE_RESPONSES = ["yes", "y", "ok", "sure", "yeah", "yep", "send", "go"]
 
 
 def _send_and_log(chat_id: int, user_id: str, text: str) -> None:
@@ -35,6 +41,7 @@ def process_message(
 
     context = get_session_context(user_id)
     user_messages = context["user_messages"]
+    last_assistant_message = context["last_assistant_message"]
     service = context["service"]
     target = context["target"]
     started_at = context["started_at"]
@@ -73,6 +80,29 @@ def process_message(
                 "service": service,
                 "target": target,
                 "lead": selected_lead,
+            }
+        )
+        _send_and_log(chat_id, user_id, workflow_result["message"])
+        _send_and_log(chat_id, user_id, "Send this?")
+        return
+
+    if normalized_text.lower() == "edit":
+        _send_and_log(chat_id, user_id, "What should I change?")
+        return
+
+    if last_assistant_message == "What should I change?":
+        selected_lead = get_selected_lead(user_id, since_timestamp=started_at)
+        if selected_lead is None:
+            _send_and_log(chat_id, user_id, "Couldn't find that lead. Try again.")
+            return
+
+        workflow_result = run_workflow(
+            {
+                "type": "draft_message",
+                "service": service,
+                "target": target,
+                "lead": selected_lead,
+                "edit_request": normalized_text,
             }
         )
         _send_and_log(chat_id, user_id, workflow_result["message"])

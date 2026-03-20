@@ -89,11 +89,11 @@ def search_leads(query: str) -> dict:
         }
 
     headers = {
-        "X-Api-Key": APOLLO_API_KEY,
         "Content-Type": "application/json",
     }
 
     payload = {
+        "api_key": APOLLO_API_KEY,
         "person_titles": _map_person_titles(query),
         "page": 1,
         "per_page": 5,

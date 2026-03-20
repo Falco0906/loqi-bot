@@ -59,10 +59,13 @@ def _format_mock_lead(lead: dict) -> dict:
 
 def _format_lead(index: int, lead: dict) -> str:
     full_name = " ".join(
-        part for part in [lead["first_name"], lead["last_name"]] if part
+        part for part in [lead.get("first_name", ""), lead.get("last_name", "")] if part
     ) or "Unknown"
+    title = (lead.get("title", "") or "").strip()
+    company = (lead.get("company") or "Unknown Company").strip()
+    role_part = f" — {title}" if title else ""
 
-    return f"{index}. {full_name} — {lead['title']} @ {lead['company']}"
+    return f"{index}. {full_name}{role_part} @ {company}"
 
 def format_leads_message(leads: list[dict]) -> str:
     formatted_leads = [_format_lead(i, lead) for i, lead in enumerate(leads, 1)]

@@ -25,7 +25,11 @@ def _send_and_log(chat_id: int, user_id: str, text: str) -> None:
 
 
 def _format_selected_lead(lead: dict) -> str:
-    return f"Selected: {lead['name']} — {lead['title']} @ {lead['company']}"
+    name = (lead.get("name") or "Unknown").strip()
+    title = (lead.get("title") or "").strip()
+    company = (lead.get("company") or "Unknown Company").strip()
+    role_part = f" — {title}" if title else ""
+    return f"Selected: {name}{role_part} @ {company}"
 
 
 def _send_draft_follow_up(chat_id: int, user_id: str) -> None:

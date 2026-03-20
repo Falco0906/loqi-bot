@@ -101,13 +101,17 @@ def rewrite_message(instruction: str, previous_message: str) -> str | None:
         "rewrite_message called: "
         f"instruction={instruction}, previous_message={previous_message}"
     )
-    system_text = (
-        "You rewrite outreach messages. "
-        "Preserve the goal while applying the user's instruction."
-    )
+    system_text = "You rewrite cold outreach messages."
     user_text = (
-        f"Rewrite this outreach message.\nInstruction: {instruction}\n\n"
-        f"Previous message:\n{previous_message}\n\n"
-        "Return only the rewritten message text with short paragraphs."
+        "Rewrite the following cold outreach message based on the instruction.\n\n"
+        f"Instruction: {instruction}\n\n"
+        "Message:\n"
+        f"{previous_message}\n\n"
+        "Rules:\n"
+        "- Keep it concise\n"
+        "- Maintain personalization\n"
+        "- Improve clarity and impact\n"
+        "- Do not make it longer unless asked\n\n"
+        "Return only the rewritten message."
     )
     return _send_openai_request(system_text, user_text)

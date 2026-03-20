@@ -210,7 +210,13 @@ def get_session_context(user_id: str) -> dict:
         "last_assistant_message": assistant_messages[-1] if assistant_messages else None,
         "service": user_messages[0] if len(user_messages) >= 1 else None,
         "target": user_messages[1] if len(user_messages) >= 2 else None,
+        "selected_lead_id": None,
     }
+
+    selected_lead = get_selected_lead(user_id, since_timestamp=boundary_time)
+    if selected_lead:
+        context["selected_lead_id"] = selected_lead.get("id")
+
     _log(f"get_session_context success: {context}")
     return context
 
@@ -359,4 +365,21 @@ def get_selected_lead(
         return selected_lead
     except Exception as error:
         _log(f"get_selected_lead error: {error}")
+        return None
+
+
+def get_lead_by_id(lead_id: str) -> dict | None:
+    _log(f"get_lead_by_id called: lead_id={lead_id}")
+    client = get_supabase_client()
+    if client is None:
+        _log("get_lead_by_id aborted: no client")
+        return None
+
+    try:
+        result = client.table("leads").select("*").eq("id", lead_id).limit(1).execute()
+        lead = _first_row(result)
+        _log(f"get_lead_by_id success: {lead}")
+        return lead
+    except Exception as error:
+        _log(f"get_lead_by_id error: {error}")
         return None

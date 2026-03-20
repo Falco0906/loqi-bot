@@ -1,7 +1,7 @@
 from services.telegram import send_message
 from services.supabase import (
+    get_lead_by_id,
     get_or_create_user,
-    get_selected_lead,
     get_session_context,
     log_conversation,
     select_lead,
@@ -81,6 +81,7 @@ def process_message(
     service = context["service"]
     target = context["target"]
     started_at = context["started_at"]
+    selected_lead_id = context.get("selected_lead_id")
 
     if len(user_messages) == 1:
         _send_and_log(chat_id, user_id, "Who do you want to reach?")
@@ -130,7 +131,7 @@ def process_message(
 
     previous_message = _extract_previous_outreach(assistant_messages)
     if previous_message:
-        selected_lead = get_selected_lead(user_id, since_timestamp=started_at)
+        selected_lead = get_lead_by_id(selected_lead_id) if selected_lead_id else None
         if selected_lead is None:
             _send_and_log(chat_id, user_id, "Couldn't find that lead. Try again.")
             return

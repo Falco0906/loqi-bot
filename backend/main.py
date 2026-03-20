@@ -1,3 +1,5 @@
+import os
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
@@ -40,3 +42,10 @@ async def telegram_webhook(request: Request):
     except Exception as e:
         print(f"Error processing webhook: {e}")
         return {"status": "error", "message": str(e)}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    port = int(os.getenv("PORT", "10000"))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)

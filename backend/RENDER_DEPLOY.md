@@ -5,7 +5,7 @@ This backend is ready to deploy to Render as a FastAPI web service.
 ### Start command
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 10000
+uvicorn main:app --host 0.0.0.0 --port $PORT
 ```
 
 ### Environment variables
@@ -25,7 +25,7 @@ Set these in Render:
 6. Set the start command to:
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 10000
+uvicorn main:app --host 0.0.0.0 --port $PORT
 ```
 
 7. Add the environment variables:
@@ -77,3 +77,4 @@ Loqi backend running
 - Check Render logs.
 - Make sure the webhook is set correctly.
 - Make sure `BOT_TOKEN` and `APOLLO_API_KEY` are correct in Render.
+- Make sure the service is binding to Render's `PORT` env var, not a hard-coded port.

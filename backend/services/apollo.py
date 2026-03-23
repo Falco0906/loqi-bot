@@ -42,7 +42,7 @@ def _parse_person(person: dict) -> dict:
 def _format_lead(index: int, lead: dict) -> str:
     full_name = " ".join(
         part for part in [lead.get("first_name", ""), lead.get("last_name", "")] if part
-    ) or "Unknown"
+    ) or (lead.get("name") or "Unknown")
     title = (lead.get("title", "") or "").strip()
     company = (lead.get("company") or "Unknown Company").strip()
     role_part = f" — {title}" if title else ""

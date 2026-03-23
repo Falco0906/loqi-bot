@@ -1,5 +1,6 @@
-from services.apollo import format_leads_message, search_leads
+from services.apollo import format_leads_message
 from services.ai import generate_message, rewrite_message
+from services.lead_provider import get_leads
 from services.supabase import store_leads
 
 
@@ -115,11 +116,9 @@ def _build_fallback_draft(
 
 def generate_leads(input: dict) -> dict:
     service = input.get("service") or ""
-    query = input.get("target") or ""
+    target = input.get("target") or ""
     user_id = input.get("user_id")
-    print("[apollo] TRIGGERED with:", service, query)
-
-    result = search_leads(query)
+    result = get_leads(service, target)
     leads = result.get("leads", [])
 
     if not result.get("ok") or not leads:
@@ -127,10 +126,10 @@ def generate_leads(input: dict) -> dict:
         return {
             "ok": False,
             "type": "generate_leads",
-            "source": result.get("source", "apollo"),
+            "source": result.get("source", "lead_provider"),
             "leads": [],
             "stored_leads": [],
-            "message": f"Apollo failed: {error}",
+            "message": f"Lead search failed: {error}",
             "error": error,
         }
 
@@ -139,7 +138,7 @@ def generate_leads(input: dict) -> dict:
     return {
         "ok": True,
         "type": "generate_leads",
-        "source": "mock",
+        "source": result.get("source", "lead_provider"),
         "leads": leads,
         "stored_leads": stored_leads,
         "message": format_leads_message(leads),

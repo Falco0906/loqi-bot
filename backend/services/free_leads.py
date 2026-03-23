@@ -1,63 +1,61 @@
-import urllib.parse
+import os
 
-import requests
-from bs4 import BeautifulSoup
-
-
-def _normalize_lead(name: str, title: str, company: str, linkedin_url: str) -> dict:
-    return {
-        "name": name.strip(),
-        "title": title.strip(),
-        "company": company.strip(),
-        "email": "",
-        "linkedin_url": linkedin_url.strip(),
-    }
+from serpapi import GoogleSearch
 
 
 def search_free_leads(query: str) -> list[dict]:
     print("[free_leads] query:", query)
 
-    search_query = f"{query} site:linkedin.com/in"
-    encoded_query = urllib.parse.quote(search_query)
-    url = f"https://www.google.com/search?q={encoded_query}&num=10"
-    headers = {
-        "User-Agent": "Mozilla/5.0",
+    api_key = os.getenv("SERPAPI_API_KEY")
+    if not api_key:
+        raise Exception("Missing SERPAPI_API_KEY")
+
+    params = {
+        "q": f"{query} site:linkedin.com/in",
+        "num": 10,
+        "api_key": api_key,
     }
 
-    response = requests.get(url, headers=headers, timeout=20)
-    response.raise_for_status()
+    search = GoogleSearch(params)
+    results = search.get_dict()
 
-    soup = BeautifulSoup(response.text, "html.parser")
-    results = []
+    leads = []
 
-    for result in soup.select("div.g"):
-        link_tag = result.find("a", href=True)
-        title_tag = result.find("h3")
-
-        if not link_tag or not title_tag:
-            continue
-
-        link = link_tag["href"]
-        title_text = title_tag.get_text(strip=True)
+    for result in results.get("organic_results", []):
+        title = result.get("title", "")
+        link = result.get("link", "")
 
         if "linkedin.com/in/" not in link:
             continue
 
-        parts = [part.strip() for part in title_text.split(" - ")]
+        parts = title.split(" - ")
+
         if len(parts) < 2:
             continue
 
-        name = parts[0]
-        title = parts[1]
-        company = parts[2].replace("| LinkedIn", "").strip() if len(parts) >= 3 else ""
+        name = parts[0].strip()
+        role = parts[1].strip()
 
-        results.append(_normalize_lead(name, title, company, link))
-        if len(results) >= 5:
+        company = ""
+        if len(parts) >= 3:
+            company = parts[2].replace("| LinkedIn", "").strip()
+
+        leads.append(
+            {
+                "name": name,
+                "title": role,
+                "company": company,
+                "email": "",
+                "linkedin_url": link,
+            }
+        )
+
+        if len(leads) >= 5:
             break
 
-    print("[free_leads] results:", results)
+    print("[free_leads] results:", leads)
 
-    if not results:
-        raise Exception("No leads found. Try a different query.")
+    if not leads:
+        raise Exception("No leads found. Try a more specific query.")
 
-    return results
+    return leads

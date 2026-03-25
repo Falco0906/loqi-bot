@@ -8,6 +8,12 @@ VALID_TONES = {"casual", "formal", "aggressive", "friendly"}
 VALID_LENGTHS = {"short", "medium", "long"}
 
 
+def _is_relevant_lead(title: str, target: str) -> bool:
+    normalized_title = (title or "").lower()
+    keywords = (target or "").lower().split()
+    return any(keyword in normalized_title for keyword in keywords)
+
+
 def _infer_tone(input: dict) -> str:
     explicit_tone = (input.get("tone") or "").strip().lower()
     if explicit_tone in VALID_TONES:
@@ -71,16 +77,17 @@ def _build_fallback_draft(
     title: str,
     company: str,
 ) -> str:
-    title_phrase = title or "working there"
-    company_phrase = f" at {company}" if company else ""
-    return (
-        "Draft ready:\n\n"
-        "---\n"
-        f"Hey {lead_name} — noticed you're {title_phrase}{company_phrase}.\n\n"
-        "We help companies automate lead generation and outbound.\n\n"
-        "Worth a quick chat?\n"
-        "---"
+    intro = f"noticed you're {title} at {company}" if company else f"noticed you're {title}"
+    message = (
+        f"Hey {lead_name} — {intro}.\n\n"
+        "We help teams book more qualified leads without manual outbound.\n\n"
+        "Worth a quick chat?"
     )
+
+    if "Unknown Company" in message:
+        raise Exception("Bad message generated")
+
+    return f"Draft ready:\n\n---\n{message}\n---"
 
 
 def _clean_lead_title(lead_title: str) -> str:
@@ -90,17 +97,18 @@ def _clean_lead_title(lead_title: str) -> str:
 def _simplify_lead_title(lead_title: str) -> str:
     title = _clean_lead_title(lead_title).lower()
 
-    if "head" in title or "lead" in title:
+    if "vp" in title or "vice president" in title:
+        return "leading hiring"
+    if "head" in title:
         return "leading hiring and people operations"
     if "talent" in title or "recruit" in title:
-        return "working in talent acquisition"
+        return "focused on hiring and talent"
+    if "account" in title:
+        return "working in accounting"
     if "hr" in title or "human resource" in title:
         return "working in HR"
-    if "people operations" in title:
-        return "working in people operations"
 
-    words = title.split()
-    return "working in " + " ".join(words[:3]) if words else "working there"
+    return "working in your role"
 
 
 def generate_leads(input: dict) -> dict:
@@ -109,6 +117,13 @@ def generate_leads(input: dict) -> dict:
     user_id = input.get("user_id")
     result = get_leads(service, target)
     leads = result.get("leads", [])
+
+    filtered = [
+        lead for lead in leads
+        if _is_relevant_lead(lead.get("title", ""), target)
+    ]
+    if len(filtered) >= 3:
+        leads = filtered
 
     if not result.get("ok") or not leads:
         error = result.get("error") or "unknown_error"
@@ -139,7 +154,7 @@ def draft_message(input: dict) -> dict:
     lead = input.get("lead") or {}
     lead_name = ((lead.get("name") or "there").split() or ["there"])[0]
     title = _clean_lead_title(lead.get("title") or "")
-    company = (lead.get("company") or "").strip()
+    company = (lead.get("company") or "").replace("Unknown Company", "").strip()
     edit_request = _normalize_edit_request((input.get("edit_request") or "").strip())
     tone = _infer_tone(input)
     length = _infer_length(input)

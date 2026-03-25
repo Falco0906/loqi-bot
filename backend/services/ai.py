@@ -14,6 +14,16 @@ def _log(message: str) -> None:
     print(f"[ai] {message}")
 
 
+def _extract_response_text(data: dict) -> str | None:
+    try:
+        return data["output"][0]["content"][0]["text"].strip()
+    except Exception:
+        output_text = data.get("output_text")
+        if output_text:
+            return output_text.strip()
+        return None
+
+
 def _send_openai_request(system_text: str, user_text: str) -> str | None:
     if not OPENAI_API_KEY:
         _log("_send_openai_request error: missing OPENAI_API_KEY")
@@ -50,7 +60,7 @@ def _send_openai_request(system_text: str, user_text: str) -> str | None:
         _log(f"_send_openai_request response: {data}")
         response.raise_for_status()
 
-        output_text = data.get("output_text")
+        output_text = _extract_response_text(data)
         if output_text:
             return output_text.strip()
 
@@ -127,10 +137,14 @@ def generate_message(context: dict) -> str | None:
 
 
 def rewrite_message(instruction: str, previous_message: str) -> str | None:
-    _log(
-        "rewrite_message called: "
-        f"instruction={instruction}, previous_message={previous_message}"
-    )
+    print("[AI INPUT]:", previous_message)
+    print("[AI INSTRUCTION]:", instruction)
+
+    if not OPENAI_API_KEY:
+        error = "missing OPENAI_API_KEY"
+        print("[AI ERROR]:", error)
+        return f"(rewrite failed)\n\n{previous_message}"
+
     system_text = "You rewrite cold outreach messages."
     user_text = (
         "Rewrite the following cold outreach message based on the instruction.\n\n"
@@ -144,4 +158,43 @@ def rewrite_message(instruction: str, previous_message: str) -> str | None:
         "- Do not make it longer unless asked\n\n"
         "Return only the rewritten message."
     )
-    return _send_openai_request(system_text, user_text)
+    payload = {
+        "model": OPENAI_MODEL,
+        "input": [
+            {
+                "role": "system",
+                "content": [{"type": "input_text", "text": system_text}],
+            },
+            {
+                "role": "user",
+                "content": [{"type": "input_text", "text": user_text}],
+            },
+        ],
+    }
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        response = requests.post(
+            OPENAI_RESPONSES_URL,
+            headers=headers,
+            json=payload,
+            timeout=30,
+        )
+        data = response.json()
+        _log(f"rewrite_message status: {response.status_code}")
+        _log(f"rewrite_message response: {data}")
+        response.raise_for_status()
+
+        rewritten = _extract_response_text(data)
+        print("[AI OUTPUT]:", rewritten)
+
+        if not rewritten or rewritten.strip() == previous_message.strip():
+            raise Exception("AI did not modify message")
+
+        return rewritten
+    except Exception as error:
+        print("[AI ERROR]:", str(error))
+        return f"(rewrite failed)\n\n{previous_message}"

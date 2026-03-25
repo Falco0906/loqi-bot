@@ -1,43 +1,11 @@
 from services.apollo import format_leads_message
-from services.ai import generate_message, rewrite_message
+from services.ai import rewrite_message
 from services.lead_provider import get_leads
 from services.supabase import store_leads
 
 
 VALID_TONES = {"casual", "formal", "aggressive", "friendly"}
 VALID_LENGTHS = {"short", "medium", "long"}
-
-
-def _infer_role_problem(title: str) -> str:
-    normalized_title = title.lower()
-
-    if any(word in normalized_title for word in ["hr", "people", "talent", "recruit"]):
-        return "hiring bottlenecks, onboarding inefficiency"
-    if any(word in normalized_title for word in ["founder", "co-founder", "ceo"]):
-        return "growth, revenue, scaling"
-    return "hitting team goals while reducing manual work"
-
-
-def _build_message_context(
-    *,
-    lead_name: str,
-    lead_title: str,
-    company: str,
-    user_service: str,
-    tone: str,
-    length: str,
-    conversation_context: list[str],
-) -> dict:
-    return {
-        "lead_name": lead_name,
-        "lead_title": lead_title,
-        "company": company,
-        "role_problem": _infer_role_problem(lead_title),
-        "user_service": user_service,
-        "tone": tone,
-        "length": length,
-        "conversation_context": conversation_context,
-    }
 
 
 def _infer_tone(input: dict) -> str:
@@ -102,16 +70,33 @@ def _build_fallback_draft(
     lead_name: str,
     title: str,
     company: str,
-    service: str,
 ) -> str:
+    title_phrase = f" as {title.lower()}" if title else ""
+    company_phrase = f" at {company}" if company else ""
     return (
         "Draft ready:\n\n"
         "---\n"
-        f"Hey {lead_name} — saw you're working as an {title} at {company}.\n\n"
-        f"We help companies {service}.\n\n"
+        f"Hey {lead_name} — noticed you're working{title_phrase}{company_phrase}.\n\n"
+        "We help companies automate lead generation and outbound.\n\n"
         "Worth a quick chat?\n"
         "---"
     )
+
+
+def _clean_lead_title(lead_title: str) -> str:
+    return lead_title.replace("|", "").replace("  ", " ").strip()
+
+
+def _simplify_lead_title(lead_title: str) -> str:
+    normalized = _clean_lead_title(lead_title)
+    lowered = normalized.lower()
+
+    if "people operations" in lowered:
+        return "leading people operations"
+    if "talent acquisition" in lowered:
+        return "leading talent acquisition"
+
+    return normalized
 
 
 def generate_leads(input: dict) -> dict:
@@ -148,38 +133,27 @@ def generate_leads(input: dict) -> dict:
 
 def draft_message(input: dict) -> dict:
     lead = input.get("lead") or {}
-    service = input.get("service") or "automate hiring workflows and reduce manual effort"
-    lead_name = (lead.get("first_name") or "").strip() or (lead.get("name") or "there").split()[0]
-    title = lead.get("title") or (input.get("target") or "this role")
-    company = lead.get("company") or "your team"
+    lead_name = ((lead.get("name") or "there").split() or ["there"])[0]
+    title = _clean_lead_title(lead.get("title") or "")
+    company = (lead.get("company") or "").strip()
     edit_request = _normalize_edit_request((input.get("edit_request") or "").strip())
     tone = _infer_tone(input)
     length = _infer_length(input)
-    conversation_context = input.get("conversation_context") or []
     previous_message = input.get("previous_message") or ""
-    message_context = _build_message_context(
-        lead_name=lead_name,
-        lead_title=title,
-        company=company,
-        user_service=service,
-        tone=tone,
-        length=length,
-        conversation_context=conversation_context,
-    )
 
     if edit_request and previous_message:
         llm_message = rewrite_message(edit_request, previous_message)
     else:
-        llm_message = generate_message(message_context)
+        llm_message = None
 
     if llm_message:
         message = f"Draft ready:\n\n---\n{llm_message}\n---"
     else:
+        simplified_title = _simplify_lead_title(title)
         message = _build_fallback_draft(
             lead_name=lead_name,
-            title=title,
+            title=simplified_title,
             company=company,
-            service=service,
         )
 
     return {

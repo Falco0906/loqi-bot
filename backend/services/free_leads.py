@@ -11,6 +11,30 @@ def build_search_query(query: str) -> str:
     )
 
 
+def clean_text(text: str) -> str:
+    return text.replace("...", "").replace("|", "").strip()
+
+
+def extract_company(title: str, snippet: str) -> str:
+    title = title.replace("| LinkedIn", "").strip()
+
+    parts = [part.strip() for part in title.split(" - ") if part.strip()]
+
+    if len(parts) >= 3:
+        return clean_text(parts[2])
+
+    match = re.search(r"at ([A-Za-z0-9&.\- ]+)", title)
+    if match:
+        return clean_text(match.group(1))
+
+    if snippet:
+        match = re.search(r"at ([A-Za-z0-9&.\- ]+)", snippet)
+        if match:
+            return clean_text(match.group(1))
+
+    return ""
+
+
 def search_free_leads(query: str) -> list[dict]:
     print("[free_leads] query:", query)
 
@@ -46,18 +70,8 @@ def search_free_leads(query: str) -> list[dict]:
 
         name = parts[0] if len(parts) > 0 else ""
         role = parts[1] if len(parts) > 1 else ""
-        company = ""
-
-        if len(parts) >= 3:
-            company = parts[2]
-
-        if not company and snippet:
-            match = re.search(r"at ([A-Za-z0-9&.\- ]+)", snippet)
-            if match:
-                company = match.group(1).strip()
-
-        role = role.replace("...", "").strip()
-        company = company.replace("...", "").strip()
+        role = clean_text(role)
+        company = extract_company(title, snippet)
 
         if not name or not role:
             continue
@@ -66,7 +80,7 @@ def search_free_leads(query: str) -> list[dict]:
             {
                 "name": name,
                 "title": role,
-                "company": company if company else "",
+                "company": company,
                 "email": "",
                 "linkedin_url": link,
             }

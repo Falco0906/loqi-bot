@@ -1,6 +1,14 @@
 import os
+import re
 
 from serpapi import GoogleSearch
+
+
+def build_search_query(query: str) -> str:
+    return (
+        '("HR Manager" OR "Head of HR" OR "People Operations" OR "Talent Acquisition") '
+        f"{query} site:linkedin.com/in"
+    )
 
 
 def search_free_leads(query: str) -> list[dict]:
@@ -10,8 +18,12 @@ def search_free_leads(query: str) -> list[dict]:
     if not api_key:
         raise Exception("Missing SERPAPI_API_KEY")
 
+    built_query = build_search_query(query)
+    print("[free_leads] built_query:", built_query)
+
     params = {
-        "q": f"{query} site:linkedin.com/in",
+        "engine": "google",
+        "q": built_query,
         "num": 10,
         "api_key": api_key,
     }
@@ -23,28 +35,38 @@ def search_free_leads(query: str) -> list[dict]:
 
     for result in results.get("organic_results", []):
         title = result.get("title", "")
+        snippet = result.get("snippet", "")
         link = result.get("link", "")
 
         if "linkedin.com/in/" not in link:
             continue
 
-        parts = title.split(" - ")
+        title = title.replace("| LinkedIn", "").strip()
+        parts = [part.strip() for part in title.split(" - ") if part.strip()]
 
-        if len(parts) < 2:
-            continue
-
-        name = parts[0].strip()
-        role = parts[1].strip()
-
+        name = parts[0] if len(parts) > 0 else ""
+        role = parts[1] if len(parts) > 1 else ""
         company = ""
+
         if len(parts) >= 3:
-            company = parts[2].replace("| LinkedIn", "").strip()
+            company = parts[2]
+
+        if not company and snippet:
+            match = re.search(r"at ([A-Za-z0-9&.\- ]+)", snippet)
+            if match:
+                company = match.group(1).strip()
+
+        role = role.replace("...", "").strip()
+        company = company.replace("...", "").strip()
+
+        if not name or not role:
+            continue
 
         leads.append(
             {
                 "name": name,
                 "title": role,
-                "company": company,
+                "company": company if company else "",
                 "email": "",
                 "linkedin_url": link,
             }
@@ -53,7 +75,7 @@ def search_free_leads(query: str) -> list[dict]:
         if len(leads) >= 5:
             break
 
-    print("[free_leads] results:", leads)
+    print("[free_leads] leads:", leads)
 
     if not leads:
         raise Exception("No leads found. Try a more specific query.")

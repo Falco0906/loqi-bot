@@ -71,12 +71,12 @@ def _build_fallback_draft(
     title: str,
     company: str,
 ) -> str:
-    title_phrase = f" as {title.lower()}" if title else ""
+    title_phrase = title or "working there"
     company_phrase = f" at {company}" if company else ""
     return (
         "Draft ready:\n\n"
         "---\n"
-        f"Hey {lead_name} — noticed you're working{title_phrase}{company_phrase}.\n\n"
+        f"Hey {lead_name} — noticed you're {title_phrase}{company_phrase}.\n\n"
         "We help companies automate lead generation and outbound.\n\n"
         "Worth a quick chat?\n"
         "---"
@@ -88,15 +88,19 @@ def _clean_lead_title(lead_title: str) -> str:
 
 
 def _simplify_lead_title(lead_title: str) -> str:
-    normalized = _clean_lead_title(lead_title)
-    lowered = normalized.lower()
+    title = _clean_lead_title(lead_title).lower()
 
-    if "people operations" in lowered:
-        return "leading people operations"
-    if "talent acquisition" in lowered:
-        return "leading talent acquisition"
+    if "head" in title or "lead" in title:
+        return "leading hiring and people operations"
+    if "talent" in title or "recruit" in title:
+        return "working in talent acquisition"
+    if "hr" in title or "human resource" in title:
+        return "working in HR"
+    if "people operations" in title:
+        return "working in people operations"
 
-    return normalized
+    words = title.split()
+    return "working in " + " ".join(words[:3]) if words else "working there"
 
 
 def generate_leads(input: dict) -> dict:

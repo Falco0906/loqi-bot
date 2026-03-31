@@ -33,8 +33,7 @@ def _format_selected_lead(lead: dict) -> str:
 
 
 def _send_draft_follow_up(chat_id: int, user_id: str) -> None:
-    _send_and_log(chat_id, user_id, "Want to tweak it or send?")
-    _send_and_log(chat_id, user_id, TWEAK_EXAMPLES)
+    _send_and_log(chat_id, user_id, "Reply 'send' to continue or pick another lead.")
 
 
 def _extract_previous_outreach(assistant_messages: list[str]) -> str:
@@ -157,7 +156,18 @@ def process_message(
     ) or _fallback_classify_intent(normalized_text, has_draft=has_draft)
 
     if classified_intent == "send":
-        _send_and_log(chat_id, user_id, "Sent ✅ (mock)")
+        selected_lead = get_lead_by_id(selected_lead_id) if selected_lead_id else None
+        if selected_lead is None:
+            _send_and_log(chat_id, user_id, "Couldn't find that lead. Try again.")
+            return
+
+        workflow_result = run_workflow(
+            {
+                "type": "send_outreach",
+                "lead": selected_lead,
+            }
+        )
+        _send_and_log(chat_id, user_id, workflow_result["message"])
         _send_and_log(chat_id, user_id, "Type /start when you are ready to reach out to more leads.")
         return
 
@@ -221,6 +231,10 @@ def process_message(
         )
         _send_and_log(chat_id, user_id, workflow_result["message"])
         _send_draft_follow_up(chat_id, user_id)
+        return
+
+    if classified_intent == "refine_message":
+        _send_and_log(chat_id, user_id, "n8n will generate the email when you send it. Reply 'send' to continue.")
         return
 
     _send_and_log(chat_id, user_id, "Operation cancelled. Type /start to try again.")

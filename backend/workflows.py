@@ -1,6 +1,7 @@
 from services.apollo import format_leads_message
 from services.ai import rewrite_message
 from services.lead_provider import get_leads
+from services.n8n_client import send_lead_to_n8n
 from services.supabase import store_leads
 
 
@@ -71,23 +72,20 @@ def _normalize_edit_request(edit_request: str) -> str:
     return normalized
 
 
-def _build_fallback_draft(
+def _build_send_confirmation(
     *,
     lead_name: str,
     title: str,
     company: str,
 ) -> str:
-    intro = f"noticed you're {title} at {company}" if company else f"noticed you're {title}"
-    message = (
-        f"Hey {lead_name} — {intro}.\n\n"
-        "We help teams book more qualified leads without manual outbound.\n\n"
-        "Worth a quick chat?"
+    role_part = f" — {title}" if title else ""
+    company_part = f" @ {company}" if company else ""
+    return (
+        "Ready to send outreach:\n\n"
+        f"{lead_name}{role_part}{company_part}\n\n"
+        "n8n will generate and send the email when you confirm.\n\n"
+        "Send this?"
     )
-
-    if "Unknown Company" in message:
-        raise Exception("Bad message generated")
-
-    return f"Draft ready:\n\n---\n{message}\n---"
 
 
 def _clean_lead_title(lead_title: str) -> str:
@@ -169,7 +167,7 @@ def draft_message(input: dict) -> dict:
         message = f"Draft ready:\n\n---\n{llm_message}\n---"
     else:
         simplified_title = _simplify_lead_title(title)
-        message = _build_fallback_draft(
+        message = _build_send_confirmation(
             lead_name=lead_name,
             title=simplified_title,
             company=company,
@@ -186,6 +184,35 @@ def draft_message(input: dict) -> dict:
     }
 
 
+def send_outreach(input: dict) -> dict:
+    lead = input.get("lead") or {}
+
+    try:
+        result = send_lead_to_n8n(lead)
+    except Exception:
+        return {
+            "ok": False,
+            "type": "send_outreach",
+            "message": "⚠️ Failed to send email. Try again.",
+            "error": "n8n_failed",
+        }
+
+    company = (lead.get("company") or "").replace("Unknown Company", "").strip()
+    company_part = f" @ {company}" if company else ""
+    subject = result.get("subject", "Sent")
+
+    return {
+        "ok": True,
+        "type": "send_outreach",
+        "message": (
+            "✅ Email sent successfully\n\n"
+            f"To: {lead.get('name', 'Unknown')}{company_part}\n\n"
+            f"Subject: {subject}"
+        ),
+        "result": result,
+    }
+
+
 def run_workflow(input: dict) -> dict:
     workflow_type = input.get("type")
 
@@ -194,6 +221,9 @@ def run_workflow(input: dict) -> dict:
 
     if workflow_type == "draft_message":
         return draft_message(input)
+
+    if workflow_type == "send_outreach":
+        return send_outreach(input)
 
     return {
         "ok": False,

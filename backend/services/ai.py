@@ -100,42 +100,6 @@ def classify_intent(user_message: str, context: dict) -> str | None:
     _log(f"classify_intent error: unexpected model output {normalized}")
     return None
 
-
-def generate_message(context: dict) -> str | None:
-    _log(f"generate_message called: {context}")
-    system_text = (
-        "You are an elite B2B SDR who writes highly personalized cold outreach messages that get replies.\n\n"
-        "Rules:\n"
-        "- Never sound like AI\n"
-        "- Avoid generic phrases like 'I hope you're doing well'\n"
-        "- Be direct and concise\n"
-        "- Personalize using role + company\n"
-        "- Explicitly reference their role and a problem relevant to that role\n"
-        "- Focus on value, not features\n"
-        "- Keep it under 3-5 lines\n"
-        "- End with a soft CTA (not pushy)\n"
-        "- Make it feel human and slightly informal\n\n"
-        "Tone options:\n"
-        "- casual: friendly, conversational\n"
-        "- formal: clean and professional\n"
-        "- aggressive: direct, confident, slightly bold\n\n"
-        "Output only the message. No explanations."
-    )
-    user_text = (
-        "Write an outreach message body only.\n"
-        f"Lead first name: {context.get('lead_name', 'there')}\n"
-        f"Lead title: {context.get('lead_title', 'this role')}\n"
-        f"Lead company: {context.get('company', 'their company')}\n"
-        f"Relevant problem for this role: {context.get('role_problem', 'important operational priorities')}\n"
-        f"What the user sells: {context.get('user_service', 'our service')}\n"
-        f"Tone: {context.get('tone', 'friendly') or 'friendly'}\n"
-        f"Length: {context.get('length', 'medium') or 'medium'}\n"
-        f"Conversation context:\n{chr(10).join(context.get('conversation_context', [])) or 'none'}\n\n"
-        "Return only the message text with short paragraphs."
-    )
-    return _send_openai_request(system_text, user_text)
-
-
 def rewrite_message(instruction: str, previous_message: str) -> str | None:
     print("[AI INPUT]:", previous_message)
     print("[AI INSTRUCTION]:", instruction)

@@ -4,6 +4,7 @@ import requests
 
 
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL")
+N8N_INTERNAL_WEBHOOK_KEY = os.getenv("N8N_INTERNAL_WEBHOOK_KEY", "")
 
 
 def send_lead_to_n8n(lead: dict, user: dict) -> dict:
@@ -29,8 +30,11 @@ def send_lead_to_n8n(lead: dict, user: dict) -> dict:
     headers = {
         "Content-Type": "application/json",
     }
+    if N8N_INTERNAL_WEBHOOK_KEY:
+        headers["x-internal-key"] = N8N_INTERNAL_WEBHOOK_KEY
 
     print("[n8n] sending lead:", payload)
+    print("[n8n] headers:", headers)
     response = requests.post(N8N_WEBHOOK_URL, json=payload, headers=headers, timeout=30)
 
     try:

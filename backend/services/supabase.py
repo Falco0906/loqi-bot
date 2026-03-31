@@ -1,5 +1,6 @@
 import os
 import re
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from supabase import Client, create_client
@@ -136,6 +137,141 @@ def get_or_create_user(telegram_id: str, username: str | None = None) -> dict | 
     except Exception as error:
         _log(f"get_or_create_user error: {error}")
         return None
+
+
+def update_user_telegram_chat_id(user_id: str, telegram_chat_id: int) -> dict | None:
+    _log(
+        "update_user_telegram_chat_id called: "
+        f"user_id={user_id}, telegram_chat_id={telegram_chat_id}"
+    )
+    client = get_supabase_client()
+    if client is None:
+        _log("update_user_telegram_chat_id aborted: no client")
+        return None
+
+    try:
+        result = (
+            client.table("users")
+            .update({"telegram_chat_id": str(telegram_chat_id)})
+            .eq("id", user_id)
+            .execute()
+        )
+        user = _first_row(result)
+        _log(f"update_user_telegram_chat_id success: {user}")
+        return user
+    except Exception as error:
+        _log(f"update_user_telegram_chat_id error: {error}")
+        return None
+
+
+def get_user(user_id: str) -> dict | None:
+    _log(f"get_user called: user_id={user_id}")
+    client = get_supabase_client()
+    if client is None:
+        _log("get_user aborted: no client")
+        return None
+
+    try:
+        result = client.table("users").select("*").eq("id", user_id).limit(1).execute()
+        user = _first_row(result)
+        _log(f"get_user success: {user}")
+        return user
+    except Exception as error:
+        _log(f"get_user error: {error}")
+        return None
+
+
+def save_google_tokens(
+    user_id: str,
+    *,
+    email: str,
+    telegram_chat_id: int | None,
+    access_token: str,
+    refresh_token: str,
+    token_expiry: str | None,
+) -> dict | None:
+    _log(
+        "save_google_tokens called: "
+        f"user_id={user_id}, email={email}, telegram_chat_id={telegram_chat_id}, token_expiry={token_expiry}"
+    )
+    client = get_supabase_client()
+    if client is None:
+        _log("save_google_tokens aborted: no client")
+        return None
+
+    payload = {
+        "email": email,
+        "google_access_token": access_token,
+        "google_refresh_token": refresh_token,
+        "token_expiry": token_expiry,
+    }
+    if telegram_chat_id is not None:
+        payload["telegram_chat_id"] = str(telegram_chat_id)
+
+    try:
+        result = (
+            client.table("users")
+            .update(payload)
+            .eq("id", user_id)
+            .execute()
+        )
+        user = _first_row(result)
+        _log(f"save_google_tokens success: {user}")
+        return user
+    except Exception as error:
+        _log(f"save_google_tokens error: {error}")
+        return None
+
+
+def update_google_access_token(
+    user_id: str,
+    *,
+    access_token: str,
+    token_expiry: str | None,
+) -> dict | None:
+    _log(
+        "update_google_access_token called: "
+        f"user_id={user_id}, token_expiry={token_expiry}"
+    )
+    client = get_supabase_client()
+    if client is None:
+        _log("update_google_access_token aborted: no client")
+        return None
+
+    try:
+        result = (
+            client.table("users")
+            .update(
+                {
+                    "google_access_token": access_token,
+                    "token_expiry": token_expiry,
+                }
+            )
+            .eq("id", user_id)
+            .execute()
+        )
+        user = _first_row(result)
+        _log(f"update_google_access_token success: {user}")
+        return user
+    except Exception as error:
+        _log(f"update_google_access_token error: {error}")
+        return None
+
+
+def is_token_expired(token_expiry: str | None) -> bool:
+    _log(f"is_token_expired called: token_expiry={token_expiry}")
+    if not token_expiry:
+        _log("is_token_expired result: True (missing token_expiry)")
+        return True
+
+    try:
+        expiry = datetime.fromisoformat(token_expiry.replace("Z", "+00:00"))
+        expired = expiry <= datetime.now(timezone.utc)
+        _log(f"is_token_expired result: {expired}")
+        return expired
+    except Exception as error:
+        _log(f"is_token_expired error: {error}")
+        return True
 
 
 def log_conversation(user_id: str, role: str, message: str) -> None:

@@ -1,8 +1,10 @@
+from services.gmail import send_email
+from services.google_auth import refresh_access_token
 from services.apollo import format_leads_message
 from services.ai import rewrite_message
 from services.lead_provider import get_leads
 from services.n8n_client import send_lead_to_n8n
-from services.supabase import store_leads
+from services.supabase import get_user, is_token_expired, store_leads, update_google_access_token
 
 
 VALID_TONES = {"casual", "formal", "aggressive", "friendly"}
@@ -186,9 +188,53 @@ def draft_message(input: dict) -> dict:
 
 def send_outreach(input: dict) -> dict:
     lead = input.get("lead") or {}
+    user_id = input.get("user_id")
+
+    user = get_user(user_id) if user_id else None
+    if user is None:
+        return {
+            "ok": False,
+            "type": "send_outreach",
+            "message": "⚠️ Failed to send email. Try again.",
+            "error": "missing_user",
+        }
+
+    if not user.get("google_refresh_token"):
+        return {
+            "ok": False,
+            "type": "send_outreach",
+            "message": "Connect your Gmail first with /connect",
+            "error": "missing_google_tokens",
+        }
+
+    access_token = user.get("google_access_token") or ""
+    if is_token_expired(user.get("token_expiry")):
+        try:
+            refreshed = refresh_access_token(user["google_refresh_token"])
+            access_token = refreshed.get("access_token", "")
+            updated_user = update_google_access_token(
+                user_id,
+                access_token=access_token,
+                token_expiry=refreshed.get("token_expiry"),
+            )
+            if updated_user:
+                user = updated_user
+        except Exception:
+            return {
+                "ok": False,
+                "type": "send_outreach",
+                "message": "⚠️ Failed to send email. Try again.",
+                "error": "token_refresh_failed",
+            }
 
     try:
-        result = send_lead_to_n8n(lead)
+        draft = send_lead_to_n8n(lead, user)
+        send_email(
+            access_token or user.get("google_access_token", ""),
+            lead.get("email") or "",
+            draft.get("subject", "Sent"),
+            draft.get("body", ""),
+        )
     except Exception:
         return {
             "ok": False,
@@ -199,7 +245,7 @@ def send_outreach(input: dict) -> dict:
 
     company = (lead.get("company") or "").replace("Unknown Company", "").strip()
     company_part = f" @ {company}" if company else ""
-    subject = result.get("subject", "Sent")
+    subject = draft.get("subject", "Sent")
 
     return {
         "ok": True,
@@ -209,7 +255,7 @@ def send_outreach(input: dict) -> dict:
             f"To: {lead.get('name', 'Unknown')}{company_part}\n\n"
             f"Subject: {subject}"
         ),
-        "result": result,
+        "result": draft,
     }
 
 

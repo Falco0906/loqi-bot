@@ -6,9 +6,9 @@ import requests
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL")
 
 
-def send_lead_to_n8n(lead: dict) -> dict:
+def send_lead_to_n8n(lead: dict, user: dict) -> dict:
     """
-    Sends selected lead to n8n workflow for email generation + sending.
+    Sends selected lead to n8n workflow for email generation.
     """
 
     if not N8N_WEBHOOK_URL:
@@ -16,6 +16,8 @@ def send_lead_to_n8n(lead: dict) -> dict:
 
     payload = {
         "lead_id": lead.get("id"),
+        "user_id": user.get("id"),
+        "telegram_chat_id": user.get("telegram_chat_id"),
         "first_name": (lead.get("name", "").split() or [""])[0],
         "last_name": " ".join(lead.get("name", "").split()[1:]),
         "email": lead.get("email") or "noemail@example.com",

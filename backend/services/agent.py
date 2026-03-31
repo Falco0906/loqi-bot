@@ -1,4 +1,5 @@
 from services.ai import classify_intent
+from services.google_auth import get_google_auth_url
 from services.telegram import send_message
 from services.supabase import (
     clear_session_context,
@@ -7,6 +8,7 @@ from services.supabase import (
     get_session_context,
     log_conversation,
     select_lead,
+    update_user_telegram_chat_id,
 )
 from workflows import run_workflow
 
@@ -77,6 +79,7 @@ def process_message(
         return
 
     user_id = user["id"]
+    update_user_telegram_chat_id(user_id, chat_id)
     normalized_text = text.strip()
     existing_context = get_session_context(user_id)
 
@@ -85,6 +88,12 @@ def process_message(
         log_conversation(user_id, "user", normalized_text)
         _send_and_log(chat_id, user_id, "Hey — I’m Loqi. I’ll help you find leads and run outreach.")
         _send_and_log(chat_id, user_id, "What do you sell?")
+        return
+
+    if normalized_text.lower() == "/connect":
+        log_conversation(user_id, "user", normalized_text)
+        auth_url = get_google_auth_url(state=f"{user_id}:{chat_id}")
+        _send_and_log(chat_id, user_id, f"Connect your Gmail here:\n{auth_url}")
         return
 
     if normalized_text.lower() == "/start":
@@ -165,6 +174,7 @@ def process_message(
             {
                 "type": "send_outreach",
                 "lead": selected_lead,
+                "user_id": user_id,
             }
         )
         _send_and_log(chat_id, user_id, workflow_result["message"])

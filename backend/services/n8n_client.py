@@ -4,7 +4,6 @@ import requests
 
 
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL")
-N8N_API_KEY = os.getenv("N8N_API_KEY")
 
 
 def send_lead_to_n8n(lead: dict) -> dict:
@@ -27,7 +26,6 @@ def send_lead_to_n8n(lead: dict) -> dict:
 
     headers = {
         "Content-Type": "application/json",
-        "x-internal-key": N8N_API_KEY,
     }
 
     print("[n8n] sending lead:", payload)

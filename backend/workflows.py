@@ -2,7 +2,7 @@ from services.gmail import send_email
 from services.google_auth import refresh_access_token
 from services.apollo import format_leads_message
 from services.ai import generate_outreach_email, rewrite_message, OpenAIError
-from services.lead_provider import get_leads
+from services.lead_provider import get_leads, search_with_expansion
 from services.supabase import get_user, is_token_expired, store_leads, update_google_access_token
 
 
@@ -98,7 +98,8 @@ def generate_leads(input: dict) -> dict:
     service = input.get("service") or ""
     target = input.get("target") or ""
     user_id = input.get("user_id")
-    result = get_leads(service, target)
+    
+    result = search_with_expansion(service, target)
     leads = result.get("leads", [])
 
     filtered = [

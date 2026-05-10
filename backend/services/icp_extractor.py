@@ -37,61 +37,213 @@ def _dedupe_and_cap(items: list, max_items: int = 8) -> list:
     return result
 
 
+INDUSTRY_ROLES = {
+    "restaurants": ["Restaurant Owner", "Operations Manager", "General Manager", "Franchise Owner", "Kitchen Manager", "Food & Beverage Director"],
+    "restaurant": ["Restaurant Owner", "Operations Manager", "General Manager", "Franchise Owner", "Kitchen Manager", "Food & Beverage Director"],
+    "hospitality": ["Hotel Manager", "Operations Director", "General Manager", "Revenue Manager", "VP Operations"],
+    "healthcare": ["Practice Manager", "Clinic Director", "Operations Director", "Healthcare Administrator", "Medical Director"],
+    "saas": ["RevOps", "VP Sales", "CRM Manager", "Sales Ops", "Head of Revenue"],
+    "startups": ["Founder", "COO", "Head of Operations", "Co-Founder", "CEO"],
+    "tech": ["CTO", "VP Engineering", "Product Manager", "Tech Lead", "Engineering Manager"],
+    "technology": ["CTO", "VP Engineering", "Product Manager", "Tech Lead", "Engineering Manager"],
+    "real estate": ["Broker Owner", "Operations Manager", "Real Estate Manager", "Brokerage Director"],
+    "realestate": ["Broker Owner", "Operations Manager", "Real Estate Manager", "Brokerage Director"],
+    "marketing": ["Marketing Director", "Growth Lead", "CMO", "Head of Marketing", "Demand Gen Manager"],
+    "sales": ["VP Sales", "Sales Director", "Account Executive", "Sales Manager", "Head of Revenue"],
+    "finance": ["CFO", "Finance Director", "Controller", "VP Finance", "Financial Controller"],
+    "accounting": ["CFO", "Controller", "Finance Manager", "Accounting Manager", "Bookkeeping Director"],
+    "hr": ["HR Director", "People Ops", "CHRO", "HR Manager", "Talent Lead"],
+    "legal": ["Practice Manager", "Operations Director", "Firm Administrator", "Managing Partner"],
+    "education": ["School Director", "Operations Manager", "Education Administrator", "Principal"],
+    "retail": ["Store Manager", "Operations Manager", "Retail Director", "Store Owner", "District Manager"],
+    "manufacturing": ["Operations Manager", "Production Manager", "Plant Manager", "Manufacturing Director", "COO"],
+    "construction": ["Project Manager", "Operations Manager", "Construction Manager", "Owner", "General Contractor"],
+    "logistics": ["Operations Manager", "Logistics Manager", "Supply Chain Manager", "Fleet Manager", "Warehouse Manager"],
+    "food": ["Operations Manager", "Food Safety Manager", "Production Manager", "Kitchen Manager", "Owner"],
+    "agencies": ["Agency Owner", "Account Director", "Operations Manager", "Managing Director", "Client Services Director"],
+    "agency": ["Agency Owner", "Account Director", "Operations Manager", "Managing Director", "Client Services Director"],
+}
+
+OFFER_SEPARATORS = [" for ", " to ", " targeting ", " helping ", " for ", " serving ", " for businesses in "]
+
+INDUSTRY_NORMALIZATION = {
+    "restaurant": "restaurants",
+    "startup": "startups",
+    "realestate": "real estate",
+    "hospitality": "restaurants",
+    "food": "restaurants",
+    "agency": "agencies",
+}
+
+
+def _extract_offer(user_input: str) -> str:
+    """Extract just the product/service from user input"""
+    user_input_lower = user_input.lower()
+
+    for sep in OFFER_SEPARATORS:
+        if sep in user_input_lower:
+            parts = user_input.split(sep, 1)
+            offer = parts[0].strip()
+            if len(offer) > 2:
+                return _normalize_string(offer)
+
+    words = user_input.replace(",", " ").replace("-", " ").split()
+    if len(words) >= 2:
+        offer = " ".join(words[:-1])
+        if len(offer) > 2:
+            return _normalize_string(offer)
+
+    return _normalize_string(user_input)
+
+
+EXCLUDE_PLURALIZATION = {"healthcare", "saas", "real estate", "marketing", "accounting", "logistics", "hr"}
+
+
+def _normalize_industries(industries: list) -> list:
+    """Normalize industry names to consistent plurals"""
+    normalized = []
+    for ind in industries:
+        ind_lower = ind.lower().strip()
+        if ind_lower in INDUSTRY_NORMALIZATION:
+            normalized.append(INDUSTRY_NORMALIZATION[ind_lower])
+        else:
+            if not ind_lower.endswith("s") and ind_lower not in EXCLUDE_PLURALIZATION:
+                normalized.append(ind_lower + "s")
+            else:
+                normalized.append(ind_lower)
+    return normalized
+
+
+def _get_industry_roles(industries: list) -> list:
+    """Get target roles based on detected industries"""
+    roles = []
+    for ind in industries:
+        if ind in INDUSTRY_ROLES:
+            roles.extend(INDUSTRY_ROLES[ind])
+        elif ind.rstrip("s") in INDUSTRY_ROLES:
+            roles.extend(INDUSTRY_ROLES[ind.rstrip("s")])
+    return roles
+
+
+def _find_industries_in_input(user_input: str) -> list:
+    """Find industries in user input by looking for industry keywords"""
+    user_lower = user_input.lower()
+    found = []
+
+    industry_keywords = {
+        "restaurants": ["restaurant", "restaurants", "dining", "food service", "cafe", "bistro", "eatery"],
+        "hospitality": ["hotel", "hospitality", "resort", "inn", "motel", "lodge"],
+        "healthcare": ["healthcare", "medical", "clinic", "hospital", "doctor", "practice", "health"],
+        "saas": ["saas"],
+        "startups": ["startup", "startups", "early stage", "founder"],
+        "tech": ["tech", "technology", "tech company"],
+        "technology": ["tech", "technology", "tech company"],
+        "real estate": ["real estate", "realestate", "property", "brokerage"],
+        "marketing": ["marketing agency", "marketing firm", "advertising agency", "digital agency"],
+        "sales": ["sales", "sales team"],
+        "finance": ["finance", "financial", "banking"],
+        "accounting": ["accounting", "accountant", "bookkeeping"],
+        "hr": ["hr", "human resources", "people ops", "talent"],
+        "legal": ["legal", "law firm", "lawyer", "attorney"],
+        "education": ["education", "school", "university", "training"],
+        "retail": ["retail", "retailer", "store", "shop"],
+        "manufacturing": ["manufacturing", "manufacture", "factory", "production"],
+        "construction": ["construction", "contractor", "builder"],
+        "logistics": ["logistics", "shipping", "freight", "supply chain"],
+        "food": ["food", "catering", "food service"],
+        "agencies": ["agency", "agencies"],
+    }
+
+    for ind, keywords in industry_keywords.items():
+        for kw in keywords:
+            if kw in user_lower:
+                if ind not in found:
+                    found.append(ind)
+                break
+
+    return found
+
+
+def _generate_industry_keywords(offer: str, industries: list) -> list:
+    """Generate industry-aware keywords"""
+    keywords = []
+
+    offer_words = offer.lower().split()
+
+    for ind in industries:
+        keywords.append(f"{offer} {ind}")
+        keywords.append(f"{offer} for {ind}")
+
+        if "restaurant" in ind:
+            keywords.extend([
+                f"{offer} restaurant operations",
+                f"{offer} restaurant management",
+                f"{offer} hospitality industry",
+            ])
+        elif "healthcare" in ind:
+            keywords.extend([
+                f"{offer} healthcare operations",
+                f"{offer} medical practice",
+                f"{offer} clinic management",
+            ])
+        elif "startup" in ind:
+            keywords.extend([
+                f"{offer} startup operations",
+                f"{offer} early stage company",
+            ])
+        elif "saas" in ind:
+            keywords.extend([
+                f"{offer} SaaS operations",
+                f"{offer} software company",
+            ])
+        elif "real estate" in ind:
+            keywords.extend([
+                f"{offer} real estate operations",
+                f"{offer} property management",
+            ])
+        elif "marketing" in ind:
+            keywords.extend([
+                f"{offer} marketing operations",
+                f"{offer} growth team",
+            ])
+
+    return keywords[:8]
+
+
 def _get_deterministic_icp(user_input: str, existing_context: Optional[dict] = None) -> dict:
     """Generate deterministic ICP extraction when AI is unavailable"""
-    _log("AI unavailable, using deterministic extraction")
+    _log("Using deterministic fallback extraction")
 
     user_input = (user_input or "").strip()
     if not user_input:
         return _empty_icp("fallback")
 
-    words = user_input.replace(",", " ").replace("/", " ").split()
+    _log(f"raw_input='{user_input}'")
 
-    offer = _normalize_string(user_input)
+    offer = _extract_offer(user_input)
+    _log(f"extracted_offer='{offer}'")
 
-    industries = []
-    target_roles = []
-    keywords = []
+    detected_industries = _find_industries_in_input(user_input)
+    normalized_industries = _dedupe_and_cap(_normalize_industries(detected_industries), 6)
+    _log(f"normalized_industries={normalized_industries}")
+
+    industry_roles = _get_industry_roles(normalized_industries)
+    _log(f"inferred_roles={industry_roles}")
+
+    keywords = _generate_industry_keywords(offer, normalized_industries)
+
     search_hints = []
-
-    common_industries = {
-        "restaurant", "restaurants", "hospitality", "healthcare", "finance",
-        "saas", "startup", "startups", "tech", "technology", "retail",
-        "manufacturing", "construction", "real estate", "legal", "education",
-        "marketing", "sales", "accounting", "logistics", "food"
-    }
-
-    common_roles = {
-        "crm": ["CRM Manager", "RevOps", "Sales Ops"],
-        "ai": ["CTO", "VP Engineering", "Product Manager", "Founder"],
-        "automation": ["Operations Manager", "VP Operations", "Founder"],
-        "marketing": ["CMO", "Marketing Director", "Growth Lead"],
-        "sales": ["VP Sales", "Sales Director", "Account Executive"],
-        "hr": ["HR Director", "People Ops", "CHRO"],
-        "accounting": ["CFO", "Controller", "Finance Manager"],
-    }
-
-    for word in words:
-        word_lower = word.lower()
-        if word_lower in common_industries:
-            industries.append(word_lower)
-        if word_lower in common_roles:
-            target_roles.extend(common_roles[word_lower])
-
-    if not industries and len(words) >= 2:
-        industries.append(words[-1])
-
-    if industries:
-        keywords.append(f"{offer} {industries[0]}")
-    else:
-        keywords.append(offer)
-
-    search_hints = [f"{r} {industries[0]}" if industries else r for r in target_roles[:2]]
+    for role in industry_roles[:3]:
+        if normalized_industries:
+            primary_ind = normalized_industries[0]
+            search_hints.append(f"{role} {primary_ind}")
+        else:
+            search_hints.append(role)
 
     return {
         "offer": offer,
-        "industries": _dedupe_and_cap(industries, 6),
-        "target_roles": _dedupe_and_cap(target_roles, 8),
+        "industries": normalized_industries,
+        "target_roles": _dedupe_and_cap(industry_roles, 8),
         "company_types": [],
         "pain_points": [],
         "keywords": _dedupe_and_cap(keywords, 8),

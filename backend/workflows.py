@@ -1,9 +1,8 @@
 from services.gmail import send_email
 from services.google_auth import refresh_access_token
 from services.apollo import format_leads_message
-from services.ai import rewrite_message
+from services.ai import generate_outreach_email, rewrite_message, OpenAIError
 from services.lead_provider import get_leads
-from services.n8n_client import send_lead_to_n8n
 from services.supabase import get_user, is_token_expired, store_leads, update_google_access_token
 
 
@@ -72,22 +71,6 @@ def _normalize_edit_request(edit_request: str) -> str:
     if "add urgency" in lowered:
         return "Add urgency and make the call to action more time-sensitive."
     return normalized
-
-
-def _build_send_confirmation(
-    *,
-    lead_name: str,
-    title: str,
-    company: str,
-) -> str:
-    role_part = f" — {title}" if title else ""
-    company_part = f" @ {company}" if company else ""
-    return (
-        "Ready to send outreach:\n\n"
-        f"{lead_name}{role_part}{company_part}\n\n"
-        "n8n will generate and send the email when you confirm.\n\n"
-        "Send this?"
-    )
 
 
 def _clean_lead_title(lead_title: str) -> str:
@@ -161,19 +144,35 @@ def draft_message(input: dict) -> dict:
     previous_message = input.get("previous_message") or ""
 
     if edit_request and previous_message:
-        llm_message = rewrite_message(edit_request, previous_message)
+        try:
+            llm_message = rewrite_message(edit_request, previous_message)
+            message = f"Draft ready:\n\n---\n{llm_message}\n---"
+        except OpenAIError as e:
+            return {
+                "ok": False,
+                "type": "draft_message",
+                "message": f"Failed to rewrite draft: {e}",
+                "lead": lead,
+                "edit_request": edit_request,
+                "tone": tone,
+                "length": length,
+                "error": str(e),
+            }
     else:
-        llm_message = None
-
-    if llm_message:
-        message = f"Draft ready:\n\n---\n{llm_message}\n---"
-    else:
-        simplified_title = _simplify_lead_title(title)
-        message = _build_send_confirmation(
-            lead_name=lead_name,
-            title=simplified_title,
-            company=company,
-        )
+        try:
+            draft = generate_outreach_email(lead)
+            message = f"Draft ready:\n\n---\n{draft.get('body', '')}\n---"
+        except OpenAIError as e:
+            return {
+                "ok": False,
+                "type": "draft_message",
+                "message": f"Failed to generate draft: {e}",
+                "lead": lead,
+                "edit_request": edit_request,
+                "tone": tone,
+                "length": length,
+                "error": str(e),
+            }
 
     return {
         "ok": True,
@@ -223,24 +222,31 @@ def send_outreach(input: dict) -> dict:
             return {
                 "ok": False,
                 "type": "send_outreach",
-                "message": "⚠️ Failed to send email. Try again.",
+                "message": "⚠️ Failed to refresh Gmail token. Try connecting Gmail again.",
                 "error": "token_refresh_failed",
             }
 
     try:
-        draft = send_lead_to_n8n(lead, user)
+        draft = generate_outreach_email(lead)
         send_email(
             access_token or user.get("google_access_token", ""),
             lead.get("email") or "",
             draft.get("subject", "Sent"),
             draft.get("body", ""),
         )
+    except OpenAIError as e:
+        return {
+            "ok": False,
+            "type": "send_outreach",
+            "message": f"⚠️ Failed to generate email: {e}",
+            "error": f"openai_error: {e}",
+        }
     except Exception:
         return {
             "ok": False,
             "type": "send_outreach",
             "message": "⚠️ Failed to send email. Try again.",
-            "error": "n8n_failed",
+            "error": "send_failed",
         }
 
     company = (lead.get("company") or "").replace("Unknown Company", "").strip()

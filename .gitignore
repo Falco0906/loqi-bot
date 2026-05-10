@@ -4,3 +4,7 @@ backend/__pycache__/
 backend/services/__pycache__/
 backend/state/__pycache__/
 *.pyc
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+*.log

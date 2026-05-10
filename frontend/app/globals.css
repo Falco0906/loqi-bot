@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --loqi-bg: #131722;
+  --loqi-panel: #171b25;
+  --loqi-chat: #1e2430;
+  --loqi-line: rgba(255, 255, 255, 0.07);
+  --loqi-text: #edf1ff;
+  --loqi-muted: #8f99b6;
+  --loqi-accent: #6467ef;
+}
+
+html,
+body {
+  height: 100%;
+  background-color: #141824;
+  background:
+    radial-gradient(circle at top center, rgba(100, 103, 239, 0.11), transparent 28%),
+    radial-gradient(circle at 38% 54%, rgba(66, 76, 151, 0.08), transparent 24%),
+    linear-gradient(180deg, #151823 0%, #141824 52%, #121620 100%);
+  color: var(--loqi-text);
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  font-family:
+    "Söhne",
+    "Manrope",
+    "SF Pro Display",
+    "Inter",
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  text-rendering: optimizeLegibility;
+}
+
+body > div:first-child {
+  min-height: 100%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(143, 153, 182, 0.35) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  background-color: rgba(143, 153, 182, 0.35);
+}

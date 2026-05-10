@@ -1,0 +1,173 @@
+{
+  "name": "WF3 — Outreach Draft Generation",
+  "nodes": [
+    {
+      "id": "n001",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "outreach/send",
+        "responseMode": "responseNode"
+      }
+    },
+    {
+      "id": "n002",
+      "name": "Security Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.headers['x-internal-key'] }}",
+              "rightValue": "={{ $env.INTERNAL_WEBHOOK_KEY }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n003",
+      "name": "Unauthorized",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [680, 500],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"success\": false}",
+        "options": { "responseCode": 401 }
+      }
+    },
+    {
+      "id": "n004",
+      "name": "Parse Payload",
+      "type": "n8n-nodes-base.code",
+      "position": [680, 300],
+      "parameters": {
+        "jsCode": "const b = $input.first().json.body;\nreturn [{ json: {\n  lead_id: b.lead_id,\n  first_name: b.first_name,\n  last_name: b.last_name,\n  full_name: b.first_name + ' ' + b.last_name,\n  email: b.email,\n  title: b.title,\n  company: b.company,\n  pain_points: b.pain_points || 'scaling efficiently',\n  draft_subject: b.draft_subject || '',\n  draft_body: b.draft_body || '',\n  has_draft: !!(b.draft_subject && b.draft_body),\n  user_id: b.user_id || null,\n  telegram_chat_id: b.telegram_chat_id || null\n}}];"
+      }
+    },
+    {
+      "id": "n005",
+      "name": "Has Draft?",
+      "type": "n8n-nodes-base.if",
+      "position": [900, 300],
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.has_draft }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n006",
+      "name": "Use Existing Draft",
+      "type": "n8n-nodes-base.code",
+      "position": [1100, 180],
+      "parameters": {
+        "jsCode": "return [{ json: $input.first().json }];"
+      }
+    },
+    {
+      "id": "n007",
+      "name": "Generate Email (GPT)",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1100, 420],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENAI_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'system', content: 'Write a short personalized cold email. Return JSON {\"subject\":\"\",\"body\":\"\"}' }, { role: 'user', content: `Write for ${$json.first_name}, ${$json.title} at ${$json.company}. Pain: ${$json.pain_points}` }] }) }}"
+      }
+    },
+    {
+      "id": "n008",
+      "name": "Parse GPT",
+      "type": "n8n-nodes-base.code",
+      "position": [1300, 420],
+      "parameters": {
+        "jsCode": "const lead = $('Parse Payload').first().json;\nconst raw = $input.first().json.choices[0].message.content;\nlet data;\ntry { data = JSON.parse(raw); } catch { data = { subject: 'Quick question', body: raw }; }\nreturn [{ json: { ...lead, draft_subject: data.subject, draft_body: data.body } }];"
+      }
+    },
+    {
+      "id": "n009",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "position": [1500, 300],
+      "parameters": {
+        "mode": "passThrough"
+      }
+    },
+    {
+      "id": "n010",
+      "name": "Return Draft",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [1700, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, subject: $json.draft_subject, body: $json.draft_body, email: $json.email, full_name: $json.full_name }) }}"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[{ "node": "Security Gate" }]]
+    },
+    "Security Gate": {
+      "main": [
+        [{ "node": "Parse Payload" }],
+        [{ "node": "Unauthorized" }]
+      ]
+    },
+    "Parse Payload": {
+      "main": [[{ "node": "Has Draft?" }]]
+    },
+    "Has Draft?": {
+      "main": [
+        [{ "node": "Use Existing Draft" }],
+        [{ "node": "Generate Email (GPT)" }]
+      ]
+    },
+    "Use Existing Draft": {
+      "main": [[{ "node": "Merge" }]]
+    },
+    "Generate Email (GPT)": {
+      "main": [[{ "node": "Parse GPT" }]]
+    },
+    "Parse GPT": {
+      "main": [[{ "node": "Merge" }]]
+    },
+    "Merge": {
+      "main": [[{ "node": "Return Draft" }]]
+    }
+  }
+}

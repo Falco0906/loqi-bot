@@ -4,3 +4,4 @@ requests
 python-dotenv
 supabase
 google-search-results
+serpapi

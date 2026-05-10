@@ -36,15 +36,28 @@ def get_leads(service: str, target: str) -> dict:
 
 
 def search_with_expansion(service: str, target: str) -> dict:
-    """AI-enhanced lead search with semantic expansion"""
+    """AI-enhanced lead search with semantic expansion and ICP extraction"""
     provider = os.getenv("LEAD_PROVIDER", "free").strip().lower()
 
     print(f"[lead_provider] AI-enhanced search: service='{service}', target='{target}'")
 
+    combined_input = f"{service} {target}".strip() if target else service
+
+    try:
+        from services.icp_extractor import extract_structured_icp
+        icp = extract_structured_icp(combined_input)
+
+        print(f"[lead_provider] ICP extracted: mode={icp.get('mode')}, offer='{icp.get('offer')}'")
+        print(f"[lead_provider] ICP industries: {icp.get('industries')}")
+        print(f"[lead_provider] ICP target_roles: {icp.get('target_roles')}")
+    except Exception as e:
+        print(f"[lead_provider] ICP extraction failed: {e}, using fallback")
+        icp = None
+
     try:
         from services.search_expansion import expand_search_intent
-        expansion = expand_search_intent(service, target)
-        
+        expansion = expand_search_intent(service, target, icp)
+
         print(f"[lead_provider] expansion result: {len(expansion.get('search_queries', []))} queries")
         print(f"[lead_provider] roles: {expansion.get('roles', [])}")
         print(f"[lead_provider] industries: {expansion.get('industries', [])}")
@@ -94,18 +107,20 @@ def search_with_expansion(service: str, target: str) -> dict:
                 "source": "free",
                 "leads": [],
                 "error": "No leads found for expanded search",
+                "icp": icp,
             }
 
         print(f"[lead_provider] Final result: {len(all_leads)} unique leads")
-        
+
         return {
             "ok": True,
             "source": "free",
             "leads": all_leads,
             "error": None,
             "expansion": expansion,
+            "icp": icp,
         }
-        
+
     except Exception as error:
         print(f"[lead_provider] error: {error}")
         error_message = str(error)
@@ -114,4 +129,5 @@ def search_with_expansion(service: str, target: str) -> dict:
             "source": provider,
             "leads": [],
             "error": error_message,
+            "icp": icp,
         }

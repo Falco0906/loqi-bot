@@ -341,6 +341,7 @@ class ConversationEngine:
                         "service": existing_context["service"],
                         "target": existing_context["target"],
                         "user_id": user["id"],
+                        "workflow_session_id": workflow_session_id,
                     }
                 )
                 outputs.extend(
@@ -408,6 +409,7 @@ class ConversationEngine:
                     "service": service,
                     "target": target,
                     "user_id": user["id"],
+                    "workflow_session_id": workflow_session_id,
                 }
             )
             outputs.extend(
@@ -534,6 +536,7 @@ class ConversationEngine:
                     "service": service,
                     "target": normalized_text,
                     "user_id": user["id"],
+                    "workflow_session_id": workflow_session_id,
                 }
             )
             outputs.extend(

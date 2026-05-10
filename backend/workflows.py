@@ -4,6 +4,7 @@ from services.apollo import format_leads_message
 from services.ai import generate_outreach_email, rewrite_message, OpenAIError
 from services.lead_provider import get_leads, search_with_expansion
 from services.supabase import get_user, is_token_expired, store_leads, update_google_access_token
+from services.conversation_store import record_workflow_event
 
 
 VALID_TONES = {"casual", "formal", "aggressive", "friendly"}
@@ -98,9 +99,23 @@ def generate_leads(input: dict) -> dict:
     service = input.get("service") or ""
     target = input.get("target") or ""
     user_id = input.get("user_id")
-    
+    workflow_session_id = input.get("workflow_session_id")
+
     result = search_with_expansion(service, target)
     leads = result.get("leads", [])
+    icp = result.get("icp")
+
+    if icp:
+        print(f"[workflows] Storing ICP: mode={icp.get('mode')}, offer='{icp.get('offer')}'")
+        try:
+            if workflow_session_id:
+                record_workflow_event(
+                    session_id=workflow_session_id,
+                    event_type="icp.extracted",
+                    payload={"structured_icp": icp},
+                )
+        except Exception as e:
+            print(f"[workflows] Failed to store ICP: {e}")
 
     filtered = [
         lead for lead in leads

@@ -16,26 +16,39 @@ def _log(message: str) -> None:
     print(f"[search_expansion] {message}")
 
 
-def _get_deterministic_expansion(service: str, target: Optional[str]) -> dict:
+def _get_deterministic_expansion(service: str, target: Optional[str], icp: Optional[dict] = None) -> dict:
     """Generate deterministic expansion when AI is unavailable"""
     _log("Using deterministic fallback expansion")
     
     service_clean = service.strip() if service else ""
     target_clean = target.strip() if target else ""
     
-    roles = [service_clean] if service_clean else []
-    industries = [service_clean] if service_clean else []
+    roles = []
+    industries = []
     keywords = []
     
-    if service_clean and target_clean:
-        keywords.append(f"{service_clean} {target_clean}")
-        keywords.append(f"{service_clean} {target_clean} linkedin")
-    elif service_clean:
-        keywords.append(service_clean)
-        keywords.append(f"{service_clean} linkedin")
+    if icp and icp.get("target_roles"):
+        roles = icp["target_roles"][:6]
+    else:
+        roles = [service_clean] if service_clean else []
+    
+    if icp and icp.get("industries"):
+        industries = icp["industries"][:4]
+    else:
+        industries = [service_clean] if service_clean else []
+    
+    if icp and icp.get("keywords"):
+        keywords = icp["keywords"][:6]
+    else:
+        if service_clean and target_clean:
+            keywords.append(f"{service_clean} {target_clean}")
+            keywords.append(f"{service_clean} {target_clean} linkedin")
+        elif service_clean:
+            keywords.append(service_clean)
+            keywords.append(f"{service_clean} linkedin")
     
     search_queries = []
-    for kw in keywords[:5]:
+    for kw in keywords[:8]:
         search_queries.append(f'site:linkedin.com/in "{kw}"')
     
     return {
@@ -48,7 +61,8 @@ def _get_deterministic_expansion(service: str, target: Optional[str]) -> dict:
 
 def expand_search_intent(
     service: str,
-    target: Optional[str] = None
+    target: Optional[str] = None,
+    icp: Optional[dict] = None
 ) -> dict:
     """
     Expand search intent using AI semantic understanding.
@@ -56,19 +70,24 @@ def expand_search_intent(
     Args:
         service: What the user sells (e.g., "CRM", "AI automation")
         target: Optional target audience (e.g., "startups", "law firms")
+        icp: Optional structured ICP from extract_structured_icp()
     
     Returns:
         dict with roles, industries, keywords, and search_queries
     """
     if not service:
         _log("No service provided, using empty expansion")
-        return _get_deterministic_expansion("", None)
+        return _get_deterministic_expansion("", None, icp)
     
     if not OPENAI_API_KEY:
         _log("OPENAI_API_KEY not configured, using deterministic fallback")
-        return _get_deterministic_expansion(service, target)
+        return _get_deterministic_expansion(service, target, icp)
     
     _log(f"Expanding intent: service='{service}', target='{target}'")
+    
+    has_icp = icp and icp.get("mode") == "ai"
+    if has_icp:
+        _log(f"Using structured ICP: offer='{icp.get('offer')}', industries={icp.get('industries')}, roles={icp.get('target_roles')}")
     
     system_text = """You are a B2B sales lead search strategist. Your job is to expand vague search intent into specific search queries.
 
@@ -98,8 +117,21 @@ Rules:
     service_context = f"Product/Service: {service}"
     target_context = f"Target Audience: {target}" if target else "Target Audience: (any)"
     
+    icp_context = ""
+    if has_icp:
+        icp_context = f"""
+ICP Data (already extracted):
+- Offer: {icp.get('offer', '')}
+- Industries: {', '.join(icp.get('industries', []))}
+- Target Roles: {', '.join(icp.get('target_roles', []))}
+- Keywords: {', '.join(icp.get('keywords', []))}
+- Search Hints: {', '.join(icp.get('search_hints', []))}
+
+Use this ICP data to generate more relevant search queries. Build upon the extracted keywords and roles."""
+
     user_text = f"""{service_context}
 {target_context}
+{icp_context}
 
 Generate the expanded search intent."""
 
@@ -132,15 +164,15 @@ Generate the expanded search intent."""
         
         if response.status_code == 401:
             _log("OpenAI API key is invalid")
-            return _get_deterministic_expansion(service, target)
+            return _get_deterministic_expansion(service, target, icp)
         
         if response.status_code == 429:
             _log("OpenAI API quota exceeded")
-            return _get_deterministic_expansion(service, target)
+            return _get_deterministic_expansion(service, target, icp)
         
         if response.status_code >= 500:
             _log(f"OpenAI API server error: {response.status_code}")
-            return _get_deterministic_expansion(service, target)
+            return _get_deterministic_expansion(service, target, icp)
         
         response.raise_for_status()
         
@@ -153,7 +185,7 @@ Generate the expanded search intent."""
         
         if not output_text:
             _log("Empty response from OpenAI")
-            return _get_deterministic_expansion(service, target)
+            return _get_deterministic_expansion(service, target, icp)
         
         _log(f"Raw AI response: {output_text[:200]}...")
         
@@ -175,13 +207,13 @@ Generate the expanded search intent."""
         
     except requests.Timeout:
         _log("OpenAI request timed out, using deterministic fallback")
-        return _get_deterministic_expansion(service, target)
+        return _get_deterministic_expansion(service, target, icp)
     except requests.ConnectionError as e:
         _log(f"OpenAI connection error: {e}, using deterministic fallback")
-        return _get_deterministic_expansion(service, target)
+        return _get_deterministic_expansion(service, target, icp)
     except json.JSONDecodeError as e:
         _log(f"Failed to parse AI response as JSON: {e}")
-        return _get_deterministic_expansion(service, target)
+        return _get_deterministic_expansion(service, target, icp)
     except Exception as e:
         _log(f"Unexpected error during AI expansion: {e}")
-        return _get_deterministic_expansion(service, target)
+        return _get_deterministic_expansion(service, target, icp)

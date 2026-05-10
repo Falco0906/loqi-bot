@@ -1,14 +1,40 @@
 # Loqi Roadmap
 
-## Current Stage
+## Completed ✅
 
-Current focus:
-- make product reliable enough for first customer/investor
-- stabilize core workflows
-- improve UX
-- improve output quality
+- Frontend web UI (Next.js, chat interface)
+- Multi-client architecture (conversation engine)
+- Supabase integration (users, leads, conversations, workflow events)
+- Semantic query expansion (AI + deterministic fallback)
+- Deterministic ICP fallback (industry-first role mapping)
+- OpenAI ICP extraction (AI mode)
+- Workflow orchestration (generate_leads, draft_message, send_email)
+- Real SerpAPI integration (LinkedIn profile search)
+- Graceful AI degradation (fallback when OpenAI unavailable)
+- Gmail OAuth + send
 
-Avoid unnecessary infrastructure work.
+## In Progress 🔄
+
+- Gmail production hardening (inbox sync, reply detection)
+- Lead ranking (ICP-based relevance scoring)
+- Lead enrichment (company data, emails)
+
+## Next Priorities 📋
+
+1. Lead ranking pipeline - Score leads by ICP match
+2. Enrichment architecture - Add company data
+3. Gmail production hardening - Fix inbox sync
+4. Reply detection - Detect and classify replies
+5. Personalization memory - Learn from user preferences
+6. Analytics - Track metrics
+
+## Long-Term Vision 🌟
+
+- Adaptive outbound intelligence
+- Multi-provider lead routing (SerpAPI → Apollo → etc)
+- Autonomous followups
+- CRM memory graph
+- Multi-agent orchestration
 
 ---
 

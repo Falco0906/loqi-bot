@@ -9,8 +9,8 @@ Loqi is an AI-native outbound operating system focused on:
 - conversational workflow management
 
 Current interfaces:
-- Telegram bot
-- Web chat UI (MVP)
+- Web chat UI (primary - MVP complete)
+- Telegram (deprecated - interface code still exists but not primary)
 
 Future interfaces:
 - WhatsApp
@@ -20,6 +20,34 @@ Future interfaces:
 
 The backend is the core product.
 Interfaces should remain thin adapters.
+
+---
+
+## Why Web UI Became Primary
+
+Telegram was the initial interface but had limitations:
+- No persistent web presence
+- Limited UI customization
+- Users wanted browser-based experience
+
+Web UI provides:
+- Persistent sessions
+- Rich UI components
+- Better lead display
+- Future: analytics dashboard
+- Future: team collaboration
+
+---
+
+## Why Telegram Deprecated
+
+1. Single-threaded conversations
+2. Limited rich UI elements
+3. No analytics/visualization
+4. Platform lock-in
+5. Hard to build team features
+
+The conversation engine (`services/conversation_engine.py`) is channel-agnostic and could support Telegram again, but web is the priority.
 
 ---
 

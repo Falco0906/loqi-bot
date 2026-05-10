@@ -41,25 +41,36 @@ def extract_company(title: str, snippet: str) -> str:
 
 
 def search_free_leads(query: str) -> list[dict]:
-    print("[free_leads] query:", query)
+    print(f"[free_leads] query: {query}")
 
     api_key = os.getenv("SERPAPI_API_KEY")
     if not api_key:
+        print("[free_leads] ERROR: SERPAPI_API_KEY not configured")
         raise SerpAPIError("SERPAPI_API_KEY not configured. Lead search unavailable.")
 
     try:
         from serpapi import Client
+        print("[free_leads] Using serpapi package (Client API)")
     except ImportError as e:
-        raise SerpAPIError(f"SerpAPI package not installed: {e}. Lead search unavailable.")
+        print(f"[free_leads] ERROR: serpapi package not installed: {e}")
+        raise SerpAPIError(f"serpapi package not installed: {e}. Lead search unavailable.")
 
     built_query = build_search_query(query)
-    print("[free_leads] built_query:", built_query)
+    print(f"[free_leads] search_query: {built_query}")
 
     try:
         client = Client(api_key=api_key)
         results = client.search(q=built_query, engine="google", num=15)
         
-        organic_results = results.get("organic_results", [])
+        print(f"[free_leads] API response received, keys: {list(results.keys())}")
+        
+        if hasattr(results, 'get') and results.get("error"):
+            error_msg = results.get("error", "Unknown SerpAPI error")
+            print(f"[free_leads] API error: {error_msg}")
+            raise SerpAPIError(f"SerpAPI error: {error_msg}")
+        
+        organic_results = results.get("organic_results", []) if hasattr(results, 'get') else []
+        print(f"[free_leads] organic_results count: {len(organic_results)}")
         
         leads = []
         seen_names = set()
@@ -131,16 +142,26 @@ def search_free_leads(query: str) -> list[dict]:
             if len(leads) >= 5:
                 break
 
-        print("[free_leads] leads:", leads)
+        print(f"[free_leads] leads extracted: {len(leads)}")
 
         if not leads:
+            print("[free_leads] ERROR: No leads found for query")
             raise SerpAPIError("No leads found for this query. Try a different target.")
 
+        print(f"[free_leads] SUCCESS: {len(leads)} leads returned")
         return leads
+        
+    except SerpAPIError:
+        raise
     except Exception as e:
         error_msg = str(e)
-        if "api_key" in error_msg.lower() or "unauthorized" in error_msg.lower():
+        print(f"[free_leads] EXCEPTION: {error_msg}")
+        
+        lower_error = error_msg.lower()
+        if "api_key" in lower_error or "unauthorized" in lower_error or "invalid" in lower_error:
             raise SerpAPIError("SerpAPI API key is invalid")
-        if "quota" in error_msg.lower() or "limit" in error_msg.lower():
+        if "quota" in lower_error or "limit" in lower_error:
             raise SerpAPIError("SerpAPI quota exceeded")
+        if "timeout" in lower_error or "timed out" in lower_error:
+            raise SerpAPIError("SerpAPI request timed out")
         raise SerpAPIError(f"SerpAPI request failed: {error_msg}")

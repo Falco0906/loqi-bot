@@ -556,3 +556,54 @@ def get_lead_by_id(lead_id: str) -> dict | None:
     except Exception as error:
         _log(f"get_lead_by_id error: {error}")
         return None
+
+
+def get_user_preferences(user_id: str) -> dict | None:
+    _log(f"get_user_preferences called: user_id={user_id}")
+    client = get_supabase_client()
+    if client is None:
+        _log("get_user_preferences aborted: no client")
+        return None
+
+    try:
+        result = client.table("user_preferences").select("*").eq("user_id", user_id).limit(1).execute()
+        prefs = _first_row(result)
+        _log(f"get_user_preferences success: {prefs}")
+        if prefs:
+            return {
+                "tone": prefs.get("tone"),
+                "length": prefs.get("length"),
+                "style": prefs.get("style"),
+                "industry_focus": prefs.get("industry_focus"),
+            }
+        return None
+    except Exception as error:
+        _log(f"get_user_preferences error: {error}")
+        return None
+
+
+def save_user_preference(user_id: str, key: str, value: str) -> None:
+    _log(f"save_user_preference called: user_id={user_id}, key={key}, value={value}")
+    client = get_supabase_client()
+    if client is None:
+        _log("save_user_preference aborted: no client")
+        return
+
+    try:
+        existing = client.table("user_preferences").select("*").eq("user_id", user_id).limit(1).execute()
+        existing_row = _first_row(existing)
+
+        if existing_row:
+            result = (
+                client.table("user_preferences")
+                .update({key: value})
+                .eq("user_id", user_id)
+                .execute()
+            )
+        else:
+            payload = {"user_id": user_id, key: value}
+            result = client.table("user_preferences").insert(payload).execute()
+
+        _log(f"save_user_preference success")
+    except Exception as error:
+        _log(f"save_user_preference error: {error}")

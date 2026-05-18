@@ -152,6 +152,30 @@ HOSPITALITY_KEYWORDS = [
     "catering",
 ]
 
+HR_PEOPLE_KEYWORDS = [
+    "hr manager",
+    "hr director",
+    "hr business partner",
+    "hr lead",
+    "people manager",
+    "people director",
+    "people operations",
+    "human resources",
+    "talent acquisition",
+    "recruiting manager",
+    "recruiter",
+    "hr coordinator",
+    "hr generalist",
+    "chief people officer",
+    "chief human resources officer",
+    "chro",
+    "hr vp",
+    "hr executive",
+    "recruiting operations",
+    "hr consultant",
+    "people ops",
+]
+
 CHAIN_INDICATORS = [
     "group",
     "holdings",
@@ -403,6 +427,15 @@ def _score_buyer_fit(title_lower: str, company_lower: str) -> int:
     if any(kw in title_lower for kw in HOSPITALITY_KEYWORDS):
         if any(op in title_lower for op in OPERATIONS_TITLE_KEYWORDS):
             score += 25
+
+    if any(kw in title_lower for kw in HR_PEOPLE_KEYWORDS):
+        score += 35
+        if "director" in title_lower or "manager" in title_lower:
+            score += 10
+        if "chief" in title_lower or "vp" in title_lower or "head" in title_lower:
+            score += 15
+        if "operations" in title_lower or "business partner" in title_lower:
+            score += 10
 
     return score
 

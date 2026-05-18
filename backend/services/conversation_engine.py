@@ -566,6 +566,20 @@ class ConversationEngine:
             print(f"[CONTEXT] Inferred target from single message: {target}")
 
         if parsed_service and parsed_target and not service:
+            print(f"[CONTEXT] Combined message detected — proceeding to lead search")
+
+        if parsed_service and not service:
+            service = parsed_service
+            print(f"[CONTEXT] Inferred service from single message: {service}")
+            if parsed_target:
+                target = parsed_target
+                print(f"[CONTEXT] Inferred target from single message: {target}")
+
+        if parsed_target and not target and service:
+            target = parsed_target
+            print(f"[CONTEXT] Inferred target from single message: {target}")
+
+        if parsed_service and parsed_target and not service:
             print(f"[CONTEXT] Combined message detected — skipping redundant questions")
 
         if not service:
@@ -582,6 +596,24 @@ class ConversationEngine:
                 )
             )
             return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+        if not target:
+            prompt_text = self._get_dynamic_prompt(
+                stage="ask_target",
+                context=context,
+                recent_messages=assistant_messages[-3:],
+                service=service,
+            )
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=prompt_text,
+                    message_type="prompt",
+                )
+            )
+            return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+        print(f"[WORKFLOW] Proceeding with service='{service}', target='{target}'")
 
         if not target:
             prompt_text = self._get_dynamic_prompt(
@@ -719,6 +751,33 @@ class ConversationEngine:
                     "workflow_session_id": workflow_session_id,
                 }
             )
+            if not workflow_result.get("ok"):
+                error_msg = workflow_result.get("error", "")
+                print(f"[WORKFLOW] Lead search failed: {error_msg}")
+
+                recovery_messages = [
+                    f"That search came up empty — let me try a broader approach with \"{target}\".",
+                    f"I couldn't find strong matches — trying a wider search.",
+                    f"That's a bit narrow, so I'm widening the search. Give me a moment.",
+                ]
+                import random
+                recovery_text = random.choice(recovery_messages)
+
+                outputs.extend(
+                    _assistant_bundle(
+                        workflow_session_id=workflow_session_id,
+                        text=recovery_text,
+                        message_type="status",
+                    )
+                )
+                outputs.extend(
+                    self._render_workflow_result(
+                        workflow_session_id=workflow_session_id,
+                        workflow_result=workflow_result,
+                    )
+                )
+                return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
             outputs.extend(
                 self._render_workflow_result(
                     workflow_session_id=workflow_session_id,

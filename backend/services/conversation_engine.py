@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from uuid import uuid4
+import random
 
 from services.conversation_store import (
     create_lightweight_web_session,
@@ -313,6 +314,59 @@ class ConversationEngine:
 
         return False, ""
 
+    def _is_greeting(self, user_message: str) -> bool:
+        """Check if message is a greeting or casual opener."""
+        msg = user_message.lower().strip()
+
+        pure_greetings = ["hi", "hello", "hey", "yo", "sup", "hiya", "greetings"]
+        if msg in pure_greetings:
+            return True
+
+        greeting_prefixes = [
+            "hi ", "hi,", "hi.", "hi!", "hello ", "hello,", "hello.",
+            "hey ", "hey,", "hey.", "hey!", "yo ", "yo,",
+            "good morning", "good afternoon", "good evening",
+            "good day", "greetings", "howdy", "what's up", "whassup",
+            "wassup", "wazzup", "how's it going", "how are you",
+        ]
+        for prefix in greeting_prefixes:
+            if msg.startswith(prefix):
+                return True
+
+        casual_acknowledgements = [
+            "thanks", "thank you", "thank u", "thx", "ty",
+            "cool", "nice", "okay", "ok", "alright", "alrighty",
+            "sure", "sounds good", "great", "perfect", "awesome",
+            "no problem", "np", "no worries", "cheers",
+            "got it", "understood", "understood.",
+        ]
+        if msg in casual_acknowledgements:
+            return True
+
+        short_social = ["ok", "cool", "nice", "sure", "yeah", "yep", "nah"]
+        if len(msg) <= 5 and msg in short_social:
+            return True
+
+        return False
+
+    def _get_greeting_response(self, recent_messages: list[str]) -> str:
+        """Get a natural greeting response with variation."""
+        pool = RESPONSE_VARIATIONS.get("greeting", [])
+        recent_lower = [m.lower() for m in (recent_messages or [])]
+        available = [p for p in pool if p.lower() not in recent_lower]
+        if available:
+            return random.choice(available)
+        return pool[0] if pool else "Hey — what are you looking to promote today?"
+
+    def _get_onboarding_prompt(self, recent_messages: list[str]) -> str:
+        """Get a conversational onboarding prompt."""
+        pool = RESPONSE_VARIATIONS.get("onboarding", [])
+        recent_lower = [m.lower() for m in (recent_messages or [])]
+        available = [p for p in pool if p.lower() not in recent_lower]
+        if available:
+            return random.choice(available)
+        return pool[0] if pool else "Who are you trying to reach?"
+
     def handle_message(
         self,
         *,
@@ -480,6 +534,25 @@ class ConversationEngine:
 
         parsed_service, parsed_target, signals = extract_single_message_fields(normalized_text)
         print(f"[DEBUG] parsed_service={parsed_service}, parsed_target={parsed_target}, signals={signals}")
+
+        if self._is_greeting(normalized_text) and not parsed_service and not parsed_target:
+            print(f"[GREETING] Casual message detected — responding conversationally")
+            greeting_response = self._get_greeting_response(assistant_messages[-3:])
+            onboarding_prompt = self._get_onboarding_prompt(assistant_messages[-3:])
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=greeting_response,
+                )
+            )
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=onboarding_prompt,
+                    message_type="prompt",
+                )
+            )
+            return self._finish_response(user_id=user["id"], messages=outputs, events=events)
 
         if parsed_service and not service:
             service = parsed_service

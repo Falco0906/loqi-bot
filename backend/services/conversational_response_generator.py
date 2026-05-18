@@ -65,6 +65,24 @@ def _send_openai_request(system_text: str, user_text: str, timeout: int = 30) ->
 
 
 RESPONSE_VARIATIONS = {
+    "greeting": [
+        "Hey — what are you looking to promote today?",
+        "Hi! Who are you trying to reach?",
+        "Hey, tell me a bit about what you're selling.",
+        "Hey there — what kind of outreach are you running?",
+        "Hi! What are you looking to sell or promote?",
+        "Hey — who are we trying to connect with?",
+        "Hello! What does your outbound look like?",
+        "Hey — what's the target for today?",
+    ],
+    "onboarding": [
+        "What are you looking to promote?",
+        "Who are you trying to reach?",
+        "What does your ideal customer look like?",
+        "What kind of outreach are you running?",
+        "What's the target for today?",
+        "What are you selling?",
+    ],
     "ask_service": [
         "What do you sell?",
         "What's your product or service?",

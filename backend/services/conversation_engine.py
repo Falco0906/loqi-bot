@@ -382,6 +382,8 @@ class ConversationEngine:
         previous_message = _extract_previous_outreach(assistant_messages)
         has_draft = bool(previous_message)
 
+        print(f"[DEBUG] selected_lead_id={selected_lead_id}, normalized_text={normalized_text}, has_draft={has_draft}")
+
         if not service:
             outputs.extend(
                 _assistant_bundle(
@@ -402,7 +404,14 @@ class ConversationEngine:
             )
             return self._finish_response(user_id=user["id"], messages=outputs, events=events)
 
-        if not selected_lead_id and not normalized_text.isdigit():
+        if selected_lead_id:
+            print(f"[WORKFLOW] selected_lead_id={selected_lead_id} — skipping lead search pipeline")
+            if normalized_text.isdigit():
+                print(f"[WORKFLOW] numeric reply with selected_lead — treating as lead re-selection")
+            else:
+                print(f"[WORKFLOW] non-numeric reply with selected_lead — proceeding to intent classification")
+        elif not normalized_text.isdigit():
+            print(f"[WORKFLOW] no selected_lead and non-numeric text — triggering lead search")
             workflow_result = run_workflow(
                 {
                     "type": "generate_leads",
@@ -421,12 +430,17 @@ class ConversationEngine:
             return self._finish_response(user_id=user["id"], messages=outputs, events=events)
 
         try:
+            lead_list_active = (
+                assistant_messages
+                and "Search for leads in" in (assistant_messages[-1] or "")
+            )
             classified_intent = classify_intent(
                 normalized_text,
                 {
                     "service": service,
                     "target": target,
                     "selected_lead_id": selected_lead_id,
+                    "lead_list_active": lead_list_active,
                     "has_draft": has_draft,
                     "user_message_count": len(user_messages),
                 },
@@ -443,6 +457,9 @@ class ConversationEngine:
 
         if not classified_intent:
             classified_intent = _fallback_classify_intent(normalized_text, has_draft=has_draft)
+            print(f"[WORKFLOW] AI classifier returned no intent — using fallback: {classified_intent}")
+
+        print(f"[WORKFLOW] intent classified: '{classified_intent}' (user_input='{normalized_text}', has_selected_lead={bool(selected_lead_id)}, has_draft={has_draft})")
 
         if classified_intent == "send":
             selected_lead = get_lead_by_id(selected_lead_id) if selected_lead_id else None
@@ -486,14 +503,25 @@ class ConversationEngine:
                 since_timestamp=started_at,
             )
             if selected_lead is None:
+                print(f"[WORKFLOW] select_lead returned None — regenerating lead list")
+                workflow_result = run_workflow(
+                    {
+                        "type": "generate_leads",
+                        "service": service,
+                        "target": target,
+                        "user_id": user["id"],
+                        "workflow_session_id": workflow_session_id,
+                    }
+                )
                 outputs.extend(
-                    _assistant_bundle(
+                    self._render_workflow_result(
                         workflow_session_id=workflow_session_id,
-                        text="Reply with a lead number.",
-                        message_type="error",
+                        workflow_result=workflow_result,
                     )
                 )
                 return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+            print(f"[WORKFLOW] lead selected: id={selected_lead.get('id')}, name={selected_lead.get('name')}, company={selected_lead.get('company')}")
 
             outputs.extend(
                 _assistant_bundle(
@@ -503,6 +531,7 @@ class ConversationEngine:
                     data={"lead": selected_lead},
                 )
             )
+            print(f"[WORKFLOW] transitioning to draft_generation for lead_id={selected_lead.get('id')}")
             workflow_result = run_workflow(
                 {
                     "type": "draft_message",
@@ -512,6 +541,7 @@ class ConversationEngine:
                     "conversation_context": conversation_context,
                 }
             )
+            print(f"[WORKFLOW] draft_generation complete: ok={workflow_result.get('ok')}")
             outputs.extend(
                 self._render_workflow_result(
                     workflow_session_id=workflow_session_id,

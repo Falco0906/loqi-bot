@@ -97,6 +97,19 @@ def _send_openai_request(system_text: str, user_text: str) -> str:
 def classify_intent(user_message: str, context: dict) -> str:
     """Classify user intent. Returns intent string or raises OpenAIError."""
     _log(f"classify_intent called: user_message={user_message}, context={context}")
+
+    normalized_msg = user_message.strip().lower()
+    if normalized_msg.isdigit():
+        num = int(normalized_msg)
+        if 1 <= num <= 20:
+            _log(f"classify_intent numeric input detected ({num}) — forcing select_lead")
+            return "select_lead"
+
+    lead_list_active = context.get("lead_list_active", False)
+    if lead_list_active and normalized_msg.isdigit():
+        _log(f"classify_intent lead_list_active with numeric input — forcing select_lead")
+        return "select_lead"
+
     system_text = (
         "Classify the user's intent into exactly one label.\n"
         "Allowed labels only:\n"
@@ -104,6 +117,11 @@ def classify_intent(user_message: str, context: dict) -> str:
         "- refine_message\n"
         "- select_lead\n"
         "- send\n\n"
+        "Rules:\n"
+        "- If the context shows 'lead_list_active: true' and the user replied with a number, it means they selected a lead — classify as 'select_lead'\n"
+        "- If 'selected_lead_id' is set and the user sends a number, they want to switch to a different lead — classify as 'select_lead'\n"
+        "- 'new_search' is ONLY when the user wants to search for a DIFFERENT audience with NEW search terms\n"
+        "- Never classify a numeric reply as 'new_search'\n\n"
         "Return only the label. No explanation."
     )
     user_text = (

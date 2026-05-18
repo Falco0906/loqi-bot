@@ -31,14 +31,14 @@ from services.conversational_response_generator import (
     generate_conversational_response,
     detect_preferences_from_refinement,
     build_classification_context,
-    classify_natural_action,
-    extract_single_message_fields,
-    __get_service_prompt_variation,
-    __get_target_prompt_variation,
-    __get_after_leads_variation,
-    __get_after_draft_variation,
-    __get_after_send_variation,
-    __get_refine_options_variation,
+    _classify_natural_action as classify_natural_action,
+    _extract_single_message_fields as extract_single_message_fields,
+    _get_service_prompt_variation,
+    _get_target_prompt_variation,
+    _get_after_leads_variation,
+    _get_after_draft_variation,
+    _get_after_send_variation,
+    _get_refine_options_variation,
 )
 
 

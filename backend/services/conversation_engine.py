@@ -586,6 +586,20 @@ class ConversationEngine:
             print(f"[CONTEXT] Inferred target from single message: {target}")
 
         if parsed_service and parsed_target and not service:
+            print(f"[CONTEXT] Combined message detected — proceeding to lead search")
+
+        if parsed_service and not service:
+            service = parsed_service
+            print(f"[CONTEXT] Inferred service from single message: {service}")
+            if parsed_target:
+                target = parsed_target
+                print(f"[CONTEXT] Inferred target from single message: {target}")
+
+        if parsed_target and not target and service:
+            target = parsed_target
+            print(f"[CONTEXT] Inferred target from single message: {target}")
+
+        if parsed_service and parsed_target and not service:
             print(f"[CONTEXT] Combined message detected — skipping redundant questions")
 
         if not service:
@@ -774,16 +788,16 @@ class ConversationEngine:
                     "workflow_session_id": workflow_session_id,
                 }
             )
-            print(f"[TRACE] 8 | LEAD SEARCH FINISHED | run_workflow returned | +{int((time.time()-_t0)*1000)}ms | ok={workflow_result.get('ok')}")
             if not workflow_result.get("ok"):
                 error_msg = workflow_result.get("error", "")
                 print(f"[WORKFLOW] Lead search failed: {error_msg}")
 
                 recovery_messages = [
-                    f"That search was narrow — let me broaden it and look for more matches in \"{target}\" spaces.",
-                    f"I couldn't find strong matches with that criteria. Trying a wider search.",
-                    f"Not many results for that exact target. Let me cast a wider net.",
+                    f"That search came up empty — let me try a broader approach with \"{target}\".",
+                    f"I couldn't find strong matches — trying a wider search.",
+                    f"That's a bit narrow, so I'm widening the search. Give me a moment.",
                 ]
+                import random
                 recovery_text = random.choice(recovery_messages)
 
                 outputs.extend(

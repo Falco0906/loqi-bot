@@ -13,27 +13,20 @@
   --loqi-accent: #6467ef;
 }
 
-html {
-  height: 100%;
-  overflow: hidden;
-  position: fixed;
-  width: 100%;
-  touch-action: manipulation;
-}
-
+html,
 body {
   height: 100%;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  position: fixed;
-  width: 100%;
   background-color: #141824;
   background:
     radial-gradient(circle at top center, rgba(100, 103, 239, 0.11), transparent 28%),
     radial-gradient(circle at 38% 54%, rgba(66, 76, 151, 0.08), transparent 24%),
     linear-gradient(180deg, #151823 0%, #141824 52%, #121620 100%);
   color: var(--loqi-text);
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
   font-family:
     "Söhne",
     "Manrope",
@@ -46,62 +39,32 @@ body {
     "Segoe UI",
     sans-serif;
   text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
-  overscroll-behavior: none;
 }
 
-#__next,
-main {
-  height: 100%;
-  height: 100dvh;
-  overflow: hidden;
+body > div:first-child {
+  min-height: 100%;
 }
 
 * {
   box-sizing: border-box;
-  -webkit-tap-highlight-color: transparent;
 }
 
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(143, 153, 182, 0.35) transparent;
 }
 
-::-webkit-scrollbar-track {
+*::-webkit-scrollbar {
+  width: 10px;
+}
+
+*::-webkit-scrollbar-track {
   background: transparent;
 }
 
-::-webkit-scrollbar-thumb {
-  background: rgba(143, 153, 182, 0.25);
+*::-webkit-scrollbar-thumb {
   border-radius: 999px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(143, 153, 182, 0.4);
-}
-
-@media (max-width: 639px) {
-  ::-webkit-scrollbar {
-    display: none;
-  }
-}
-
-input,
-textarea,
-button,
-select {
-  font-family: inherit;
-}
-
-textarea {
-  -webkit-user-select: auto;
-  user-select: auto;
-}
-
-@media (max-width: 639px) {
-  body {
-    overscroll-behavior: contain;
-  }
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  background-color: rgba(143, 153, 182, 0.35);
 }

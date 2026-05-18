@@ -66,19 +66,22 @@ def _send_openai_request(system_text: str, user_text: str, timeout: int = 30) ->
 
 RESPONSE_VARIATIONS = {
     "greeting": [
-        "Hey! What are you looking to promote today?\n\nYou can describe it naturally — for example:\n• AI automations for restaurant chains\n• Accounting services for dental clinics\n• Websites for gyms",
-        "Hi there! Who are you hoping to reach with outbound?\n\nFor instance:\n• Marketing agencies for my HR platform\n• Dental practices for my scheduling software\n• Construction firms for my safety compliance tool",
-        "Welcome! Tell me a bit about what you're offering.\n\nEven something simple works:\n• Payroll software for restaurants\n• CRM for real estate agents\n• SEO services for e-commerce brands",
-        "Hey! I'm ready to help find your next customers.\n\nJust describe what you do and who you want to reach — for example:\n• Lead generation for HVAC companies\n• Website design for law firms\n• Consulting for SaaS startups",
-        "Great to see you. What are you putting out into the world?\n\nA quick example:\n• POS systems for coffee shops\n• Recruitment software for healthcare\n• Email outreach for B2B agencies",
-        "Let's find you some buyers. What are you offering, and who are you trying to reach?\n\nLike:\n• Fleet management for logistics companies\n• Booking software for hotels\n• Compliance training for manufacturers",
+        "Hey — what are you looking to promote today?",
+        "Hi! Who are you trying to reach?",
+        "Hey, tell me a bit about what you're selling.",
+        "Hey there — what kind of outreach are you running?",
+        "Hi! What are you looking to sell or promote?",
+        "Hey — who are we trying to connect with?",
+        "Hello! What does your outbound look like?",
+        "Hey — what's the target for today?",
     ],
     "onboarding": [
-        "Tell me more about what you do — I'll find the right audience.",
-        "Help me understand your offering so I can find strong matches.",
-        "Walk me through what you're selling and I'll take it from there.",
-        "Give me the details — what you offer and who needs it.",
-        "I'm all ears. What are you bringing to market?",
+        "What are you looking to promote?",
+        "Who are you trying to reach?",
+        "What does your ideal customer look like?",
+        "What kind of outreach are you running?",
+        "What's the target for today?",
+        "What are you selling?",
     ],
     "ask_service": [
         "What are you offering? Describe it however feels natural.",

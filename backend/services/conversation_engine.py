@@ -386,113 +386,6 @@ class ConversationEngine:
             return random.choice(available)
         return pool[0] if pool else "Who are you trying to reach?"
 
-    def select_lead_and_draft(
-        self,
-        *,
-        user_id: str,
-        lead_index: int,
-        workflow_session_id: str,
-    ) -> dict:
-        context = get_session_context(user_id)
-        service = context.get("service")
-        target = context.get("target")
-        user_messages = context.get("user_messages", [])
-        assistant_messages = context.get("assistant_messages", [])
-        conversation_context = (user_messages + assistant_messages)[-10:]
-
-        selected_lead = select_lead(
-            user_id,
-            str(lead_index),
-            since_timestamp=context.get("started_at"),
-        )
-        if selected_lead is None:
-            return {
-                "ok": False,
-                "messages": [
-                    _message(
-                        role="assistant",
-                        message_type="error",
-                        text="Could not find that lead. Try searching again.",
-                    )
-                ],
-            }
-
-        outputs = []
-        outputs.extend(
-            _assistant_bundle(
-                workflow_session_id=workflow_session_id,
-                text=_format_selected_lead(selected_lead),
-                message_type="lead_selected",
-                data={"lead": selected_lead},
-            )
-        )
-
-        workflow_result = run_workflow(
-            {
-                "type": "draft_message",
-                "service": service,
-                "target": target,
-                "lead": selected_lead,
-                "conversation_context": conversation_context,
-            }
-        )
-        outputs.extend(
-            self._render_workflow_result(
-                workflow_session_id=workflow_session_id,
-                workflow_result=workflow_result,
-            )
-        )
-
-        user_prefs = get_user_preferences(user_id) or {}
-        next_text = self._get_dynamic_prompt(
-            stage="after_draft",
-            context={"lead_name": selected_lead.get("name", "")},
-            recent_messages=assistant_messages[-3:],
-            user_preferences=user_prefs,
-        )
-        outputs.extend(
-            _assistant_bundle(
-                workflow_session_id=workflow_session_id,
-                text=next_text,
-                message_type="status",
-            )
-        )
-
-        return {"ok": True, "messages": outputs}
-
-    def preview_lead_intelligence(
-        self,
-        *,
-        user_id: str,
-        lead_index: int,
-    ) -> dict:
-        pending_leads = get_pending_leads(
-            user_id,
-            since_timestamp=None,
-            limit=5,
-        )
-        if lead_index < 1 or lead_index > len(pending_leads):
-            return {
-                "ok": False,
-                "error": "Invalid lead index",
-            }
-
-        lead = pending_leads[lead_index - 1]
-        company_intelligence = None
-        try:
-            enricher = get_enricher()
-            if enricher.health_check().get("ok"):
-                company_intelligence = enricher.enrich_lead(lead)
-        except Exception:
-            pass
-
-        lead_intelligence = generate_lead_intelligence(lead, company_intelligence)
-
-        return {
-            "ok": True,
-            "lead_intelligence": lead_intelligence,
-        }
-
     def handle_message(
         self,
         *,
@@ -666,31 +559,7 @@ class ConversationEngine:
         print(f"[DEBUG] parsed_service={parsed_service}, parsed_target={parsed_target}, signals={signals}")
 
         if self._is_greeting(normalized_text) and not parsed_service and not parsed_target:
-            if target or selected_lead_id:
-                print(f"[GREETING] Greeting mid-flow — acknowledging without restart")
-                acks = ["Hey!", "Hi there!", "Hello!", "Hey hey!"]
-                outputs.extend(
-                    _assistant_bundle(
-                        workflow_session_id=workflow_session_id,
-                        text=random.choice(acks),
-                    )
-                )
-                if has_draft:
-                    prompt_text = "Let me know what you'd like to do with this draft — send, adjust, or find different leads."
-                elif target:
-                    prompt_text = "Still here! What's next?"
-                else:
-                    prompt_text = self._get_onboarding_prompt(assistant_messages[-3:])
-                outputs.extend(
-                    _assistant_bundle(
-                        workflow_session_id=workflow_session_id,
-                        text=prompt_text,
-                        message_type="prompt",
-                    )
-                )
-                return self._finish_response(user_id=user["id"], messages=outputs, events=events)
-
-            print(f"[GREETING] Fresh greeting detected — responding conversationally")
+            print(f"[GREETING] Casual message detected — responding conversationally")
             greeting_response = self._get_greeting_response(assistant_messages[-3:])
             onboarding_prompt = self._get_onboarding_prompt(assistant_messages[-3:])
             outputs.extend(
@@ -707,20 +576,6 @@ class ConversationEngine:
                 )
             )
             return self._finish_response(user_id=user["id"], messages=outputs, events=events)
-
-        if parsed_service and not service:
-            service = parsed_service
-            print(f"[CONTEXT] Inferred service from single message: {service}")
-            if parsed_target:
-                target = parsed_target
-                print(f"[CONTEXT] Inferred target from single message: {target}")
-
-        if parsed_target and not target and service:
-            target = parsed_target
-            print(f"[CONTEXT] Inferred target from single message: {target}")
-
-        if parsed_service and parsed_target and not service:
-            print(f"[CONTEXT] Combined message detected — proceeding to lead search")
 
         if parsed_service and not service:
             service = parsed_service

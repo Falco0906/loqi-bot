@@ -43,9 +43,6 @@ from services.conversational_response_generator import (
     _get_after_draft_variation,
     _get_after_send_variation,
     _get_refine_options_variation,
-    _get_pre_lead_search_transition,
-    _get_pre_draft_transition,
-    _get_refine_confirmation,
 )
 
 

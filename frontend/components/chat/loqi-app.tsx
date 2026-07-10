@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 
 import { createSession, getGmailStatus, getSession, sendMessage } from "../../lib/api";
-import type { LoqiMessage, LoqiSessionSummary } from "../../lib/types";
+import type { LoqiMessage, LoqiSessionSummary, LeadIntelligence } from "../../lib/types";
+import LeadIntelligenceCard from "./LeadIntelligenceCard";
 
 const ACTIVE_SESSION_STORAGE_KEY = "loqi_active_session_token";
 const SESSION_INDEX_STORAGE_KEY = "loqi_session_index";
@@ -111,6 +112,7 @@ function MessageBlock({ message }: { message: LoqiMessage }) {
     : [];
   const draft = typeof message.data?.draft === "string" ? message.data.draft : null;
   const actionUrl = typeof message.data?.url === "string" ? message.data.url : null;
+  const leadIntelligence = message.data?.lead_intelligence as LeadIntelligence | undefined;
   const timestamp = formatMessageTime(message.created_at);
 
   return (
@@ -159,6 +161,10 @@ function MessageBlock({ message }: { message: LoqiMessage }) {
               </div>
               <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[#f3fff9]">{draft}</p>
             </div>
+          ) : null}
+
+          {leadIntelligence ? (
+            <LeadIntelligenceCard intelligence={leadIntelligence} />
           ) : null}
 
           {actionUrl ? (

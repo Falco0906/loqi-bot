@@ -169,8 +169,22 @@ def rewrite_message(instruction: str, previous_message: str) -> str:
     return rewritten
 
 
-def generate_outreach_email(lead: dict) -> dict:
-    """Generate a personalized outreach email. Returns email dict or raises OpenAIError."""
+def generate_outreach_email(
+    lead: dict,
+    company_intelligence: dict | None = None,
+    lead_intelligence: dict | None = None,
+) -> dict:
+    """Generate a personalized outreach email. Returns email dict or raises OpenAIError.
+
+    When company_intelligence and/or lead_intelligence are provided, the AI
+    receives structured business context *and* lead-level sales intelligence
+    (fit score, buying stage, urgency, objection risk, why selected, etc.)
+    so the email is grounded in real intelligence.
+
+    The lead_intelligence provides *explainability* — why this lead was chosen,
+    what to pitch, and what risks exist — enabling the AI to write emails
+    that reference actual qualification reasoning rather than guessing.
+    """
     _log(f"generate_outreach_email called: lead={lead}")
 
     first_name = ((lead.get("name") or "").split() or [""])[0]
@@ -180,23 +194,91 @@ def generate_outreach_email(lead: dict) -> dict:
         "manual outbound, low reply rates, poor personalization"
     )
 
-    system_text = (
-        "You write short personalized cold emails.\n"
-        "Return valid JSON only with exactly these keys:\n"
-        "{\"subject\":\"...\",\"body\":\"...\"}\n\n"
-        "Rules:\n"
-        "- Keep the email concise and natural\n"
-        "- Do not use markdown\n"
-        "- Do not invent detailed facts about the recipient\n"
-        "- Mention one believable pain point\n"
-        "- End with a simple low-friction call to action"
-    )
+    intelligence_block = ""
+
+    if company_intelligence:
+        system_text = (
+            "You write short personalized cold emails based on company intelligence.\n"
+            "Return valid JSON only with exactly these keys:\n"
+            "{\"subject\":\"...\",\"body\":\"...\"}\n\n"
+            "Rules:\n"
+            "- Keep the email concise and natural\n"
+            "- Do not use markdown\n"
+            "- Do not invent detailed facts about the recipient\n"
+            "- Use the provided company intelligence to write a relevant pitch\n"
+            "- Reference the recommended pitch angle when appropriate\n"
+            "- Mention one believable pain point from the intelligence\n"
+            "- End with a simple low-friction call to action"
+        )
+
+        ci = company_intelligence
+        intelligence_block += (
+            f"\n\n=== COMPANY INTELLIGENCE ===\n"
+            f"Summary: {ci.get('company_summary', 'N/A')}\n"
+            f"Recommended pitch angle: {ci.get('recommended_pitch_angle', 'N/A')}\n"
+            f"Business pain: {ci.get('business_pain_summary', 'N/A')}\n"
+            f"Technology: {ci.get('technology_summary', 'N/A')}\n"
+            f"Growth: {ci.get('growth_summary', 'N/A')}\n"
+            f"Decision context: {ci.get('decision_context', 'N/A')}\n"
+            f"Buying signals: {ci.get('buying_signal_summary', 'N/A')}\n"
+            f"Recent events: {ci.get('recent_events_summary', 'N/A')}\n"
+            f"Qualification reason: {ci.get('qualification_reason', 'N/A')}\n"
+            f"Confidence: {ci.get('confidence_score', 'N/A')}/100\n"
+            f"=============================="
+        )
+
+    if lead_intelligence:
+        li = lead_intelligence
+        if not company_intelligence:
+            system_text = (
+                "You write short personalized cold emails based on sales intelligence.\n"
+                "Return valid JSON only with exactly these keys:\n"
+                "{\"subject\":\"...\",\"body\":\"...\"}\n\n"
+                "Rules:\n"
+                "- Keep the email concise and natural\n"
+                "- Do not use markdown\n"
+                "- Do not invent detailed facts about the recipient\n"
+                "- Use the provided lead intelligence to write a relevant pitch\n"
+                "- Reference the recommended pitch when appropriate\n"
+                "- Mention one believable pain point\n"
+                "- End with a simple low-friction call to action"
+            )
+        intelligence_block += (
+            f"\n\n=== LEAD INTELLIGENCE ===\n"
+            f"Fit score: {li.get('fit_score', 'N/A')}/100\n"
+            f"Confidence: {li.get('confidence', 'N/A')}/100\n"
+            f"Buying stage: {li.get('buying_stage', 'N/A')}\n"
+            f"Urgency: {li.get('urgency', 'N/A')}\n"
+            f"Decision authority: {li.get('decision_authority_summary', 'N/A')}\n"
+            f"Business need: {li.get('estimated_business_need', 'N/A')}\n"
+            f"Objection risk: {li.get('objection_risk', 'N/A')}\n"
+            f"Best contact reason: {li.get('best_contact_reason', 'N/A')}\n"
+            f"Recommended pitch: {li.get('recommended_pitch', 'N/A')}\n"
+            f"Why selected: {'; '.join(li.get('why_selected', ['N/A']))}\n"
+            f"Summary: {li.get('summary', 'N/A')}\n"
+            f"========================"
+        )
+
+    if not company_intelligence and not lead_intelligence:
+        system_text = (
+            "You write short personalized cold emails.\n"
+            "Return valid JSON only with exactly these keys:\n"
+            "{\"subject\":\"...\",\"body\":\"...\"}\n\n"
+            "Rules:\n"
+            "- Keep the email concise and natural\n"
+            "- Do not use markdown\n"
+            "- Do not invent detailed facts about the recipient\n"
+            "- Mention one believable pain point\n"
+            "- End with a simple low-friction call to action"
+        )
+
     user_text = (
         "Write a cold outreach email for this lead.\n\n"
         f"First name: {first_name or 'there'}\n"
         f"Title: {title or 'unknown'}\n"
         f"Company: {company or 'unknown company'}\n"
         f"Pain points: {pain_points}\n"
+        f"{intelligence_block}"
     )
 
     result = _send_openai_request(system_text, user_text)

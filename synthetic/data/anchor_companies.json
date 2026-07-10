@@ -1,0 +1,167 @@
+[
+  {
+    "company_id": "anchor_001",
+    "name": "Blue Orchid Coffee Roasters",
+    "industry": "Cafe",
+    "sub_industry": "Specialty Coffee",
+    "description": "Blue Orchid Coffee Roasters is a third-wave specialty coffee company sourcing single-origin beans directly from growers in Ethiopia, Colombia, and Guatemala. They operate artisanal cafes focused on pour-over and espresso craft, with a wholesale roasting program supplying 40+ local offices and restaurants. Known for their seasonal tasting flights and barista education workshops, they have built a loyal following among coffee enthusiasts in the Pacific Northwest.",
+    "website": "https://blueorchidcoffee.com",
+    "city": "Portland",
+    "country": "USA",
+    "employees": 28,
+    "locations": 3,
+    "founded": 2016,
+    "growth_stage": "Growing",
+    "revenue_band": "$1M-$5M",
+    "business_profile": {
+      "franchise": false,
+      "expanding_locations": true,
+      "hiring": true,
+      "online_presence": "strong",
+      "delivery": true,
+      "multi_location": true
+    },
+    "technology": {
+      "crm": "HubSpot",
+      "website_platform": "Squarespace",
+      "marketing_platform": "Mailchimp",
+      "automation_level": "medium"
+    },
+    "pain_points": [
+      "Roast profile consistency across batches",
+      "Wholesale order management",
+      "Barista retention and training",
+      "Seasonal menu planning inventory"
+    ],
+    "buying_signals": [
+      "Opening two new locations in Seattle",
+      "Hiring a Head Roaster",
+      "Expanding wholesale distribution to 60+ accounts"
+    ],
+    "decision_makers": [
+      {
+        "lead_id": "lead_00001",
+        "name": "Elena Vasquez",
+        "title": "Founder & CEO",
+        "department": "Executive",
+        "email": "elena@blueorchidcoffee.com",
+        "linkedin_url": "https://linkedin.com/in/elenavasquez",
+        "buying_authority": 100
+      },
+      {
+        "lead_id": "lead_00002",
+        "name": "Marcus Chen",
+        "title": "Head Roaster & Operations",
+        "department": "Operations",
+        "email": "marcus@blueorchidcoffee.com",
+        "linkedin_url": "https://linkedin.com/in/marcuschen",
+        "buying_authority": 85
+      },
+      {
+        "lead_id": "lead_00003",
+        "name": "Sophie Tran",
+        "title": "Retail Manager",
+        "department": "Retail",
+        "email": "sophie@blueorchidcoffee.com",
+        "linkedin_url": "https://linkedin.com/in/sophietran",
+        "buying_authority": 75
+      },
+      {
+        "lead_id": "lead_00004",
+        "name": "Jake Morrison",
+        "title": "Wholesale Director",
+        "department": "Sales",
+        "email": "jake@blueorchidcoffee.com",
+        "linkedin_url": "https://linkedin.com/in/jakemorrison",
+        "buying_authority": 80
+      }
+    ]
+  },
+  {
+    "company_id": "anchor_002",
+    "name": "Canopy Brew Collective",
+    "industry": "Cafe",
+    "sub_industry": "Coffee Shop Chain",
+    "description": "Canopy Brew Collective runs a network of plant-filled, co-working-friendly cafes across Austin and Denver. Each location features high-speed WiFi, meeting pods, and locally sourced pastries. They position themselves as a third place for remote workers and freelancers, with membership plans that include unlimited drip coffee and dedicated desk space. Their locations frequently host tech meetups and networking events.",
+    "website": "https://canopybrew.com",
+    "city": "Austin",
+    "country": "USA",
+    "employees": 45,
+    "locations": 5,
+    "founded": 2018,
+    "growth_stage": "Scaling",
+    "revenue_band": "$2M-$8M",
+    "business_profile": {
+      "franchise": false,
+      "expanding_locations": true,
+      "hiring": true,
+      "online_presence": "strong",
+      "delivery": false,
+      "multi_location": true
+    },
+    "technology": {
+      "crm": "Salesforce",
+      "website_platform": "Webflow",
+      "marketing_platform": "HubSpot",
+      "automation_level": "medium"
+    },
+    "pain_points": [
+      "Foot traffic analytics across locations",
+      "Membership billing and churn",
+      "Staff scheduling across multiple sites",
+      "WiFi network security and management"
+    ],
+    "buying_signals": [
+      "Opening three new locations in Denver",
+      "Building a membership mobile app",
+      "Hiring a Director of Operations"
+    ],
+    "decision_makers": [
+      {
+        "lead_id": "lead_00005",
+        "name": "Derek Sullivan",
+        "title": "CEO",
+        "department": "Executive",
+        "email": "derek@canopybrew.com",
+        "linkedin_url": "https://linkedin.com/in/dereksullivan",
+        "buying_authority": 95
+      },
+      {
+        "lead_id": "lead_00006",
+        "name": "Priya Anand",
+        "title": "COO",
+        "department": "Operations",
+        "email": "priya@canopybrew.com",
+        "linkedin_url": "https://linkedin.com/in/priyaanand",
+        "buying_authority": 95
+      },
+      {
+        "lead_id": "lead_00007",
+        "name": "Liam Foster",
+        "title": "Marketing Director",
+        "department": "Marketing",
+        "email": "liam@canopybrew.com",
+        "linkedin_url": "https://linkedin.com/in/liamfoster",
+        "buying_authority": 70
+      },
+      {
+        "lead_id": "lead_00008",
+        "name": "Taylor Reed",
+        "title": "Membership Manager",
+        "department": "Customer Success",
+        "email": "taylor@canopybrew.com",
+        "linkedin_url": "https://linkedin.com/in/taylorreed",
+        "buying_authority": 65
+      },
+      {
+        "lead_id": "lead_00009",
+        "name": "Jordan Kim",
+        "title": "District Manager",
+        "department": "Operations",
+        "email": "jordan@canopybrew.com",
+        "linkedin_url": "https://linkedin.com/in/jordankim",
+        "buying_authority": 80
+      }
+    ]
+  }
+]

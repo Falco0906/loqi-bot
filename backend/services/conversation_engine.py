@@ -28,6 +28,7 @@ from services.supabase import (
 )
 from workflows import run_workflow
 from services.conversational_response_generator import (
+    RESPONSE_VARIATIONS,
     generate_conversational_response,
     detect_preferences_from_refinement,
     build_classification_context,
@@ -39,6 +40,9 @@ from services.conversational_response_generator import (
     _get_after_draft_variation,
     _get_after_send_variation,
     _get_refine_options_variation,
+    _get_pre_lead_search_transition,
+    _get_pre_draft_transition,
+    _get_refine_confirmation,
 )
 
 
@@ -289,8 +293,18 @@ class ConversationEngine:
         if msg in send_phrases:
             return True
 
-        for phrase in send_phrases:
+        # Multi-word phrases: longest-first substring match
+        multi = sorted([p for p in send_phrases if ' ' in p], key=len, reverse=True)
+        for phrase in multi:
             if phrase in msg and len(msg) < 50:
+                return True
+
+        # Single-word phrases (except "go"): word-boundary regex
+        # "go" is excluded to avoid false positives like "go with 5"
+        import re
+        single = [p for p in send_phrases if ' ' not in p and p != "go"]
+        for phrase in single:
+            if re.search(r'\b' + re.escape(phrase) + r'\b', msg) and len(msg) < 50:
                 return True
 
         return False
@@ -388,7 +402,7 @@ class ConversationEngine:
                     _message(
                         role="assistant",
                         message_type="error",
-                        text="Couldn't process that right now. Try again.",
+                        text="Something hiccupped on my end. Mind saying that again?",
                     )
                 ],
                 "events": [],
@@ -454,7 +468,7 @@ class ConversationEngine:
                 channel=channel,
                 external_user_id=external_user_id,
             )
-            connect_text = f"Connect your Gmail here:\n{auth_url}"
+            connect_text = f"Gmail isn't connected yet.\n\nConnect it once and I'll be able to send outreach directly from Loqi.\n\n{auth_url}"
             outputs.extend(
                 _assistant_bundle(
                     workflow_session_id=workflow_session_id,
@@ -475,7 +489,7 @@ class ConversationEngine:
             outputs.extend(
                 _assistant_bundle(
                     workflow_session_id=workflow_session_id,
-                    text="Hey — I'm Loqi. I'll help you find leads and run outreach.",
+                    text="Hey — I'm Loqi. I help you find the right buyers and craft outreach that actually sounds like you.",
                 )
             )
             if existing_context["service"] and existing_context["target"]:
@@ -536,7 +550,31 @@ class ConversationEngine:
         print(f"[DEBUG] parsed_service={parsed_service}, parsed_target={parsed_target}, signals={signals}")
 
         if self._is_greeting(normalized_text) and not parsed_service and not parsed_target:
-            print(f"[GREETING] Casual message detected — responding conversationally")
+            if target or selected_lead_id:
+                print(f"[GREETING] Greeting mid-flow — acknowledging without restart")
+                acks = ["Hey!", "Hi there!", "Hello!", "Hey hey!"]
+                outputs.extend(
+                    _assistant_bundle(
+                        workflow_session_id=workflow_session_id,
+                        text=random.choice(acks),
+                    )
+                )
+                if has_draft:
+                    prompt_text = "Let me know what you'd like to do with this draft — send, adjust, or find different leads."
+                elif target:
+                    prompt_text = "Still here! What's next?"
+                else:
+                    prompt_text = self._get_onboarding_prompt(assistant_messages[-3:])
+                outputs.extend(
+                    _assistant_bundle(
+                        workflow_session_id=workflow_session_id,
+                        text=prompt_text,
+                        message_type="prompt",
+                    )
+                )
+                return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+            print(f"[GREETING] Fresh greeting detected — responding conversationally")
             greeting_response = self._get_greeting_response(assistant_messages[-3:])
             onboarding_prompt = self._get_onboarding_prompt(assistant_messages[-3:])
             outputs.extend(
@@ -633,7 +671,7 @@ class ConversationEngine:
 
         lead_list_active = (
             assistant_messages
-            and "Search for leads in" in (assistant_messages[-1] or "")
+            and "Reply with a number to pick one" in (assistant_messages[-1] or "")
         )
 
         is_send_intent = self._parse_natural_send_intent(normalized_text)
@@ -646,7 +684,7 @@ class ConversationEngine:
                 outputs.extend(
                     _assistant_bundle(
                         workflow_session_id=workflow_session_id,
-                        text="Couldn't find that lead. Try again.",
+                        text="I couldn't find that lead — it may have been cleared in a previous session. Try selecting a different one.",
                         message_type="error",
                     )
                 )
@@ -687,7 +725,7 @@ class ConversationEngine:
                 outputs.extend(
                     _assistant_bundle(
                         workflow_session_id=workflow_session_id,
-                        text="Couldn't find that lead. Try again.",
+                        text="I couldn't find that lead — it may have been cleared in a previous session. Try selecting a different one.",
                         message_type="error",
                     )
                 )
@@ -703,6 +741,14 @@ class ConversationEngine:
                     "previous_message": previous_message,
                     "conversation_context": conversation_context,
                 }
+            )
+            refine_confirmation = _get_refine_confirmation(refine_instruction)
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=refine_confirmation,
+                    message_type="status",
+                )
             )
             outputs.extend(
                 self._render_workflow_result(
@@ -742,6 +788,14 @@ class ConversationEngine:
                 print(f"[WORKFLOW] numeric reply with selected_lead — treating as lead re-selection")
         elif not normalized_text.isdigit() and not is_send_intent:
             print(f"[WORKFLOW] no selected_lead and non-send text — triggering lead search")
+            transition_text = _get_pre_lead_search_transition()
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=transition_text,
+                    message_type="status",
+                )
+            )
             workflow_result = run_workflow(
                 {
                     "type": "generate_leads",
@@ -756,11 +810,10 @@ class ConversationEngine:
                 print(f"[WORKFLOW] Lead search failed: {error_msg}")
 
                 recovery_messages = [
-                    f"That search came up empty — let me try a broader approach with \"{target}\".",
-                    f"I couldn't find strong matches — trying a wider search.",
-                    f"That's a bit narrow, so I'm widening the search. Give me a moment.",
+                    f"That search was narrow — let me broaden it and look for more matches in \"{target}\" spaces.",
+                    f"I couldn't find strong matches with that criteria. Trying a wider search.",
+                    f"Not many results for that exact target. Let me cast a wider net.",
                 ]
-                import random
                 recovery_text = random.choice(recovery_messages)
 
                 outputs.extend(
@@ -840,7 +893,7 @@ class ConversationEngine:
                 outputs.extend(
                     _assistant_bundle(
                         workflow_session_id=workflow_session_id,
-                        text="Couldn't find that lead. Try again.",
+                        text="I couldn't find that lead — it may have been cleared in a previous session. Try selecting a different one.",
                         message_type="error",
                     )
                 )
@@ -906,6 +959,14 @@ class ConversationEngine:
                 )
             )
             print(f"[WORKFLOW] transitioning to draft_generation for lead_id={selected_lead.get('id')}")
+            draft_transition = _get_pre_draft_transition()
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=draft_transition,
+                    message_type="status",
+                )
+            )
             workflow_result = run_workflow(
                 {
                     "type": "draft_message",
@@ -964,7 +1025,7 @@ class ConversationEngine:
                 outputs.extend(
                     _assistant_bundle(
                         workflow_session_id=workflow_session_id,
-                        text="Couldn't find that lead. Try again.",
+                        text="I couldn't find that lead — it may have been cleared in a previous session. Try selecting a different one.",
                         message_type="error",
                     )
                 )
@@ -984,6 +1045,14 @@ class ConversationEngine:
                     "previous_message": previous_message,
                     "conversation_context": conversation_context,
                 }
+            )
+            refine_confirmation = _get_refine_confirmation(normalized_text)
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=refine_confirmation,
+                    message_type="status",
+                )
             )
             outputs.extend(
                 self._render_workflow_result(
@@ -1021,7 +1090,7 @@ class ConversationEngine:
         outputs.extend(
             _assistant_bundle(
                 workflow_session_id=workflow_session_id,
-                text="I'm not sure what you meant. Try picking a lead number, saying 'send', or telling me what to change.",
+                text="I didn't quite catch that. You can pick a lead number, say 'send' to send the draft, or tell me how you'd like to change the message.",
                 message_type="error",
             )
         )
@@ -1077,6 +1146,8 @@ class ConversationEngine:
                         "draft": draft_body,
                         "tone": workflow_result.get("tone"),
                         "length": workflow_result.get("length"),
+                        "lead_intelligence": workflow_result.get("lead_intelligence"),
+                        "company_intelligence": workflow_result.get("company_intelligence"),
                     },
                 )
             )

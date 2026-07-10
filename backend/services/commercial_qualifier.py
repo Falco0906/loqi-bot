@@ -580,7 +580,12 @@ def qualify_and_rank_leads(leads: list[dict], icp: dict) -> tuple[list[dict], di
     if stats["scores"]:
         stats["avg_score"] = sum(stats["scores"]) / len(stats["scores"])
 
-    final_leads = [item["lead"] for item in qualified]
+    final_leads = []
+    for item in qualified:
+        lead = item["lead"]
+        lead["commercial_score"] = item["final_score"]
+        lead["commercial_score_breakdown"] = item["score_breakdown"]
+        final_leads.append(lead)
 
     _log(f"[QUALIFICATION] total={stats['total']}, qualified={stats['qualified']}, excluded_vendor={stats['excluded_vendor']}, excluded_junk={stats['excluded_junk']}, drift={stats['drift_detected']}, avg_score={stats['avg_score']:.1f}")
 

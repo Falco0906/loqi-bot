@@ -1,0 +1,828 @@
+[
+  {
+    "name": "Meridian Precision Machining",
+    "industry": "Manufacturing",
+    "sub_industry": "CNC Machining & Fabrication",
+    "description": "Meridian Precision Machining is a Cleveland-based contract manufacturer specializing in high-tolerance CNC machining and metal fabrication. With ISO 9001 and AS9100D certifications and a 50,000 sq ft facility running 35 CNC machines, they serve aerospace, defense, and medical device OEMs. Their proprietary in-process inspection system holds tolerances to \u00b10.0002 inches. The company has doubled revenue in three years through nearshoring demand.",
+    "website": "https://meridianprecision.com",
+    "city": "Cleveland",
+    "country": "United States",
+    "employees": 185,
+    "locations": 1,
+    "founded": 1998,
+    "growth_stage": "Growing",
+    "revenue_band": "$25M-$50M",
+    "business_profile": {
+      "franchise": false,
+      "expanding_locations": true,
+      "hiring": true,
+      "online_presence": "moderate",
+      "delivery": false,
+      "multi_location": false
+    },
+    "technology": {
+      "crm": "Salesforce",
+      "website_platform": "WordPress",
+      "marketing_platform": "HubSpot",
+      "automation_level": "mid"
+    },
+    "pain_points": [
+      "ERP system is outdated and doesn't integrate with CNC machines for real-time OEE tracking",
+      "Manual quoting process causes 3-5 day turnaround on RFQs, losing bids to faster competitors",
+      "Supply chain volatility for specialty alloys creates production scheduling headaches",
+      "Skilled CNC programmer turnover is eroding shop-floor productivity"
+    ],
+    "buying_signals": [
+      "Requested demo of MES platform for shop-floor digitization",
+      "Posted senior CNC programmer role on LinkedIn (open for 6+ weeks)",
+      "CFO approved $200K budget for ERP modernization in Q3"
+    ],
+    "decision_makers": [
+      {
+        "name": "David Kosar",
+        "title": "CEO",
+        "department": "Executive",
+        "email": "d.kosar@meridianprecision.com",
+        "linkedin_url": "https://linkedin.com/in/davidkosar",
+        "buying_authority": true
+      },
+      {
+        "name": "Lisa Tran",
+        "title": "VP of Operations",
+        "department": "Operations",
+        "email": "l.tran@meridianprecision.com",
+        "linkedin_url": "https://linkedin.com/in/lisatran",
+        "buying_authority": true
+      },
+      {
+        "name": "Mark Rodriguez",
+        "title": "Manufacturing Engineering Manager",
+        "department": "Engineering",
+        "email": "m.rodriguez@meridianprecision.com",
+        "linkedin_url": "https://linkedin.com/in/markrodriguez",
+        "buying_authority": false
+      },
+      {
+        "name": "Jennifer Walsh",
+        "title": "Procurement Manager",
+        "department": "Supply Chain",
+        "email": "j.walsh@meridianprecision.com",
+        "linkedin_url": "https://linkedin.com/in/jenniferwalsh",
+        "buying_authority": true
+      },
+      {
+        "name": "Tom Huang",
+        "title": "IT Director",
+        "department": "IT",
+        "email": "t.huang@meridianprecision.com",
+        "linkedin_url": "https://linkedin.com/in/tomhuang",
+        "buying_authority": true
+      }
+    ]
+  },
+  {
+    "name": "Northpeak Electronics Assembly",
+    "industry": "Manufacturing",
+    "sub_industry": "Electronics Manufacturing Services (EMS)",
+    "description": "Northpeak Electronics Assembly is a Penang-based EMS provider operating 12 advanced SMT lines in a 180,000 sq ft facility. They hold ISO 13485 certification for medical device electronics and serve automotive, industrial, and IoT customers across Southeast Asia. Their NPI lab can prototype 50 boards in 24 hours. A recent $12M investment in automated optical inspection has reduced defect rates to under 15 ppm.",
+    "website": "https://northpeak-ems.com",
+    "city": "Penang",
+    "country": "Malaysia",
+    "employees": 920,
+    "locations": 2,
+    "founded": 2005,
+    "growth_stage": "Scaling",
+    "revenue_band": "$75M-$150M",
+    "business_profile": {
+      "franchise": false,
+      "expanding_locations": true,
+      "hiring": true,
+      "online_presence": "moderate",
+      "delivery": true,
+      "multi_location": true
+    },
+    "technology": {
+      "crm": "Zoho CRM",
+      "website_platform": "Drupal",
+      "marketing_platform": "Mailchimp",
+      "automation_level": "high"
+    },
+    "pain_points": [
+      "Customer onboarding and PPAP documentation is still managed via spreadsheets and email chains",
+      "Component obsolescence tracking is reactive, causing costly last-minute redesigns",
+      "Shop-floor data is siloed from the ERP, creating 48-hour lag in WIP reporting",
+      "Growing customer demand for supply chain\u900f\u660e\u5ea6 is straining manual compliance reporting"
+    ],
+    "buying_signals": [
+      "Engaged a consultant to evaluate PLM and QMS software vendors last quarter",
+      "Hired a Digital Transformation Manager to modernize manufacturing IT stack",
+      "Two key automotive customers requested API-based order tracking integration"
+    ],
+    "decision_makers": [
+      {
+        "name": "Chen Wei Ming",
+        "title": "Managing Director",
+        "department": "Executive",
+        "email": "wm.chen@northpeak-ems.com",
+        "linkedin_url": "https://linkedin.com/in/chenweiming",
+        "buying_authority": true
+      },
+      {
+        "name": "Siti Rahmah",
+        "title": "VP of Operations",
+        "department": "Operations",
+        "email": "s.rahmah@northpeak-ems.com",
+        "linkedin_url": "https://linkedin.com/in/sitirahmah",
+        "buying_authority": true
+      },
+      {
+        "name": "Ganesh Kumar",
+        "title": "Director of Engineering",
+        "department": "Engineering",
+        "email": "g.kumar@northpeak-ems.com",
+        "linkedin_url": "https://linkedin.com/in/ganeshkumar",
+        "buying_authority": false
+      },
+      {
+        "name": "Linda Ooi",
+        "title": "Procurement & Supply Chain Head",
+        "department": "Supply Chain",
+        "email": "l.ooi@northpeak-ems.com",
+        "linkedin_url": "https://linkedin.com/in/lindaooi",
+        "buying_authority": true
+      },
+      {
+        "name": "Ahmad Faisal",
+        "title": "IT & Digital Transformation Manager",
+        "department": "IT",
+        "email": "a.faisal@northpeak-ems.com",
+        "linkedin_url": "https://linkedin.com/in/ahmadfaisal",
+        "buying_authority": true
+      },
+      {
+        "name": "Priya Nair",
+        "title": "Quality Assurance Director",
+        "department": "Quality",
+        "email": "p.nair@northpeak-ems.com",
+        "linkedin_url": "https://linkedin.com/in/priyanair",
+        "buying_authority": false
+      }
+    ]
+  },
+  {
+    "name": "Southern Textile Mills",
+    "industry": "Manufacturing",
+    "sub_industry": "Textile Manufacturing",
+    "description": "Southern Textile Mills is a vertically integrated textile manufacturer based in Tirupur, India, specializing in organic cotton knitwear. GOTS and OEKO-TEX certified, they manage the full value chain from ginning to finished garments across three facilities. They produce 2.4 million garments annually for European and North American sustainable fashion brands. Their zero-liquid-discharge plant has won environmental awards from the Tamil Nadu government.",
+    "website": "https://southerntextilemills.com",
+    "city": "Tirupur",
+    "country": "India",
+    "employees": 1450,
+    "locations": 3,
+    "founded": 1995,
+    "growth_stage": "Established",
+    "revenue_band": "$50M-$100M",
+    "business_profile": {
+      "franchise": false,
+      "expanding_locations": false,
+      "hiring": true,
+      "online_presence": "minimal",
+      "delivery": false,
+      "multi_location": true
+    },
+    "technology": {
+      "crm": "Oracle NetSuite",
+      "website_platform": "Custom PHP",
+      "marketing_platform": "None",
+      "automation_level": "low"
+    },
+    "pain_points": [
+      "Paper-based quality inspection across 3 plants makes defect traceability a multi-day forensic effort",
+      "ERP can't handle batch-level traceability required by new EU sustainability reporting mandates",
+      "Water and energy usage data collected manually, cannot prove compliance claims to eco-conscious buyers",
+      "Skilled labor shortage in Tirupur is driving up sewing machine operator wages 18% YoY"
+    ],
+    "buying_signals": [
+      "RFP floated for a textile-specific MES with environmental monitoring modules",
+      "CEO mentioned carbon footprint reporting requirements in recent industry interview",
+      "Hiring a Chief Sustainability Officer to lead ESG compliance and certifications"
+    ],
+    "decision_makers": [
+      {
+        "name": "Ramesh Chandran",
+        "title": "CEO & Managing Director",
+        "department": "Executive",
+        "email": "r.chandran@southerntextilemills.com",
+        "linkedin_url": "https://linkedin.com/in/rameshchandran",
+        "buying_authority": true
+      },
+      {
+        "name": "Kavitha Suryanarayanan",
+        "title": "Chief Sustainability Officer",
+        "department": "Sustainability",
+        "email": "k.suryanarayanan@southerntextilemills.com",
+        "linkedin_url": "https://linkedin.com/in/kavithasuryanarayanan",
+        "buying_authority": true
+      },
+      {
+        "name": "Rajesh Patel",
+        "title": "VP of Operations",
+        "department": "Operations",
+        "email": "r.patel@southerntextilemills.com",
+        "linkedin_url": "https://linkedin.com/in/rajeshpatel",
+        "buying_authority": true
+      },
+      {
+        "name": "Deepa Krishnan",
+        "title": "Quality Assurance Head",
+        "department": "Quality",
+        "email": "d.krishnan@southerntextilemills.com",
+        "linkedin_url": "https://linkedin.com/in/deepakrishnan",
+        "buying_authority": false
+      },
+      {
+        "name": "Vikram Shetty",
+        "title": "IT Manager",
+        "department": "IT",
+        "email": "v.shetty@southerntextilemills.com",
+        "linkedin_url": "https://linkedin.com/in/vikramshetty",
+        "buying_authority": true
+      }
+    ]
+  },
+  {
+    "name": "EcoForm Packaging",
+    "industry": "Manufacturing",
+    "sub_industry": "Sustainable Packaging Manufacturing",
+    "description": "EcoForm Packaging is a Boulder-based manufacturer of molded fiber packaging solutions made from post-consumer recycled content. Operating three production plants in Colorado, Ohio, and South Carolina, they produce custom protective packaging for consumer electronics, food service, and e-commerce clients. Their patented dry-mold process uses 40% less water than conventional methods. The company has grown 5x since 2020 as brands phase out single-use plastics.",
+    "website": "https://ecoformpackaging.com",
+    "city": "Boulder",
+    "country": "United States",
+    "employees": 340,
+    "locations": 3,
+    "founded": 2015,
+    "growth_stage": "Scaling",
+    "revenue_band": "$35M-$60M",
+    "business_profile": {
+      "franchise": false,
+      "expanding_locations": true,
+      "hiring": true,
+      "online_presence": "strong",
+      "delivery": true,
+      "multi_location": true
+    },
+    "technology": {
+      "crm": "HubSpot",
+      "website_platform": "Webflow",
+      "marketing_platform": "HubSpot",
+      "automation_level": "mid"
+    },
+    "pain_points": [
+      "Spreadsheet-based scheduling across 3 plants leads to 12% unplanned downtime from material shortages",
+      "No real-time visibility into production capacity for accurate lead time promises to customers",
+      "Customer onboarding for custom packaging designs requires 15+ email exchanges per order",
+      "Energy costs are 22% of COGS and they lack granular consumption data to target efficiency investments"
+    ],
+    "buying_signals": [
+      "CFO requested proposals for manufacturing analytics platform at leadership offsite",
+      "Operations team actively searching for production scheduling software on G2",
+      "Major retailer customer mandated real-time order tracking portal as condition of renewal"
+    ],
+    "decision_makers": [
+      {
+        "name": "Alex Chen",
+        "title": "CEO & Co-Founder",
+        "department": "Executive",
+        "email": "a.chen@ecoformpackaging.com",
+        "linkedin_url": "https://linkedin.com/in/alexchen",
+        "buying_authority": true
+      },
+      {
+        "name": "Sarah Mitchell",
+        "title": "COO",
+        "department": "Operations",
+        "email": "s.mitchell@ecoformpackaging.com",
+        "linkedin_url": "https://linkedin.com/in/sarahmitchell",
+        "buying_authority": true
+      },
+      {
+        "name": "Jake Morrison",
+        "title": "VP of Sales",
+        "department": "Sales",
+        "email": "j.morrison@ecoformpackaging.com",
+        "linkedin_url": "https://linkedin.com/in/jakemorrison",
+        "buying_authority": false
+      },
+      {
+        "name": "Priya Desai",
+        "title": "Director of Manufacturing",
+        "department": "Manufacturing",
+        "email": "p.desai@ecoformpackaging.com",
+        "linkedin_url": "https://linkedin.com/in/priyadesai",
+        "buying_authority": true
+      },
+      {
+        "name": "Mike O'Brien",
+        "title": "CFO",
+        "department": "Finance",
+        "email": "m.obrien@ecoformpackaging.com",
+        "linkedin_url": "https://linkedin.com/in/mikeobrien",
+        "buying_authority": true
+      }
+    ]
+  },
+  {
+    "name": "Boschmann Brewing Systems",
+    "industry": "Manufacturing",
+    "sub_industry": "Industrial Brewery Equipment Manufacturing",
+    "description": "Boschmann Brewing Systems designs and manufactures commercial brewing equipment for craft breweries and regional producers worldwide. Based in Munich with a 75,000 sq ft production facility, they export to 35 countries and have installed over 600 turnkey brewing systems. Their product line ranges from 5-barrel nano breweries to 200-barrel automated brewhouses with integrated IoT sensors. Third-generation family-owned, they combine Bavarian engineering tradition with modern Industry 4.0 capabilities.",
+    "website": "https://boschmann-brewing.de",
+    "city": "Munich",
+    "country": "Germany",
+    "employees": 210,
+    "locations": 2,
+    "founded": 1965,
+    "growth_stage": "Mature",
+    "revenue_band": "$40M-$70M",
+    "business_profile": {
+      "franchise": false,
+      "expanding_locations": false,
+      "hiring": true,
+      "online_presence": "moderate",
+      "delivery": true,
+      "multi_location": true
+    },
+    "technology": {
+      "crm": "SAP CRM",
+      "website_platform": "TYPO3",
+      "marketing_platform": "LinkedIn Ads",
+      "automation_level": "high"
+    },
+    "pain_points": [
+      "Legacy SAP system is 15 years old and can't handle configure-to-order workflows for complex brewhouse projects",
+      "International installation project management tracked across separate Excel sheets and email threads",
+      "Customer service ticketing is manual with no self-service portal for spare parts ordering",
+      "After-sales maintenance contracts are under-penetrated \u2014 only 30% of customers renew, leaving recurring revenue on the table"
+    ],
+    "buying_signals": [
+      "CEO attended Hannover Messe and met with IoT platform vendors for connected brewing systems",
+      "Hired a Head of Digital Transformation to overhaul customer-facing and internal systems",
+      "Two large US craft breweries requested API integration for remote brewing monitoring"
+    ],
+    "decision_makers": [
+      {
+        "name": "Hans-Peter Boschmann",
+        "title": "CEO (Managing Partner)",
+        "department": "Executive",
+        "email": "hp.boschmann@boschmann-brewing.de",
+        "linkedin_url": "https://linkedin.com/in/hanspeterboschmann",
+        "buying_authority": true
+      },
+      {
+        "name": "Thomas Weber",
+        "title": "Head of Sales & Marketing",
+        "department": "Sales",
+        "email": "t.weber@boschmann-brewing.de",
+        "linkedin_url": "https://linkedin.com/in/thomasweber",
+        "buying_authority": true
+      },
+      {
+        "name": "Klaus Richter",
+        "title": "Director of Engineering",
+        "department": "Engineering",
+        "email": "k.richter@boschmann-brewing.de",
+        "linkedin_url": "https://linkedin.com/in/klausrichter",
+        "buying_authority": false
+      },
+      {
+        "name": "Maria Schmidt",
+        "title": "Head of Customer Service & After-Sales",
+        "department": "Service",
+        "email": "m.schmidt@boschmann-brewing.de",
+        "linkedin_url": "https://linkedin.com/in/mariaschmidt",
+        "buying_authority": true
+      },
+      {
+        "name": "Stefan Mueller",
+        "title": "Digital Transformation Lead",
+        "department": "IT",
+        "email": "s.mueller@boschmann-brewing.de",
+        "linkedin_url": "https://linkedin.com/in/stefanmueller",
+        "buying_authority": true
+      }
+    ]
+  },
+  {
+    "name": "Pinnacle Freight Solutions",
+    "industry": "Logistics",
+    "sub_industry": "Freight Brokerage & 3PL",
+    "description": "Pinnacle Freight Solutions is a non-asset-based third-party logistics provider headquartered in Memphis, Tennessee. They broker over 35,000 loads annually across full truckload, LTL, and expedited modes for manufacturing, retail, and food & beverage shippers. Their technology stack includes a proprietary TMS with real-time tracking and carrier performance analytics. The company has grown 40% year-over-year by winning mid-market shippers frustrated with the big 3PLs.",
+    "website": "https://pinnaclefreight.com",
+    "city": "Memphis",
+    "country": "United States",
+    "employees": 185,
+    "locations": 3,
+    "founded": 2012,
+    "growth_stage": "Scaling",
+    "revenue_band": "$100M-$200M",
+    "business_profile": {
+      "franchise": false,
+      "expanding_locations": true,
+      "hiring": true,
+      "online_presence": "strong",
+      "delivery": true,
+      "multi_location": true
+    },
+    "technology": {
+      "crm": "Salesforce",
+      "website_platform": "React",
+      "marketing_platform": "Google Ads + LinkedIn",
+      "automation_level": "mid"
+    },
+    "pain_points": [
+      "Carrier onboarding and compliance document collection still relies on manual email follow-ups",
+      "Rate negotiation and spot quoting takes 45+ minutes per request, limiting the number of loads each rep can manage",
+      "Customer portal usage is below 30% \u2014 most clients still call/email for updates despite tracking features",
+      "High broker turnover (35% annually) is eroding customer relationships and institutional knowledge"
+    ],
+    "buying_signals": [
+      "VP of Operations requested demos from 3 carrier management software vendors",
+      "Published case study highlighting need for automated carrier compliance verification",
+      "Hiring surge for senior brokers suggests they are scaling before a tech upgrade"
+    ],
+    "decision_makers": [
+      {
+        "name": "Tyler Reynolds",
+        "title": "CEO & Founder",
+        "department": "Executive",
+        "email": "t.reynolds@pinnaclefreight.com",
+        "linkedin_url": "https://linkedin.com/in/tylerreynolds",
+        "buying_authority": true
+      },
+      {
+        "name": "Amanda Foster",
+        "title": "VP of Operations",
+        "department": "Operations",
+        "email": "a.foster@pinnaclefreight.com",
+        "linkedin_url": "https://linkedin.com/in/amandafoster",
+        "buying_authority": true
+      },
+      {
+        "name": "Derek Simmons",
+        "title": "Director of Carrier Relations",
+        "department": "Carrier Management",
+        "email": "d.simmons@pinnaclefreight.com",
+        "linkedin_url": "https://linkedin.com/in/dereksimmons",
+        "buying_authority": false
+      },
+      {
+        "name": "Rachel Nguyen",
+        "title": "VP of Sales",
+        "department": "Sales",
+        "email": "r.nguyen@pinnaclefreight.com",
+        "linkedin_url": "https://linkedin.com/in/rachelnguyen",
+        "buying_authority": true
+      },
+      {
+        "name": "Chris Patterson",
+        "title": "CTO",
+        "department": "Technology",
+        "email": "c.patterson@pinnaclefreight.com",
+        "linkedin_url": "https://linkedin.com/in/chrispatterson",
+        "buying_authority": true
+      }
+    ]
+  },
+  {
+    "name": "Redwood Warehousing & Distribution",
+    "industry": "Logistics",
+    "sub_industry": "Warehousing & Distribution",
+    "description": "Redwood Warehousing & Distribution operates 1.2 million square feet of warehouse space across five facilities in the Greater Toronto Area. They provide dedicated contract warehousing, pick-pack fulfillment, and cross-docking services for consumer goods, food, and automotive clients. Their WMS supports EDI 856 ASN compliance for major retailers like Loblaws, Walmart Canada, and Canadian Tire. The company is currently constructing a 400,000 sq ft automated facility with goods-to-person robotics.",
+    "website": "https://redwoodwd.com",
+    "city": "Mississauga",
+    "country": "Canada",
+    "employees": 620,
+    "locations": 5,
+    "founded": 2003,
+    "growth_stage": "Established",
+    "revenue_band": "$60M-$120M",
+    "business_profile": {
+      "franchise": false,
+      "expanding_locations": true,
+      "hiring": true,
+      "online_presence": "moderate",
+      "delivery": false,
+      "multi_location": true
+    },
+    "technology": {
+      "crm": "Microsoft Dynamics 365",
+      "website_platform": "Sitecore",
+      "marketing_platform": "Marketo",
+      "automation_level": "mid"
+    },
+    "pain_points": [
+      "WMS is 12 years old and cannot handle multi-client slotting optimization across 5 warehouses",
+      "Labor management is manual \u2014 shift scheduling and productivity tracking done on whiteboards",
+      "Client onboarding for EDI compliance takes 4-6 weeks, delaying revenue recognition on new accounts",
+      "Lack of real-time inventory visibility across facilities causes 8% error rate in client inventory reporting"
+    ],
+    "buying_signals": [
+      "Hired a VP of Technology to lead warehouse automation and software modernization",
+      "Issued RFP for next-gen WMS with multi-facility orchestration capabilities",
+      "Two major retail clients threatened to leave unless real-time inventory visibility is provided via API"
+    ],
+    "decision_makers": [
+      {
+        "name": "James Whitfield",
+        "title": "CEO",
+        "department": "Executive",
+        "email": "j.whitfield@redwoodwd.com",
+        "linkedin_url": "https://linkedin.com/in/jameswhitfield",
+        "buying_authority": true
+      },
+      {
+        "name": "Marcus Chen",
+        "title": "VP of Operations",
+        "department": "Operations",
+        "email": "m.chen@redwoodwd.com",
+        "linkedin_url": "https://linkedin.com/in/marcuschen",
+        "buying_authority": true
+      },
+      {
+        "name": "Sarah Thompson",
+        "title": "VP of Technology",
+        "department": "Technology",
+        "email": "s.thompson@redwoodwd.com",
+        "linkedin_url": "https://linkedin.com/in/sarahthompson",
+        "buying_authority": true
+      },
+      {
+        "name": "Brian Kowalski",
+        "title": "Director of Warehouse Operations",
+        "department": "Warehousing",
+        "email": "b.kowalski@redwoodwd.com",
+        "linkedin_url": "https://linkedin.com/in/briankowalski",
+        "buying_authority": false
+      },
+      {
+        "name": "Nina Patel",
+        "title": "Director of Client Solutions",
+        "department": "Sales",
+        "email": "n.patel@redwoodwd.com",
+        "linkedin_url": "https://linkedin.com/in/ninapatel",
+        "buying_authority": true
+      }
+    ]
+  },
+  {
+    "name": "SwiftChoice Last Mile",
+    "industry": "Logistics",
+    "sub_industry": "Last-Mile Delivery",
+    "description": "SwiftChoice Last Mile is a UK-based same-day delivery platform specializing in grocery, meal kit, and convenience retail logistics. They operate a network of 400+ self-employed couriers across London, Manchester, Birmingham, and Bristol, powered by a real-time route optimization engine. Their proprietary algorithms handle dynamic slot allocation and ETAs with 93% on-time performance. SwiftChoice secured a \u00a315M Series A in 2023 to expand into the Nordics.",
+    "website": "https://swiftchoice-lastmile.co.uk",
+    "city": "London",
+    "country": "United Kingdom",
+    "employees": 95,
+    "locations": 4,
+    "founded": 2019,
+    "growth_stage": "Growing",
+    "revenue_band": "$15M-$30M",
+    "business_profile": {
+      "franchise": false,
+      "expanding_locations": true,
+      "hiring": true,
+      "online_presence": "strong",
+      "delivery": true,
+      "multi_location": true
+    },
+    "technology": {
+      "crm": "HubSpot",
+      "website_platform": "Next.js",
+      "marketing_platform": "Klaviyo",
+      "automation_level": "high"
+    },
+    "pain_points": [
+      "Courier churn exceeds 50% annually \u2014 incentive model and dispatch fairness need overhaul",
+      "Customer delivery window compliance is 88%, below the 95% SLA demanded by grocery retailers",
+      "Returns and failed delivery handling is entirely manual, costing 3x per failed attempt vs successful",
+      "Integration with each retailer's OMS requires custom middleware, slowing new client activation to 8-12 weeks"
+    ],
+    "buying_signals": [
+      "Head of Operations researching courier engagement platforms to reduce churn",
+      "CEO mentioned last-mile delivery OS overhaul in recent TechCrunch interview",
+      "Two major supermarket chains require real-time delivery tracking integration in Q4"
+    ],
+    "decision_makers": [
+      {
+        "name": "Oliver Trent",
+        "title": "CEO & Co-Founder",
+        "department": "Executive",
+        "email": "o.trent@swiftchoice-lastmile.co.uk",
+        "linkedin_url": "https://linkedin.com/in/olivertrent",
+        "buying_authority": true
+      },
+      {
+        "name": "Emma Whitehead",
+        "title": "COO",
+        "department": "Operations",
+        "email": "e.whitehead@swiftchoice-lastmile.co.uk",
+        "linkedin_url": "https://linkedin.com/in/emmawhitehead",
+        "buying_authority": true
+      },
+      {
+        "name": "Raj Gupta",
+        "title": "Head of Engineering",
+        "department": "Engineering",
+        "email": "r.gupta@swiftchoice-lastmile.co.uk",
+        "linkedin_url": "https://linkedin.com/in/rajgupta",
+        "buying_authority": true
+      },
+      {
+        "name": "Chloe Davies",
+        "title": "VP of Operations",
+        "department": "Operations",
+        "email": "c.davies@swiftchoice-lastmile.co.uk",
+        "linkedin_url": "https://linkedin.com/in/chloedavies",
+        "buying_authority": true
+      },
+      {
+        "name": "James Parkin",
+        "title": "Head of Sales",
+        "department": "Sales",
+        "email": "j.parkin@swiftchoice-lastmile.co.uk",
+        "linkedin_url": "https://linkedin.com/in/jamesparkin",
+        "buying_authority": false
+      }
+    ]
+  },
+  {
+    "name": "Nippon Maritime Logistics",
+    "industry": "Logistics",
+    "sub_industry": "Ocean Freight Forwarding",
+    "description": "Nippon Maritime Logistics is a Yokohama-based ocean freight forwarder specializing in Japan-to-North America trade lanes. They manage 18,000+ TEUs annually, offering FCL, LCL, and breakbulk services with consolidated weekly sailings to Los Angeles, Seattle, and Vancouver. Their digital booking platform provides instant rate comparison across 12 carrier partners and real-time vessel tracking. The company has expanded rapidly by serving Japanese automotive and industrial exporters seeking alternatives to the giant forwarders.",
+    "website": "https://nippon-maritime.jp",
+    "city": "Yokohama",
+    "country": "Japan",
+    "employees": 130,
+    "locations": 4,
+    "founded": 2008,
+    "growth_stage": "Scaling",
+    "revenue_band": "$80M-$150M",
+    "business_profile": {
+      "franchise": false,
+      "expanding_locations": true,
+      "hiring": true,
+      "online_presence": "moderate",
+      "delivery": true,
+      "multi_location": true
+    },
+    "technology": {
+      "crm": "Salesforce",
+      "website_platform": "Vue.js",
+      "marketing_platform": "Google Ads",
+      "automation_level": "mid"
+    },
+    "pain_points": [
+      "Documentation for letter of credit and customs compliance still involves printing, scanning, and emailing PDFs",
+      "Demurrage and detention invoice reconciliation is manual, with 15% of carrier invoices containing errors",
+      "Customer booking process requires phone/email follow-up even after digital quote \u2014 only 20% self-book",
+      "Real-time container tracking relies on carrier APIs that have inconsistent data quality and update latency"
+    ],
+    "buying_signals": [
+      "CEO announced digital transformation initiative at industry conference in Tokyo",
+      "Hiring a Product Manager for digital freight platform \u2014 first non-technical PM hire",
+      "Two largest customers requested automated shipment documentation and invoicing integration by year-end"
+    ],
+    "decision_makers": [
+      {
+        "name": "Takeshi Yamamoto",
+        "title": "CEO & Founder",
+        "department": "Executive",
+        "email": "t.yamamoto@nippon-maritime.jp",
+        "linkedin_url": "https://linkedin.com/in/takeshiyamamoto",
+        "buying_authority": true
+      },
+      {
+        "name": "Yuki Tanaka",
+        "title": "VP of Operations & Logistics",
+        "department": "Operations",
+        "email": "y.tanaka@nippon-maritime.jp",
+        "linkedin_url": "https://linkedin.com/in/yukitanaka",
+        "buying_authority": true
+      },
+      {
+        "name": "Hiroshi Sato",
+        "title": "Director of Sales & Business Development",
+        "department": "Sales",
+        "email": "h.sato@nippon-maritime.jp",
+        "linkedin_url": "https://linkedin.com/in/hiroshisato",
+        "buying_authority": true
+      },
+      {
+        "name": "Akiko Watanabe",
+        "title": "Chief Digital Officer",
+        "department": "Technology",
+        "email": "a.watanabe@nippon-maritime.jp",
+        "linkedin_url": "https://linkedin.com/in/akikowatanabe",
+        "buying_authority": true
+      },
+      {
+        "name": "Kenji Ishikawa",
+        "title": "Finance & Administration Director",
+        "department": "Finance",
+        "email": "k.ishikawa@nippon-maritime.jp",
+        "linkedin_url": "https://linkedin.com/in/kenjiishikawa",
+        "buying_authority": false
+      }
+    ]
+  },
+  {
+    "name": "Tempus Cold Chain",
+    "industry": "Logistics",
+    "sub_industry": "Temperature-Controlled Logistics",
+    "description": "Tempus Cold Chain is a Netherlands-headquartered logistics provider specializing in temperature-controlled transport and warehousing for pharmaceutical, biotech, and clinical trial logistics. GDP-certified across all operations, they operate a fleet of 85 refrigerated vehicles and 3 cold storage facilities with temperature ranges from -80\u00b0C to +25\u00b0C. Their IoT-enabled monitoring platform provides real-time temperature logs with 99.997% data integrity for regulatory compliance. Tempus serves top-20 pharma companies across Benelux, Germany, and France.",
+    "website": "https://tempuscoldchain.nl",
+    "city": "Rotterdam",
+    "country": "Netherlands",
+    "employees": 280,
+    "locations": 5,
+    "founded": 2010,
+    "growth_stage": "Growing",
+    "revenue_band": "$45M-$75M",
+    "business_profile": {
+      "franchise": false,
+      "expanding_locations": true,
+      "hiring": true,
+      "online_presence": "moderate",
+      "delivery": true,
+      "multi_location": true
+    },
+    "technology": {
+      "crm": "Salesforce Health Cloud",
+      "website_platform": "Next.js",
+      "marketing_platform": "LinkedIn Ads",
+      "automation_level": "high"
+    },
+    "pain_points": [
+      "GDP compliance documentation is prepared manually per shipment, consuming 2 hours of admin time per delivery",
+      "Temperature excursion data is reviewed after delivery, not in transit, risking spoiled batches",
+      "Client onboarding for pharmacovigilance reporting requires custom integration work each time",
+      "Fleet utilization is tracked in spreadsheets, leading to 25% empty backhaul on temperature-controlled routes"
+    ],
+    "buying_signals": [
+      "Quality & Compliance Director evaluating automated GDP documentation platforms",
+      "CEO speaking at\u51b7\u94fe logistics conference about need for real-time excursion alerting",
+      "RFP issued for temperature monitoring IoT platform with automated regulatory reporting"
+    ],
+    "decision_makers": [
+      {
+        "name": "Lars van der Berg",
+        "title": "CEO",
+        "department": "Executive",
+        "email": "l.vanderberg@tempuscoldchain.nl",
+        "linkedin_url": "https://linkedin.com/in/larsvanderberg",
+        "buying_authority": true
+      },
+      {
+        "name": "Sophie Dekker",
+        "title": "Director of Quality & Compliance",
+        "department": "Quality",
+        "email": "s.dekker@tempuscoldchain.nl",
+        "linkedin_url": "https://linkedin.com/in/sophiedekker",
+        "buying_authority": true
+      },
+      {
+        "name": "Pieter Jacobs",
+        "title": "VP of Operations",
+        "department": "Operations",
+        "email": "p.jacobs@tempuscoldchain.nl",
+        "linkedin_url": "https://linkedin.com/in/pieterjacobs",
+        "buying_authority": true
+      },
+      {
+        "name": "Eva Meijer",
+        "title": "Head of Business Development",
+        "department": "Sales",
+        "email": "e.meijer@tempuscoldchain.nl",
+        "linkedin_url": "https://linkedin.com/in/evameijer",
+        "buying_authority": false
+      },
+      {
+        "name": "Thomas de Wit",
+        "title": "IT & Innovation Director",
+        "department": "Technology",
+        "email": "t.dewit@tempuscoldchain.nl",
+        "linkedin_url": "https://linkedin.com/in/thomasdewit",
+        "buying_authority": true
+      },
+      {
+        "name": "Fatima Al-Rashid",
+        "title": "Supply Chain Solutions Manager",
+        "department": "Solutions",
+        "email": "f.alrashid@tempuscoldchain.nl",
+        "linkedin_url": "https://linkedin.com/in/fatimaalrashid",
+        "buying_authority": false
+      }
+    ]
+  }
+]

@@ -20,3 +20,17 @@ export type LoqiSessionSummary = {
   }>;
   messages: LoqiMessage[];
 };
+
+export type LeadIntelligence = {
+  fit_score: number;
+  confidence: number;
+  why_selected: string[];
+  recommended_pitch: string;
+  decision_authority_summary: string;
+  buying_stage: string;
+  urgency: string;
+  estimated_business_need: string;
+  objection_risk: string;
+  best_contact_reason: string;
+  summary: string;
+};

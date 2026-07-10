@@ -1,5 +1,4 @@
-import os
-import re
+from services.providers.provider_factory import get_provider, get_provider_capabilities
 
 
 def _log(message: str) -> None:
@@ -12,7 +11,7 @@ def _filter_and_rank_leads(leads: list, icp: dict) -> tuple[list, dict]:
     Uses commercial_qualifier for multi-dimensional scoring.
     Returns (filtered_and_ranked_leads, filtering_stats)
     """
-    from services.commercial_qualifier import qualify_and_rank_leads, log_ranking_breakdown
+    from services.commercial_qualifier import qualify_and_rank_leads
 
     qualified_leads, qual_stats = qualify_and_rank_leads(leads, icp)
 
@@ -62,61 +61,41 @@ def _filter_and_rank_leads_soft(leads: list, icp: dict) -> tuple[list, dict]:
 
 
 def get_leads(service: str, target: str) -> dict:
-    """Original deterministic lead search"""
-    provider = os.getenv("LEAD_PROVIDER", "free").strip().lower()
-
-    _log(f"using: {provider}")
-    _log(f"input: {service}, {target}")
-
-    try:
-        if provider == "apollo":
-            from services.apollo import search_leads
-            return search_leads(target)
-
-        if provider == "free":
-            from services.free_leads import search_free_leads, SerpAPIError
-            leads = search_free_leads(target)
-            return {
-                "ok": True,
-                "source": "free",
-                "leads": leads,
-                "error": None,
-            }
-
-        raise Exception(f"Invalid LEAD_PROVIDER: {provider}")
-    except Exception as error:
-        _log(f"error: {error}")
-        error_message = str(error)
+    """Search for leads using the configured provider (no ICP expansion)."""
+    provider = get_provider()
+    health = provider.health_check()
+    if not health.get("ok"):
         return {
             "ok": False,
-            "source": provider,
+            "source": type(provider).__name__,
             "leads": [],
-            "error": error_message,
+            "error": health.get("error", "Provider health check failed"),
         }
 
+    combined_input = f"{service} {target}".strip() if target else service
 
-def _build_fallback_queries(service: str, target: str, icp: dict) -> list[str]:
-    """Build progressively wider fallback queries when primary search fails."""
-    queries = []
+    from services.icp_extractor import extract_structured_icp
+    icp = extract_structured_icp(combined_input)
 
-    if icp and icp.get("buyer_roles"):
-        for role in icp.get("buyer_roles", [])[:3]:
-            queries.append(role)
+    result = provider.search_leads(icp=icp, search_expansion={}, limit=10)
 
-    if target:
-        queries.append(target)
-
-    words = (target or service or "").split()
-    if len(words) >= 2:
-        queries.append(" ".join(words[:2]))
-
-    return queries[:5]
+    return {
+        "ok": result.get("ok", False),
+        "source": result.get("provider", type(provider).__name__),
+        "leads": result.get("leads", []),
+        "error": result.get("error"),
+    }
 
 
 def search_with_expansion(service: str, target: str) -> dict:
-    """AI-enhanced lead search with buyer-intent expansion and filtering"""
-    provider = os.getenv("LEAD_PROVIDER", "free").strip().lower()
+    """AI-enhanced lead search with buyer-intent expansion and filtering.
 
+    Keeps ICP extraction, search expansion, and commercial qualification
+    exactly as they were. Only the lead retrieval is delegated to the provider.
+    """
+    provider = get_provider()
+
+    _log(f"Using {type(provider).__name__}")
     _log(f"BUYER-INTENT search: service='{service}', target='{target}'")
 
     combined_input = f"{service} {target}".strip() if target else service
@@ -144,69 +123,28 @@ def search_with_expansion(service: str, target: str) -> dict:
         _log(f"Expansion failed: {e}, falling back to deterministic")
         expansion = None
 
-    if provider != "free":
-        _log(f"Provider {provider} doesn't support expansion, using deterministic")
-        return get_leads(service, target)
-
     try:
-        from services.free_leads import search_free_leads, SerpAPIError
+        result = provider.search_leads(
+            icp=icp or {},
+            search_expansion=expansion or {},
+            limit=20,
+        )
 
-        all_leads = []
-        seen_urls = set()
-        search_attempts = []
+        if not result.get("ok"):
+            return {
+                "ok": False,
+                "source": result.get("provider", type(provider).__name__),
+                "leads": [],
+                "error": result.get("error", "Provider search failed"),
+                "icp": icp,
+            }
 
-        primary_queries = []
-        if expansion and expansion.get("search_queries"):
-            primary_queries = expansion["search_queries"]
-
-        for query in primary_queries:
-            query_text = query.replace('site:linkedin.com/in "', '').replace('"', '')
-            _log(f"Searching (buyer-focused): {query_text}")
-            search_attempts.append(query_text)
-
-            try:
-                leads = search_free_leads(query_text)
-
-                for lead in leads:
-                    if lead.get("linkedin_url") and lead["linkedin_url"] not in seen_urls:
-                        seen_urls.add(lead["linkedin_url"])
-                        all_leads.append(lead)
-
-                _log(f"Found {len(leads)} leads for query, total unique: {len(all_leads)}")
-
-            except SerpAPIError as e:
-                _log(f"Query failed: {e}")
-                continue
-
-        if not all_leads:
-            _log("Primary search returned no leads — attempting fallback widening...")
-            fallback_queries = _build_fallback_queries(service, target, icp)
-            _log(f"Fallback queries: {fallback_queries}")
-
-            for query_text in fallback_queries:
-                if not query_text or query_text in search_attempts:
-                    continue
-                _log(f"Searching (fallback): {query_text}")
-                search_attempts.append(query_text)
-
-                try:
-                    leads = search_free_leads(query_text)
-
-                    for lead in leads:
-                        if lead.get("linkedin_url") and lead["linkedin_url"] not in seen_urls:
-                            seen_urls.add(lead["linkedin_url"])
-                            all_leads.append(lead)
-
-                    _log(f"Fallback found {len(leads)} leads, total: {len(all_leads)}")
-
-                except SerpAPIError as e:
-                    _log(f"Fallback query failed: {e}")
-                    continue
+        all_leads = result.get("leads", [])
 
         if not all_leads:
             return {
                 "ok": False,
-                "source": "free",
+                "source": result.get("provider", type(provider).__name__),
                 "leads": [],
                 "error": "No leads found. Try a broader target.",
                 "icp": icp,
@@ -243,7 +181,7 @@ def search_with_expansion(service: str, target: str) -> dict:
 
         return {
             "ok": True,
-            "source": "free",
+            "source": result.get("provider", type(provider).__name__),
             "leads": filtered_leads,
             "error": None,
             "expansion": expansion,
@@ -253,11 +191,30 @@ def search_with_expansion(service: str, target: str) -> dict:
 
     except Exception as error:
         _log(f"error: {error}")
-        error_message = str(error)
         return {
             "ok": False,
-            "source": provider,
+            "source": type(provider).__name__,
             "leads": [],
-            "error": error_message,
+            "error": str(error),
             "icp": icp,
         }
+
+
+def _format_lead(index: int, lead: dict) -> str:
+    full_name = " ".join(
+        part for part in [lead.get("first_name", ""), lead.get("last_name", "")] if part
+    ) or (lead.get("name") or "Unknown")
+    title = (lead.get("title", "") or "").strip()
+    company = (lead.get("company") or "Unknown Company").strip()
+    role_part = f" — {title}" if title else ""
+    return f"{index}. {full_name}{role_part} @ {company}"
+
+
+def format_leads_message(leads: list[dict]) -> str:
+    formatted_leads = [_format_lead(i, lead) for i, lead in enumerate(leads, 1)]
+    count = len(leads)
+    return (
+        f"I found **{count} promising match{'es' if count != 1 else ''}** ranked by buying potential.\n\n"
+        + "\n".join(formatted_leads)
+        + "\n\nReply with a number to pick one and I'll draft a personalized message."
+    )

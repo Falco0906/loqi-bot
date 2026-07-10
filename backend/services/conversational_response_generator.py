@@ -66,56 +66,46 @@ def _send_openai_request(system_text: str, user_text: str, timeout: int = 30) ->
 
 RESPONSE_VARIATIONS = {
     "greeting": [
-        "Hey — what are you looking to promote today?",
-        "Hi! Who are you trying to reach?",
-        "Hey, tell me a bit about what you're selling.",
-        "Hey there — what kind of outreach are you running?",
-        "Hi! What are you looking to sell or promote?",
-        "Hey — who are we trying to connect with?",
-        "Hello! What does your outbound look like?",
-        "Hey — what's the target for today?",
+        "Hey! What are you looking to promote today?\n\nYou can describe it naturally — for example:\n• AI automations for restaurant chains\n• Accounting services for dental clinics\n• Websites for gyms",
+        "Hi there! Who are you hoping to reach with outbound?\n\nFor instance:\n• Marketing agencies for my HR platform\n• Dental practices for my scheduling software\n• Construction firms for my safety compliance tool",
+        "Welcome! Tell me a bit about what you're offering.\n\nEven something simple works:\n• Payroll software for restaurants\n• CRM for real estate agents\n• SEO services for e-commerce brands",
+        "Hey! I'm ready to help find your next customers.\n\nJust describe what you do and who you want to reach — for example:\n• Lead generation for HVAC companies\n• Website design for law firms\n• Consulting for SaaS startups",
+        "Great to see you. What are you putting out into the world?\n\nA quick example:\n• POS systems for coffee shops\n• Recruitment software for healthcare\n• Email outreach for B2B agencies",
+        "Let's find you some buyers. What are you offering, and who are you trying to reach?\n\nLike:\n• Fleet management for logistics companies\n• Booking software for hotels\n• Compliance training for manufacturers",
     ],
     "onboarding": [
-        "What are you looking to promote?",
-        "Who are you trying to reach?",
-        "What does your ideal customer look like?",
-        "What kind of outreach are you running?",
-        "What's the target for today?",
-        "What are you selling?",
+        "Tell me more about what you do — I'll find the right audience.",
+        "Help me understand your offering so I can find strong matches.",
+        "Walk me through what you're selling and I'll take it from there.",
+        "Give me the details — what you offer and who needs it.",
+        "I'm all ears. What are you bringing to market?",
     ],
     "ask_service": [
-        "What do you sell?",
-        "What's your product or service?",
-        "What are you offering?",
-        "Tell me what you're selling.",
-        "What does your business do?",
+        "What are you offering? Describe it however feels natural.",
+        "What does your product or service do?",
+        "Tell me what you're bringing to market.",
+        "What are you looking to promote?",
+        "What do you offer? Give me a quick description.",
     ],
     "ask_target": [
-        "Who are you trying to reach?",
-        "What kind of businesses or people are you targeting?",
-        "Who makes sense to contact?",
-        "What's your ideal customer look like?",
-        "Who should I look for?",
+        "Who would your ideal buyer be?",
+        "What kind of businesses or roles are you targeting?",
+        "Who do you want me to find for you?",
+        "Describe your ideal customer — industry, role, or company type.",
+        "What does the right buyer look like for this?",
     ],
     "after_lead_list": [
-        "Any of these jump out at you?",
-        "Want me to draft outreach for one of these?",
-        "Which lead should we focus on?",
-        "See anyone worth reaching out to?",
-        "Pick one and I'll prepare a personalized message.",
-        "Want me to start drafting for any of these?",
-        "Should we prioritize one of these?",
-        "Let me know if you want me to draft for any of these.",
-        "Which one interests you most?",
+        "These are ranked by buying potential. Pick a lead and I'll draft a personalized message, or tell me to draft for multiple.",
+        "I've scored these by fit and buying signals. Which one should we focus on first?",
+        "Here are the strongest matches. Reply with the number you want to start with.",
+        "These are sorted by relevance. Which lead stands out to you?",
+        "I've ranked these by who's most likely to engage. Pick one to begin outreach.",
     ],
     "after_draft": [
-        "Here's a draft for you. Want me to refine it, or should I send it as-is?",
-        "Draft's ready. Sound good, or want me to tweak it?",
-        "I've drafted something personalized. Should I send it or make some changes?",
-        "This is what I'm thinking — want me to adjust the tone, make it shorter, or send as-is?",
-        "Here's a draft. Just say what you'd like to change or tell me to send it.",
-        "Draft is ready. Want me to make it shorter, more casual, or less salesy? Or just send it?",
-        "Here's what I'd send. Let me know if you want adjustments or if you're ready to go.",
+        "I've drafted something personalized based on what I know about the company. Take a look.\n\nIf you'd like, I can:\n• make it shorter\n• sound more casual\n• make it more direct\n• regenerate it\n\nOr just tell me to send it as-is.",
+        "Here's what I'd send to this contact. It's grounded in their business profile.\n\nOptions if you want changes:\n• shorter or longer\n• more casual or formal\n• different angle\n\nOr say 'send it' and I'll fire it off.",
+        "I've tailored this message to their specific situation. Let me know what you think.\n\nI can:\n• tighten it up\n• make it friendlier\n• make it more direct\n• start over\n\nOr just say 'go ahead' and I'll send it.",
+        "Take a look at the draft. It's written with their company context in mind.\n\nWant me to:\n• shorten it\n• make it less salesy\n• use a stronger tone\n• try something different\n\nOr tell me to send as-is.",
     ],
     "confirming_send": [
         "Ready to send this?",
@@ -125,16 +115,16 @@ RESPONSE_VARIATIONS = {
         "Ready when you are.",
     ],
     "select_lead_confirm": [
-        "Got it — drafting now.",
-        "On it.",
-        "Selecting that lead and drafting outreach.",
-        "Perfect, let me pull together something personalized.",
-        "Alright, getting a draft ready for them.",
+        "I'm putting together a personalized first message based on their profile...",
+        "I'm tailoring this specifically for their business context...",
+        "Let me draft something grounded in what I know about them...",
+        "Perfect — I'm writing a message that fits their situation...",
+        "Working on a custom outreach for this lead...",
     ],
     "session_start": [
-        "Hey — I'm Loqi. I help you find leads and run personalized outreach.",
-        "Hi! I'm Loqi, your outbound assistant.",
-        "Welcome! I help find leads and craft personalized messages.",
+        "Hey! I'm Loqi — I help you find the right buyers and craft outreach that actually sounds like you.\n\nTo get started, just tell me what you're offering and who you want to reach. Something like:\n• \"I sell AI sales tools for SaaS companies\"\n• \"My agency builds websites for dental clinics\"\n• \"I offer bookkeeping for restaurant groups\"",
+        "Hi there! I'm Loqi. I find promising leads and help you reach out with messages that feel personal, not templated.\n\nTo start, tell me what you do and who you're after. For example:\n• \"We provide HR software for construction firms\"\n• \"I do lead generation for real estate agents\"\n• \"My product automates hiring for healthcare\"",
+        "Welcome to Loqi. Think of me as your SDR — I find the right people and help you start real conversations.\n\nJust describe what you're selling and who you're targeting:\n• \"CRM for boutique real estate agencies\"\n• \"Safety training for manufacturing plants\"\n• \"Dev tools for growing SaaS teams\"",
     ],
     "refine_options": [
         "Want me to try a different angle?",
@@ -438,7 +428,9 @@ def _get_service_prompt_variation(recent_messages: list[str]) -> str:
     pool = RESPONSE_VARIATIONS["ask_service"]
     recent_lower = [m.lower() for m in (recent_messages or [])]
     available = [p for p in pool if p.lower() not in recent_lower]
-    return random.choice(available if available else pool)
+    if not available:
+        available = pool
+    return random.choice(available)
 
 
 def _get_target_prompt_variation(recent_messages: list[str], service: str) -> str:
@@ -447,21 +439,33 @@ def _get_target_prompt_variation(recent_messages: list[str], service: str) -> st
     recent_lower = [m.lower() for m in (recent_messages or [])]
     available = [p for p in pool if p.lower() not in recent_lower]
 
-    if available and random.random() > 0.7:
+    if not available:
+        available = pool
+
+    if available and random.random() > 0.5:
         return random.choice(available)
 
     short_variants = [
         f"Who should I look for?",
-        f"Got it. Who are you targeting?",
-        f"Perfect. Who's your ideal customer?",
-        f"And who are you trying to reach?",
-        f"Who makes sense to contact here?",
+        f"Nice. Who would you like to reach with {service}?",
+        f"Great. What kind of businesses are you targeting with {service}?",
+        f"Perfect. Who's the right audience for {service}?",
+        f"Who makes sense to contact for {service}?",
     ]
     return random.choice(short_variants)
 
 
 def _get_after_leads_variation(recent_messages: list[str], lead_count: int) -> str:
-    """Get a fresh 'after lead list' variant."""
+    """Get a fresh 'after lead list' variant with ranking context."""
+    if lead_count > 0:
+        intro = random.choice([
+            f"I found **{lead_count} promising matches** sorted by buying potential.",
+            f"I've ranked **{lead_count} leads** by fit and engagement signals.",
+            f"Here are **{lead_count} potential buyers** — ranked by relevance.",
+        ])
+    else:
+        intro = ""
+
     pool = RESPONSE_VARIATIONS["after_lead_list"]
     recent_lower = [m.lower() for m in (recent_messages or [])]
     available = [p for p in pool if p.lower() not in recent_lower]
@@ -469,7 +473,10 @@ def _get_after_leads_variation(recent_messages: list[str], lead_count: int) -> s
     if not available:
         available = pool
 
-    return random.choice(available)
+    prompt = random.choice(available)
+    if intro:
+        return f"{intro}\n\n{prompt}"
+    return prompt
 
 
 def _get_after_draft_variation(recent_messages: list[str], lead_name: str, preferences: dict) -> str:
@@ -489,24 +496,93 @@ def _get_after_draft_variation(recent_messages: list[str], lead_name: str, prefe
     return base
 
 
+def _get_pre_lead_search_transition() -> str:
+    """Transition message before searching for leads."""
+    return random.choice([
+        "Looking through potential buyers that match your criteria...",
+        "Searching for businesses that fit your ICP...",
+        "I'm scanning for the strongest opportunities...",
+        "Let me find companies that match what you described...",
+        "Searching for the right leads in this space...",
+    ])
+
+
+def _get_pre_draft_transition() -> str:
+    """Transition message before drafting."""
+    return random.choice([
+        "I'm putting together a personalized first message...",
+        "Tailoring this based on their business profile...",
+        "Let me write something grounded in their context...",
+        "Crafting a message that fits their specific situation...",
+        "Working on a custom draft for this lead...",
+    ])
+
+
+def _get_refine_confirmation(instruction: str) -> str:
+    """Natural acknowledgment when user asks for refinement."""
+    msg = instruction.lower().strip()
+    if any(kw in msg for kw in ["shorter", "concise", "brief"]):
+        return random.choice([
+            "Done — I tightened it up.",
+            "Made it more concise.",
+            "Trimmed it down for you.",
+        ])
+    if any(kw in msg for kw in ["longer", "more detail", "expand"]):
+        return random.choice([
+            "Done — I expanded it with more context.",
+            "Added more substance to it.",
+            "Made it a bit more detailed.",
+        ])
+    if any(kw in msg for kw in ["casual", "friendly", "less formal", "breezy"]):
+        return random.choice([
+            "Made it more conversational.",
+            "I loosened it up a bit.",
+            "Less formal, more natural.",
+        ])
+    if any(kw in msg for kw in ["formal", "professional"]):
+        return random.choice([
+            "Made it more professional.",
+            "I polished the tone.",
+            "Sounds more formal now.",
+        ])
+    if any(kw in msg for kw in ["less salesy", "softer", "subtle"]):
+        return random.choice([
+            "Removed most of the sales language.",
+            "Made it less pushy.",
+            "Softened the pitch significantly.",
+        ])
+    if any(kw in msg for kw in ["direct", "confident", "stronger"]):
+        return random.choice([
+            "Made it more direct.",
+            "I gave it a stronger tone.",
+            "More confident, less hedging.",
+        ])
+    return random.choice([
+        "Got it — applying that feedback now.",
+        "Let me adjust it based on that.",
+        "Made the change you asked for.",
+    ])
+
+
 def _get_after_send_variation() -> str:
     """Get a fresh 'after send' variant."""
     return random.choice([
-        "Sent! Want to do another one?",
-        "Done. Should I find another lead?",
-        "Email is on its way. Ready for another?",
-        "Sent. Want me to look for more leads?",
-        "All sent. I can find more leads if you want.",
+        "Sent! Want to find another lead to reach out to?",
+        "Done. Should I look for more people in this space?",
+        "Email's on its way. Ready for the next one?",
+        "Sent. I can find more leads or we can refine a different one.",
+        "All sent. Tell me if you want to continue with more leads.",
+        "Done. Want me to search for another batch or refine someone else?",
     ])
 
 
 def _get_refine_options_variation() -> str:
     """Get a fresh refinement prompt."""
     return random.choice([
+        "Want me to try a different angle?",
+        "I can adjust the length, tone, or make it more casual.",
         "What would you like to change?",
-        "How should I adjust it?",
-        "What should be different?",
-        "Tell me what to tweak.",
+        "Tell me what to tweak — shorter, longer, different tone?",
     ])
 
 
@@ -568,7 +644,7 @@ def build_classification_context(
         "parsed_action": action,
         "parsed_action_detail": detail,
         "lead_list_active": (
-            "Search for leads in" in (assistant_messages[-1] or "")
+            "Reply with a number to pick one" in (assistant_messages[-1] or "")
             if assistant_messages else False
         ),
         "recent_conversation": recent[-3:],

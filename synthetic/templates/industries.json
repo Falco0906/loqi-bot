@@ -1,0 +1,1384 @@
+{
+  "Cafe": {
+    "sub_industries": ["Specialty Coffee", "Coffee Shop Chain", "French Cafe", "Experimental Coffee", "Quick Service Cafe", "Bakery Cafe", "Drive-Through Coffee"],
+    "name_prefixes": ["Bean Street", "Urban Roast", "Coffee District", "Daily Brew", "Brew Haven", "Roast Republic", "Ground Floor", "Morning Ritual", "The Pour Over", "Brew Lab", "Copper Kettle", "Steam & Leaf", "The Drip", "Black Gold", "Froth & Foam"],
+    "name_suffixes": ["Cafe", "Coffee House", "Coffee Co", "Roasters", "Brewing Co", "Coffee Bar", "Espresso Bar", "Caffe", "Brewing Works", "Roast House"],
+    "roles": [
+      ["Owner", "Executive", 100],
+      ["Founder", "Executive", 100],
+      ["CEO", "Executive", 95],
+      ["COO", "Operations", 95],
+      ["Operations Manager", "Operations", 85],
+      ["General Manager", "Operations", 80],
+      ["Marketing Manager", "Marketing", 70],
+      ["Wholesale Director", "Sales", 80],
+      ["Barista Lead", "Operations", 60],
+      ["District Manager", "Operations", 80]
+    ],
+    "pain_points": [
+      "Inventory tracking for perishable beans and supplies",
+      "Customer retention and loyalty program management",
+      "Staff scheduling across multiple locations",
+      "Vendor coordination and bean sourcing consistency",
+      "Quality control across batches and baristas",
+      "Manual sales reporting and analytics",
+      "Seasonal demand forecasting",
+      "Wholesale order management",
+      "Equipment maintenance scheduling",
+      "Food safety compliance tracking"
+    ],
+    "technologies": {
+      "crm": ["HubSpot", "Salesforce", "Zoho CRM", null],
+      "website_platform": ["WordPress", "Squarespace", "Webflow", "Shopify"],
+      "marketing_platform": ["Mailchimp", "Klaviyo", "Instagram Ads", "Google Ads", "Meta Ads"],
+      "pos": ["Square", "Toast", "Clover", "Lightspeed"],
+      "automation_level": ["low", "medium", "low", "medium"]
+    },
+    "buying_signals": [
+      "Opening new location",
+      "Hiring a Head Roaster",
+      "Expanding wholesale distribution",
+      "Launching loyalty program",
+      "Hiring Operations Manager",
+      "Expanding into another city",
+      "Implementing POS system",
+      "Growing social media following",
+      "Launching mobile ordering app",
+      "Partnering with local offices"
+    ],
+    "events": [
+      "Opened a new branch in {city}",
+      "Launched a monthly coffee subscription",
+      "Won Best Coffee Shop award",
+      "Hired a new Head Roaster",
+      "Expanded wholesale to 50+ accounts",
+      "Launched mobile ordering",
+      "Partnered with local roaster co-op",
+      "Hosted latte art competition",
+      "Introduced seasonal menu",
+      "Grew Instagram to 15K followers"
+    ],
+    "employee_range": [8, 150],
+    "location_range": [1, 12],
+    "founded_range": [2010, 2024],
+    "revenue_bands": ["$250K-$1M", "$1M-$3M", "$3M-$8M", "$8M-$15M", "$15M-$30M"],
+    "description_templates": [
+      "{name} is a {sub} in {city} known for their {adjective} approach to coffee. They serve {coffee_type} sourced from {origin} and have built a loyal following among {audience}.",
+      "{name} operates as a {sub} in the heart of {city}, focusing on {focus}. Their {feature} has made them popular with {audience} across the {region} area.",
+      "{name} is a {sub} serving {city}'s {audience} community with {coffee_type} and {food}. They are known for their {adjective} atmosphere and {feature}."
+    ]
+  },
+  "Restaurant": {
+    "sub_industries": ["Farm-to-Table", "Asian Fusion", "Mediterranean", "Barbecue", "Ramen", "Italian Trattoria", "Mexican Cantina", "Seafood", "Steakhouse", "Fast Casual"],
+    "name_prefixes": ["FreshBite", "Spice Junction", "Urban Plate", "Taste Factory", "Fork & Flame", "Table & Hearth", "Harvest Kitchen", "Salt & Smoke", "Wild Root", "Golden Fork", "River Bend", "The Copper Pot", "Ember & Oak", "Blue Heron", "Red Lantern"],
+    "name_suffixes": ["Restaurants", "Kitchen", "Foods", "Dining", "Eatery", "Grill", "Trattoria", "Bistro", "House", "Table"],
+    "roles": [
+      ["Owner", "Executive", 100],
+      ["Founder", "Executive", 100],
+      ["CEO", "Executive", 95],
+      ["COO", "Operations", 95],
+      ["Executive Chef", "Kitchen", 85],
+      ["Operations Manager", "Operations", 85],
+      ["Regional Manager", "Operations", 80],
+      ["General Manager", "Operations", 80],
+      ["Marketing Director", "Marketing", 70],
+      ["Bar Manager", "F&B", 65],
+      ["Catering Director", "Sales", 75]
+    ],
+    "pain_points": [
+      "Inventory synchronization across locations",
+      "Delivery aggregator commission pressure",
+      "Multi-location P&L reporting",
+      "Staff turnover and training consistency",
+      "Food cost margin management",
+      "Reservation no-show handling",
+      "Seasonal menu planning and sourcing",
+      "Kitchen equipment maintenance",
+      "Health inspection compliance",
+      "Online order accuracy"
+    ],
+    "technologies": {
+      "crm": ["Toast", "Square", "Salesforce", "Zoho CRM", null],
+      "website_platform": ["WordPress", "Wix", "Squarespace", "Custom"],
+      "marketing_platform": ["Mailchimp", "Instagram", "Meta Ads", "Google Ads", "TikTok"],
+      "pos": ["Toast", "Square", "Clover", "Lightspeed", "Resy"],
+      "automation_level": ["low", "medium", "low", "medium", "high"]
+    },
+    "buying_signals": [
+      "Opening new branch location",
+      "Hiring Operations Manager",
+      "Expanding into another city",
+      "Launching franchise program",
+      "Growing delivery operations",
+      "Adding catering division",
+      "Hiring a COO",
+      "Implementing inventory system",
+      "Launching e-commerce for sauces/spices",
+      "Expanding to late-night hours"
+    ],
+    "events": [
+      "Opened a new branch in {city}",
+      "Launched a catering division",
+      "Hired a new Executive Chef",
+      "Expanded delivery to DoorDash and UberEats",
+      "Won Best Restaurant award",
+      "Introduced farm-to-table menu",
+      "Hired a Head of Operations",
+      "Launched online merchandise store",
+      "Added outdoor dining terrace",
+      "Grew catering revenue 40%"
+    ],
+    "employee_range": [12, 350],
+    "location_range": [1, 18],
+    "founded_range": [2005, 2024],
+    "revenue_bands": ["$500K-$2M", "$2M-$5M", "$5M-$15M", "$15M-$30M", "$30M-$60M"],
+    "description_templates": [
+      "{name} is a {sub} concept operating in {city}. They focus on {focus} and have earned a reputation for {adjective} dining experiences.",
+      "{name} runs a {sub} model across {city} with {locations} locations. They are known for their {feature} and have built a loyal customer base.",
+      "{name} is a {sub} restaurant in {city} serving {food} with a focus on {focus}. They have expanded to {locations} locations across the {region} area."
+    ]
+  },
+  "Hotel": {
+    "sub_industries": ["Boutique Mountain Resort", "Luxury City Hotel", "Hostel / Co-Living", "Waterfront Boutique Hotel", "Wellness Resort", "Business Hotel", "Extended Stay", "Eco-Lodge", "Historic Inn", "Beach Resort"],
+    "name_prefixes": ["Cascade", "The Asteria", "Nomad", "Dockside", "Sora", "Harbor View", "The Meridian", "Willow Creek", "Summit Ridge", "Pine Harbor", "Silver Birch", "Golden Gate", "Coral Bay", "Misty Peak", "Sunstone"],
+    "name_suffixes": ["Lodge", "Hotel", "Resort & Spa", "Inn", "Suites", "Hostels", "Retreat", "Place", "Collection", "House"],
+    "roles": [
+      ["Owner", "Executive", 100],
+      ["Founder", "Executive", 100],
+      ["General Manager", "Executive", 90],
+      ["Director of Operations", "Operations", 85],
+      ["Director of Sales & Events", "Sales", 80],
+      ["Head of Hospitality", "Hospitality", 75],
+      ["F&B Director", "F&B", 75],
+      ["HR Director", "HR", 65],
+      ["Revenue Manager", "Revenue", 70],
+      ["Spa Director", "Wellness", 65],
+      ["Marketing Manager", "Marketing", 70]
+    ],
+    "pain_points": [
+      "OTA commission rates reducing margins",
+      "Seasonal staffing surges and retention",
+      "Direct booking vs. OTA optimization",
+      "Guest experience personalization",
+      "Revenue management during low season",
+      "Property management system integration",
+      "Maintenance and property upkeep",
+      "Guest review management",
+      "Event booking coordination",
+      "Multi-department scheduling"
+    ],
+    "technologies": {
+      "crm": ["Salesforce", "Oracle Hospitality", "HubSpot", "Little Hotelier", "Cloudbeds"],
+      "website_platform": ["WordPress", "Custom", "Cloudbeds", "Wix", "Bookingsuite"],
+      "marketing_platform": ["Google Ads", "Meta Ads", "Instagram", "Email Marketing", "TripAdvisor"],
+      "pos": ["Oracle", "Agilysys", "Micros", "Toast"],
+      "automation_level": ["low", "medium", "high", "medium"]
+    },
+    "buying_signals": [
+      "Investing in direct booking engine",
+      "Hiring Director of Operations",
+      "Adding new rooms/suites",
+      "Launching loyalty program",
+      "Renovating property",
+      "Expanding to new property",
+      "Implementing PMS upgrade",
+      "Hiring Revenue Manager",
+      "Adding spa/wellness services",
+      "Launching corporate retreat packages"
+    ],
+    "events": [
+      "Completed property renovation",
+      "Opened {locations} new locations",
+      "Hired a new General Manager",
+      "Launched direct booking program",
+      "Added luxury suites",
+      "Won Travelers Choice award",
+      "Implemented new PMS system",
+      "Launched sustainability initiative",
+      "Hired a Revenue Manager",
+      "Expanded event space"
+    ],
+    "employee_range": [12, 280],
+    "location_range": [1, 8],
+    "founded_range": [1995, 2024],
+    "revenue_bands": ["$1M-$3M", "$3M-$10M", "$10M-$25M", "$25M-$50M", "$50M-$100M"],
+    "description_templates": [
+      "{name} is a {sub} located in {city}. They offer {features} and cater to {audience}.",
+      "{name} operates as a {sub} in {city} with {room_count} rooms. They are known for {feature} and serve {audience}.",
+      "{name} is a {sub} in the heart of {city}, offering {features} for {audience}."
+    ]
+  },
+  "Gym": {
+    "sub_industries": ["Strength & Conditioning", "Yoga & Pilates Studio", "High-Intensity / CrossFit", "Aquatic Fitness", "Climbing Gym", "Boutique Fitness", "24-Hour Gym", "Martial Arts Studio", "Dance Studio", "Rehabilitation Center"],
+    "name_prefixes": ["FitZone", "Iron House", "Pulse Fitness", "NextGen", "Peak Performance", "Core Fitness", "Elevate", "Zenith", "Forge", "Apex", "Kinetic", "Vitality", "Summit", "Blaze", "Titan"],
+    "name_suffixes": ["Fitness", "Gym", "Health Club", "Athletics", "Training Center", "Wellness Center", "Fit Lab", "Strength Club", "Performance Lab", "Fit Studio"],
+    "roles": [
+      ["Owner", "Executive", 100],
+      ["Founder", "Executive", 100],
+      ["Operations Manager", "Operations", 85],
+      ["Regional Manager", "Operations", 80],
+      ["Membership Director", "Sales", 75],
+      ["Head Coach", "Coaching", 70],
+      ["Marketing Manager", "Marketing", 70],
+      ["Personal Training Director", "Training", 65],
+      ["Front Desk Manager", "Operations", 60],
+      ["Wellness Director", "Wellness", 65]
+    ],
+    "pain_points": [
+      "Membership renewals and churn",
+      "Trainer scheduling and utilization",
+      "Lead follow-up and conversion",
+      "Equipment maintenance and replacement",
+      "Class capacity management",
+      "Member engagement and retention",
+      "Staff turnover in coaching roles",
+      "Competition from budget gyms",
+      "Insurance and liability management",
+      "Facility cleanliness and upkeep"
+    ],
+    "technologies": {
+      "crm": ["Mindbody", "PushPress", "Club OS", "Wodify", "Glofox"],
+      "website_platform": ["WordPress", "Wix", "Squarespace", "Mindbody"],
+      "marketing_platform": ["Instagram", "Meta Ads", "Google Ads", "TikTok", "Email Marketing"],
+      "pos": ["Mindbody", "Square", "Stripe", "EZFacility"],
+      "automation_level": ["low", "medium", "low", "medium"]
+    },
+    "buying_signals": [
+      "Opening new location",
+      "Hiring Head Coach",
+      "Launching mobile app",
+      "Expanding class offerings",
+      "Implementing new CRM",
+      "Hiring Membership Director",
+      "Adding personal training",
+      "Launching corporate wellness",
+      "Expanding to new city",
+      "Upgrading equipment"
+    ],
+    "events": [
+      "Opened new location in {city}",
+      "Hired a new Head Coach",
+      "Launched mobile app",
+      "Added 50 new pieces of equipment",
+      "Won Best Gym award",
+      "Expanded class schedule",
+      "Hired a Membership Director",
+      "Launched virtual classes",
+      "Added recovery zone",
+      "Grew membership 30%"
+    ],
+    "employee_range": [5, 85],
+    "location_range": [1, 8],
+    "founded_range": [2010, 2024],
+    "revenue_bands": ["$250K-$1M", "$1M-$3M", "$3M-$8M", "$8M-$15M"],
+    "description_templates": [
+      "{name} is a {sub} in {city} offering {features}. They cater to {audience} and are known for {feature}.",
+      "{name} operates as a {sub} with {locations} locations in {city}. They focus on {focus} and serve {audience}.",
+      "{name} is a {sub} serving {city}'s {audience} community with {features}."
+    ]
+  },
+  "Dental Clinic": {
+    "sub_industries": ["Multi-Specialty Dental", "Cosmetic & Aesthetic Dentistry", "Pediatric Dentistry", "Family & Orthodontic Practice", "Emergency & Urgent Dental Care", "Implant Center", "Orthodontics", "Periodontics", "Oral Surgery", "Prosthodontics"],
+    "name_prefixes": ["SmileCare", "Bright Dental", "Prime Dental", "Healthy Smiles", "Alpine", "Nordic", "EcoDent", "Downtown", "Meridian", "Summit", "Pacific", "Ivory", "Radiance", "Clear", "Platinum"],
+    "name_suffixes": ["Dental Group", "Dental Studio", "Dental Care", "Dental Center", "Dental & Orthodontics", "Dental Arts", "Smile Center", "Oral Health Center", "Dental Associates", "Dental Partners"],
+    "roles": [
+      ["Practice Owner", "Executive", 100],
+      ["Lead Dentist", "Clinical", 90],
+      ["Clinic Director", "Operations", 85],
+      ["Operations Manager", "Operations", 80],
+      ["Practice Manager", "Operations", 80],
+      ["Marketing Director", "Marketing", 70],
+      ["Insurance & Billing Director", "Billing", 70],
+      ["Treatment Coordinator", "Patient Care", 60],
+      ["Lead Dental Hygienist", "Clinical", 65],
+      ["Office Manager", "Operations", 70]
+    ],
+    "pain_points": [
+      "Appointment reminders and no-show reduction",
+      "Insurance verification and claims processing",
+      "Patient recall and retention",
+      "Multi-location scheduling coordination",
+      "Digital X-ray and records interoperability",
+      "Treatment plan acceptance rates",
+      "Staff recruitment and retention",
+      "Compliance with dental regulations",
+      "Patient communication workflows",
+      "Lab turnaround times"
+    ],
+    "technologies": {
+      "crm": ["Dentrix", "Eaglesoft", "Salesforce Health Cloud", "Zoho CRM", "PracticeWeb"],
+      "website_platform": ["WordPress", "Wix", "Squarespace", "Weebly"],
+      "marketing_platform": ["Google Ads", "BirdEye", "Instagram", "Facebook Ads", "Healthgrades"],
+      "pos": ["Square", "Dentrix", "Eaglesoft", "Clover"],
+      "automation_level": ["low", "medium", "low", "medium"]
+    },
+    "buying_signals": [
+      "Opening new location",
+      "Hiring a Dentist",
+      "Implementing new CRM",
+      "Adding Invisalign/orthodontics",
+      "Expanding to new city",
+      "Hiring a Practice Manager",
+      "Adding cosmetic services",
+      "Implementing patient portal",
+      "Upgrading imaging equipment",
+      "Launching patient referral program"
+    ],
+    "events": [
+      "Opened a new location in {city}",
+      "Hired a new Lead Dentist",
+      "Implemented patient portal",
+      "Added Invisalign services",
+      "Won Best Dental Practice award",
+      "Upgraded to digital X-rays",
+      "Hired a Practice Manager",
+      "Launched teeth whitening special",
+      "Added sedation dentistry",
+      "Grew patient base 25%"
+    ],
+    "employee_range": [8, 120],
+    "location_range": [1, 8],
+    "founded_range": [2000, 2024],
+    "revenue_bands": ["$500K-$2M", "$2M-$5M", "$5M-$15M", "$15M-$30M"],
+    "description_templates": [
+      "{name} is a {sub} practice in {city} serving {audience}. They offer {services} and are known for {feature}.",
+      "{name} operates {locations} locations in {city} as a {sub} practice. They focus on {focus} and serve {audience}.",
+      "{name} is a {sub} in {city} providing {services} to {audience} across the {region} area."
+    ]
+  },
+  "Healthcare": {
+    "sub_industries": ["Primary Care Practice", "Physical Therapy", "Diagnostic Imaging", "Mental Health Services", "Medical Aesthetics", "Cardiology Clinic", "Dermatology Practice", "Urgent Care", "Veterinary Clinic", "Chiropractic Center"],
+    "name_prefixes": ["Northbridge", "Verve", "Atlas", "Thrive", "Soma", "Summit", "Horizon", "Keystone", "Vanguard", "Pinnacle", "Cornerstone", "Elevate", "Ascend", "Prime", "Crossroads"],
+    "name_suffixes": ["Medical Group", "Health Partners", "Healthcare", "Medical Center", "Health System", "Wellness Center", "Health Network", "Medical Associates", "Health Sciences", "Clinical Partners"],
+    "roles": [
+      ["Medical Director", "Executive", 95],
+      ["Practice Owner", "Executive", 100],
+      ["CEO", "Executive", 100],
+      ["Practice Administrator", "Operations", 85],
+      ["Clinical Director", "Clinical", 80],
+      ["Marketing Director", "Marketing", 70],
+      ["Billing & Compliance Director", "Billing", 70],
+      ["IT Director", "IT", 75],
+      ["HR Director", "HR", 65],
+      ["Regional Clinic Manager", "Operations", 80]
+    ],
+    "pain_points": [
+      "EHR interoperability and data migration",
+      "Provider burnout and staffing shortages",
+      "Patient portal adoption and engagement",
+      "Insurance reimbursement fluctuations",
+      "Appointment scheduling optimization",
+      "Patient no-show management",
+      "Claims denial management",
+      "Regulatory compliance tracking",
+      "Staff training and credentialing",
+      "Revenue cycle optimization"
+    ],
+    "technologies": {
+      "crm": ["Salesforce Health Cloud", "Epic", "Cerner", "Zoho CRM", "SimplePractice"],
+      "website_platform": ["WordPress", "Squarespace", "Wix", "Custom"],
+      "marketing_platform": ["Google Ads", "Healthgrades", "Instagram", "Psychology Today", "Meta Ads"],
+      "pos": ["Epic", "Cerner", "athenahealth", "DrChrono"],
+      "automation_level": ["low", "medium", "high", "medium"]
+    },
+    "buying_signals": [
+      "Opening new location",
+      "Hiring additional physicians",
+      "Migrating to cloud-based EHR",
+      "Implementing telehealth",
+      "Expanding service offerings",
+      "Hiring a Practice Administrator",
+      "Upgrading imaging equipment",
+      "Launching patient portal",
+      "Adding new specialty",
+      "Expanding to new market"
+    ],
+    "events": [
+      "Opened new clinic in {city}",
+      "Hired 3 new physicians",
+      "Implemented telehealth services",
+      "Upgraded to cloud-based EHR",
+      "Won Patient Choice award",
+      "Expanded imaging capabilities",
+      "Hired a Practice Administrator",
+      "Launched wellness program",
+      "Added pediatric services",
+      "Grew patient volume 20%"
+    ],
+    "employee_range": [12, 200],
+    "location_range": [1, 10],
+    "founded_range": [1995, 2024],
+    "revenue_bands": ["$1M-$5M", "$5M-$15M", "$15M-$35M", "$35M-$75M"],
+    "description_templates": [
+      "{name} is a {sub} in {city} serving {audience}. They offer {services} and have {locations} locations.",
+      "{name} operates as a {sub} across {city} with {locations} locations. They focus on {focus}.",
+      "{name} is a {sub} providing {services} to {audience} in {city}."
+    ]
+  },
+  "Real Estate": {
+    "sub_industries": ["Residential Brokerage", "Commercial Real Estate", "Property Management", "Real Estate Development", "Title & Escrow Services", "Real Estate Investment", "Luxury Real Estate", "Industrial Real Estate", "Mixed-Use Development", "Co-Living Operator"],
+    "name_prefixes": ["Highline", "Greyrock", "Vesta", "Brick + Vine", "Beacon", "Summit", "Crestview", "Horizon", "Keystone", "Pinnacle", "Silverline", "Ironside", "Oakmont", "Bridgewater", "Crestview"],
+    "name_suffixes": ["Realty", "Properties", "Real Estate", "Homes", "Realty Partners", "Capital", "Holdings", "Group", "Associates", "Investments"],
+    "roles": [
+      ["Managing Partner", "Executive", 100],
+      ["CEO", "Executive", 100],
+      ["COO", "Operations", 95],
+      ["Director of Sales", "Sales", 85],
+      ["Marketing Director", "Marketing", 70],
+      ["Director of Leasing", "Leasing", 80],
+      ["Property Manager", "Operations", 70],
+      ["Acquisitions Director", "Finance", 80],
+      ["IT Director", "IT", 70],
+      ["HR Director", "HR", 65]
+    ],
+    "pain_points": [
+      "Agent productivity and pipeline management",
+      "Commission split tracking and accounting",
+      "Lead generation ROI across portals",
+      "Transaction coordination and compliance",
+      "Vacancy rate tracking and lease expiration",
+      "Property maintenance coordination",
+      "Tenant screening and retention",
+      "Market data aggregation and reporting",
+      "Multi-party document coordination",
+      "Regulatory compliance across counties"
+    ],
+    "technologies": {
+      "crm": ["Salesforce", "HubSpot", "LionDesk", "Follow Up Boss", "kvCORE"],
+      "website_platform": ["WordPress", "Luxury Presence", "Custom", "Wix", "Squarespace"],
+      "marketing_platform": ["Zillow", "LinkedIn Ads", "Google Ads", "Instagram", "Meta Ads"],
+      "pos": ["Stripe", "Buildium", "AppFolio", "Yardi"],
+      "automation_level": ["low", "medium", "high", "medium"]
+    },
+    "buying_signals": [
+      "Opening new office",
+      "Hiring Director of Sales",
+      "Adopting AI lead scoring",
+      "Expanding to new market",
+      "Hiring additional agents",
+      "Implementing new CRM",
+      "Acquiring smaller firm",
+      "Launching property management",
+      "Hiring IT Director",
+      "Adding commercial division"
+    ],
+    "events": [
+      "Opened new office in {city}",
+      "Hired a Director of Sales",
+      "Adopted AI lead scoring",
+      "Expanded to new market",
+      "Hired 10 new agents",
+      "Implemented new CRM",
+      "Acquired a competitor",
+      "Launched property management",
+      "Won Top Brokerage award",
+      "Grew transaction volume 25%"
+    ],
+    "employee_range": [10, 100],
+    "location_range": [1, 8],
+    "founded_range": [2000, 2024],
+    "revenue_bands": ["$2M-$5M", "$5M-$15M", "$15M-$30M", "$30M-$60M", "$60M-$120M"],
+    "description_templates": [
+      "{name} is a {sub} firm in {city} serving {audience}. They have {locations} offices and focus on {focus}.",
+      "{name} operates as a {sub} across {city} with {locations} offices. They are known for {feature}.",
+      "{name} is a {sub} in {city} with {agent_count} agents. They specialize in {focus}."
+    ]
+  },
+  "Law Firm": {
+    "sub_industries": ["Personal Injury Litigation", "Corporate & Business Law", "Family & Divorce Law", "Intellectual Property Law", "Startup & VC Law", "Criminal Defense", "Employment Law", "Immigration Law", "Real Estate Law", "Tax Law"],
+    "name_prefixes": ["Rivera & Shaw", "Sterling & Birch", "McAllister", "Klein & Partners", "Silicon Legal", "Caldwell & Associates", "Beacon Law", "Summit Legal", "Pinnacle Law", "Keystone Legal", "Harbor Law", "Crossroads Legal", "Alliance Law", "Liberty Law", "Horizon Legal"],
+    "name_suffixes": ["LLP", "Law Group", "Legal", "Law", "Associates", "Partners", "Legal Partners", "Law Office", "Legal Group", "Counsel"],
+    "roles": [
+      ["Managing Partner", "Executive", 100],
+      ["Founder", "Executive", 100],
+      ["Partner", "Legal", 95],
+      ["Director of Operations", "Operations", 85],
+      ["Marketing Director", "Marketing", 70],
+      ["IT Director", "IT", 75],
+      ["Office Manager", "Operations", 70],
+      ["Senior Associate", "Legal", 70],
+      ["Business Development Director", "Business Development", 75],
+      ["Paralegal Supervisor", "Legal Support", 60]
+    ],
+    "pain_points": [
+      "Client communication and case status",
+      "Billable hour tracking and invoicing",
+      "Document management and version control",
+      "Case intake and lead response time",
+      "Multi-jurisdiction compliance",
+      "Marketing ROI and lead generation",
+      "Staff recruitment and retention",
+      "Court deadline management",
+      "Client billing disputes",
+      "Legal research efficiency"
+    ],
+    "technologies": {
+      "crm": ["Clio", "Smokeball", "MyCase", "Salesforce", "HubSpot"],
+      "website_platform": ["WordPress", "Webflow", "Squarespace", "LawLytics", "Wix"],
+      "marketing_platform": ["Google Ads", "LinkedIn Ads", "Avvo", "Justia", "Meta Ads"],
+      "pos": ["Clio", "Smokeball", "MyCase", "QuickBooks"],
+      "automation_level": ["low", "medium", "low", "medium"]
+    },
+    "buying_signals": [
+      "Opening new office",
+      "Hiring additional attorneys",
+      "Implementing case management software",
+      "Expanding practice area",
+      "Hiring Marketing Director",
+      "Adopting AI contract review",
+      "Launching client portal",
+      "Hiring a Partner",
+      "Expanding to new state",
+      "Launching blog/content"
+    ],
+    "events": [
+      "Opened new office in {city}",
+      "Hired 3 new attorneys",
+      "Implemented case management software",
+      "Expanded practice area",
+      "Hired a Marketing Director",
+      "Adopted AI contract review",
+      "Launched client portal",
+      "Won Best Law Firm award",
+      "Hired a new Partner",
+      "Grew revenue 30%"
+    ],
+    "employee_range": [8, 80],
+    "location_range": [1, 6],
+    "founded_range": [1995, 2024],
+    "revenue_bands": ["$1M-$3M", "$3M-$8M", "$8M-$20M", "$20M-$50M"],
+    "description_templates": [
+      "{name} is a {sub} firm in {city} with {attorney_count} attorneys. They focus on {focus} and serve {audience}.",
+      "{name} operates as a {sub} firm across {city} with {locations} offices. They are known for {feature}.",
+      "{name} is a {sub} practice in {city} serving {audience} with {feature}."
+    ]
+  },
+  "Accounting Firm": {
+    "sub_industries": ["Tax & Business Advisory", "Online Bookkeeping & CFO Services", "Audit & Assurance", "Bookkeeping Services", "Sustainability-Focused Accounting", "Forensic Accounting", "Payroll Services", "Small Business Accounting", "Non-Profit Accounting", "Construction Accounting"],
+    "name_prefixes": ["Meridian", "NovaBook", "Horizon", "AccuCount", "GreenLeaf", "Summit Tax", "Keystone", "Pinnacle", "Cornerstone", "Sterling", "Bright Ledger", "Clear View", "True North", "Solid Ground", "Prime Advisory"],
+    "name_suffixes": ["Tax & Advisory", "Accounting", "CPA Group", "Accounting Solutions", "Financial Services", "Advisory", "Accounting Partners", "Tax Services", "Bookkeeping", "Advisory Group"],
+    "roles": [
+      ["Managing Partner", "Executive", 100],
+      ["CEO", "Executive", 100],
+      ["Partner", "Tax", 95],
+      ["Director of Operations", "Operations", 85],
+      ["Marketing Director", "Marketing", 70],
+      ["IT Director", "IT", 70],
+      ["Senior Accountant", "Accounting", 65],
+      ["Client Services Director", "Client Services", 75],
+      ["Tax Director", "Tax", 80],
+      ["HR Director", "HR", 65]
+    ],
+    "pain_points": [
+      "Tax season capacity planning and staff burnout",
+      "Client document collection and organization",
+      "Tax law change tracking and compliance",
+      "Practice management and workflow automation",
+      "Staff turnover and training",
+      "Client communication and expectation management",
+      "Software integration and data migration",
+      "Regulatory compliance across jurisdictions",
+      "Revenue forecasting and pipeline management",
+      "Client onboarding efficiency"
+    ],
+    "technologies": {
+      "crm": ["HubSpot", "Salesforce", "Zoho CRM", "Keeper", "Jetpack"],
+      "website_platform": ["WordPress", "Webflow", "Squarespace", "Wix"],
+      "marketing_platform": ["Google Ads", "LinkedIn Ads", "Instagram", "Meta Ads", "Email Marketing"],
+      "pos": ["QuickBooks", "Xero", "Stripe", "Bill.com"],
+      "automation_level": ["low", "medium", "high", "medium"]
+    },
+    "buying_signals": [
+      "Opening new office",
+      "Hiring additional accountants",
+      "Implementing AI tax tools",
+      "Expanding service offerings",
+      "Hiring a Tax Director",
+      "Migrating to cloud platform",
+      "Launching fractional CFO",
+      "Hiring Director of Operations",
+      "Acquiring smaller firm",
+      "Expanding to new market"
+    ],
+    "events": [
+      "Opened new office in {city}",
+      "Hired 5 new accountants",
+      "Implemented AI tax research",
+      "Expanded service offerings",
+      "Hired a Tax Director",
+      "Migrated to cloud platform",
+      "Launched fractional CFO service",
+      "Won Best CPA Firm award",
+      "Acquired a competitor",
+      "Grew revenue 25%"
+    ],
+    "employee_range": [8, 90],
+    "location_range": [1, 6],
+    "founded_range": [1998, 2024],
+    "revenue_bands": ["$1M-$3M", "$3M-$10M", "$10M-$25M", "$25M-$50M"],
+    "description_templates": [
+      "{name} is a {sub} firm in {city} serving {audience}. They have {locations} offices and focus on {focus}.",
+      "{name} operates as a {sub} across {city} with {locations} offices. They are known for {feature}.",
+      "{name} is a {sub} practice in {city} providing {services} to {audience}."
+    ]
+  },
+  "Manufacturing": {
+    "sub_industries": ["CNC Machining & Fabrication", "Electronics Contract Manufacturing", "Textile & Fabric Manufacturing", "Sustainable Packaging", "Brewery Equipment Manufacturing", "Food & Beverage Manufacturing", "Plastics Injection Molding", "Metal Stamping", "Contract Assembly", "Medical Device Manufacturing"],
+    "name_prefixes": ["Meridian Precision", "Northpeak", "Southern", "EcoForm", "Boschmann", "Pacific", "Vanguard", "Summit", "Sterling", "Precision", "Apex", "Ironclad", "Keystone", "Titan", "Pinnacle"],
+    "name_suffixes": ["Manufacturing", "Machining", "Industries", "Fabrication", "Systems", "Solutions", "Assembly", "Production", "Works", "Corp"],
+    "roles": [
+      ["President", "Executive", 100],
+      ["CEO", "Executive", 100],
+      ["VP of Operations", "Operations", 90],
+      ["Plant Manager", "Manufacturing", 85],
+      ["Quality Manager", "Quality", 80],
+      ["Supply Chain Manager", "Supply Chain", 75],
+      ["Engineering Director", "Engineering", 80],
+      ["Sales Director", "Sales", 75],
+      ["HR Director", "HR", 65],
+      ["IT Director", "IT", 70]
+    ],
+    "pain_points": [
+      "Machine utilization and OEE tracking",
+      "Raw material price volatility",
+      "Skilled worker recruitment and retention",
+      "Quality control and defect rates",
+      "Production scheduling optimization",
+      "Supply chain disruption mitigation",
+      "Equipment maintenance and downtime",
+      "Regulatory compliance and certifications",
+      "Energy cost management",
+      "Inventory management across shifts"
+    ],
+    "technologies": {
+      "crm": ["Salesforce", "SAP", "HubSpot", "Oracle", "Zoho CRM"],
+      "website_platform": ["WordPress", "Custom", "Wix", "Squarespace"],
+      "marketing_platform": ["LinkedIn", "Trade Shows", "Google Ads", "Industry Publications", "Meta Ads"],
+      "pos": ["SAP", "Oracle", "QuickBooks", "Fishbowl"],
+      "automation_level": ["medium", "high", "medium", "high"]
+    },
+    "buying_signals": [
+      "Investing in new machinery",
+      "Hiring Quality Manager",
+      "Implementing MES system",
+      "Expanding to new facility",
+      "Adding new production line",
+      "Seeking ISO certification",
+      "Hiring Supply Chain Manager",
+      "Implementing ERP system",
+      "Expanding to new market",
+      "Launching sustainability initiative"
+    ],
+    "events": [
+      "Invested in new CNC machines",
+      "Hired a Quality Manager",
+      "Implemented MES system",
+      "Expanded facility in {city}",
+      "Added new production line",
+      "Achieved ISO 9001 certification",
+      "Hired a Supply Chain Manager",
+      "Implemented ERP system",
+      "Won Manufacturing Excellence award",
+      "Grew production 30%"
+    ],
+    "employee_range": [15, 500],
+    "location_range": [1, 5],
+    "founded_range": [1985, 2024],
+    "revenue_bands": ["$3M-$10M", "$10M-$25M", "$25M-$60M", "$60M-$120M"],
+    "description_templates": [
+      "{name} is a {sub} company in {city} serving {audience}. They operate {machines} and are known for {feature}.",
+      "{name} operates as a {sub} facility in {city} with {employee_count} employees. They focus on {focus}.",
+      "{name} is a {sub} company in {city} providing {services} to {audience}."
+    ]
+  },
+  "Logistics": {
+    "sub_industries": ["Truckload & LTL Freight Brokerage", "Warehousing & Fulfillment", "Last-Mile Delivery", "Ocean Freight & Shipping", "Cold Chain Logistics", "Air Freight", "Rail Freight", "Third-Party Logistics", "Reverse Logistics", "Hazmat Transportation"],
+    "name_prefixes": ["Pinnacle", "Redwood", "SwiftChoice", "Nippon Maritime", "Tempus", "Arrow", "Meridian", "Summit", "Apex", "Velocity", "Titan", "Sterling", "Crossroads", "Gateway", "Vanguard"],
+    "name_suffixes": ["Freight", "Logistics", "Solutions", "Transport", "Supply Chain", "Distribution", "Shipping", "Carriers", "Express", "Network"],
+    "roles": [
+      ["CEO", "Executive", 100],
+      ["Founder", "Executive", 100],
+      ["COO", "Operations", 95],
+      ["VP of Sales", "Sales", 85],
+      ["Director of Operations", "Operations", 80],
+      ["Carrier Relations Director", "Operations", 75],
+      ["IT Director", "IT", 70],
+      ["HR Director", "HR", 65],
+      ["Fleet Manager", "Operations", 75],
+      ["Business Development Director", "Sales", 80]
+    ],
+    "pain_points": [
+      "Carrier capacity fluctuations and rate volatility",
+      "Load-to-carrier matching efficiency",
+      "Freight visibility and real-time tracking",
+      "Driver detention and accessorial charges",
+      "Warehouse labor productivity and turnover",
+      "Peak season capacity and surge staffing",
+      "Inventory accuracy across facilities",
+      "Route optimization and fuel costs",
+      "Customer SLA monitoring and reporting",
+      "Regulatory compliance and safety"
+    ],
+    "technologies": {
+      "crm": ["Salesforce", "HubSpot", "Oracle", "SAP", "Zoho CRM"],
+      "website_platform": ["WordPress", "Custom", "Webflow", "Squarespace"],
+      "marketing_platform": ["LinkedIn Ads", "Google Ads", "Trade Shows", "Industry Publications", "Meta Ads"],
+      "pos": ["TMS", "WMS", "QuickBooks", "SAP", "Oracle"],
+      "automation_level": ["medium", "high", "medium", "high"]
+    },
+    "buying_signals": [
+      "Opening new facility",
+      "Hiring Director of Operations",
+      "Implementing AI routing",
+      "Expanding to new market",
+      "Adding fleet vehicles",
+      "Hiring Carrier Relations Director",
+      "Implementing TMS/WMS",
+      "Launching last-mile division",
+      "Acquiring smaller carrier",
+      "Hiring IT Director"
+    ],
+    "events": [
+      "Opened new facility in {city}",
+      "Hired a Director of Operations",
+      "Implemented AI routing system",
+      "Expanded to new market",
+      "Added fleet vehicles",
+      "Hired a Carrier Relations Director",
+      "Implemented TMS/WMS",
+      "Won Logistics Excellence award",
+      "Acquired a competitor",
+      "Grew volume 35%"
+    ],
+    "employee_range": [10, 300],
+    "location_range": [1, 10],
+    "founded_range": [1995, 2024],
+    "revenue_bands": ["$3M-$10M", "$10M-$30M", "$30M-$75M", "$75M-$150M"],
+    "description_templates": [
+      "{name} is a {sub} provider based in {city} serving {audience}. They operate {vehicles} vehicles and {sq_ft} sq ft of warehouse space.",
+      "{name} operates as a {sub} company in {city} with {locations} facilities. They focus on {focus}.",
+      "{name} is a {sub} provider in {city} offering {services} to {audience}."
+    ]
+  },
+  "Construction": {
+    "sub_industries": ["Commercial General Contracting", "Residential & Commercial Roofing", "Electrical Contracting", "Residential Home Building", "Civil & Infrastructure Construction", "Plumbing & HVAC", "Concrete & Masonry", "Demolition", "Interior Fit-Out", "Renovation & Remodeling"],
+    "name_prefixes": ["Summit", "Ironclad", "GreenLine", "Harbor Ridge", "Pioneer", "Apex", "Sterling", "Keystone", "Vanguard", "Titan", "Ironside", "Crossroads", "Gateway", "Horizon", "Pinnacle"],
+    "name_suffixes": ["Construction", "Contractors", "Builders", "Enterprises", "Group", "Solutions", "Engineering", "Development", "Services", "Partners"],
+    "roles": [
+      ["President", "Executive", 100],
+      ["CEO", "Executive", 100],
+      ["VP of Operations", "Operations", 90],
+      ["Project Manager", "Project Management", 80],
+      ["Safety Director", "Safety", 75],
+      ["Director of Preconstruction", "Preconstruction", 80],
+      ["Marketing Director", "Marketing", 70],
+      ["HR Director", "HR", 65],
+      ["IT Director", "IT", 70],
+      ["Superintendent", "Field Operations", 80]
+    ],
+    "pain_points": [
+      "Construction labor shortage and subcontractor availability",
+      "Project schedule compression and delay mitigation",
+      "Material cost escalation and procurement timing",
+      "RFI and submittal turnaround time",
+      "Safety incident prevention and compliance",
+      "Budget tracking and cost overruns",
+      "Equipment maintenance and downtime",
+      "Weather-dependent scheduling",
+      "Permit and inspection coordination",
+      "Warranty service management"
+    ],
+    "technologies": {
+      "crm": ["Salesforce", "HubSpot", "Procore", "Buildertrend", "Jobber"],
+      "website_platform": ["WordPress", "Wix", "Squarespace", "Custom"],
+      "marketing_platform": ["Google Ads", "LinkedIn Ads", "Houzz", "Industry Publications", "Meta Ads"],
+      "pos": ["Procore", "Buildertrend", "QuickBooks", "PlanGrid"],
+      "automation_level": ["low", "medium", "medium", "high"]
+    },
+    "buying_signals": [
+      "Opening new branch",
+      "Hiring Project Manager",
+      "Implementing project management software",
+      "Expanding to new market",
+      "Adding self-perform capabilities",
+      "Hiring Safety Director",
+      "Investing in new equipment",
+      "Launching preconstruction division",
+      "Hiring Superintendent",
+      "Winning major contract"
+    ],
+    "events": [
+      "Opened new branch in {city}",
+      "Hired a Project Manager",
+      "Implemented project management software",
+      "Expanded to new market",
+      "Added self-perform capabilities",
+      "Hired a Safety Director",
+      "Invested in new equipment",
+      "Won major contract",
+      "Achieved safety milestone",
+      "Grew revenue 20%"
+    ],
+    "employee_range": [15, 200],
+    "location_range": [1, 6],
+    "founded_range": [1990, 2024],
+    "revenue_bands": ["$5M-$15M", "$15M-$40M", "$40M-$80M", "$80M-$200M"],
+    "description_templates": [
+      "{name} is a {sub} company in {city} serving {audience}. They have {employee_count} employees and focus on {focus}.",
+      "{name} operates as a {sub} firm across {city} with {locations} offices. They are known for {feature}.",
+      "{name} is a {sub} company in {city} providing {services} to {audience}."
+    ]
+  },
+  "Retail": {
+    "sub_industries": ["Home Decor & Furniture Retail", "Vintage & Second-Hand Clothing", "Specialty Grocery", "Apparel & Lifestyle Brand", "Electronics Retail", "Sports & Outdoor", "Bookstore & Gift Shop", "Pet Supplies", "Beauty & Cosmetics", "Wine & Spirits"],
+    "name_prefixes": ["Terra & Timber", "Circa 1950", "Farm & Pantry", "Kinfolk", "Urban Outfitters", "Wild Harvest", "Ironwood", "Copper Fox", "Blue Ridge", "Summit", "Pioneer", "Sterling", "Golden Oak", "Silverline", "Horizon"],
+    "name_suffixes": ["Goods", "Market", "Collective", "Supply Co", "Store", "Shop", "Outfitters", "Trading Co", "Exchange", "Boutique"],
+    "roles": [
+      ["CEO", "Executive", 100],
+      ["Founder", "Executive", 100],
+      ["COO", "Operations", 95],
+      ["VP of Retail", "Retail", 85],
+      ["VP of E-commerce", "E-commerce", 80],
+      ["Merchandising Director", "Merchandising", 75],
+      ["Marketing Director", "Marketing", 70],
+      ["Supply Chain Director", "Supply Chain", 75],
+      ["Store Manager", "Operations", 65],
+      ["Creative Director", "Creative", 70]
+    ],
+    "pain_points": [
+      "Omnichannel inventory unification",
+      "Visual merchandising consistency across locations",
+      "Last-mile delivery logistics",
+      "Seasonal inventory planning and markdowns",
+      "Customer acquisition cost on paid social",
+      "Returns and reverse logistics",
+      "Staff turnover and training",
+      "Product sourcing and authentication",
+      "Loyalty program management",
+      "Store-level performance analytics"
+    ],
+    "technologies": {
+      "crm": ["Salesforce", "Shopify", "HubSpot", "Klaviyo", "Lightspeed"],
+      "website_platform": ["Shopify", "Shopify Plus", "WooCommerce", "Custom", "BigCommerce"],
+      "marketing_platform": ["Klaviyo", "Meta Ads", "Google Ads", "TikTok", "Instagram"],
+      "pos": ["Shopify", "Square", "Lightspeed", "Clover"],
+      "automation_level": ["medium", "high", "medium", "high"]
+    },
+    "buying_signals": [
+      "Opening new store",
+      "Hiring VP of E-commerce",
+      "Implementing unified commerce",
+      "Launching subscription model",
+      "Expanding to new market",
+      "Hiring Creative Director",
+      "Launching mobile app",
+      "Acquiring brand",
+      "Hiring Supply Chain Director",
+      "Expanding product line"
+    ],
+    "events": [
+      "Opened new store in {city}",
+      "Hired a VP of E-commerce",
+      "Implemented unified commerce",
+      "Launched subscription model",
+      "Expanded to new market",
+      "Hired a Creative Director",
+      "Launched mobile app",
+      "Acquired a brand",
+      "Won Retail Excellence award",
+      "Grew revenue 30%"
+    ],
+    "employee_range": [10, 250],
+    "location_range": [1, 20],
+    "founded_range": [2005, 2024],
+    "revenue_bands": ["$1M-$5M", "$5M-$15M", "$15M-$30M", "$30M-$60M", "$60M-$120M"],
+    "description_templates": [
+      "{name} is a {sub} retailer with {locations} locations in {city}. They focus on {focus} and serve {audience}.",
+      "{name} operates as a {sub} brand across {city} with {locations} stores. They are known for {feature}.",
+      "{name} is a {sub} retailer in {city} offering {products} to {audience}."
+    ]
+  },
+  "Education": {
+    "sub_industries": ["K-12 School", "Online Learning Platform", "Tutoring Center", "Language School", "Coding Bootcamp", "Music School", "Art & Design Academy", "Business School", "Early Childhood Education", "Test Prep Center"],
+    "name_prefixes": ["BrightPath", "Summit Academy", "Northstar", "Bright Horizons", "Keystone", "Vanguard", "Horizon", "Apex", "Pinnacle", "Sterling", "Elevate", "Ascend", "Prime", "Crestview", "Gateway"],
+    "name_suffixes": ["Academy", "School", "Learning", "Education", "Institute", "College", "Prep", "Center", "Academies", "Learning Center"],
+    "roles": [
+      ["Founder", "Executive", 100],
+      ["CEO", "Executive", 100],
+      ["Head of School", "Executive", 90],
+      ["Director of Operations", "Operations", 85],
+      ["Director of Admissions", "Admissions", 80],
+      ["Marketing Director", "Marketing", 70],
+      ["Curriculum Director", "Education", 75],
+      ["HR Director", "HR", 65],
+      ["IT Director", "IT", 70],
+      ["Student Success Manager", "Student Services", 65]
+    ],
+    "pain_points": [
+      "Student enrollment and retention",
+      "Teacher recruitment and retention",
+      "Curriculum development and updates",
+      "Parent communication and engagement",
+      "Administrative workflow automation",
+      "Financial aid and tuition management",
+      "Learning management system adoption",
+      "Regulatory compliance and accreditation",
+      "Student outcome tracking",
+      "Marketing and brand awareness"
+    ],
+    "technologies": {
+      "crm": ["HubSpot", "Salesforce", "Zoho CRM", "Eviso", "Finalsite"],
+      "website_platform": ["WordPress", "Squarespace", "Wix", "Finalsite"],
+      "marketing_platform": ["Google Ads", "Instagram", "Facebook Ads", "Email Marketing", "LinkedIn"],
+      "pos": ["Stripe", "QuickBooks", "SchoolAdmin", "FACTS"],
+      "automation_level": ["low", "medium", "medium", "high"]
+    },
+    "buying_signals": [
+      "Opening new campus",
+      "Hiring Director of Admissions",
+      "Implementing LMS",
+      "Launching online program",
+      "Expanding to new market",
+      "Hiring Head of School",
+      "Adding new program",
+      "Launching summer camps",
+      "Hiring Marketing Director",
+      "Expanding student capacity"
+    ],
+    "events": [
+      "Opened new campus in {city}",
+      "Hired a Director of Admissions",
+      "Implemented LMS system",
+      "Launched online program",
+      "Expanded to new market",
+      "Hired a Head of School",
+      "Added new program",
+      "Launched summer camps",
+      "Won Education Excellence award",
+      "Grew enrollment 25%"
+    ],
+    "employee_range": [10, 150],
+    "location_range": [1, 8],
+    "founded_range": [2000, 2024],
+    "revenue_bands": ["$1M-$5M", "$5M-$15M", "$15M-$30M", "$30M-$60M"],
+    "description_templates": [
+      "{name} is a {sub} in {city} serving {audience}. They have {locations} campuses and focus on {focus}.",
+      "{name} operates as a {sub} across {city} with {locations} campuses. They are known for {feature}.",
+      "{name} is a {sub} in {city} providing {services} to {audience}."
+    ]
+  },
+  "SaaS": {
+    "sub_industries": ["B2B SaaS", "CRM Platform", "Marketing Automation", "Project Management", "HR Tech", "FinTech", "EdTech", "HealthTech", "DevOps Tools", "Analytics Platform"],
+    "name_prefixes": ["Nexus", "Velocity", "Quantum", "Pulse", "Synapse", "Forge", "Prism", "Atlas", "Horizon", "Zenith", "Apex", "Spark", "Vanguard", "Nimbus", "Orbit"],
+    "name_suffixes": ["Labs", "AI", "Tech", "io", "ify", "Hub", "Stack", "Cloud", "Suite", "Works", "Platform", "Systems", "Dynamics", "Engine", "Flow"],
+    "roles": [
+      ["CEO", "Executive", 100],
+      ["Founder", "Executive", 100],
+      ["CTO", "Engineering", 90],
+      ["VP of Sales", "Sales", 90],
+      ["VP of Marketing", "Marketing", 85],
+      ["VP of Product", "Product", 85],
+      ["VP of Customer Success", "Customer Success", 80],
+      ["Head of Engineering", "Engineering", 80],
+      ["Head of Growth", "Growth", 75],
+      ["CFO", "Finance", 85]
+    ],
+    "pain_points": [
+      "Customer acquisition cost optimization",
+      "Churn reduction and retention",
+      "Product-market fit refinement",
+      "Scaling engineering team",
+      "Enterprise sales cycle complexity",
+      "API reliability and uptime",
+      "Data security and compliance",
+      "Pricing strategy optimization",
+      "Onboarding and activation",
+      "Integrations with legacy systems"
+    ],
+    "technologies": {
+      "crm": ["Salesforce", "HubSpot", "Intercom", "Zendesk", "Freshdesk"],
+      "website_platform": ["Next.js", "React", "Webflow", "WordPress", "Custom"],
+      "marketing_platform": ["HubSpot", "Marketo", "Google Ads", "LinkedIn Ads", "ProductHunt"],
+      "pos": ["Stripe", "Chargebee", "Recurly", "Braintree"],
+      "automation_level": ["high", "high", "medium", "high"]
+    },
+    "buying_signals": [
+      "Raising Series A/B funding",
+      "Hiring VP of Sales",
+      "Launching enterprise tier",
+      "Expanding to new market",
+      "Hiring VP of Customer Success",
+      "Launching mobile app",
+      "Implementing Salesforce",
+      "Hiring CTO",
+      "Launching partner program",
+      "Achieving SOC2 compliance"
+    ],
+    "events": [
+      "Raised {funding_round}",
+      "Hired a VP of Sales",
+      "Launched enterprise tier",
+      "Expanded to {city}",
+      "Hired a VP of Customer Success",
+      "Launched mobile app",
+      "Implemented Salesforce",
+      "Hired a CTO",
+      "Won TechCrunch award",
+      "Grew ARR 100%"
+    ],
+    "employee_range": [5, 200],
+    "location_range": [1, 4],
+    "founded_range": [2015, 2024],
+    "revenue_bands": ["$500K-$2M", "$2M-$10M", "$10M-$30M", "$30M-$75M", "$75M-$150M"],
+    "description_templates": [
+      "{name} is a {sub} company based in {city} serving {audience}. Their platform {feature}.",
+      "{name} operates as a {sub} startup in {city} with {employee_count} employees. They focus on {focus}.",
+      "{name} is a {sub} company in {city} providing {services} to {audience}."
+    ]
+  },
+  "Marketing Agency": {
+    "sub_industries": ["Digital Marketing Agency", "Creative Agency", "Performance Marketing", "Content Marketing", "Social Media Agency", "Brand Strategy", "PR Agency", "SEO Agency", "Video Production", "Influencer Marketing"],
+    "name_prefixes": ["Bright Spark", "Maven", "Elevate", "Ignite", "Pulse", "Velocity", "Spark", "Beacon", "Catalyst", "Amplify", "Thrive", "Apex", "Zenith", "Prism", "Nexus"],
+    "name_suffixes": ["Agency", "Media", "Group", "Collective", "Studio", "Partners", "Labs", "Digital", "Creative", "Marketing"],
+    "roles": [
+      ["Founder", "Executive", 100],
+      ["CEO", "Executive", 100],
+      ["COO", "Operations", 95],
+      ["Creative Director", "Creative", 85],
+      ["Head of Strategy", "Strategy", 80],
+      ["VP of Client Services", "Client Services", 80],
+      ["Head of Content", "Content", 75],
+      ["Media Buyer", "Media", 65],
+      ["Account Manager", "Client Services", 70],
+      ["Business Development Director", "Sales", 80]
+    ],
+    "pain_points": [
+      "Client retention and upselling",
+      "Campaign performance measurement",
+      "Creative team capacity management",
+      "Scope creep and project profitability",
+      "New client acquisition",
+      "Talent recruitment for creative roles",
+      "Cross-platform campaign coordination",
+      "Client reporting and dashboards",
+      "Pricing and packaging strategy",
+      "Keeping up with platform changes"
+    ],
+    "technologies": {
+      "crm": ["HubSpot", "Salesforce", "Monday.com", "Asana", "ClickUp"],
+      "website_platform": ["WordPress", "Webflow", "Squarespace", "Wix"],
+      "marketing_platform": ["Meta Ads", "Google Ads", "TikTok Ads", "LinkedIn Ads", "HubSpot"],
+      "pos": ["Stripe", "QuickBooks", "FreshBooks", "Wave"],
+      "automation_level": ["medium", "high", "medium", "high"]
+    },
+    "buying_signals": [
+      "Hiring Creative Director",
+      "Opening new office",
+      "Launching new service",
+      "Expanding to new market",
+      "Hiring Head of Strategy",
+      "Implementing new project tool",
+      "Launching podcast/content",
+      "Winning major client",
+      "Hiring Business Development",
+      "Expanding team 50%"
+    ],
+    "events": [
+      "Hired a Creative Director",
+      "Opened new office in {city}",
+      "Launched new service line",
+      "Expanded to {city}",
+      "Hired a Head of Strategy",
+      "Implemented project management tool",
+      "Launched company podcast",
+      "Won major client",
+      "Hired Business Development lead",
+      "Grew team 50%"
+    ],
+    "employee_range": [5, 100],
+    "location_range": [1, 5],
+    "founded_range": [2010, 2024],
+    "revenue_bands": ["$500K-$2M", "$2M-$8M", "$8M-$20M", "$20M-$50M"],
+    "description_templates": [
+      "{name} is a {sub} based in {city} serving {audience}. They specialize in {focus}.",
+      "{name} operates as a {sub} agency in {city} with {employee_count} team members. They focus on {focus}.",
+      "{name} is a {sub} in {city} providing {services} to {audience}."
+    ]
+  },
+  "Furniture": {
+    "sub_industries": ["Modern Furniture Retail", "Custom Woodworking", "Office Furniture", "Outdoor Furniture", "Mid-Century Modern", "Sustainable Furniture", "Luxury Furniture", "Affordable Home Furnishings", "Kitchen & Bath Design", "Commercial Furniture"],
+    "name_prefixes": ["Oakwood", "Timberline", "Crafted", "Hearthstone", "Ironwood", "Cedar & Pine", "Grain & Grain", "Willow & Ash", "Mountain", "Rustic", "Modern", "Studio", "Artisan", "Heritage", "Foundry"],
+    "name_suffixes": ["Furniture", "Woodworks", "Studio", "Design Co", "Collective", "Workshop", "Makers", "Craft", "House", "Interiors"],
+    "roles": [
+      ["Owner", "Executive", 100],
+      ["Founder", "Executive", 100],
+      ["CEO", "Executive", 95],
+      ["Operations Manager", "Operations", 85],
+      ["Design Director", "Design", 80],
+      ["Sales Director", "Sales", 75],
+      ["Production Manager", "Manufacturing", 80],
+      ["Marketing Manager", "Marketing", 70],
+      ["Showroom Manager", "Retail", 65],
+      ["Supply Chain Manager", "Supply Chain", 75]
+    ],
+    "pain_points": [
+      "Custom order lead time management",
+      "Material sourcing and cost volatility",
+      "Showroom vs. e-commerce cannibalization",
+      "Delivery and white-glove logistics",
+      "Production scheduling optimization",
+      "Design trend forecasting",
+      "Inventory management for large items",
+      "Customer return handling",
+      "Trade program management",
+      "Sustainability certification compliance"
+    ],
+    "technologies": {
+      "crm": ["HubSpot", "Salesforce", "Zoho CRM", "Shopify", null],
+      "website_platform": ["Shopify", "WordPress", "Squarespace", "Custom"],
+      "marketing_platform": ["Instagram", "Pinterest", "Google Ads", "Meta Ads", "Houzz"],
+      "pos": ["Shopify", "Square", "Lightspeed", "QuickBooks"],
+      "automation_level": ["low", "medium", "low", "medium"]
+    },
+    "buying_signals": [
+      "Opening new showroom",
+      "Hiring Design Director",
+      "Launching e-commerce",
+      "Expanding to new market",
+      "Hiring Operations Manager",
+      "Adding new product line",
+      "Launching trade program",
+      "Implementing inventory system",
+      "Hiring Supply Chain Manager",
+      "Expanding production capacity"
+    ],
+    "events": [
+      "Opened new showroom in {city}",
+      "Hired a Design Director",
+      "Launched e-commerce site",
+      "Expanded to new market",
+      "Hired an Operations Manager",
+      "Added new product line",
+      "Launched trade program",
+      "Implemented inventory system",
+      "Won Design Excellence award",
+      "Grew revenue 25%"
+    ],
+    "employee_range": [8, 120],
+    "location_range": [1, 8],
+    "founded_range": [2000, 2024],
+    "revenue_bands": ["$1M-$3M", "$3M-$10M", "$10M-$25M", "$25M-$60M"],
+    "description_templates": [
+      "{name} is a {sub} company in {city} known for {feature}. They serve {audience} with {products}.",
+      "{name} operates as a {sub} brand with {locations} showrooms in {city}. They focus on {focus}.",
+      "{name} is a {sub} company in {city} providing {products} to {audience}."
+    ]
+  },
+  "Automotive": {
+    "sub_industries": ["Car Dealership", "Auto Repair Shop", "Body Shop", "Car Wash & Detailing", "Used Car Dealership", "Fleet Management", "EV Charging Network", "Auto Parts Retail", "Tire Shop", "Performance Tuning"],
+    "name_prefixes": ["Summit", "Pinnacle", "Crestview", "Horizon", "Keystone", "Sterling", "Apex", "Crossroads", "Gateway", "Vanguard", "Silverline", "Ironside", "Golden", "Premier", "Elite"],
+    "name_suffixes": ["Motors", "Auto", "Automotive", "Cars", "Deal", "Dealership", "Service Center", "Garage", "Works", "Express"],
+    "roles": [
+      ["Owner", "Executive", 100],
+      ["General Manager", "Executive", 90],
+      ["Service Manager", "Operations", 80],
+      ["Sales Manager", "Sales", 80],
+      ["Finance Manager", "Finance", 75],
+      ["Parts Manager", "Parts", 70],
+      ["Marketing Manager", "Marketing", 70],
+      ["Body Shop Manager", "Operations", 75],
+      ["Detail Manager", "Operations", 65],
+      ["HR Manager", "HR", 65]
+    ],
+    "pain_points": [
+      "Inventory management and vehicle aging",
+      "Service appointment scheduling",
+      "Parts ordering and inventory",
+      "Customer retention and follow-up",
+      "Technician recruitment and retention",
+      "Service department profitability",
+      "Marketing ROI tracking",
+      "Warranty claim processing",
+      "Customer communication workflows",
+      "Multi-location performance tracking"
+    ],
+    "technologies": {
+      "crm": ["DealerSocket", "Salesforce", "HubSpot", "VinSolutions", "vAuto"],
+      "website_platform": ["WordPress", "DealerOn", "Dealer Inspire", "Custom"],
+      "marketing_platform": ["Google Ads", "Meta Ads", "Instagram", "Autotrader", "Cars.com"],
+      "pos": ["CDK", " Reynolds & Reynolds", "DealerSocket", "QuickBooks"],
+      "automation_level": ["low", "medium", "medium", "high"]
+    },
+    "buying_signals": [
+      "Opening new dealership",
+      "Hiring Service Manager",
+      "Implementing CRM system",
+      "Expanding service department",
+      "Hiring General Manager",
+      "Launching online sales",
+      "Adding EV service",
+      "Implementing DMS",
+      "Expanding to new location",
+      "Hiring Finance Manager"
+    ],
+    "events": [
+      "Opened new dealership in {city}",
+      "Hired a Service Manager",
+      "Implemented CRM system",
+      "Expanded service department",
+      "Hired a General Manager",
+      "Launched online sales portal",
+      "Added EV service capability",
+      "Implemented new DMS",
+      "Won Dealer of the Year",
+      "Grew service revenue 30%"
+    ],
+    "employee_range": [10, 150],
+    "location_range": [1, 5],
+    "founded_range": [1990, 2024],
+    "revenue_bands": ["$5M-$15M", "$15M-$40M", "$40M-$80M", "$80M-$200M"],
+    "description_templates": [
+      "{name} is a {sub} in {city} serving {audience}. They have {locations} locations and are known for {feature}.",
+      "{name} operates as a {sub} in {city} with {employee_count} employees. They focus on {focus}.",
+      "{name} is a {sub} in {city} providing {services} to {audience}."
+    ]
+  },
+  "Travel Agency": {
+    "sub_industries": ["Luxury Travel", "Adventure Travel", "Corporate Travel", "Wedding & Honeymoon", "Family Vacation", "Eco-Tourism", "Cruise Specialist", "Group Tours", "Business Travel Management", "Destination Wedding"],
+    "name_prefixes": ["Wanderlust", "Meridian", "Horizon", "Passage", "Odyssey", "Venture", "Nomad", "Explorer", "Voyage", "Compass", "Trailblazer", "Roaming", "Safari", "Journey", "Trek"],
+    "name_suffixes": ["Travel", "Travels", "Adventures", "Voyages", "Escapes", "Journeys", "Experiences", "Tours", "Getaways", "Expeditions"],
+    "roles": [
+      ["Owner", "Executive", 100],
+      ["Founder", "Executive", 100],
+      ["Director of Operations", "Operations", 85],
+      ["Travel Advisor Lead", "Sales", 80],
+      ["Marketing Director", "Marketing", 70],
+      ["Corporate Travel Manager", "Corporate", 75],
+      ["Group Tours Director", "Operations", 75],
+      ["Customer Service Manager", "Client Services", 65],
+      ["IT Director", "IT", 65],
+      ["HR Manager", "HR", 60]
+    ],
+    "pain_points": [
+      "Supplier relationship management",
+      "Seasonal demand fluctuations",
+      "Client communication and itinerary management",
+      "Commission tracking and supplier payments",
+      "Group booking coordination",
+      "Travel restriction monitoring",
+      "Client retention and repeat bookings",
+      "Marketing in competitive market",
+      "Travel insurance and liability",
+      "Technology adoption for bookings"
+    ],
+    "technologies": {
+      "crm": ["HubSpot", "Salesforce", "TravelJoy", "Zoho CRM", "ClientBase"],
+      "website_platform": ["WordPress", "Squarespace", "Wix", "Custom"],
+      "marketing_platform": ["Instagram", "Google Ads", "Meta Ads", "Pinterest", "Email Marketing"],
+      "pos": ["Stripe", "QuickBooks", "TravelJoy", "Sabre"],
+      "automation_level": ["low", "medium", "low", "medium"]
+    },
+    "buying_signals": [
+      "Hiring Travel Advisor",
+      "Opening new location",
+      "Launching new destination",
+      "Expanding corporate travel",
+      "Hiring Marketing Director",
+      "Implementing booking software",
+      "Launching group tours",
+      "Hiring Operations Manager",
+      "Expanding to new market",
+      "Launching loyalty program"
+    ],
+    "events": [
+      "Hired a Travel Advisor",
+      "Opened new office in {city}",
+      "Launched new destination package",
+      "Expanded corporate travel division",
+      "Hired a Marketing Director",
+      "Implemented booking software",
+      "Launched group tours program",
+      "Won Best Travel Agency award",
+      "Hired Operations Manager",
+      "Grew bookings 30%"
+    ],
+    "employee_range": [5, 80],
+    "location_range": [1, 5],
+    "founded_range": [2005, 2024],
+    "revenue_bands": ["$500K-$2M", "$2M-$8M", "$8M-$20M", "$20M-$50M"],
+    "description_templates": [
+      "{name} is a {sub} agency in {city} specializing in {focus}. They serve {audience} with {features}.",
+      "{name} operates as a {sub} agency across {city} with {locations} offices. They are known for {feature}.",
+      "{name} is a {sub} in {city} providing {services} to {audience}."
+    ]
+  },
+  "E-commerce": {
+    "sub_industries": ["Direct-to-Consumer Brand", "Marketplace", "Subscription Box", "Dropshipping", "Niche E-commerce", "B2B E-commerce", "Health & Wellness E-commerce", "Fashion E-commerce", "Electronics E-commerce", "Food & Beverage E-commerce"],
+    "name_prefixes": ["Direct", "Swift", "Nova", "Prime", "Vibe", "Snap", "Zest", "Lush", "Bold", "Fresh", "Urban", "Eco", "Pure", "Vivid", "Bright"],
+    "name_suffixes": ["Shop", "Market", "Store", "Direct", "Supply", "Co", "Box", "Hub", "Zone", "Express", "Plus", "Deals", "Goods", "Warehouse", "Outlet"],
+    "roles": [
+      ["CEO", "Executive", 100],
+      ["Founder", "Executive", 100],
+      ["COO", "Operations", 95],
+      ["VP of Marketing", "Marketing", 85],
+      ["VP of Operations", "Operations", 85],
+      ["Head of Product", "Product", 80],
+      ["Head of Customer Service", "Client Services", 70],
+      ["Head of Fulfillment", "Logistics", 75],
+      ["CFO", "Finance", 85],
+      ["Head of Growth", "Growth", 75]
+    ],
+    "pain_points": [
+      "Customer acquisition cost optimization",
+      "Cart abandonment and conversion rates",
+      "Inventory management across channels",
+      "Fulfillment and shipping logistics",
+      "Product return handling",
+      "Supplier reliability and quality",
+      "Customer lifetime value optimization",
+      "Platform dependency risk",
+      "International shipping complexity",
+      "Review and reputation management"
+    ],
+    "technologies": {
+      "crm": ["Klaviyo", "Salesforce", "HubSpot", "Gorgias", "Intercom"],
+      "website_platform": ["Shopify", "Shopify Plus", "WooCommerce", "BigCommerce", "Custom"],
+      "marketing_platform": ["Klaviyo", "Meta Ads", "Google Ads", "TikTok Ads", "Pinterest"],
+      "pos": ["Shopify", "Stripe", "Square", "Recharge"],
+      "automation_level": ["high", "medium", "high", "medium"]
+    },
+    "buying_signals": [
+      "Raising funding",
+      "Hiring VP of Marketing",
+      "Launching subscription model",
+      "Expanding to new market",
+      "Hiring Head of Fulfillment",
+      "Implementing new platform",
+      "Launching mobile app",
+      "Hiring COO",
+      "Expanding product line",
+      "Launching influencer program"
+    ],
+    "events": [
+      "Raised {funding_round}",
+      "Hired a VP of Marketing",
+      "Launched subscription model",
+      "Expanded to new market",
+      "Hired a Head of Fulfillment",
+      "Migrated to Shopify Plus",
+      "Launched mobile app",
+      "Hired a COO",
+      "Won Best E-commerce award",
+      "Grew revenue 80%"
+    ],
+    "employee_range": [5, 150],
+    "location_range": [1, 4],
+    "founded_range": [2015, 2024],
+    "revenue_bands": ["$500K-$2M", "$2M-$10M", "$10M-$30M", "$30M-$75M", "$75M-$150M"],
+    "description_templates": [
+      "{name} is a {sub} brand based in {city} serving {audience}. They focus on {focus}.",
+      "{name} operates as a {sub} platform in {city} with {employee_count} employees. They are known for {feature}.",
+      "{name} is a {sub} company in {city} providing {products} to {audience}."
+    ]
+  }
+}

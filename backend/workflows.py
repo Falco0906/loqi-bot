@@ -1,10 +1,12 @@
 from services.gmail import send_email
 from services.google_auth import refresh_access_token
-from services.apollo import format_leads_message
+from services.lead_provider import format_leads_message
 from services.ai import generate_outreach_email, rewrite_message, OpenAIError
 from services.lead_provider import get_leads, search_with_expansion
 from services.supabase import get_user, is_token_expired, store_leads, update_google_access_token
 from services.conversation_store import record_workflow_event
+from services.enrichment.enrichment_factory import get_enricher
+from services.intelligence.lead_intelligence import generate_lead_intelligence
 
 
 VALID_TONES = {"casual", "formal", "aggressive", "friendly"}
@@ -126,13 +128,17 @@ def generate_leads(input: dict) -> dict:
 
     if not result.get("ok") or not leads:
         error = result.get("error") or "unknown_error"
+        friendly_error = (
+            "I couldn't find strong matches with that search. "
+            "Want me to broaden the search or try a slightly different audience?"
+        )
         return {
             "ok": False,
             "type": "generate_leads",
             "source": result.get("source", "lead_provider"),
             "leads": [],
             "stored_leads": [],
-            "message": f"Lead search failed: {error}",
+            "message": friendly_error,
             "error": error,
         }
 
@@ -159,6 +165,20 @@ def draft_message(input: dict) -> dict:
     length = _infer_length(input)
     previous_message = input.get("previous_message") or ""
 
+    company_intelligence = None
+    lead_intelligence = None
+    try:
+        enricher = get_enricher()
+        if enricher.health_check().get("ok"):
+            company_intelligence = enricher.enrich_lead(lead)
+    except Exception as e:
+        print(f"[workflows] Enrichment failed (proceeding without): {e}")
+
+    try:
+        lead_intelligence = generate_lead_intelligence(lead, company_intelligence)
+    except Exception as e:
+        print(f"[workflows] Lead intelligence generation failed (proceeding without): {e}")
+
     if edit_request and previous_message:
         try:
             llm_message = rewrite_message(edit_request, previous_message)
@@ -167,27 +187,31 @@ def draft_message(input: dict) -> dict:
             return {
                 "ok": False,
                 "type": "draft_message",
-                "message": f"Failed to rewrite draft: {e}",
+                "message": f"Couldn't rewrite the draft due to a generation error. Want to try a different instruction or start fresh?",
                 "lead": lead,
                 "edit_request": edit_request,
                 "tone": tone,
                 "length": length,
                 "error": str(e),
+                "company_intelligence": company_intelligence,
+                "lead_intelligence": lead_intelligence,
             }
     else:
         try:
-            draft = generate_outreach_email(lead)
+            draft = generate_outreach_email(lead, company_intelligence, lead_intelligence)
             message = f"Draft ready:\n\n---\n{draft.get('body', '')}\n---"
         except OpenAIError as e:
             return {
                 "ok": False,
                 "type": "draft_message",
-                "message": f"Failed to generate draft: {e}",
+                "message": f"I wasn't able to generate a draft right now. Try again or adjust the targeting.",
                 "lead": lead,
                 "edit_request": edit_request,
                 "tone": tone,
                 "length": length,
                 "error": str(e),
+                "company_intelligence": company_intelligence,
+                "lead_intelligence": lead_intelligence,
             }
 
     return {
@@ -198,6 +222,8 @@ def draft_message(input: dict) -> dict:
         "edit_request": edit_request,
         "tone": tone,
         "length": length,
+        "company_intelligence": company_intelligence,
+        "lead_intelligence": lead_intelligence,
     }
 
 
@@ -210,7 +236,7 @@ def send_outreach(input: dict) -> dict:
         return {
             "ok": False,
             "type": "send_outreach",
-            "message": "⚠️ Failed to send email. Try again.",
+            "message": "Something went wrong on my end. Mind trying again?",
             "error": "missing_user",
         }
 
@@ -218,7 +244,7 @@ def send_outreach(input: dict) -> dict:
         return {
             "ok": False,
             "type": "send_outreach",
-            "message": "Connect your Gmail first with /connect",
+            "message": "Gmail isn't connected yet. Connect it once and I'll be able to send outreach directly from Loqi.",
             "error": "missing_google_tokens",
         }
 
@@ -238,12 +264,26 @@ def send_outreach(input: dict) -> dict:
             return {
                 "ok": False,
                 "type": "send_outreach",
-                "message": "⚠️ Failed to refresh Gmail token. Try connecting Gmail again.",
+                "message": "Your Gmail connection expired. Connect it again with /connect and I'll be ready to send.",
                 "error": "token_refresh_failed",
             }
 
+    company_intelligence = None
+    lead_intelligence = None
     try:
-        draft = generate_outreach_email(lead)
+        enricher = get_enricher()
+        if enricher.health_check().get("ok"):
+            company_intelligence = enricher.enrich_lead(lead)
+    except Exception as e:
+        print(f"[workflows] Enrichment failed during send (proceeding without): {e}")
+
+    try:
+        lead_intelligence = generate_lead_intelligence(lead, company_intelligence)
+    except Exception as e:
+        print(f"[workflows] Lead intelligence failed during send (proceeding without): {e}")
+
+    try:
+        draft = generate_outreach_email(lead, company_intelligence, lead_intelligence)
         send_email(
             access_token or user.get("google_access_token", ""),
             lead.get("email") or "",
@@ -254,14 +294,14 @@ def send_outreach(input: dict) -> dict:
         return {
             "ok": False,
             "type": "send_outreach",
-            "message": f"⚠️ Failed to generate email: {e}",
+            "message": "I couldn't generate the email content. Let me try again — or adjust the draft first.",
             "error": f"openai_error: {e}",
         }
     except Exception:
         return {
             "ok": False,
             "type": "send_outreach",
-            "message": "⚠️ Failed to send email. Try again.",
+            "message": "The email didn't go through. Gmail may need reconnecting — try /connect to set it up again.",
             "error": "send_failed",
         }
 
@@ -273,8 +313,8 @@ def send_outreach(input: dict) -> dict:
         "ok": True,
         "type": "send_outreach",
         "message": (
-            "✅ Email sent successfully\n\n"
-            f"To: {lead.get('name', 'Unknown')}{company_part}\n\n"
+            "Looks good — I'll send this from your connected Gmail.\n\n"
+            f"To: {lead.get('name', 'Unknown')}{company_part}\n"
             f"Subject: {subject}"
         ),
         "result": draft,

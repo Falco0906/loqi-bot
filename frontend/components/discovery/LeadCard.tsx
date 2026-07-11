@@ -100,11 +100,12 @@ export default function LeadCard({ lead, index, selected, onToggle }: Props) {
       tabIndex={0}
       onClick={(e) => onToggle(index, e.shiftKey)}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(index, e.shiftKey); } }}
-      className={`rounded-xl p-4 cursor-pointer transition-all select-none ${
+      className={`rounded-xl p-4 cursor-pointer transition-all duration-150 select-none active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2 animate-slide-up ${
         selected
           ? "border-2 border-primary/60 bg-surface-low shadow-[0_0_0_1px_rgba(139,92,246,0.15)]"
           : "border border-outline-variant/10 bg-surface hover:bg-surface-low hover:border-outline-variant/30"
       }`}
+      style={{ animationDelay: `${(index % 10) * 0.03}s` }}
     >
       <div className="flex justify-between items-start mb-3">
         <div className="flex gap-3 items-start">

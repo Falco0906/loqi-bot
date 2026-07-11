@@ -8,6 +8,7 @@ import {
   approveDraft,
 } from "../../lib/api";
 import Icon from "../shared/Icon";
+import { toast } from "../shared/Toast";
 import { usePageContext } from "../../hooks/usePageContext";
 import { useActionHandlers } from "../../hooks/useActionHandlers";
 
@@ -204,20 +205,21 @@ export default function DraftReviewWorkspace() {
   /* ── Empty: backend error ── */
   if (!loading && backendError) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-center px-6">
+      <div className="flex flex-col items-center justify-center h-full text-center px-6 animate-fade-in">
         <div className="w-16 h-16 rounded-2xl bg-error/10 flex items-center justify-center text-error mb-4">
-          <Icon name="warning" className="text-4xl" />
+          <Icon name="warning" className="text-3xl" />
         </div>
-        <p className="text-body-lg text-on-surface-variant/60">
+        <p className="text-body-lg text-on-surface-variant/80 font-medium">
           Backend unavailable
         </p>
-        <p className="mt-1 text-body-md text-on-surface-variant/40 max-w-sm">
+        <p className="mt-1.5 text-body-md text-on-surface-variant/50 max-w-sm leading-relaxed">
           Could not load drafts. Make sure the backend server is running.
         </p>
         <button
           onClick={fetchDrafts}
-          className="mt-4 px-5 py-2 bg-primary text-on-primary text-sm font-bold rounded-lg hover:brightness-110 transition-all"
+          className="mt-6 inline-flex items-center gap-1.5 rounded-lg border border-error/30 px-4 py-2 text-label-sm font-semibold text-error hover:bg-error/5 transition-all active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
         >
+          <Icon name="refresh" className="text-sm" />
           Retry
         </button>
       </div>
@@ -227,11 +229,24 @@ export default function DraftReviewWorkspace() {
   /* ── Empty: loading ── */
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="flex items-center gap-3 text-on-surface-variant">
-          <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-          Loading drafts...
-        </div>
+      <div className="flex h-full overflow-hidden animate-fade-in">
+        <aside className="w-72 shrink-0 border-r border-outline-variant/10 bg-surface-lowest p-4 space-y-3">
+          <div className="h-5 w-24 animate-skeleton-pulse bg-surface-high/50 rounded-lg" />
+          {[1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="flex items-start gap-2 animate-skeleton-pulse" style={{ animationDelay: `${i * 0.05}s` }}>
+              <div className="w-8 h-8 rounded-lg bg-surface-high/50 shrink-0" />
+              <div className="flex-1 space-y-1.5">
+                <div className="h-3 w-28 bg-surface-high/50 rounded" />
+                <div className="h-2 w-20 bg-surface-high/50 rounded" />
+              </div>
+            </div>
+          ))}
+        </aside>
+        <section className="flex-1 p-6 space-y-4">
+          <div className="h-4 w-48 animate-skeleton-pulse bg-surface-high/50 rounded-lg" />
+          <div className="h-64 animate-skeleton-pulse bg-surface-highest/20 rounded-xl" />
+          <div className="h-32 animate-skeleton-pulse bg-surface-highest/20 rounded-xl" />
+        </section>
       </div>
     );
   }
@@ -239,18 +254,18 @@ export default function DraftReviewWorkspace() {
   /* ── Empty: no drafts ── */
   if (drafts.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-center px-6">
+      <div className="flex flex-col items-center justify-center h-full text-center px-6 animate-fade-in">
         <div className="w-16 h-16 rounded-2xl bg-surface-high/30 flex items-center justify-center text-on-surface-variant/40 mb-4">
-          <Icon name="edit_note" className="text-4xl" />
+          <Icon name="edit_note" className="text-3xl" />
         </div>
-        <p className="text-body-lg text-on-surface-variant/60">No drafts yet</p>
-        <p className="mt-1 text-body-md text-on-surface-variant/40 max-w-sm">
+        <p className="text-body-lg text-on-surface-variant/80 font-medium">No drafts yet</p>
+        <p className="mt-1.5 text-body-md text-on-surface-variant/50 max-w-sm leading-relaxed">
           Discover leads and use batch drafting to generate outreach drafts.
           They will appear here.
         </p>
         <a
           href="/discovery"
-          className="mt-4 px-5 py-2 bg-primary text-on-primary text-sm font-bold rounded-lg hover:brightness-110 transition-all inline-flex items-center gap-2"
+          className="mt-6 inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-on-primary transition-all duration-150 hover:brightness-110 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
         >
           <Icon name="explore" className="text-sm" />
           Discover Leads
@@ -298,10 +313,10 @@ export default function DraftReviewWorkspace() {
               <button
                 key={d.id}
                 onClick={() => handleSelect(i)}
-                className={`w-full text-left rounded-lg px-3 py-2.5 transition-colors ${
+                className={`w-full text-left rounded-lg px-3 py-2.5 transition-all duration-100 focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2 ${
                   isSelected
                     ? "bg-primary-container/20 border border-primary/20"
-                    : "hover:bg-surface border border-transparent"
+                    : "hover:bg-surface/60 border border-transparent"
                 }`}
               >
                 <div className="flex items-start gap-2">
@@ -361,7 +376,7 @@ export default function DraftReviewWorkspace() {
               <StatusBadge status={selected.status} />
               <button
                 onClick={handleApprove}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors ${
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all duration-150 active:scale-[0.95] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2 ${
                   selected.status === "approved"
                     ? "border-outline-variant/20 text-on-surface-variant hover:border-error/40 hover:text-error"
                     : "border-secondary/30 text-secondary hover:bg-secondary/10"
@@ -374,7 +389,8 @@ export default function DraftReviewWorkspace() {
 
           {/* Toast message */}
           {message ? (
-            <div className="mx-6 mt-3 rounded-lg bg-primary-container/10 border border-primary/20 px-3 py-2 text-sm text-primary">
+            <div className="mx-6 mt-3 rounded-lg bg-primary-container/10 border border-primary/20 px-3 py-2 text-sm text-primary animate-scale-in flex items-center gap-2">
+              <Icon name="check_circle" className="text-sm shrink-0" />
               {message}
             </div>
           ) : null}
@@ -426,13 +442,13 @@ export default function DraftReviewWorkspace() {
                 <div className="flex gap-2">
                   <button
                     onClick={saveEdit}
-                    className="px-5 py-2 bg-primary text-on-primary text-sm font-bold rounded-lg hover:brightness-110 transition-all"
+                    className="px-5 py-2 bg-primary text-on-primary text-sm font-bold rounded-lg transition-all duration-150 hover:brightness-110 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
                   >
                     Save Changes
                   </button>
                   <button
                     onClick={cancelEditing}
-                    className="px-5 py-2 border border-outline-variant/20 text-on-surface text-sm font-medium rounded-lg hover:bg-surface transition-all"
+                    className="px-5 py-2 border border-outline-variant/20 text-on-surface text-sm font-medium rounded-lg transition-all duration-150 hover:bg-surface active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
                   >
                     Cancel
                   </button>
@@ -472,7 +488,7 @@ export default function DraftReviewWorkspace() {
             </p>
             <button
               onClick={startEditing}
-              className="flex items-center gap-1.5 px-4 py-2 border border-outline-variant/20 text-on-surface text-sm font-medium rounded-lg hover:border-primary/40 hover:text-primary transition-all"
+              className="flex items-center gap-1.5 px-4 py-2 border border-outline-variant/20 text-on-surface text-sm font-medium rounded-lg transition-all duration-150 hover:border-primary/40 hover:text-primary active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
             >
               <Icon name="edit_note" className="text-base" />
               Edit
@@ -516,7 +532,7 @@ export default function DraftReviewWorkspace() {
                   key={action.key}
                   onClick={() => handleRefine(action.key)}
                   disabled={refining === action.key}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-on-surface hover:bg-surface transition-colors disabled:opacity-50"
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-on-surface hover:bg-surface/60 transition-all duration-100 disabled:opacity-50 active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
                 >
                   <Icon
                     name={action.icon}

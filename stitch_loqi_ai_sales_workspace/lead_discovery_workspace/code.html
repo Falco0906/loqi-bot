@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Loqi AI | Lead Discovery</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Geist:wght@400;500;600;700;800;900&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@100..900&family=Inter:wght@100..900&display=swap" rel="stylesheet"/>
+<style>
+    :root {
+      --primary-glow: rgba(135, 129, 255, 0.15);
+    }
+    body {
+      background-color: #09090B;
+      color: #e4e1ee;
+      overflow: hidden;
+    }
+    .glass {
+      background: rgba(11, 11, 15, 0.8);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
+    .ai-glow {
+      box-shadow: 0 0 20px var(--primary-glow);
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 4px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #1F1F23;
+      border-radius: 10px;
+    }
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      vertical-align: middle;
+    }
+  </style>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          "colors": {
+            "on-error-container": "#ffdad6",
+            "surface-container-lowest": "#0e0d16",
+            "outline-variant": "#464555",
+            "surface-container-high": "#2a2933",
+            "on-primary": "#2000a4",
+            "inverse-on-surface": "#302f39",
+            "primary-fixed": "#e3dfff",
+            "primary": "#c4c0ff",
+            "error": "#ffb4ab",
+            "on-background": "#e4e1ee",
+            "on-primary-fixed-variant": "#3622ca",
+            "surface-container-highest": "#35343e",
+            "on-tertiary-fixed-variant": "#653e00",
+            "on-tertiary": "#472a00",
+            "surface": "#13121b",
+            "error-container": "#93000a",
+            "on-primary-container": "#1b0091",
+            "secondary-container": "#00a572",
+            "on-error": "#690005",
+            "on-secondary-container": "#00311f",
+            "primary-fixed-dim": "#c4c0ff",
+            "on-surface": "#e4e1ee",
+            "surface-container": "#1f1f28",
+            "inverse-primary": "#4f44e2",
+            "on-primary-fixed": "#100069",
+            "on-secondary-fixed": "#002113",
+            "background": "#13121b",
+            "on-secondary-fixed-variant": "#005236",
+            "secondary-fixed-dim": "#4edea3",
+            "inverse-surface": "#e4e1ee",
+            "primary-container": "#8781ff",
+            "surface-dim": "#13121b",
+            "surface-tint": "#c4c0ff",
+            "outline": "#918fa1",
+            "tertiary": "#ffb95f",
+            "tertiary-fixed": "#ffddb8",
+            "on-secondary": "#003824",
+            "secondary-fixed": "#6ffbbe",
+            "surface-container-low": "#1b1b24",
+            "tertiary-container": "#ca8100",
+            "secondary": "#4edea3",
+            "surface-bright": "#393842",
+            "tertiary-fixed-dim": "#ffb95f",
+            "on-tertiary-fixed": "#2a1700",
+            "surface-variant": "#35343e",
+            "on-surface-variant": "#c7c4d8",
+            "on-tertiary-container": "#3e2400"
+          },
+          "borderRadius": {
+            "DEFAULT": "0.25rem",
+            "lg": "0.5rem",
+            "xl": "0.75rem",
+            "full": "9999px"
+          },
+          "spacing": {
+            "container-padding": "24px",
+            "stack-lg": "32px",
+            "stack-sm": "8px",
+            "unit": "4px",
+            "stack-md": "16px",
+            "gutter": "16px"
+          },
+          "fontFamily": {
+            "headline-lg": ["Geist"],
+            "body-md": ["Inter"],
+            "mono-sm": ["Geist"],
+            "headline-xl": ["Geist"],
+            "headline-md": ["Geist"],
+            "body-lg": ["Inter"],
+            "label-md": ["Geist"]
+          },
+          "fontSize": {
+            "headline-lg": ["32px", {"lineHeight": "1.2", "letterSpacing": "-0.03em", "fontWeight": "600"}],
+            "body-md": ["14px", {"lineHeight": "1.5", "letterSpacing": "0", "fontWeight": "400"}],
+            "mono-sm": ["12px", {"lineHeight": "1.4", "letterSpacing": "0", "fontWeight": "400"}],
+            "headline-xl": ["40px", {"lineHeight": "1.1", "letterSpacing": "-0.04em", "fontWeight": "600"}],
+            "headline-md": ["24px", {"lineHeight": "1.3", "letterSpacing": "-0.02em", "fontWeight": "500"}],
+            "body-lg": ["16px", {"lineHeight": "1.6", "letterSpacing": "0", "fontWeight": "400"}],
+            "label-md": ["12px", {"lineHeight": "1", "letterSpacing": "0.05em", "fontWeight": "500"}]
+          }
+        },
+      },
+    }
+  </script>
+</head>
+<body class="bg-background text-on-surface font-body-md text-body-md overflow-hidden h-screen flex">
+<!-- Side Navigation Shell -->
+<aside class="fixed left-0 top-0 h-full w-64 z-40 bg-surface-container-lowest border-r border-outline-variant/10 flex flex-col py-stack-md">
+<div class="px-6 mb-8">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-lg bg-primary-container flex items-center justify-center">
+<span class="material-symbols-outlined text-on-primary-container" style="font-variation-settings: 'FILL' 1;">rocket_launch</span>
+</div>
+<div>
+<h1 class="font-headline-md text-headline-md font-black text-on-surface leading-tight">Loqi</h1>
+<p class="text-on-surface-variant font-label-md text-label-md tracking-wider">AI OUTBOUND</p>
+</div>
+</div>
+</div>
+<nav class="flex-1 px-4 space-y-1">
+<a class="flex items-center gap-3 text-on-surface-variant px-4 py-2 hover:bg-surface-container-high transition-all duration-200 rounded-lg group" href="#">
+<span class="material-symbols-outlined text-lg">dashboard</span>
+<span class="font-label-md text-label-md">Mission Control</span>
+</a>
+<a class="flex items-center gap-3 text-on-primary-container bg-primary-container/20 rounded-lg px-4 py-2 font-semibold group translate-x-1 transition-transform duration-200" href="#">
+<span class="material-symbols-outlined text-lg" style="font-variation-settings: 'FILL' 1;">rocket_launch</span>
+<span class="font-label-md text-label-md">Campaigns</span>
+</a>
+<a class="flex items-center gap-3 text-on-surface-variant px-4 py-2 hover:bg-surface-container-high transition-all duration-200 rounded-lg group" href="#">
+<span class="material-symbols-outlined text-lg">description</span>
+<span class="font-label-md text-label-md">Templates</span>
+</a>
+<a class="flex items-center gap-3 text-on-surface-variant px-4 py-2 hover:bg-surface-container-high transition-all duration-200 rounded-lg group" href="#">
+<span class="material-symbols-outlined text-lg">group</span>
+<span class="font-label-md text-label-md">Contacts</span>
+</a>
+<a class="flex items-center gap-3 text-on-surface-variant px-4 py-2 hover:bg-surface-container-high transition-all duration-200 rounded-lg group" href="#">
+<span class="material-symbols-outlined text-lg">query_stats</span>
+<span class="font-label-md text-label-md">Analytics</span>
+</a>
+<a class="flex items-center gap-3 text-on-surface-variant px-4 py-2 hover:bg-surface-container-high transition-all duration-200 rounded-lg group" href="#">
+<span class="material-symbols-outlined text-lg">settings</span>
+<span class="font-label-md text-label-md">Settings</span>
+</a>
+</nav>
+<div class="mt-auto px-4 pt-4 border-t border-outline-variant/10">
+<button class="w-full bg-primary text-on-primary font-bold py-3 rounded-lg flex items-center justify-center gap-2 hover:brightness-110 transition-all shadow-lg active:scale-95">
+<span class="material-symbols-outlined">add</span>
+        New Campaign
+      </button>
+<div class="mt-6 space-y-1">
+<a class="flex items-center gap-3 text-on-surface-variant px-4 py-2 hover:bg-surface-container-high transition-all rounded-lg" href="#">
+<span class="material-symbols-outlined text-sm">history</span>
+<span class="font-label-md text-label-md">Recent Campaigns</span>
+</a>
+<a class="flex items-center gap-3 text-on-surface-variant px-4 py-2 hover:bg-surface-container-high transition-all rounded-lg" href="#">
+<span class="material-symbols-outlined text-sm">dns</span>
+<span class="font-label-md text-label-md">System Status</span>
+</a>
+</div>
+</div>
+</aside>
+<!-- Main Stage Area -->
+<main class="ml-64 flex-1 flex flex-col h-screen relative bg-[#09090B]">
+<!-- Top Nav Anchor -->
+<header class="fixed top-0 right-0 left-64 z-50 h-16 bg-surface/80 backdrop-blur-xl border-b border-outline-variant/20 flex items-center justify-between px-container-padding">
+<div class="flex items-center gap-6">
+<div class="flex items-center gap-2 text-primary font-bold border-b-2 border-primary pb-1">
+<span class="font-label-md text-label-md">Monitoring 4 active campaigns</span>
+</div>
+<div class="text-on-surface-variant font-medium font-label-md text-label-md">
+          Detecting hiring signals
+        </div>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex -space-x-2">
+<img class="w-8 h-8 rounded-full border-2 border-surface" data-alt="Close up profile photo of a diverse marketing executive in a modern glass office, cinematic lighting, soft background blur, professional yet approachable vibe, high quality digital photography." src="https://lh3.googleusercontent.com/aida-public/AB6AXuD3awojG3wYVJNNFMTUW8_WDkuU2WIzqQOmQY7eqFGP8oygTtWqVxi26hye0B0NjzkZLn3ZVqv4DmhKj-R7Ri65dXb1cUkLe20wfVJxhjUH15ksFOMaev8wSrlmGeunOmumcFDhs_RHu2X9yVKnUdySSXoQvgnpAt5D0ev82GrKxvHEsIkyskHTDlUpN6xG-TR-lY6gHUP8G5tm8mvetedz_T1xLq59F-qpRVEg5aTGyr4T-exPOXjq"/>
+</div>
+<button class="text-on-surface-variant hover:text-primary transition-colors"><span class="material-symbols-outlined">notifications</span></button>
+<button class="text-on-surface-variant hover:text-primary transition-colors"><span class="material-symbols-outlined">smart_toy</span></button>
+</div>
+</header>
+<div class="pt-16 flex h-full overflow-hidden">
+<!-- Center Workspace (The Stage) -->
+<section class="flex-1 overflow-y-auto custom-scrollbar p-container-padding pb-32">
+<!-- Campaign Header -->
+<div class="mb-stack-lg">
+<div class="flex items-center justify-between mb-4">
+<div>
+<h2 class="font-headline-lg text-headline-lg text-on-surface">Restaurant Operator Expansion</h2>
+<div class="flex items-center gap-4 mt-2">
+<div class="bg-surface-container rounded-full h-2 w-48 overflow-hidden">
+<div class="bg-primary h-full w-[48%]"></div>
+</div>
+<span class="text-on-surface-variant font-label-md text-label-md">24/50 leads reviewed</span>
+</div>
+</div>
+<div class="flex gap-2">
+<button class="flex items-center gap-2 px-4 py-2 bg-surface-container border border-outline-variant/20 rounded-lg hover:border-primary/40 transition-colors">
+<span class="material-symbols-outlined text-sm">tune</span>
+<span class="font-label-md text-label-md">Filters</span>
+</button>
+<div class="flex gap-2">
+<span class="px-3 py-1 bg-surface-container-high rounded-full font-label-md text-label-md text-on-surface-variant">Industry: F&B</span>
+<span class="px-3 py-1 bg-surface-container-high rounded-full font-label-md text-label-md text-on-surface-variant">USA</span>
+<span class="px-3 py-1 bg-surface-container-high rounded-full font-label-md text-label-md text-on-surface-variant">50-200 Size</span>
+</div>
+</div>
+</div>
+<!-- AI Status Bar -->
+<div class="bg-primary-container/10 border border-primary/20 rounded-xl px-4 py-3 flex items-center justify-between ai-glow">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary animate-pulse">auto_awesome</span>
+<p class="text-primary font-medium">Researching Restaurant Campaign... <span class="text-on-surface-variant opacity-70">Comparing new companies</span></p>
+</div>
+<div class="flex items-center gap-2">
+<div class="flex space-x-1">
+<div class="w-1 h-4 bg-primary animate-bounce" style="animation-delay: 0.1s"></div>
+<div class="w-1 h-4 bg-primary animate-bounce" style="animation-delay: 0.2s"></div>
+<div class="w-1 h-4 bg-primary animate-bounce" style="animation-delay: 0.3s"></div>
+</div>
+</div>
+</div>
+</div>
+<!-- Lead Cards Grid -->
+<div class="grid grid-cols-1 xl:grid-cols-2 gap-gutter">
+<!-- Card: Selected -->
+<div class="bg-surface-container-low border-2 border-primary/60 rounded-xl p-stack-md cursor-pointer transition-all hover:translate-y-[-2px] ai-glow">
+<div class="flex justify-between items-start mb-4">
+<div class="flex gap-4">
+<div class="w-12 h-12 rounded-lg bg-[#1F1F23] flex items-center justify-center p-2">
+<img class="w-full h-full object-contain" data-alt="A minimalist tech company logo featuring a stylized blue heron bird in geometric lines, premium branding style, dark background, professional, vector quality." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAGF_OdtVKI-euFbBBUs7I-rakG8DYkwWjVnzMKpWHq4iZ7JN6Qm5eZ2qaZ2H3oSsoQ0GhoCvRv4oJxzl4FZBSHceOdznwpTalC05OCptxgKlQj0xfFuOvxDsiIDK3875GMcLlxZuiGT7fme9CzrCWJpt2vEqqI9zSPQ4nV65Cakst5KLALQpyQ4kOEzljPk-eRGWJpebR2wK40TbWYrBGGtkMmB-f6Jwe6xgk3Zw_Yi4_V6Vy0rQOV"/>
+</div>
+<div>
+<h3 class="font-headline-md text-body-lg font-bold text-on-surface">Marcus Thorne</h3>
+<p class="text-on-surface-variant text-body-md">VP Operations • Blue Heron Dining</p>
+</div>
+</div>
+<div class="flex text-tertiary">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">star</span>
+</div>
+</div>
+<div class="space-y-3">
+<div class="flex flex-wrap gap-2">
+<span class="bg-primary/10 border border-primary/20 text-primary px-3 py-1 rounded-full font-label-md text-label-md flex items-center gap-1">
+<span class="material-symbols-outlined text-xs">trending_up</span> Recently Hiring
+                </span>
+<span class="bg-secondary/10 border border-secondary/20 text-secondary px-3 py-1 rounded-full font-label-md text-label-md flex items-center gap-1">
+<span class="material-symbols-outlined text-xs">rocket</span> Growing Fast
+                </span>
+<span class="bg-surface-container-highest text-on-surface-variant px-3 py-1 rounded-full font-label-md text-label-md">Uses HubSpot</span>
+</div>
+<p class="text-on-surface-variant text-sm line-clamp-2">Overseeing national logistics for 120 locations. Expressed interest in automated supply chain solutions on LinkedIn recently.</p>
+</div>
+</div>
+<!-- Card 2 -->
+<div class="bg-surface border border-outline-variant/10 rounded-xl p-stack-md cursor-pointer transition-all hover:bg-surface-container-low hover:border-outline-variant/30 group">
+<div class="flex justify-between items-start mb-4">
+<div class="flex gap-4">
+<div class="w-12 h-12 rounded-lg bg-[#1F1F23] flex items-center justify-center p-2">
+<img class="w-full h-full object-contain" data-alt="Sophisticated restaurant group logo with serif typography and an abstract olive branch icon, luxury hospitality aesthetic, dark charcoal background, high-end branding." src="https://lh3.googleusercontent.com/aida-public/AB6AXuD-wy4YEG5jsa8Er1CxppCvAC7GIBKSXzwuwMLSpoonl_uTPCM_HaSZUgXbZ6ejePAe3ezM3bCLKW6BitBWL9tqopkRfKAP-9ndDeQ2AMX3S5JPpl7hXDn20NOe_7oEj3VfEropZXIEq_NaAL995ccbyh9rftfi6H_WrXVM_fUy56Afeoj6BgmN5Vd7vK7x1PiNYt9lC29qGCbcBagzr2LZkE8v_q9bWN3y7e7YC4cSrsAUxoM2OM_N"/>
+</div>
+<div>
+<h3 class="font-headline-md text-body-lg font-bold text-on-surface">Elena Rodriguez</h3>
+<p class="text-on-surface-variant text-body-md">Director of Supply Chain • Verdant Group</p>
+</div>
+</div>
+<div class="flex text-tertiary">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">star</span>
+</div>
+</div>
+<div class="space-y-3">
+<div class="flex flex-wrap gap-2">
+<span class="bg-primary/10 border border-primary/20 text-primary px-3 py-1 rounded-full font-label-md text-label-md flex items-center gap-1">
+<span class="material-symbols-outlined text-xs">add_business</span> New Branch Opening
+                </span>
+<span class="bg-surface-container-highest text-on-surface-variant px-3 py-1 rounded-full font-label-md text-label-md">Uses Salesforce</span>
+</div>
+<p class="text-on-surface-variant text-sm line-clamp-2">Currently restructuring regional distribution hubs. High relevance for multi-site optimization tools.</p>
+</div>
+</div>
+<!-- Card 3 -->
+<div class="bg-surface border border-outline-variant/10 rounded-xl p-stack-md cursor-pointer transition-all hover:bg-surface-container-low hover:border-outline-variant/30 group">
+<div class="flex justify-between items-start mb-4">
+<div class="flex gap-4">
+<div class="w-12 h-12 rounded-lg bg-[#1F1F23] flex items-center justify-center p-2">
+<img class="w-full h-full object-contain" data-alt="Modern geometric emblem for a fast-casual food tech brand, bold yellow and dark purple colors, minimalist icon, tech-forward hospitality logo design." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBel5NKoWfopo-WqWlcN-V-Byk0yeBiUPwpPsuVwPlVsZsfhMgpQTgrsz5TN46shSt8uLmJXrcFXXW136KcBjJXkFAFTZJPyVZ1btMsVlXEXJyjGaDGunvSxDLNZI1ib1sNsQeVEgAVTdkuealRzUK3MqnMIu2Z46UIEEw0d5R1s9ATbJYixPOtgyD5uVMp6fzxpYb406sFe3IcXkiFe0N9V0Qp5VZbUD8-h2WCmKXJzxCf0_JAUUkL"/>
+</div>
+<div>
+<h3 class="font-headline-md text-body-lg font-bold text-on-surface">Julian Chen</h3>
+<p class="text-on-surface-variant text-body-md">Head of Growth • QuickBite Tech</p>
+</div>
+</div>
+<div class="flex text-tertiary">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">star</span>
+</div>
+</div>
+<div class="space-y-3">
+<div class="flex flex-wrap gap-2">
+<span class="bg-secondary/10 border border-secondary/20 text-secondary px-3 py-1 rounded-full font-label-md text-label-md flex items-center gap-1">
+<span class="material-symbols-outlined text-xs">monetization_on</span> Series B Funded
+                </span>
+<span class="bg-surface-container-highest text-on-surface-variant px-3 py-1 rounded-full font-label-md text-label-md">Uses Outreach</span>
+</div>
+<p class="text-on-surface-variant text-sm line-clamp-2">Scaling rapidly across the East Coast. Expanding procurement team by 40% next quarter.</p>
+</div>
+</div>
+<!-- Card 4 -->
+<div class="bg-surface border border-outline-variant/10 rounded-xl p-stack-md cursor-pointer transition-all hover:bg-surface-container-low hover:border-outline-variant/30 group">
+<div class="flex justify-between items-start mb-4">
+<div class="flex gap-4">
+<div class="w-12 h-12 rounded-lg bg-[#1F1F23] flex items-center justify-center p-2">
+<img class="w-full h-full object-contain" data-alt="Rustic and premium logo for an organic farmhouse kitchen brand, earthy tones with gold accents, elegant hand-drawn style, high resolution branding." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBgNLWb0vFeMrkffZBWb6uJnqny5IGJMC288DEP_bBywnytmw7vbBWD66foN6c8P6QYjo0JMM1ljEX9lUQkeJYC-CV_MMCuuruFAsArYkup8fJnz6fgCwnv0GTcKyT5K2TBxey-KPIUolqt6QA-NEA4JsuetKtQIhSsWsGSEBEl8BdyUZaoHYSTWeNJwPWxaCYprNZyqk4LJPGHW1O2MUHtDx4V-5f1jywQp9CAlOxY972iJXwgwor3"/>
+</div>
+<div>
+<h3 class="font-headline-md text-body-lg font-bold text-on-surface">Sarah Miller</h3>
+<p class="text-on-surface-variant text-body-md">Founder • Hearth & Home</p>
+</div>
+</div>
+<div class="flex text-tertiary">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">star</span>
+</div>
+</div>
+<div class="space-y-3">
+<div class="flex flex-wrap gap-2">
+<span class="bg-primary/10 border border-primary/20 text-primary px-3 py-1 rounded-full font-label-md text-label-md flex items-center gap-1">
+<span class="material-symbols-outlined text-xs">trending_up</span> Growing Fast
+                </span>
+</div>
+<p class="text-on-surface-variant text-sm line-clamp-2">Artisan bakery group moving into centralized kitchen distribution. Highly likely to need regional logistics help.</p>
+</div>
+</div>
+</div>
+</section>
+<!-- Right Panel (Lead Detail) -->
+<aside class="w-96 border-l border-outline-variant/10 bg-surface-container-lowest overflow-y-auto custom-scrollbar p-container-padding">
+<div class="flex items-center gap-4 mb-8">
+<img class="w-20 h-20 rounded-2xl object-cover border border-outline-variant/20" data-alt="Portrait of a professional man in his 40s, sharp features, wearing a dark navy blazer over a clean white shirt, studio lighting, corporate portrait style, executive look, dark neutral background." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAlXkm2xEhqTj2AvR9rnIfNpehITHHlEcVtX3DHtSknY-LvWhytNMWnW2rSuaVz34kv6y8LjAS0UTpuv8R-YP179buD__3z-UBrHV4yqbcK8XR8dgAJQy_AHDc-vX0nMncst0K4ks7nml7eNoYZ05moRehdDOexKF8xW-rBFfwZlqDF1v2Vps_MXC6us1EtktATsLjC2jDsGNzUm5EEG83C0nNURI49FXiLKEiInXaOPR0gCbOCb5Cv"/>
+<div>
+<h3 class="font-headline-md text-headline-md font-bold">Marcus Thorne</h3>
+<p class="text-on-surface-variant">VP Operations</p>
+<div class="flex items-center gap-2 mt-1">
+<img class="w-4 h-4 opacity-70" data-alt="A minimalist tech company logo featuring a stylized blue heron bird in geometric lines, premium branding style, dark background, professional, vector quality." src="https://lh3.googleusercontent.com/aida-public/AB6AXuB1tttgpWA9S8c4mthGsqRPaDfF84og6Kp53hkIy7OI3GzlZkAk-OOztxqm6Ay0-KGC_BnCqOYUrOZ7R8spb-J2WONbI9TY7cPX_0ZCkxrQRKvv6WSp72hAduvSITryOCp7yoHinqfjPWBXaz9G2JItqCkbmCKkAdmUb3skiUxl9tZmpeQCn2W1KlsMS9brvlnfmcbbzFzTKiAiRnIzM1stV8dDO0l6VEPp3-aMJQEmvTDptguDJRFL"/>
+<span class="text-sm font-medium">Blue Heron Dining</span>
+</div>
+</div>
+</div>
+<div class="space-y-stack-lg">
+<!-- Section: Business Summary -->
+<div class="space-y-stack-sm">
+<h4 class="font-label-md text-label-md text-on-surface-variant uppercase tracking-widest">Business Summary</h4>
+<p class="text-on-surface leading-relaxed">Blue Heron Dining is a multi-brand restaurant group with 120+ units across the Midwest. They've recently announced a move toward 100% sustainable sourcing by 2025.</p>
+</div>
+<!-- Section: AI Messaging Angle -->
+<div class="bg-primary-container/10 border border-primary/20 rounded-xl p-4 space-y-2">
+<div class="flex items-center gap-2 text-primary">
+<span class="material-symbols-outlined text-sm">lightbulb</span>
+<h4 class="font-label-md text-label-md uppercase tracking-wider font-bold">Recommended messaging angle</h4>
+</div>
+<p class="text-on-surface-variant text-sm italic">"Focus on their 'Sustainable Sourcing 2025' initiative. Mention how our platform automates vendor compliance tracking specifically for multi-unit operators."</p>
+</div>
+<!-- Section: Current Challenges -->
+<div class="space-y-stack-sm">
+<h4 class="font-label-md text-label-md text-on-surface-variant uppercase tracking-widest">Current challenges</h4>
+<ul class="space-y-2">
+<li class="flex items-start gap-2 text-sm">
+<span class="material-symbols-outlined text-error text-xs mt-1">warning</span>
+<span>Inefficient vendor communication across 12 regions.</span>
+</li>
+<li class="flex items-start gap-2 text-sm">
+<span class="material-symbols-outlined text-error text-xs mt-1">warning</span>
+<span>High churn in mid-level management.</span>
+</li>
+</ul>
+</div>
+<!-- Section: Recent Updates -->
+<div class="space-y-stack-sm">
+<h4 class="font-label-md text-label-md text-on-surface-variant uppercase tracking-widest">Recent company updates</h4>
+<div class="space-y-3">
+<div class="bg-surface-container p-3 rounded-lg border border-outline-variant/10">
+<div class="flex justify-between mb-1">
+<span class="text-[10px] font-bold text-primary px-1.5 py-0.5 bg-primary/10 rounded">NEWS</span>
+<span class="text-[10px] text-on-surface-variant">2 days ago</span>
+</div>
+<p class="text-xs">Announced partnership with local farms in Ohio for regional expansion.</p>
+</div>
+<div class="bg-surface-container p-3 rounded-lg border border-outline-variant/10">
+<div class="flex justify-between mb-1">
+<span class="text-[10px] font-bold text-secondary px-1.5 py-0.5 bg-secondary/10 rounded">HIRING</span>
+<span class="text-[10px] text-on-surface-variant">1 week ago</span>
+</div>
+<p class="text-xs">Posted 4 new roles for 'Regional Logistics Coordinator' positions.</p>
+</div>
+</div>
+</div>
+<!-- Quick Actions -->
+<div class="pt-4 flex flex-col gap-2">
+<button class="w-full bg-[#1F1F23] border border-outline-variant/20 hover:border-primary/40 text-on-surface py-3 rounded-lg font-bold flex items-center justify-center gap-2 transition-all">
+<span class="material-symbols-outlined text-sm">share</span>
+              View Profile
+            </button>
+<button class="w-full bg-[#1F1F23] border border-outline-variant/20 hover:border-primary/40 text-on-surface py-3 rounded-lg font-bold flex items-center justify-center gap-2 transition-all">
+<span class="material-symbols-outlined text-sm">mail</span>
+              Copy Email
+            </button>
+</div>
+</div>
+</aside>
+</div>
+<!-- Floating Action Bar -->
+<div class="fixed bottom-8 left-1/2 -translate-x-1/2 glass border border-outline-variant/20 px-6 py-4 rounded-2xl flex items-center gap-8 shadow-2xl z-[60] ai-glow">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-primary font-bold">3</div>
+<span class="font-bold text-on-surface">Leads Selected</span>
+</div>
+<div class="h-8 w-[1px] bg-outline-variant/20"></div>
+<div class="flex items-center gap-3">
+<button class="px-6 py-2.5 bg-primary text-on-primary font-bold rounded-lg flex items-center gap-2 hover:brightness-110 active:scale-95 transition-all shadow-lg">
+<span class="material-symbols-outlined text-lg">edit_note</span>
+          Draft Outreach
+        </button>
+<button class="px-4 py-2.5 bg-surface-container-highest text-on-surface font-semibold rounded-lg flex items-center gap-2 hover:bg-surface-bright transition-all active:scale-95">
+<span class="material-symbols-outlined text-lg">folder_zip</span>
+          Save Campaign
+        </button>
+<button class="px-4 py-2.5 text-on-surface-variant font-medium hover:text-error transition-colors flex items-center gap-1 group">
+<span class="material-symbols-outlined text-lg group-hover:rotate-90 transition-transform">close</span>
+          Clear Selection
+        </button>
+</div>
+</div>
+</main>
+<script>
+    // Simple micro-interaction for cards
+    document.querySelectorAll('.grid > div').forEach(card => {
+      card.addEventListener('click', () => {
+        // Toggle selected styling
+        document.querySelectorAll('.grid > div').forEach(c => {
+          c.classList.remove('border-primary/60', 'ai-glow', 'bg-surface-container-low');
+          c.classList.add('border-outline-variant/10', 'bg-surface');
+        });
+        card.classList.add('border-primary/60', 'ai-glow', 'bg-surface-container-low');
+        card.classList.remove('border-outline-variant/10', 'bg-surface');
+      });
+    });
+  </script>
+</body></html>

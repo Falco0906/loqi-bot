@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 from services.agent import process_message
-from services.conversation_engine import ConversationEngine
+from services.conversation_engine import ConversationEngine, _message
 from services.google_auth import exchange_code_for_tokens
 from services.supabase import save_google_tokens, test_supabase_connection
 from services.telegram import send_message
@@ -555,7 +555,7 @@ async def export_csv(session_token: str):
             leads.append(lead)
 
     if not leads:
-        from services.conversation_engine import ConversationEngine
+        from services.conversation_engine import ConversationEngine, _message
         local_engine = ConversationEngine()
         summary = local_engine.get_web_session_summary(session_token)
         if summary:

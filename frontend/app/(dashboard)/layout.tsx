@@ -1,10 +1,14 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Sidebar from "../../components/layout/Sidebar";
 import Topbar from "../../components/layout/Topbar";
-import CommandBar from "../../components/layout/CommandBar";
+import CopilotPanel from "../../components/copilot/CopilotPanel";
 import BackendOffline from "../../components/error/BackendOffline";
 import { useBackendHealth } from "../../hooks/useBackendHealth";
+import { CopilotProvider } from "../../contexts/CopilotContext";
+
+const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
 export default function DashboardLayout({
   children,
@@ -12,6 +16,15 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const { healthy, retry } = useBackendHealth();
+  const [sessionToken, setSessionToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    const token = (() => {
+      try { return localStorage.getItem(ACTIVE_SESSION_KEY); }
+      catch { return null; }
+    })();
+    setSessionToken(token);
+  }, []);
 
   if (healthy === null) {
     return (
@@ -29,15 +42,17 @@ export default function DashboardLayout({
   }
 
   return (
-    <div className="flex h-full">
-      <Sidebar />
-      <div className="ml-64 flex flex-1 flex-col">
-        <Topbar />
-        <main className="flex-1 overflow-y-auto pt-16">
-          {children}
-        </main>
-        <CommandBar />
+    <CopilotProvider sessionToken={sessionToken}>
+      <div className="flex h-full">
+        <Sidebar />
+        <div className="ml-64 flex flex-1 flex-col">
+          <Topbar />
+          <main className="flex-1 overflow-y-auto pt-16">
+            {children}
+          </main>
+          <CopilotPanel />
+        </div>
       </div>
-    </div>
+    </CopilotProvider>
   );
 }

@@ -6,6 +6,7 @@ import { listCampaigns, getCampaignSummary } from "../../../lib/api";
 import PageContainer from "../../../components/shared/PageContainer";
 import Icon from "../../../components/shared/Icon";
 import CampaignStatusBadge from "../../../components/campaigns/CampaignStatusBadge";
+import { usePageContext } from "../../../hooks/usePageContext";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
@@ -20,6 +21,12 @@ type CampaignInfo = {
 export default function CampaignIntelligencePage() {
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [campaigns, setCampaigns] = useState<CampaignInfo[]>([]);
+
+  usePageContext("Campaign Intelligence", {
+    active_campaigns: campaigns.filter((c) => c.status !== "archived" && c.status !== "completed").length,
+    total_campaigns: campaigns.length,
+    pending_drafts: campaigns.reduce((s, c) => s + c.pending_drafts, 0),
+  });
 
   useEffect(() => {
     const token = (() => {

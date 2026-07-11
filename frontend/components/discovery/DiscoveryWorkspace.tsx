@@ -13,6 +13,7 @@ import PlannerLoading from "../planner/PlannerLoading";
 import CampaignPlanner from "../planner/CampaignPlanner";
 import StrategyApproval from "../planner/StrategyApproval";
 import GenerationProgress from "../planner/GenerationProgress";
+import { usePageContext } from "../../hooks/usePageContext";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
@@ -91,6 +92,13 @@ export default function DiscoveryWorkspace() {
 
   /* ── Save Campaign ── */
   const [campaignModal, setCampaignModal] = useState(false);
+
+  usePageContext("Discovery", {
+    leads_count: leads.length,
+    selected_count: selectedIndices.size,
+    search_query: searchQuery,
+    has_searched: hasSearched,
+  });
 
   useEffect(() => {
     const token = (() => {

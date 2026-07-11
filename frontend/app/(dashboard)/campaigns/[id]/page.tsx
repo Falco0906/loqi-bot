@@ -7,6 +7,7 @@ import DraftReviewWorkspace from "../../../../components/draft/DraftReviewWorksp
 import CampaignStatusBadge from "../../../../components/campaigns/CampaignStatusBadge";
 import CampaignDraftList from "../../../../components/campaigns/CampaignDraftList";
 import Icon from "../../../../components/shared/Icon";
+import { usePageContext } from "../../../../hooks/usePageContext";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
@@ -24,6 +25,16 @@ export default function CampaignDetailPage() {
   const [generating, setGenerating] = useState(false);
   const [genProgress, setGenProgress] = useState<{ total: number; completed: number } | null>(null);
   const [campaignError, setCampaignError] = useState<string | null>(null);
+
+  usePageContext("Campaign", {
+    campaign_id: campaignId,
+    campaign_name: campaign?.name ?? null,
+    status: campaign?.status ?? null,
+    lead_count: campaign?.lead_count ?? 0,
+    pending_drafts: campaign?.pending_drafts ?? 0,
+    approved_drafts: campaign?.approved_drafts ?? 0,
+    tab,
+  });
 
   useEffect(() => {
     const token = (() => {

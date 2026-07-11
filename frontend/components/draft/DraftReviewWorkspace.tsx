@@ -8,6 +8,7 @@ import {
   approveDraft,
 } from "../../lib/api";
 import Icon from "../shared/Icon";
+import { usePageContext } from "../../hooks/usePageContext";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
@@ -34,6 +35,15 @@ export default function DraftReviewWorkspace() {
   const [editBody, setEditBody] = useState("");
   const [refining, setRefining] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+
+  usePageContext("Draft Review", {
+    drafts_count: drafts.length,
+    selected_index: selectedIndex,
+    selected_name: drafts[selectedIndex]?.lead?.name ?? null,
+    selected_status: drafts[selectedIndex]?.status ?? null,
+    approved_count: drafts.filter((d) => d.status === "approved").length,
+    pending_count: drafts.filter((d) => d.status === "pending").length,
+  });
 
   useEffect(() => {
     const token = (() => {

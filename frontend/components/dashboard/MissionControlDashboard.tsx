@@ -112,6 +112,34 @@ export default function MissionControlDashboard() {
     has_active_workflow: hasActiveWorkflow,
   });
 
+  if (loading) {
+    return (
+      <div className="max-w-[1400px] mx-auto px-6 pb-20 animate-fade-in">
+        <div className="mb-8 space-y-3">
+          <div className="h-10 w-96 animate-skeleton-pulse bg-surface-high/50 rounded-lg" />
+          <div className="h-5 w-[600px] animate-skeleton-pulse bg-surface-high/50 rounded-lg" />
+        </div>
+        <div className="bento-grid">
+          <div className="col-span-12 lg:col-span-8">
+            <div className="h-64 rounded-3xl bg-surface-lowest border border-outline-variant/10 animate-skeleton-pulse" />
+          </div>
+          <div className="col-span-12 lg:col-span-4 row-span-2">
+            <div className="h-[400px] rounded-3xl bg-surface-lowest border border-outline-variant/10 animate-skeleton-pulse" />
+          </div>
+          <div className="col-span-12 lg:col-span-4">
+            <div className="h-48 rounded-3xl bg-surface-lowest border border-outline-variant/10 animate-skeleton-pulse" />
+          </div>
+          <div className="col-span-12 lg:col-span-4">
+            <div className="h-48 rounded-3xl bg-surface-lowest border border-outline-variant/10 animate-skeleton-pulse" />
+          </div>
+          <div className="col-span-12 lg:col-span-8">
+            <div className="h-32 rounded-3xl bg-surface-lowest border border-outline-variant/10 animate-skeleton-pulse" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       {/* Background atmospheric effect */}

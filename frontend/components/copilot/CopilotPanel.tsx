@@ -26,7 +26,7 @@ export default function CopilotPanel() {
     return (
       <button
         onClick={() => setOpen(true)}
-        className="fixed bottom-6 right-6 z-40 w-12 h-12 rounded-full bg-primary text-on-primary shadow-lg flex items-center justify-center hover:brightness-110 active:scale-95 transition-all"
+        className="fixed bottom-6 right-6 z-40 w-12 h-12 rounded-full bg-primary text-on-primary shadow-lg shadow-primary/20 flex items-center justify-center hover:brightness-110 hover:shadow-primary/30 hover:scale-105 active:scale-95 transition-all duration-150"
         title="Open AI Workspace (⌘K)"
         aria-label="Open AI Workspace"
       >
@@ -39,20 +39,20 @@ export default function CopilotPanel() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-end pt-16 pb-0 pr-4"
+      className="fixed inset-0 z-50 flex items-start justify-end pt-16 pb-0 pr-4 bg-black/20 backdrop-blur-sm animate-fade-in"
       onClick={() => setOpen(false)}
       role="dialog"
       aria-modal="true"
       aria-label="AI Workspace"
     >
       <div
-        className="w-full max-w-sm h-[calc(100vh-5rem)] rounded-2xl border border-outline-variant/20 bg-surface-lowest shadow-2xl flex flex-col overflow-hidden"
+        className="w-full max-w-sm h-[calc(100vh-5rem)] rounded-2xl border border-outline-variant/20 bg-surface-lowest shadow-2xl flex flex-col overflow-hidden animate-slide-up"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-outline-variant/10 shrink-0">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-md bg-primary/10 flex items-center justify-center">
-              <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 text-primary" fill="currentColor">
+          <div className="flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded-lg bg-primary/15 flex items-center justify-center">
+              <svg viewBox="0 0 24 24" className="w-4 h-4 text-primary" fill="currentColor">
                 <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12z" />
               </svg>
             </div>
@@ -61,7 +61,7 @@ export default function CopilotPanel() {
           <div className="flex items-center gap-1">
             <button
               onClick={clear}
-              className="p-1.5 rounded-lg text-on-surface-variant/60 hover:text-on-surface hover:bg-surface-high/50 transition-all"
+              className="p-1.5 rounded-lg text-on-surface-variant/50 hover:text-on-surface hover:bg-surface-high/60 transition-all duration-150 active:scale-95"
               title="Clear conversation"
               aria-label="Clear conversation"
             >
@@ -71,7 +71,7 @@ export default function CopilotPanel() {
             </button>
             <button
               onClick={() => setOpen(false)}
-              className="p-1.5 rounded-lg text-on-surface-variant/60 hover:text-on-surface hover:bg-surface-high/50 transition-all"
+              className="p-1.5 rounded-lg text-on-surface-variant/50 hover:text-on-surface hover:bg-surface-high/60 transition-all duration-150 active:scale-95"
               title="Close (ESC)"
               aria-label="Close AI Workspace"
             >

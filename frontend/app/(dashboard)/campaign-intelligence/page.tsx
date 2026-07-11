@@ -24,6 +24,7 @@ export default function CampaignIntelligencePage() {
   const router = useRouter();
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [campaigns, setCampaigns] = useState<CampaignInfo[]>([]);
+  const [loading, setLoading] = useState(true);
 
   const activeCampaignList = campaigns.filter((c) => c.status !== "archived" && c.status !== "completed");
   const campaignNames = activeCampaignList.map((c) => c.name).filter(Boolean);
@@ -55,9 +56,10 @@ export default function CampaignIntelligencePage() {
 
   useEffect(() => {
     if (!sessionToken) return;
+    setLoading(true);
     getCampaignSummary(sessionToken).then((res) => {
       if (res.ok) setCampaigns(res.campaigns);
-    }).catch(() => {});
+    }).catch(() => {}).finally(() => setLoading(false));
   }, [sessionToken]);
 
   const activeCampaigns = campaigns.filter((c) => c.status !== "archived" && c.status !== "completed");
@@ -108,6 +110,25 @@ export default function CampaignIntelligencePage() {
     },
   ];
 
+  if (loading) {
+    return (
+      <PageContainer>
+        <div className="flex items-center gap-3 mb-8">
+          <div className="w-10 h-10 rounded-xl bg-surface-high/50 animate-skeleton-pulse" />
+          <div className="space-y-2">
+            <div className="h-6 w-64 animate-skeleton-pulse bg-surface-high/50 rounded-lg" />
+            <div className="h-4 w-48 animate-skeleton-pulse bg-surface-high/50 rounded-lg" />
+          </div>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-2 mb-10">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-32 rounded-2xl bg-surface-lowest border border-outline-variant/10 animate-skeleton-pulse" />
+          ))}
+        </div>
+      </PageContainer>
+    );
+  }
+
   return (
     <PageContainer>
       <div className="flex items-center gap-3 mb-8">
@@ -124,11 +145,12 @@ export default function CampaignIntelligencePage() {
 
       {/* Recommendations */}
       <div className="grid gap-4 lg:grid-cols-2 mb-10">
-        {recommendations.map((r) => (
+        {recommendations.map((r, i) => (
           <Link
             key={r.id}
             href={r.href}
-            className="rounded-2xl border border-outline-variant/10 bg-surface-lowest p-6 transition-all hover:border-primary/20 hover:-translate-y-0.5"
+            className="card-interactive p-6 animate-slide-up"
+            style={{ animationDelay: `${i * 0.05}s` }}
           >
             <div className="flex items-start gap-4">
               <div className={`w-10 h-10 rounded-xl bg-surface/50 flex items-center justify-center shrink-0 ${r.color}`}>
@@ -160,7 +182,7 @@ export default function CampaignIntelligencePage() {
               <Link
                 key={c.id}
                 href={`/campaigns/${c.id}`}
-                className="rounded-xl border border-outline-variant/10 bg-surface-lowest px-5 py-4 flex items-center justify-between hover:border-primary/20 transition-all"
+                className="card-interactive px-5 py-4 flex items-center justify-between"
               >
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="w-9 h-9 rounded-lg bg-primary-container/10 flex items-center justify-center shrink-0">

@@ -84,14 +84,14 @@ export default function CommandBar() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]"
+      className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh] bg-black/40 backdrop-blur-sm animate-fade-in"
       onClick={() => { setOpen(false); setQuery(""); }}
       role="dialog"
       aria-modal="true"
       aria-label="Command palette"
     >
       <div
-        className="w-full max-w-xl rounded-2xl border border-outline-variant/20 bg-surface-lowest shadow-2xl overflow-hidden"
+        className="w-full max-w-xl rounded-2xl border border-outline-variant/20 bg-surface-lowest shadow-2xl overflow-hidden animate-slide-up"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 px-5 py-4 border-b border-outline-variant/10">
@@ -106,7 +106,7 @@ export default function CommandBar() {
             className="flex-1 border-none bg-transparent text-body-md text-on-surface outline-none placeholder:text-on-surface-variant/40"
             aria-label="Search pages and actions"
           />
-          <kbd className="rounded-md border border-outline-variant/20 bg-surface-high px-2 py-0.5 text-mono-sm text-on-surface-variant/60 shrink-0">
+          <kbd className="hidden sm:inline-flex rounded-md border border-outline-variant/20 bg-surface-high px-2 py-0.5 text-mono-sm text-on-surface-variant/60 shrink-0">
             ESC
           </kbd>
         </div>
@@ -121,10 +121,10 @@ export default function CommandBar() {
                 <button
                   onClick={() => goTo(action.href)}
                   onMouseEnter={() => setSelectedIndex(i)}
-                  className={`w-full flex items-center gap-3 px-5 py-3 text-left text-body-md transition-all ${
+                  className={`w-full flex items-center gap-3 px-5 py-3 text-left text-body-md transition-all duration-100 ${
                     i === selectedIndex
                       ? "bg-primary/10 text-primary"
-                      : "text-on-surface hover:bg-surface-high/50"
+                      : "text-on-surface/80 hover:bg-surface-high/50"
                   }`}
                 >
                   <Icon name={action.icon} className="text-lg shrink-0" />

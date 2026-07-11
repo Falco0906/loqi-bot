@@ -42,7 +42,7 @@ export default function CampaignCard({
   return (
     <Link
       href={`/campaigns/${id}`}
-      className="block rounded-2xl border border-outline-variant/10 bg-surface-lowest p-5 transition-all hover:border-primary/20 hover:shadow-lg hover:-translate-y-0.5"
+      className="block card-interactive p-5"
     >
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-3 min-w-0">

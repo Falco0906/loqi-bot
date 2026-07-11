@@ -5,7 +5,7 @@ type Props = {
 
 export default function PageContainer({ children, className = "" }: Props) {
   return (
-    <div className={`mx-auto w-full max-w-[1400px] px-6 py-6 sm:px-8 ${className}`}>
+    <div className={`mx-auto w-full max-w-[1400px] px-6 py-6 sm:px-8 animate-fade-in ${className}`}>
       {children}
     </div>
   );

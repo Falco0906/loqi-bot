@@ -88,40 +88,54 @@ export default function CampaignsPage() {
         </div>
 
         {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <div className="flex items-center gap-3 text-on-surface-variant">
-              <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-              Loading campaigns...
-            </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 animate-fade-in">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="card-base p-5 space-y-4 animate-skeleton-pulse"
+                style={{ animationDelay: `${i * 0.05}s` }}>
+                <div className="h-5 w-2/3 bg-surface-high/50 rounded-lg" />
+                <div className="h-3 w-1/3 bg-surface-high/50 rounded-lg" />
+                <div className="flex gap-2">
+                  <div className="h-6 w-16 bg-surface-high/50 rounded-full" />
+                  <div className="h-6 w-16 bg-surface-high/50 rounded-full" />
+                </div>
+              </div>
+            ))}
           </div>
         ) : campaigns.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center">
+          <div className="flex flex-col items-center justify-center py-20 text-center animate-fade-in">
             <div className="w-16 h-16 rounded-2xl bg-surface-high/30 flex items-center justify-center text-on-surface-variant/40 mb-4">
-              <Icon name="campaign" className="text-4xl" />
+              <Icon name="campaign" className="text-3xl" />
             </div>
-            <p className="text-body-lg text-on-surface-variant/60">No campaigns yet</p>
-            <p className="mt-1 text-body-md text-on-surface-variant/40 max-w-sm">
+            <p className="text-body-lg text-on-surface-variant/80 font-medium">No campaigns yet</p>
+            <p className="mt-1.5 text-body-md text-on-surface-variant/50 max-w-sm leading-relaxed">
               Find leads in Discovery and create a campaign from the batch actions bar.
             </p>
+            <a
+              href="/discovery"
+              className="mt-6 inline-flex items-center justify-center rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-on-primary hover:brightness-110 active:scale-[0.97] transition-all"
+            >
+              Discover Leads
+            </a>
           </div>
         ) : (
           <>
             {activeCampaigns.length > 0 && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
-                {activeCampaigns.sort(sortFn).map((c) => (
-                  <CampaignCard
-                    key={c.id as string}
-                    id={c.id as string}
-                    name={c.name as string}
-                    status={c.status as string}
-                    leadCount={c.lead_count as number}
-                    pendingDrafts={c.pending_drafts as number}
-                    approvedDrafts={c.approved_drafts as number}
-                    createdAt={c.created_at as string}
-                    updatedAt={c.updated_at as string}
-                    onGenerate={() => handleGenerate(c.id as string)}
-                    onArchive={() => handleArchive(c.id as string)}
-                  />
+                {activeCampaigns.sort(sortFn).map((c, i) => (
+                  <div key={c.id as string} className="animate-slide-up" style={{ animationDelay: `${i * 0.04}s` }}>
+                    <CampaignCard
+                      id={c.id as string}
+                      name={c.name as string}
+                      status={c.status as string}
+                      leadCount={c.lead_count as number}
+                      pendingDrafts={c.pending_drafts as number}
+                      approvedDrafts={c.approved_drafts as number}
+                      createdAt={c.created_at as string}
+                      updatedAt={c.updated_at as string}
+                      onGenerate={() => handleGenerate(c.id as string)}
+                      onArchive={() => handleArchive(c.id as string)}
+                    />
+                  </div>
                 ))}
               </div>
             )}

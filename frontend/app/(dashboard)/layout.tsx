@@ -5,6 +5,7 @@ import Sidebar from "../../components/layout/Sidebar";
 import Topbar from "../../components/layout/Topbar";
 import CopilotPanel from "../../components/copilot/CopilotPanel";
 import BackendOffline from "../../components/error/BackendOffline";
+import ToastContainer from "../../components/shared/Toast";
 import { useBackendHealth } from "../../hooks/useBackendHealth";
 import { CopilotProvider } from "../../contexts/CopilotContext";
 
@@ -52,6 +53,7 @@ export default function DashboardLayout({
           <main className="flex-1 overflow-y-auto pt-16">
             {children}
           </main>
+          <ToastContainer />
           <CopilotPanel />
         </div>
       </div>

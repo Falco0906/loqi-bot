@@ -7,6 +7,7 @@ import DraftReviewWorkspace from "../../../../components/draft/DraftReviewWorksp
 import CampaignStatusBadge from "../../../../components/campaigns/CampaignStatusBadge";
 import CampaignDraftList from "../../../../components/campaigns/CampaignDraftList";
 import Icon from "../../../../components/shared/Icon";
+import { toast } from "../../../../components/shared/Toast";
 import { usePageContext } from "../../../../hooks/usePageContext";
 import { useActionHandlers } from "../../../../hooks/useActionHandlers";
 
@@ -284,15 +285,21 @@ export default function CampaignDetailPage() {
                       <button
                         onClick={handleGenerateDrafts}
                         disabled={generating}
-                        className="w-full px-4 py-2.5 rounded-lg bg-primary text-on-primary text-sm font-bold hover:brightness-110 transition-all disabled:opacity-50"
+                        className="w-full inline-flex items-center justify-center px-4 py-2.5 rounded-lg bg-primary text-on-primary text-sm font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
                       >
-                        {generating ? "Generating..." : "Generate Drafts"}
+                        {generating && (
+                          <svg className="-ml-1 mr-2 h-4 w-4 animate-spin text-on-primary/80" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                          </svg>
+                        )}
+                        {generating ? "Generating Drafts..." : "Generate Drafts"}
                       </button>
                     ) : null}
                     {status === "draft_review" && pendingDrafts > 0 ? (
                       <button
                         onClick={() => { setTab("Drafts"); }}
-                        className="w-full px-4 py-2.5 rounded-lg bg-secondary text-on-primary text-sm font-bold hover:brightness-110 transition-all"
+                        className="w-full inline-flex items-center justify-center px-4 py-2.5 rounded-lg bg-secondary text-on-primary text-sm font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
                       >
                         Continue Draft Review ({pendingDrafts})
                       </button>
@@ -300,8 +307,12 @@ export default function CampaignDetailPage() {
                     {status === "generating" ? (
                       <button
                         disabled
-                        className="w-full px-4 py-2.5 rounded-lg bg-outline-variant/20 text-on-surface-variant/60 text-sm font-medium cursor-not-allowed"
+                        className="w-full inline-flex items-center justify-center px-4 py-2.5 rounded-lg bg-outline-variant/20 text-on-surface-variant/60 text-sm font-medium cursor-not-allowed"
                       >
+                        <svg className="mr-2 h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
                         Generating Drafts...
                       </button>
                     ) : null}
@@ -310,17 +321,18 @@ export default function CampaignDetailPage() {
                         onClick={async () => {
                           if (sessionToken) {
                             await updateCampaign(sessionToken, campaignId, { status: "completed" });
+                            toast("success", "Campaign marked as completed");
                             await refreshCampaign();
                           }
                         }}
-                        className="w-full px-4 py-2.5 rounded-lg border border-outline-variant/20 text-on-surface text-sm font-medium hover:border-primary/40 hover:text-primary transition-all"
+                        className="w-full inline-flex items-center justify-center px-4 py-2.5 rounded-lg border border-outline-variant/20 text-on-surface text-sm font-medium transition-all duration-150 hover:border-primary/40 hover:text-primary active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
                       >
                         Mark Completed
                       </button>
                     ) : null}
                     <button
                       onClick={() => router.push("/discovery")}
-                      className="w-full px-4 py-2.5 rounded-lg border border-outline-variant/20 text-on-surface text-sm font-medium hover:border-primary/40 hover:text-primary transition-all"
+                      className="w-full inline-flex items-center justify-center px-4 py-2.5 rounded-lg border border-outline-variant/20 text-on-surface text-sm font-medium transition-all duration-150 hover:border-primary/40 hover:text-primary active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
                     >
                       Add More Leads
                     </button>
@@ -329,10 +341,11 @@ export default function CampaignDetailPage() {
                         onClick={async () => {
                           if (sessionToken) {
                             await updateCampaign(sessionToken, campaignId, { status: "archived" });
+                            toast("info", "Campaign paused");
                             router.push("/campaigns");
                           }
                         }}
-                        className="w-full px-4 py-2.5 rounded-lg border border-error/20 text-error text-sm font-medium hover:bg-error/5 transition-all"
+                        className="w-full inline-flex items-center justify-center px-4 py-2.5 rounded-lg border border-error/20 text-error text-sm font-medium transition-all duration-150 hover:bg-error/5 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
                       >
                         Pause Campaign
                       </button>

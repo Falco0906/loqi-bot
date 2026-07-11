@@ -424,35 +424,64 @@ export default function DiscoveryWorkspace() {
             <button
               type="submit"
               disabled={searching || !searchQuery.trim()}
-              className="rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-on-primary transition hover:brightness-110 active:scale-95 disabled:opacity-50"
+              className="inline-flex items-center justify-center rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-on-primary transition-all duration-150 hover:brightness-110 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
             >
-              {searching ? "Searching..." : "Search"}
+              {searching ? (
+                <>
+                  <svg className="-ml-1 mr-2 h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Searching...
+                </>
+              ) : "Search"}
             </button>
           </form>
         </div>
 
         {/* AI Status Bar (during search) */}
         {searching ? (
-          <div className="bg-primary-container/10 border border-primary/20 rounded-xl px-4 py-3 flex items-center justify-between mb-6">
-            <div className="flex items-center gap-3">
-              <Icon name="auto_awesome" className="text-primary animate-pulse" />
-              <p className="text-primary font-medium">
-                Researching leads...{" "}
-                <span className="text-on-surface-variant opacity-70">Scanning for best matches</span>
-              </p>
+          <>
+            <div className="bg-primary-container/10 border border-primary/20 rounded-xl px-4 py-3 flex items-center justify-between mb-6 animate-fade-in">
+              <div className="flex items-center gap-3">
+                <Icon name="auto_awesome" className="text-primary animate-pulse" />
+                <p className="text-primary font-medium">
+                  Researching leads...{" "}
+                  <span className="text-on-surface-variant opacity-70">Scanning for best matches</span>
+                </p>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="w-1 h-4 bg-primary animate-bounce" style={{ animationDelay: "0.1s" }} />
+                <div className="w-1 h-4 bg-primary animate-bounce" style={{ animationDelay: "0.2s" }} />
+                <div className="w-1 h-4 bg-primary animate-bounce" style={{ animationDelay: "0.3s" }} />
+              </div>
             </div>
-            <div className="flex items-center gap-1">
-              <div className="w-1 h-4 bg-primary animate-bounce" style={{ animationDelay: "0.1s" }} />
-              <div className="w-1 h-4 bg-primary animate-bounce" style={{ animationDelay: "0.2s" }} />
-              <div className="w-1 h-4 bg-primary animate-bounce" style={{ animationDelay: "0.3s" }} />
+            <div className="space-y-3 animate-fade-in">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="rounded-xl border border-outline-variant/10 bg-surface-lowest p-4 flex items-center gap-4 animate-skeleton-pulse"
+                  style={{ animationDelay: `${i * 0.08}s` }}>
+                  <div className="w-10 h-10 rounded-lg bg-surface-high/50 shrink-0" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-4 w-48 bg-surface-high/50 rounded-lg" />
+                    <div className="h-3 w-32 bg-surface-high/50 rounded-lg" />
+                  </div>
+                  <div className="flex gap-2">
+                    <div className="h-5 w-16 bg-surface-high/50 rounded-full" />
+                    <div className="h-5 w-16 bg-surface-high/50 rounded-full" />
+                  </div>
+                </div>
+              ))}
             </div>
-          </div>
+          </>
         ) : null}
 
         {/* Error */}
         {error ? (
-          <div className="mb-6 rounded-xl border border-error/20 bg-error/5 px-4 py-3 text-sm text-error">
-            {error}
+          <div className="mb-6 rounded-xl border border-error/20 bg-error/5 px-4 py-3 text-sm text-error animate-scale-in">
+            <div className="flex items-start gap-2.5">
+              <Icon name="warning" className="text-error text-sm mt-0.5 shrink-0" />
+              <span>{error}</span>
+            </div>
           </div>
         ) : null}
 
@@ -516,7 +545,7 @@ export default function DiscoveryWorkspace() {
                     <a
                       key={c.id as string}
                       href={`/campaigns/${c.id}`}
-                      className="group flex items-center justify-between rounded-xl border border-outline-variant/10 bg-surface-lowest px-5 py-3.5 transition-all hover:border-primary/20"
+                      className="group flex items-center justify-between card-interactive px-5 py-3.5"
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         <div className="w-8 h-8 rounded-lg bg-primary-container/10 flex items-center justify-center shrink-0">

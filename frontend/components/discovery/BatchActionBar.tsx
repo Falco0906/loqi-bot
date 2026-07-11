@@ -32,7 +32,7 @@ export default function BatchActionBar({ count, onDraft, onSaveCampaign, onCompa
         <div className="flex items-center gap-2">
           <button
             onClick={onDraft}
-            className="px-5 py-2.5 bg-primary text-on-primary font-bold rounded-lg flex items-center gap-2 hover:brightness-110 active:scale-95 transition-all text-sm"
+            className="px-5 py-2.5 bg-primary text-on-primary font-bold rounded-lg flex items-center gap-2 hover:brightness-110 active:scale-95 transition-all text-sm focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
           >
             <Icon name="edit_note" className="text-base" />
             Draft Outreach

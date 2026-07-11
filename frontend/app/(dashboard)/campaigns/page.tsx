@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { listCampaigns, updateCampaign, archiveCampaign } from "../../../lib/api";
 import CampaignCard from "../../../components/campaigns/CampaignCard";
 import Icon from "../../../components/shared/Icon";
+import { toast } from "../../../components/shared/Toast";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
@@ -43,16 +44,18 @@ export default function CampaignsPage() {
     if (!sessionToken) return;
     try {
       await updateCampaign(sessionToken, id, { status: "ready" });
+      toast("success", "Campaign is ready for drafting");
       fetchCampaigns();
-    } catch { /* silent */ }
+    } catch { toast("error", "Failed to update campaign"); }
   }
 
   async function handleArchive(id: string) {
     if (!sessionToken) return;
     try {
       await archiveCampaign(sessionToken, id);
+      toast("success", "Campaign archived");
       fetchCampaigns();
-    } catch { /* silent */ }
+    } catch { toast("error", "Failed to archive campaign"); }
   }
 
   const activeCampaigns = campaigns.filter((c) => c.status !== "archived");

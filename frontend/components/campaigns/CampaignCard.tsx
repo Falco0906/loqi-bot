@@ -1,6 +1,7 @@
 import Link from "next/link";
 import Icon from "../shared/Icon";
 import CampaignStatusBadge from "./CampaignStatusBadge";
+import { toast } from "../shared/Toast";
 
 type Props = {
   id: string;
@@ -86,19 +87,19 @@ export default function CampaignCard({
       <div className="flex items-center gap-2 pt-3 border-t border-outline-variant/10">
         <button
           onClick={(e) => { e.preventDefault(); onContinue?.(); }}
-          className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-bold hover:brightness-110 transition-all"
+          className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
         >
           Open
         </button>
         <button
-          onClick={(e) => { e.preventDefault(); onGenerate?.(); }}
-          className="px-3 py-1.5 rounded-lg border border-outline-variant/20 text-on-surface text-xs font-medium hover:border-primary/40 hover:text-primary transition-all"
+          onClick={(e) => { e.preventDefault(); onGenerate?.(); toast("info", "Starting draft generation..."); }}
+          className="px-3 py-1.5 rounded-lg border border-outline-variant/20 text-on-surface text-xs font-medium transition-all duration-150 hover:border-primary/40 hover:text-primary active:scale-[0.95] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
         >
           Generate Drafts
         </button>
         <button
-          onClick={(e) => { e.preventDefault(); onArchive?.(); }}
-          className="px-3 py-1.5 rounded-lg border border-outline-variant/20 text-on-surface-variant/60 text-xs font-medium hover:border-error/40 hover:text-error transition-all ml-auto"
+          onClick={(e) => { e.preventDefault(); onArchive?.(); toast("success", "Campaign archived"); }}
+          className="px-3 py-1.5 rounded-lg border border-outline-variant/20 text-on-surface-variant/60 text-xs font-medium transition-all duration-150 hover:border-error/40 hover:text-error active:scale-[0.95] ml-auto focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
         >
           Archive
         </button>

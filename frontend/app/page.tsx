@@ -1,5 +1,5 @@
-import { LoqiApp } from "../components/chat/loqi-app";
+import { redirect } from "next/navigation";
 
 export default function HomePage() {
-  return <LoqiApp />;
+  redirect("/mission-control");
 }

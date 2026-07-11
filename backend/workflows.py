@@ -179,6 +179,7 @@ def draft_message(input: dict) -> dict:
     except Exception as e:
         print(f"[workflows] Lead intelligence generation failed (proceeding without): {e}")
 
+    subject = ""
     if edit_request and previous_message:
         try:
             llm_message = rewrite_message(edit_request, previous_message)
@@ -200,6 +201,7 @@ def draft_message(input: dict) -> dict:
         try:
             draft = generate_outreach_email(lead, company_intelligence, lead_intelligence)
             message = f"Draft ready:\n\n---\n{draft.get('body', '')}\n---"
+            subject = draft.get("subject", "")
         except OpenAIError as e:
             return {
                 "ok": False,
@@ -219,6 +221,7 @@ def draft_message(input: dict) -> dict:
         "type": "draft_message",
         "message": message,
         "lead": lead,
+        "subject": subject,
         "edit_request": edit_request,
         "tone": tone,
         "length": length,

@@ -48,6 +48,13 @@ export type Lead = {
     excluded?: boolean;
     excluded_reason?: string;
   };
+  company_growth_stage?: string;
+  company_technology?: Record<string, unknown>;
+  company_revenue_band?: string;
+  company_employees?: number;
+  company_locations?: number;
+  company_founded?: number;
+  recent_events?: string[];
 };
 
 export type LeadIntelligence = {

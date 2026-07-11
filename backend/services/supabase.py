@@ -47,12 +47,12 @@ def _first_row(result) -> dict | None:
     return data[0] if data else None
 
 
-def test_supabase_connection() -> None:
+def test_supabase_connection() -> bool:
     _log("test_supabase_connection called")
     client = get_supabase_client()
     if client is None:
         _log("test_supabase_connection aborted: no client")
-        return
+        return False
 
     try:
         telegram_id = "test_123"
@@ -83,8 +83,10 @@ def test_supabase_connection() -> None:
         )
         _log("test_supabase_connection input fetch: telegram_id=test_123")
         _log(f"test_supabase_connection fetch success: {fetch_result.data}")
+        return True
     except Exception as error:
         _log(f"test_supabase_connection error: {error}")
+        return False
 
 
 def get_or_create_user(telegram_id: str, username: str | None = None) -> dict | None:

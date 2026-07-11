@@ -1,25 +1,138 @@
+import asyncio
+import csv
+import io
+import logging
 import os
+import time
+import uuid
+from contextvars import ContextVar
+from datetime import datetime, timezone
+from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 from services.agent import process_message
 from services.conversation_engine import ConversationEngine
 from services.google_auth import exchange_code_for_tokens
 from services.supabase import save_google_tokens, test_supabase_connection
 from services.telegram import send_message
+from services.campaign_planner import analyze_campaigns
+from workflows import run_workflow
 
 load_dotenv()
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger("loqi")
+
+request_id_var: ContextVar[str] = ContextVar("request_id")
+
 app = FastAPI()
 engine = ConversationEngine()
+_start_time = time.time()
 
-# CORS Configuration - allow all origins for development
+# ── In-memory batch / draft / campaign stores ──
+batch_jobs: dict[str, dict[str, Any]] = {}
+draft_store: dict[str, list[dict[str, Any]]] = {}
+campaign_store: dict[str, list[dict[str, Any]]] = {}
+
+
+def _parse_draft_body(message: str) -> str | None:
+    if "Draft ready:" not in message or "---" not in message:
+        return None
+    parts = message.split("---")
+    return parts[1].strip() if len(parts) >= 3 else None
+
+
+async def _process_batch_drafts(
+    session_token: str,
+    batch_id: str,
+    leads: list[dict],
+) -> None:
+    job = batch_jobs[batch_id]
+    loop = asyncio.get_event_loop()
+
+    for i, lead in enumerate(leads):
+        job["current_index"] = i
+        name = (
+            lead.get("name")
+            or f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip()
+            or "Unknown"
+        )
+        job["current_name"] = name
+
+        try:
+            workflow_result = await loop.run_in_executor(
+                None,
+                run_workflow,
+                {"type": "draft_message", "lead": lead},
+            )
+
+            draft_body = _parse_draft_body(workflow_result.get("message", ""))
+
+            draft_entry: dict[str, Any] = {
+                "id": str(uuid.uuid4()),
+                "campaign_id": job.get("campaign_id"),
+                "lead": lead,
+                "subject": workflow_result.get("subject", ""),
+                "text": draft_body or workflow_result.get("message", ""),
+                "status": "pending",
+                "tone": workflow_result.get("tone"),
+                "length": workflow_result.get("length"),
+                "lead_intelligence": workflow_result.get("lead_intelligence"),
+                "company_intelligence": workflow_result.get("company_intelligence"),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+            job["drafts"].append(draft_entry)
+            job["completed"] = i + 1
+
+            if session_token not in draft_store:
+                draft_store[session_token] = []
+            draft_store[session_token].append(draft_entry)
+
+        except Exception as e:
+            print(f"[batch] Draft failed for lead {i} ({name}): {e}")
+            job["completed"] = i + 1
+
+    job["status"] = "completed"
+
+    campaign_id = job.get("campaign_id")
+    if campaign_id:
+        campaigns = campaign_store.get(session_token, [])
+        for c in campaigns:
+            if c.get("id") == campaign_id:
+                c["status"] = "draft_review"
+                c["updated_at"] = datetime.now(timezone.utc).isoformat()
+                break
+
+# ── Logging Middleware ──
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    req_id = str(uuid.uuid4())[:8]
+    request_id_var.set(req_id)
+    start = time.time()
+    response = await call_next(request)
+    duration = (time.time() - start) * 1000
+    log.info(
+        "%s %s %s %.0fms %s",
+        req_id, request.method, request.url.path, duration, response.status_code,
+    )
+    response.headers["X-Request-ID"] = req_id
+    return response
+
+
+# ── CORS Configuration ──
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins in development
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -36,15 +149,33 @@ class SendWebMessageRequest(BaseModel):
 
 @app.on_event("startup")
 def startup_event():
+    required_vars = ["OPENAI_API_KEY"]
+    missing = [v for v in required_vars if not os.getenv(v)]
+    if missing:
+        log.warning("Missing required environment variables: %s", ", ".join(missing))
+    log.info("SUPABASE_URL=%s", "set" if os.getenv("SUPABASE_URL") else "not set")
+    log.info("SUPABASE_KEY=%s", "set" if os.getenv("SUPABASE_KEY") else "not set")
     try:
         test_supabase_connection()
     except Exception as e:
-        print(f"Warning: Supabase connection test failed: {e}")
+        log.warning("Supabase connection test failed: %s", e)
 
 
 @app.get("/", response_class=PlainTextResponse)
 def read_root():
     return "Loqi backend running"
+
+
+@app.get("/health")
+def health():
+    db_status = "connected" if test_supabase_connection() else "disconnected"
+    return {
+        "status": "healthy",
+        "version": "v2",
+        "uptime": int(time.time() - _start_time),
+        "database": db_status,
+        "providers": "ready",
+    }
 
 
 @app.post("/webhook")
@@ -102,8 +233,323 @@ async def post_web_session_message(session_token: str, payload: SendWebMessageRe
     )
 
 
+class BatchDraftRequest(BaseModel):
+    leads: list[dict]
+    campaign_id: str | None = None
+
+
+class RefineDraftRequest(BaseModel):
+    edit_request: str
+    previous_message: str
+    lead: dict
+
+
+class UpdateDraftRequest(BaseModel):
+    text: str
+
+
+class SaveCampaignRequest(BaseModel):
+    name: str
+    search_query: str = ""
+    lead_count: int = 0
+    leads: list[dict] | None = None
+    strategy: dict | None = None
+    status: str = "planning"
+
+
+class UpdateCampaignRequest(BaseModel):
+    name: str | None = None
+    status: str | None = None
+
+
+class GenerateDraftsRequest(BaseModel):
+    campaign_id: str
+
+
 class SelectLeadRequest(BaseModel):
     index: int
+
+
+@app.post("/api/web/session/{session_token}/batch-draft")
+async def batch_draft(session_token: str, payload: BatchDraftRequest):
+    if not payload.leads:
+        raise HTTPException(status_code=400, detail="No leads provided")
+    batch_id = str(uuid.uuid4())
+    total = len(payload.leads)
+    batch_jobs[batch_id] = {
+        "status": "processing",
+        "total": total,
+        "completed": 0,
+        "current_index": -1,
+        "current_name": None,
+        "drafts": [],
+        "error": None,
+        "campaign_id": payload.campaign_id,
+    }
+    asyncio.create_task(_process_batch_drafts(session_token, batch_id, payload.leads))
+    return {"ok": True, "batch_id": batch_id, "total": total}
+
+
+@app.get("/api/web/session/{session_token}/batch-status/{batch_id}")
+async def batch_status(session_token: str, batch_id: str):
+    job = batch_jobs.get(batch_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    return {"ok": True, **job}
+
+
+@app.post("/api/web/session/{session_token}/analyze-campaigns")
+async def analyze_campaigns_endpoint(session_token: str, payload: BatchDraftRequest):
+    result = analyze_campaigns(payload.leads)
+    return result
+
+@app.get("/api/web/session/{session_token}/drafts")
+async def list_drafts(session_token: str):
+    drafts = draft_store.get(session_token, [])
+    return {"ok": True, "drafts": drafts}
+
+
+@app.put("/api/web/session/{session_token}/drafts/{draft_id}")
+async def update_draft(session_token: str, draft_id: str, payload: UpdateDraftRequest):
+    drafts = draft_store.get(session_token, [])
+    for d in drafts:
+        if d.get("id") == draft_id:
+            d["text"] = payload.text
+            return {"ok": True, "draft": d}
+    raise HTTPException(status_code=404, detail="Draft not found")
+
+
+@app.post("/api/web/session/{session_token}/drafts/{draft_id}/refine")
+async def refine_draft(session_token: str, draft_id: str, payload: RefineDraftRequest):
+    drafts = draft_store.get(session_token, [])
+    target = next((d for d in drafts if d.get("id") == draft_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    loop = asyncio.get_event_loop()
+    try:
+        workflow_result = await loop.run_in_executor(
+            None,
+            run_workflow,
+            {
+                "type": "draft_message",
+                "lead": payload.lead,
+                "edit_request": payload.edit_request,
+                "previous_message": payload.previous_message,
+            },
+        )
+        new_body = _parse_draft_body(workflow_result.get("message", ""))
+        if new_body:
+            target["text"] = new_body
+            target["status"] = "pending"
+        return {"ok": True, "draft": target}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/web/session/{session_token}/drafts/{draft_id}/approve")
+async def approve_draft(session_token: str, draft_id: str):
+    drafts = draft_store.get(session_token, [])
+    for d in drafts:
+        if d.get("id") == draft_id:
+            d["status"] = "approved" if d.get("status") != "approved" else "pending"
+            return {"ok": True, "draft": d}
+    raise HTTPException(status_code=404, detail="Draft not found")
+
+
+@app.post("/api/web/session/{session_token}/campaigns")
+async def save_campaign(session_token: str, payload: SaveCampaignRequest):
+    if session_token not in campaign_store:
+        campaign_store[session_token] = []
+    now = datetime.now(timezone.utc).isoformat()
+    leads = payload.leads or []
+    campaign = {
+        "id": str(uuid.uuid4()),
+        "name": payload.name,
+        "search_query": payload.search_query,
+        "lead_count": payload.lead_count or len(leads),
+        "leads": leads,
+        "status": payload.status,
+        "strategy": payload.strategy,
+        "created_at": now,
+        "updated_at": now,
+    }
+    campaign_store[session_token].append(campaign)
+    return {"ok": True, "campaign": campaign}
+
+
+@app.get("/api/web/session/{session_token}/campaigns")
+async def list_campaigns(session_token: str):
+    campaigns = campaign_store.get(session_token, [])
+
+    def _enrich(c: dict) -> dict:
+        cid = c.get("id", "")
+        drafts = [d for d in draft_store.get(session_token, []) if d.get("campaign_id") == cid]
+        pending = sum(1 for d in drafts if d.get("status") == "pending")
+        approved = sum(1 for d in drafts if d.get("status") == "approved")
+        return {**c, "pending_drafts": pending, "approved_drafts": approved}
+
+    return {"ok": True, "campaigns": [_enrich(c) for c in campaigns]}
+
+
+@app.get("/api/web/session/{session_token}/campaigns/summary")
+async def campaign_summary(session_token: str):
+    campaigns = campaign_store.get(session_token, [])
+    items = []
+    for c in campaigns:
+        cid = c.get("id", "")
+        drafts = [d for d in draft_store.get(session_token, []) if d.get("campaign_id") == cid]
+        pending = sum(1 for d in drafts if d.get("status") == "pending")
+        items.append({
+            "id": cid,
+            "name": c.get("name", ""),
+            "status": c.get("status", "planning"),
+            "lead_count": c.get("lead_count", 0),
+            "pending_drafts": pending,
+            "updated_at": c.get("updated_at", ""),
+        })
+    return {"ok": True, "campaigns": items}
+
+
+@app.get("/api/web/session/{session_token}/campaigns/{campaign_id}")
+async def get_campaign(session_token: str, campaign_id: str):
+    campaigns = campaign_store.get(session_token, [])
+    target = next((c for c in campaigns if c.get("id") == campaign_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    drafts = [d for d in draft_store.get(session_token, []) if d.get("campaign_id") == campaign_id]
+    pending = sum(1 for d in drafts if d.get("status") == "pending")
+    approved = sum(1 for d in drafts if d.get("status") == "approved")
+    return {"ok": True, "campaign": {**target, "pending_drafts": pending, "approved_drafts": approved}}
+
+
+@app.put("/api/web/session/{session_token}/campaigns/{campaign_id}")
+async def update_campaign(session_token: str, campaign_id: str, payload: UpdateCampaignRequest):
+    campaigns = campaign_store.get(session_token, [])
+    target = next((c for c in campaigns if c.get("id") == campaign_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if payload.name is not None:
+        target["name"] = payload.name
+    if payload.status is not None:
+        target["status"] = payload.status
+    target["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return {"ok": True, "campaign": target}
+
+
+@app.delete("/api/web/session/{session_token}/campaigns/{campaign_id}")
+async def delete_campaign(session_token: str, campaign_id: str):
+    campaigns = campaign_store.get(session_token, [])
+    target = next((c for c in campaigns if c.get("id") == campaign_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    target["status"] = "archived"
+    target["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return {"ok": True, "campaign": target}
+
+
+@app.get("/api/web/session/{session_token}/campaigns/{campaign_id}/drafts")
+async def list_campaign_drafts(session_token: str, campaign_id: str):
+    all_drafts = draft_store.get(session_token, [])
+    filtered = [d for d in all_drafts if d.get("campaign_id") == campaign_id]
+    return {"ok": True, "drafts": filtered}
+
+
+@app.post("/api/web/session/{session_token}/campaigns/{campaign_id}/generate-drafts")
+async def generate_campaign_drafts(session_token: str, campaign_id: str):
+    campaigns = campaign_store.get(session_token, [])
+    target = next((c for c in campaigns if c.get("id") == campaign_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    leads = target.get("leads") or []
+    strategy = target.get("strategy") or {}
+    strategy_campaigns = strategy.get("campaigns") if isinstance(strategy, dict) else []
+
+    if not leads:
+        for sc in strategy_campaigns if isinstance(strategy_campaigns, list) else []:
+            sc_leads = sc.get("leads") if isinstance(sc, dict) else []
+            if isinstance(sc_leads, list):
+                leads.extend(sc_leads)
+
+    if not leads:
+        raise HTTPException(status_code=400, detail="No leads found in campaign")
+
+    batch_id = str(uuid.uuid4())
+    total = len(leads)
+    batch_jobs[batch_id] = {
+        "status": "processing",
+        "total": total,
+        "completed": 0,
+        "current_index": -1,
+        "current_name": None,
+        "drafts": [],
+        "error": None,
+        "campaign_id": campaign_id,
+    }
+    target["status"] = "generating"
+    target["updated_at"] = datetime.now(timezone.utc).isoformat()
+    asyncio.create_task(_process_batch_drafts(session_token, batch_id, leads))
+    return {"ok": True, "batch_id": batch_id, "total": total}
+
+
+@app.get("/api/web/session/{session_token}/campaigns/{campaign_id}/generation-status")
+async def campaign_generation_status(session_token: str, campaign_id: str):
+    active_jobs = [
+        {"batch_id": bid, **job}
+        for bid, job in batch_jobs.items()
+        if job.get("campaign_id") == campaign_id
+    ]
+    if not active_jobs:
+        return {"ok": True, "active": False, "jobs": []}
+    latest = max(active_jobs, key=lambda j: j.get("current_index", -1))
+    return {
+        "ok": True,
+        "active": latest.get("status") == "processing",
+        "status": latest.get("status"),
+        "total": latest.get("total", 0),
+        "completed": latest.get("completed", 0),
+        "batch_id": latest.get("batch_id"),
+    }
+
+
+@app.get("/api/web/session/{session_token}/export-csv")
+async def export_csv(session_token: str):
+    leads: list[dict] = []
+    for d in draft_store.get(session_token, []):
+        lead = d.get("lead")
+        if lead:
+            leads.append(lead)
+
+    if not leads:
+        from services.conversation_engine import ConversationEngine
+        local_engine = ConversationEngine()
+        summary = local_engine.get_web_session_summary(session_token)
+        if summary:
+            for msg in (summary.get("messages") or []):
+                data = msg.get("data") or {}
+                msg_leads = data.get("leads") or []
+                leads.extend(msg_leads)
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Name", "Title", "Company", "Email", "LinkedIn URL", "Industry", "Phone"])
+    for lead in leads:
+        writer.writerow([
+            lead.get("name") or f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip(),
+            lead.get("title", ""),
+            lead.get("company", ""),
+            lead.get("email", ""),
+            lead.get("linkedin_url", ""),
+            lead.get("company_industry", ""),
+            "",
+        ])
+
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=loqi-leads-{session_token[:8]}.csv"},
+    )
 
 
 @app.post("/api/web/session/{session_token}/select-lead")

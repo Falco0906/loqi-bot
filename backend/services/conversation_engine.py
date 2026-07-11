@@ -18,6 +18,7 @@ from services.google_auth import get_google_auth_url
 from services.supabase import (
     clear_session_context,
     get_lead_by_id,
+    get_pending_leads,
     get_selected_lead,
     get_session_context,
     log_conversation,
@@ -26,6 +27,8 @@ from services.supabase import (
     get_user_preferences,
     save_user_preference,
 )
+from services.enrichment.enrichment_factory import get_enricher
+from services.intelligence.lead_intelligence import generate_lead_intelligence
 from workflows import run_workflow
 from services.conversational_response_generator import (
     RESPONSE_VARIATIONS,
@@ -380,6 +383,113 @@ class ConversationEngine:
         if available:
             return random.choice(available)
         return pool[0] if pool else "Who are you trying to reach?"
+
+    def select_lead_and_draft(
+        self,
+        *,
+        user_id: str,
+        lead_index: int,
+        workflow_session_id: str,
+    ) -> dict:
+        context = get_session_context(user_id)
+        service = context.get("service")
+        target = context.get("target")
+        user_messages = context.get("user_messages", [])
+        assistant_messages = context.get("assistant_messages", [])
+        conversation_context = (user_messages + assistant_messages)[-10:]
+
+        selected_lead = select_lead(
+            user_id,
+            str(lead_index),
+            since_timestamp=context.get("started_at"),
+        )
+        if selected_lead is None:
+            return {
+                "ok": False,
+                "messages": [
+                    _message(
+                        role="assistant",
+                        message_type="error",
+                        text="Could not find that lead. Try searching again.",
+                    )
+                ],
+            }
+
+        outputs = []
+        outputs.extend(
+            _assistant_bundle(
+                workflow_session_id=workflow_session_id,
+                text=_format_selected_lead(selected_lead),
+                message_type="lead_selected",
+                data={"lead": selected_lead},
+            )
+        )
+
+        workflow_result = run_workflow(
+            {
+                "type": "draft_message",
+                "service": service,
+                "target": target,
+                "lead": selected_lead,
+                "conversation_context": conversation_context,
+            }
+        )
+        outputs.extend(
+            self._render_workflow_result(
+                workflow_session_id=workflow_session_id,
+                workflow_result=workflow_result,
+            )
+        )
+
+        user_prefs = get_user_preferences(user_id) or {}
+        next_text = self._get_dynamic_prompt(
+            stage="after_draft",
+            context={"lead_name": selected_lead.get("name", "")},
+            recent_messages=assistant_messages[-3:],
+            user_preferences=user_prefs,
+        )
+        outputs.extend(
+            _assistant_bundle(
+                workflow_session_id=workflow_session_id,
+                text=next_text,
+                message_type="status",
+            )
+        )
+
+        return {"ok": True, "messages": outputs}
+
+    def preview_lead_intelligence(
+        self,
+        *,
+        user_id: str,
+        lead_index: int,
+    ) -> dict:
+        pending_leads = get_pending_leads(
+            user_id,
+            since_timestamp=None,
+            limit=5,
+        )
+        if lead_index < 1 or lead_index > len(pending_leads):
+            return {
+                "ok": False,
+                "error": "Invalid lead index",
+            }
+
+        lead = pending_leads[lead_index - 1]
+        company_intelligence = None
+        try:
+            enricher = get_enricher()
+            if enricher.health_check().get("ok"):
+                company_intelligence = enricher.enrich_lead(lead)
+        except Exception:
+            pass
+
+        lead_intelligence = generate_lead_intelligence(lead, company_intelligence)
+
+        return {
+            "ok": True,
+            "lead_intelligence": lead_intelligence,
+        }
 
     def handle_message(
         self,

@@ -102,6 +102,80 @@ async def post_web_session_message(session_token: str, payload: SendWebMessageRe
     )
 
 
+class SelectLeadRequest(BaseModel):
+    index: int
+
+
+@app.post("/api/web/session/{session_token}/select-lead")
+async def select_lead_endpoint(session_token: str, payload: SelectLeadRequest):
+    from services.supabase import get_pending_leads, get_user
+
+    user = get_web_session_internal(session_token)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    engine = ConversationEngine()
+    workflow_session_id = ensure_workflow_session_internal(user["id"], session_token)
+    result = engine.select_lead_and_draft(
+        user_id=user["id"],
+        lead_index=payload.index,
+        workflow_session_id=workflow_session_id,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("messages", [{}])[0].get("text", "Selection failed"))
+
+    for message in result.get("messages", []):
+        if message.get("role") == "assistant":
+            text = (message.get("text") or "").strip()
+            if text:
+                log_conversation_internal(user["id"], "assistant", text)
+
+    return {"ok": True, "messages": result.get("messages", [])}
+
+
+class PreviewLeadRequest(BaseModel):
+    index: int
+
+
+@app.post("/api/web/session/{session_token}/preview-lead")
+async def preview_lead_endpoint(session_token: str, payload: PreviewLeadRequest):
+    user = get_web_session_internal(session_token)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    engine = ConversationEngine()
+    result = engine.preview_lead_intelligence(
+        user_id=user["id"],
+        lead_index=payload.index,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Preview failed"))
+
+    return {"ok": True, "lead_intelligence": result.get("lead_intelligence")}
+
+
+def get_web_session_internal(session_token: str) -> dict | None:
+    from services.conversation_store import get_web_session
+
+    return get_web_session(session_token)
+
+
+def ensure_workflow_session_internal(user_id: str, session_token: str) -> str:
+    from services.conversation_store import ensure_workflow_session
+
+    return ensure_workflow_session(
+        user_id=user_id,
+        channel="web",
+        session_key=session_token,
+    )
+
+
+def log_conversation_internal(user_id: str, role: str, text: str) -> None:
+    from services.supabase import log_conversation
+
+    log_conversation(user_id, role, text)
+
+
 @app.get("/api/web/session/{session_token}/gmail")
 async def get_web_gmail_status(session_token: str):
     summary = engine.get_web_session_summary(session_token)

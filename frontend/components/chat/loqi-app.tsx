@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { createSession, getGmailStatus, getSession, sendMessage } from "../../lib/api";
-import type { LoqiMessage, LoqiSessionSummary, LeadIntelligence } from "../../lib/types";
+import { createSession, getGmailStatus, getSession, previewLead, selectLead, sendMessage } from "../../lib/api";
+import type { Lead, LeadIntelligence, LoqiMessage, LoqiSessionSummary } from "../../lib/types";
+import LeadCard from "./LeadCard";
 import LeadIntelligenceCard from "./LeadIntelligenceCard";
 
 const ACTIVE_SESSION_STORAGE_KEY = "loqi_active_session_token";
@@ -105,10 +106,22 @@ function writeStorageItem(key: string, value: string) {
   }
 }
 
-function MessageBlock({ message }: { message: LoqiMessage }) {
+function MessageBlock({
+  message,
+  selectedLeadId,
+  previewState,
+  onSelectLead,
+  onPreviewLead,
+}: {
+  message: LoqiMessage;
+  selectedLeadId: string | null;
+  previewState: Map<number, LeadIntelligence | null>;
+  onSelectLead: (index: number) => void;
+  onPreviewLead: (index: number) => void;
+}) {
   const isUser = message.role === "user";
   const leads = Array.isArray(message.data?.leads)
-    ? (message.data?.leads as Array<Record<string, string>>)
+    ? (message.data?.leads as Lead[])
     : [];
   const draft = typeof message.data?.draft === "string" ? message.data.draft : null;
   const actionUrl = typeof message.data?.url === "string" ? message.data.url : null;
@@ -135,22 +148,21 @@ function MessageBlock({ message }: { message: LoqiMessage }) {
 
           {leads.length > 0 ? (
             <div className="mt-4 grid gap-3 md:grid-cols-2">
-              {leads.map((lead, index) => (
-                <div
-                  key={`${lead.name}-${index}`}
-                  className="rounded-[0.95rem] border border-white/8 bg-black/10 p-3.5"
-                >
-                  <div className="text-[10px] uppercase tracking-[0.24em] text-[#8e98b3]">
-                    Lead {index + 1}
-                  </div>
-                  <div className="mt-2 text-sm font-semibold text-white">
-                    {lead.name || "Unknown"}
-                  </div>
-                  <div className="mt-1 text-xs text-[#bec7dc] sm:text-sm">
-                    {[lead.title, lead.company].filter(Boolean).join(" @ ")}
-                  </div>
-                </div>
-              ))}
+              {leads.map((lead, index) => {
+                const leadIndex = index + 1;
+                return (
+                  <LeadCard
+                    key={`${lead.name || lead.lead_id || ""}-${index}`}
+                    lead={lead}
+                    index={leadIndex}
+                    selected={selectedLeadId === `card-${leadIndex}`}
+                    previewing={previewState.has(leadIndex)}
+                    previewData={previewState.get(leadIndex) ?? null}
+                    onSelect={onSelectLead}
+                    onPreview={onPreviewLead}
+                  />
+                );
+              })}
             </div>
           ) : null}
 
@@ -199,11 +211,14 @@ export function LoqiApp() {
   const [messages, setMessages] = useState<LoqiMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [selectingLead, setSelectingLead] = useState(false);
   const [gmailConnected, setGmailConnected] = useState(false);
   const [gmailUrl, setGmailUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [storedSessions, setStoredSessions] = useState<StoredSession[]>([]);
+  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+  const [previewData, setPreviewData] = useState<Map<number, LeadIntelligence | null>>(new Map());
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -339,6 +354,61 @@ export function LoqiApp() {
 
     setComposer("");
     await loadSession(sessionToken);
+  }
+
+  async function handleSelectLead(index: number) {
+    if (!session || selectingLead) return;
+
+    setSelectingLead(true);
+    setSelectedLeadId(`card-${index}`);
+
+    try {
+      const response = await selectLead(session.session_token, index);
+      setMessages((current) => [...current, ...response.messages]);
+
+      const refreshed = await getSession(session.session_token);
+      setSession(refreshed);
+
+      const updatedSessions = upsertStoredSession({
+        token: session.session_token,
+        title: deriveSessionTitle(refreshed.messages),
+        updatedAt: new Date().toISOString(),
+      });
+      setStoredSessions(updatedSessions);
+
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+      }, 100);
+    } catch (caught) {
+      setSelectedLeadId(null);
+      setError(caught instanceof Error ? caught.message : "Failed to select lead.");
+    } finally {
+      setSelectingLead(false);
+    }
+  }
+
+  async function handlePreviewLead(index: number) {
+    if (!session) return;
+
+    if (previewData.has(index)) {
+      const next = new Map(previewData);
+      next.delete(index);
+      setPreviewData(next);
+      return;
+    }
+
+    try {
+      const response = await previewLead(session.session_token, index);
+      if (response.ok && response.lead_intelligence) {
+        setPreviewData((current) => {
+          const next = new Map(current);
+          next.set(index, response.lead_intelligence);
+          return next;
+        });
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Failed to preview lead.");
+    }
   }
 
   async function handleSend() {
@@ -505,7 +575,14 @@ export function LoqiApp() {
               </div>
             ) : (
               messages.map((message) => (
-                <MessageBlock key={message.id} message={message} />
+                <MessageBlock
+                  key={message.id}
+                  message={message}
+                  selectedLeadId={selectedLeadId}
+                  previewState={previewData}
+                  onSelectLead={handleSelectLead}
+                  onPreviewLead={handlePreviewLead}
+                />
               ))
             )}
             <div ref={messagesEndRef} />

@@ -1,4 +1,4 @@
-import type { LoqiMessage, LoqiSessionSummary } from "./types";
+import type { LeadIntelligence, LoqiMessage, LoqiSessionSummary } from "./types";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_LOQI_API_BASE_URL || "http://127.0.0.1:10000";
@@ -41,6 +41,30 @@ export async function sendMessage(sessionToken: string, text: string) {
     },
   );
   return parseJson<{ ok: boolean; messages: LoqiMessage[] }>(response);
+}
+
+export async function selectLead(sessionToken: string, index: number) {
+  const response = await fetch(
+    `${API_BASE}/api/web/session/${sessionToken}/select-lead`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ index }),
+    },
+  );
+  return parseJson<{ ok: boolean; messages: LoqiMessage[] }>(response);
+}
+
+export async function previewLead(sessionToken: string, index: number) {
+  const response = await fetch(
+    `${API_BASE}/api/web/session/${sessionToken}/preview-lead`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ index }),
+    },
+  );
+  return parseJson<{ ok: boolean; lead_intelligence: LeadIntelligence }>(response);
 }
 
 export async function getGmailStatus(sessionToken: string) {

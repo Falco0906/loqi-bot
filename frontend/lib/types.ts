@@ -21,6 +21,35 @@ export type LoqiSessionSummary = {
   messages: LoqiMessage[];
 };
 
+export type Lead = {
+  lead_id?: string;
+  id?: string;
+  name?: string;
+  first_name?: string;
+  last_name?: string;
+  title?: string;
+  company?: string;
+  email?: string;
+  linkedin_url?: string;
+  buying_authority?: number;
+  department?: string;
+  company_industry?: string;
+  company_description?: string;
+  pain_points?: string[];
+  buying_signals?: string[];
+  commercial_score?: number;
+  commercial_score_breakdown?: {
+    buyer_score?: number;
+    company_score?: number;
+    authority_score?: number;
+    relevance_score?: number;
+    final_score?: number;
+    highlights?: string[];
+    excluded?: boolean;
+    excluded_reason?: string;
+  };
+};
+
 export type LeadIntelligence = {
   fit_score: number;
   confidence: number;

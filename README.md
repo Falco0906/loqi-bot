@@ -112,6 +112,43 @@ docs/
 
 ---
 
+## Development
+
+### Prerequisites
+
+- Python 3.11+ with `venv` at `backend/venv/bin/python`
+- Node.js 20+ with npm
+
+### One-command start
+
+```bash
+npm run dev
+```
+
+This starts both servers simultaneously via `concurrently`:
+
+| Service        | URL                                    |
+|----------------|----------------------------------------|
+| Frontend       | http://localhost:3000                   |
+| Backend API    | http://127.0.0.1:10000                  |
+| FastAPI Docs   | http://127.0.0.1:10000/docs             |
+| Health Check   | http://127.0.0.1:10000/health           |
+
+### Individual commands
+
+```bash
+npm run backend    # Start only the FastAPI server
+npm run frontend   # Start only the Next.js dev server
+npm run build      # Build the frontend for production
+npm run lint       # Lint the frontend
+```
+
+Press **Ctrl+C** to stop both processes cleanly.
+
+> Note: This project uses in-memory stores. Data persists across page navigation but not across backend restarts.
+
+---
+
 ## Support
 
 - Check `docs/CURRENT_STATE.md` for what's working

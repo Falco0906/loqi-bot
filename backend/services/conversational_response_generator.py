@@ -720,3 +720,49 @@ def _suggest_fallback_action(stage: str, context: dict) -> str:
         "complete": "Offer to find more leads",
     }
     return suggestions.get(stage, "Continue the conversation")
+
+
+def generate_copilot_response(
+    user_message: str,
+    copilot_context: dict | None = None,
+    context: dict | None = None,
+) -> str:
+    """Generate a response for the AI Copilot.
+
+    The frontend sends structured data instead of a pre-built prompt.
+    This function merges the copilot system prompt, page context,
+    available actions, and user message before calling the LLM.
+    """
+    ctx = copilot_context or {}
+    current_page = ctx.get("current_page", "unknown")
+    page_context = ctx.get("page_context") or {}
+    available_actions = ctx.get("available_actions") or []
+
+    system = (
+        "You are Loqi OS, the AI copilot for an outbound sales platform.\n"
+        "You can navigate between pages, answer questions about the user's data, "
+        "and execute actions on the current page.\n"
+        "Keep responses concise and actionable.\n"
+        "When suggesting an action, include it in your response.\n"
+        f"Format: <<action:label:action_type>> (e.g. <<action:Select All:select_all>>)\n"
+        f"For navigation: <<action:label:/path>> (e.g. <<action:Discovery:/discovery>>)\n"
+    )
+
+    system += f"\nCurrent page: {current_page}\n"
+
+    if available_actions:
+        system += "\nAvailable actions on this page:\n"
+        for a in available_actions:
+            system += f"- {a}\n"
+
+    if page_context:
+        system += f"\nPage context:\n{json.dumps(page_context, indent=2)}\n"
+
+    user_text = f"User message: {user_message.strip()}"
+    response = _send_openai_request(system, user_text, timeout=20)
+
+    if response and len(response.strip()) > 0:
+        _log(f"Copilot response generated: {response[:80]}")
+        return response.strip()
+
+    return "I understand what you're looking at. What would you like me to do?"

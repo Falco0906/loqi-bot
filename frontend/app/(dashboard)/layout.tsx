@@ -42,7 +42,7 @@ export default function DashboardLayout({
   }
 
   return (
-    <CopilotProvider sessionToken={sessionToken}>
+    <CopilotProvider initialToken={sessionToken}>
       <div className="flex h-full">
         <Sidebar />
         <div className="ml-64 flex flex-1 flex-col">

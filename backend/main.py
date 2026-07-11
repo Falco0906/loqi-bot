@@ -143,8 +143,15 @@ class CreateWebSessionRequest(BaseModel):
     display_name: str | None = None
 
 
+class CopilotContextModel(BaseModel):
+    current_page: str | None = None
+    page_context: dict | None = None
+    available_actions: list[str] | None = None
+
+
 class SendWebMessageRequest(BaseModel):
     text: str
+    copilot: CopilotContextModel | None = None
 
 
 @app.on_event("startup")
@@ -222,8 +229,34 @@ async def get_web_session_messages(session_token: str):
 @app.post("/api/web/session/{session_token}/messages")
 async def post_web_session_message(session_token: str, payload: SendWebMessageRequest):
     summary = engine.get_web_session_summary(session_token)
+
     if summary is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+        created = engine.create_web_session(display_name="web-user")
+        if created is None:
+            raise HTTPException(status_code=500, detail="Unable to create session")
+        summary = engine.get_web_session_summary(created["session_token"])
+        if summary is None:
+            raise HTTPException(status_code=500, detail="Session creation failed")
+        return engine.handle_message(
+            channel="web",
+            external_user_id=created["session_token"],
+            text=payload.text,
+            username=summary.get("display_name"),
+        )
+
+    if payload.copilot and payload.copilot.current_page:
+        from services.conversational_response_generator import generate_copilot_response
+        response_text = generate_copilot_response(
+            user_message=payload.text,
+            copilot_context=payload.copilot.model_dump(),
+            context={
+                "user_id": summary.get("user_id"),
+                "service": "",
+                "target": "",
+            },
+        )
+        msg = _message(role="assistant", message_type="text", text=response_text)
+        return {"ok": True, "messages": [msg], "events": []}
 
     return engine.handle_message(
         channel="web",

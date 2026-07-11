@@ -137,6 +137,39 @@ export async function sendMessage(sessionToken: string, text: string) {
   );
 }
 
+export async function copilotMessage(
+  sessionToken: string,
+  params: {
+    text: string;
+    currentPage?: string;
+    pageContext?: Record<string, unknown>;
+    availableActions?: string[];
+  },
+) {
+  return fetchWithRetry<{
+    ok: boolean;
+    messages: LoqiMessage[];
+    events: unknown[];
+    session_token?: string;
+  }>(
+    `${API_BASE}/api/web/session/${sessionToken}/messages`,
+    {
+      method: "POST",
+      timeout: 20000,
+      retries: 1,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: params.text,
+        copilot: {
+          current_page: params.currentPage,
+          page_context: params.pageContext,
+          available_actions: params.availableActions,
+        },
+      }),
+    },
+  );
+}
+
 export async function selectLead(sessionToken: string, index: number) {
   return fetchWithRetry<{ ok: boolean; messages: LoqiMessage[] }>(
     `${API_BASE}/api/web/session/${sessionToken}/select-lead`,

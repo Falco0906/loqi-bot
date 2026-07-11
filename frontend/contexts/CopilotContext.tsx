@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
-import { sendMessage } from "../lib/api";
+import { copilotMessage, createSession } from "../lib/api";
 import type {
   CopilotAction,
   ActionType,
@@ -17,6 +17,8 @@ import type {
 } from "../lib/actionRegistry";
 
 export type { CopilotAction, ActionType, ActionHandler };
+
+const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
 export type CopilotMessage = {
   id: string;
@@ -53,12 +55,16 @@ export function useCopilot() {
   return ctx;
 }
 
+function storeToken(token: string) {
+  try { localStorage.setItem(ACTIVE_SESSION_KEY, token); } catch { /* noop */ }
+}
+
 export function CopilotProvider({
   children,
-  sessionToken,
+  initialToken,
 }: {
   children: ReactNode;
-  sessionToken: string | null;
+  initialToken: string | null;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -77,36 +83,6 @@ export function CopilotProvider({
   const unregisterHandler = useCallback((action: ActionType) => {
     handlersRef.current.delete(action);
   }, []);
-
-  const buildSystemPrompt = useCallback(() => {
-    const ctx = pageContext;
-    let prompt = `You are Loqi OS, the AI copilot for an outbound sales platform.
-
-You can:
-- Navigate between pages (Discovery, Campaigns, Draft Review, Campaign Intelligence, Mission Control)
-- Answer questions about the user's data
-- Execute actions on the current page
-
-Available actions on this page:
-${
-  ctx?.page === "Discovery"
-    ? "- select_all: Select all visible leads\n- clear_selection: Clear current selection\n- compare: Compare selected leads\n- plan_campaign: Create a campaign from selected leads\n- search: Search for leads\n- save_campaign: Save the current campaign\n- export_csv: Export leads to CSV"
-    : ctx?.page === "Campaign"
-      ? "- generate_drafts: Generate email drafts for this campaign"
-      : ctx?.page === "Draft Review"
-        ? "- approve: Approve the current draft\n- approve_all: Approve all pending drafts\n- refine: Refine the current draft"
-        : "None specific"
-}
-
-Current page: ${ctx?.page || "unknown"}`;
-    if (ctx?.data && Object.keys(ctx.data).length > 0) {
-      prompt += `\n\nPage context:\n${JSON.stringify(ctx.data, null, 2)}`;
-    }
-    prompt += `\n\nKeep responses concise and actionable. When suggesting an action, include it in your response.
-Format: <<action:label:action_type>> (e.g. <<action:Select All:select_all>>)
-For navigation: <<action:label:/path>> (e.g. <<action:Discovery:/discovery>>)`;
-    return prompt;
-  }, [pageContext]);
 
   const executeAction = useCallback(
     async (action: CopilotAction) => {
@@ -146,9 +122,20 @@ For navigation: <<action:label:/path>> (e.g. <<action:Discovery:/discovery>>)`;
     [],
   );
 
+  const buildAvailableActions = useCallback((): string[] => {
+    const ctx = pageContext;
+    if (!ctx) return [];
+    const map: Record<string, string[]> = {
+      Discovery: ["select_all", "clear_selection", "compare", "plan_campaign", "search", "save_campaign", "export_csv"],
+      Campaign: ["generate_drafts"],
+      "Draft Review": ["approve", "approve_all", "refine"],
+    };
+    return map[ctx.page] || [];
+  }, [pageContext]);
+
   const send = useCallback(
     async (text: string) => {
-      if (!sessionToken || !text.trim() || sending) return;
+      if (!text.trim() || sending) return;
 
       const userMsg: CopilotMessage = {
         id: `user-${Date.now()}`,
@@ -157,14 +144,25 @@ For navigation: <<action:label:/path>> (e.g. <<action:Discovery:/discovery>>)`;
         created_at: new Date().toISOString(),
       };
 
-      const systemPrompt = buildSystemPrompt();
-      const fullText = `${systemPrompt}\n\nUser message: ${text.trim()}`;
-
       setMessages((prev) => [...prev, userMsg]);
       setSending(true);
 
       try {
-        const res = await sendMessage(sessionToken, fullText);
+        let token = initialToken;
+        if (!token) {
+          const created = await createSession("Copilot User");
+          token = created.session_token;
+          storeToken(token);
+        }
+
+        const ctx = pageContext;
+        const res = await copilotMessage(token, {
+          text: text.trim(),
+          currentPage: ctx?.page || "unknown",
+          pageContext: ctx?.data,
+          availableActions: buildAvailableActions(),
+        });
+
         const assistantText =
           res.messages?.[res.messages.length - 1]?.text || "No response";
         const { clean, actions } = parseActions(assistantText);
@@ -192,7 +190,7 @@ For navigation: <<action:label:/path>> (e.g. <<action:Discovery:/discovery>>)`;
         setSending(false);
       }
     },
-    [sessionToken, sending, buildSystemPrompt, parseActions],
+    [initialToken, sending, pageContext, parseActions, buildAvailableActions],
   );
 
   const clear = useCallback(() => {

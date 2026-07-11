@@ -14,6 +14,7 @@ import CampaignPlanner from "../planner/CampaignPlanner";
 import StrategyApproval from "../planner/StrategyApproval";
 import GenerationProgress from "../planner/GenerationProgress";
 import { usePageContext } from "../../hooks/usePageContext";
+import { useActionHandlers } from "../../hooks/useActionHandlers";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
@@ -93,11 +94,33 @@ export default function DiscoveryWorkspace() {
   /* ── Save Campaign ── */
   const [campaignModal, setCampaignModal] = useState(false);
 
+  /* ── Derived ── */
+  const selectedCount = selectedIndices.size;
+  const selectedLeads = Array.from(selectedIndices).map((i) => leads[i]).filter(Boolean);
+
   usePageContext("Discovery", {
     leads_count: leads.length,
-    selected_count: selectedIndices.size,
+    selected_count: selectedCount,
     search_query: searchQuery,
     has_searched: hasSearched,
+    selected_names: selectedLeads.map((l) => l.name),
+    selected_companies: selectedLeads.map((l) => l.company),
+    industries: [...new Set(leads.map((l) => l.company || "").filter(Boolean))],
+    signals: [...new Set(leads.flatMap((l) => l.buying_signals || []))],
+  });
+
+  useActionHandlers({
+    select_all: () => {
+      if (leads.length > 0) setSelectedIndices(new Set(leads.map((_, i) => i)));
+    },
+    clear_selection: clearSelection,
+    compare: () => {
+      if (selectedIndices.size >= 2) setCompareOpen(true);
+    },
+    plan_campaign: handlePlanCampaigns,
+    search: () => searchInputRef.current?.focus(),
+    save_campaign: handleSaveCampaign,
+    export_csv: handleExportCSV,
   });
 
   useEffect(() => {
@@ -291,8 +314,6 @@ export default function DiscoveryWorkspace() {
   }, [sessionToken]);
 
   const campaignTitle = leads.length > 0 ? "Lead Discovery Results" : "Lead Discovery Workspace";
-  const selectedCount = selectedIndices.size;
-  const selectedLeads = Array.from(selectedIndices).map((i) => leads[i]).filter(Boolean);
 
   /* ── Campaign Planner View ── */
   if (planning) {

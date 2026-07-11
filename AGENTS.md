@@ -74,6 +74,26 @@ Client-specific adapters:
 
 ---
 
+# Important Project Rule — Server Management
+
+OpenCode must NEVER start or stop development servers (backend or frontend).
+
+This includes:
+- killing backend processes
+- killing frontend processes
+- restarting servers
+- launching long-running dev servers
+- leaving background processes running
+
+Whenever runtime verification is needed, opencode should assume the user will handle it:
+- restart the backend
+- restart the frontend
+- verify in the browser
+
+OpenCode is only responsible for modifying code.
+
+---
+
 # Avoid
 
 - overengineering infra

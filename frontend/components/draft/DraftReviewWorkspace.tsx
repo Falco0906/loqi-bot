@@ -9,6 +9,7 @@ import {
 } from "../../lib/api";
 import Icon from "../shared/Icon";
 import { usePageContext } from "../../hooks/usePageContext";
+import { useActionHandlers } from "../../hooks/useActionHandlers";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
@@ -39,10 +40,36 @@ export default function DraftReviewWorkspace() {
   usePageContext("Draft Review", {
     drafts_count: drafts.length,
     selected_index: selectedIndex,
-    selected_name: drafts[selectedIndex]?.lead?.name ?? null,
+    selected_name: (drafts[selectedIndex]?.lead as Record<string, unknown>)?.name as string | null ?? null,
+    selected_company: (drafts[selectedIndex]?.lead as Record<string, unknown>)?.company as string | null ?? null,
     selected_status: drafts[selectedIndex]?.status ?? null,
+    selected_text: drafts[selectedIndex]?.text?.slice(0, 200) ?? null,
+    selected_subject: drafts[selectedIndex]?.subject ?? null,
     approved_count: drafts.filter((d) => d.status === "approved").length,
     pending_count: drafts.filter((d) => d.status === "pending").length,
+  });
+
+  useActionHandlers({
+    approve: handleApprove,
+    refine: (params) => handleRefine(params?.instruction as string || "professional"),
+    approve_all: async () => {
+      if (!sessionToken) return;
+      const pending = drafts.filter((d) => d.status === "pending");
+      for (const d of pending) {
+        try {
+          const res = await approveDraft(sessionToken, d.id);
+          if (res.ok) {
+            const updated = res.draft as DraftEntry;
+            setDrafts((prev) =>
+              prev.map((pd) =>
+                pd.id === d.id ? { ...pd, status: updated.status } : pd,
+              ),
+            );
+          }
+        } catch { /* skip */ }
+      }
+      setMessage(`Approved ${pending.length} drafts`);
+    },
   });
 
   useEffect(() => {

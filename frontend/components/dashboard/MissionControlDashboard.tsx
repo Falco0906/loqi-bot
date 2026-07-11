@@ -5,6 +5,7 @@ import Link from "next/link";
 import { getSession, getCampaignSummary } from "../../lib/api";
 import type { LoqiMessage, LoqiSessionSummary } from "../../lib/types";
 import Icon from "../shared/Icon";
+import { usePageContext } from "../../hooks/usePageContext";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 const SESSION_INDEX_KEY = "loqi_session_index";
@@ -103,6 +104,13 @@ export default function MissionControlDashboard() {
 
   const hasActiveWorkflow = workflowSessions.length > 0;
   const hasMessages = messages.length > 0;
+
+  usePageContext("Mission Control", {
+    active_campaigns: activeCampaigns.length,
+    recent_activity: userMessages.length > 0 ? "has_activity" : "no_activity",
+    pending_drafts: draftCount,
+    has_active_workflow: hasActiveWorkflow,
+  });
 
   return (
     <>

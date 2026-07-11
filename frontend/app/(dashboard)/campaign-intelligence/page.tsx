@@ -7,6 +7,8 @@ import PageContainer from "../../../components/shared/PageContainer";
 import Icon from "../../../components/shared/Icon";
 import CampaignStatusBadge from "../../../components/campaigns/CampaignStatusBadge";
 import { usePageContext } from "../../../hooks/usePageContext";
+import { useActionHandlers } from "../../../hooks/useActionHandlers";
+import { useRouter } from "next/navigation";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
@@ -19,13 +21,28 @@ type CampaignInfo = {
 };
 
 export default function CampaignIntelligencePage() {
+  const router = useRouter();
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [campaigns, setCampaigns] = useState<CampaignInfo[]>([]);
 
+  const activeCampaignList = campaigns.filter((c) => c.status !== "archived" && c.status !== "completed");
+  const campaignNames = activeCampaignList.map((c) => c.name).filter(Boolean);
+  const campaignStatuses = [...new Set(activeCampaignList.map((c) => c.status).filter(Boolean))];
+
   usePageContext("Campaign Intelligence", {
-    active_campaigns: campaigns.filter((c) => c.status !== "archived" && c.status !== "completed").length,
+    active_campaigns: activeCampaignList.length,
     total_campaigns: campaigns.length,
     pending_drafts: campaigns.reduce((s, c) => s + c.pending_drafts, 0),
+    active_names: campaignNames,
+    statuses: campaignStatuses,
+    recommended_actions: campaignNames.length > 0 ? "review_drafts, compare_performance" : "create_campaign",
+  });
+
+  useActionHandlers({
+    navigate: (params) => {
+      const path = params?.path as string;
+      if (path) router.push(path);
+    },
   });
 
   useEffect(() => {

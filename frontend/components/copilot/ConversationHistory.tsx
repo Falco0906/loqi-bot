@@ -3,7 +3,8 @@
 import { useEffect, useRef } from "react";
 import Icon from "../shared/Icon";
 import SuggestedActions from "./SuggestedActions";
-import type { CopilotMessage, CopilotAction } from "../../contexts/CopilotContext";
+import type { CopilotMessage } from "../../contexts/CopilotContext";
+import type { CopilotAction } from "../../lib/actionRegistry";
 
 type Props = {
   messages: CopilotMessage[];

@@ -1,7 +1,7 @@
 "use client";
 
 import Icon from "../shared/Icon";
-import type { CopilotAction } from "../../contexts/CopilotContext";
+import type { CopilotAction } from "../../lib/actionRegistry";
 
 type Props = {
   actions: CopilotAction[];

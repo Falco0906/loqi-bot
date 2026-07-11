@@ -5,10 +5,18 @@ import {
   useContext,
   useState,
   useCallback,
+  useRef,
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
 import { sendMessage } from "../lib/api";
+import type {
+  CopilotAction,
+  ActionType,
+  ActionHandler,
+} from "../lib/actionRegistry";
+
+export type { CopilotAction, ActionType, ActionHandler };
 
 export type CopilotMessage = {
   id: string;
@@ -16,14 +24,6 @@ export type CopilotMessage = {
   text: string;
   actions?: CopilotAction[];
   created_at?: string;
-};
-
-export type CopilotAction = {
-  type: "navigate" | "action";
-  label: string;
-  path?: string;
-  action?: string;
-  payload?: Record<string, unknown>;
 };
 
 export type PageContext = {
@@ -41,6 +41,8 @@ type CopilotContextType = {
   send: (text: string) => Promise<void>;
   clear: () => void;
   executeAction: (action: CopilotAction) => void;
+  registerHandler: (action: ActionType, handler: ActionHandler) => void;
+  unregisterHandler: (action: ActionType) => void;
 };
 
 const CopilotContext = createContext<CopilotContextType | null>(null);
@@ -63,6 +65,18 @@ export function CopilotProvider({
   const [messages, setMessages] = useState<CopilotMessage[]>([]);
   const [sending, setSending] = useState(false);
   const [pageContext, setPageContext] = useState<PageContext | null>(null);
+  const handlersRef = useRef<Map<ActionType, ActionHandler>>(new Map());
+
+  const registerHandler = useCallback(
+    (action: ActionType, handler: ActionHandler) => {
+      handlersRef.current.set(action, handler);
+    },
+    [],
+  );
+
+  const unregisterHandler = useCallback((action: ActionType) => {
+    handlersRef.current.delete(action);
+  }, []);
 
   const buildSystemPrompt = useCallback(() => {
     const ctx = pageContext;
@@ -71,22 +85,43 @@ export function CopilotProvider({
 You can:
 - Navigate between pages (Discovery, Campaigns, Draft Review, Campaign Intelligence, Mission Control)
 - Answer questions about the user's data
-- Execute actions when possible
+- Execute actions on the current page
+
+Available actions on this page:
+${
+  ctx?.page === "Discovery"
+    ? "- select_all: Select all visible leads\n- clear_selection: Clear current selection\n- compare: Compare selected leads\n- plan_campaign: Create a campaign from selected leads\n- search: Search for leads\n- save_campaign: Save the current campaign\n- export_csv: Export leads to CSV"
+    : ctx?.page === "Campaign"
+      ? "- generate_drafts: Generate email drafts for this campaign"
+      : ctx?.page === "Draft Review"
+        ? "- approve: Approve the current draft\n- approve_all: Approve all pending drafts\n- refine: Refine the current draft"
+        : "None specific"
+}
 
 Current page: ${ctx?.page || "unknown"}`;
     if (ctx?.data && Object.keys(ctx.data).length > 0) {
       prompt += `\n\nPage context:\n${JSON.stringify(ctx.data, null, 2)}`;
     }
-    prompt += `\n\nKeep responses concise and actionable. When you want the user to navigate somewhere, include an action in your response.
-Format actions as: <<action:label:path>> or <<action:label:action>>`;
+    prompt += `\n\nKeep responses concise and actionable. When suggesting an action, include it in your response.
+Format: <<action:label:action_type>> (e.g. <<action:Select All:select_all>>)
+For navigation: <<action:label:/path>> (e.g. <<action:Discovery:/discovery>>)`;
     return prompt;
   }, [pageContext]);
 
   const executeAction = useCallback(
-    (action: CopilotAction) => {
+    async (action: CopilotAction) => {
       if (action.type === "navigate" && action.path) {
         router.push(action.path);
         setOpen(false);
+        return;
+      }
+      if (action.type === "action" && action.action) {
+        const handler = handlersRef.current.get(action.action);
+        if (handler) {
+          await handler(action.payload);
+          setOpen(false);
+          return;
+        }
       }
     },
     [router],
@@ -95,14 +130,17 @@ Format actions as: <<action:label:path>> or <<action:label:action>>`;
   const parseActions = useCallback(
     (text: string): { clean: string; actions: CopilotAction[] } => {
       const actions: CopilotAction[] = [];
-      const clean = text.replace(/<<action:([^:]+):([^>]+)>>/g, (_m, label, target) => {
-        if (target.startsWith("/")) {
-          actions.push({ type: "navigate", label, path: target });
-        } else {
-          actions.push({ type: "action", label, action: target });
-        }
-        return "";
-      });
+      const clean = text.replace(
+        /<<action:([^:]+):([^>]+)>>/g,
+        (_m, label, target) => {
+          if (target.startsWith("/")) {
+            actions.push({ type: "navigate", label, path: target });
+          } else {
+            actions.push({ type: "action", label, action: target as ActionType });
+          }
+          return "";
+        },
+      );
       return { clean: clean.trim(), actions };
     },
     [],
@@ -173,6 +211,8 @@ Format actions as: <<action:label:path>> or <<action:label:action>>`;
         send,
         clear,
         executeAction,
+        registerHandler,
+        unregisterHandler,
       }}
     >
       {children}

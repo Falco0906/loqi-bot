@@ -8,6 +8,7 @@ import CampaignStatusBadge from "../../../../components/campaigns/CampaignStatus
 import CampaignDraftList from "../../../../components/campaigns/CampaignDraftList";
 import Icon from "../../../../components/shared/Icon";
 import { usePageContext } from "../../../../hooks/usePageContext";
+import { useActionHandlers } from "../../../../hooks/useActionHandlers";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
@@ -33,7 +34,14 @@ export default function CampaignDetailPage() {
     lead_count: campaign?.lead_count ?? 0,
     pending_drafts: campaign?.pending_drafts ?? 0,
     approved_drafts: campaign?.approved_drafts ?? 0,
+    total_drafts: (campaign?.pending_drafts as number ?? 0) + (campaign?.approved_drafts as number ?? 0),
     tab,
+    generating,
+    messaging_strategy: campaign?.messaging_strategy ?? null,
+  });
+
+  useActionHandlers({
+    generate_drafts: handleGenerateDrafts,
   });
 
   useEffect(() => {

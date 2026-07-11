@@ -6,7 +6,8 @@
     "backend": "cd backend && venv/bin/python main.py",
     "frontend": "cd frontend && npm run dev",
     "build": "cd frontend && npm run build",
-    "lint": "cd frontend && npm run lint"
+    "lint": "cd frontend && npm run lint",
+    "test": "cd frontend && npm run build && cd ../backend && venv/bin/python -m pytest tests/ -v"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

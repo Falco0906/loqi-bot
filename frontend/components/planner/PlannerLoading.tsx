@@ -44,7 +44,7 @@ export default function PlannerLoading({ leadCount }: { leadCount: number }) {
   const displayed = current.replace("20", String(leadCount));
 
   return (
-    <div className="flex flex-col items-center justify-center py-24 px-6">
+    <div className="flex flex-col items-center justify-center py-24 px-6 animate-fade-in">
       <div className="relative mb-10">
         <div className="w-20 h-20 rounded-2xl bg-primary/10 flex items-center justify-center">
           <Icon name="psychology" className="text-4xl text-primary" />
@@ -67,7 +67,7 @@ export default function PlannerLoading({ leadCount }: { leadCount: number }) {
       </div>
 
       <div className="w-full max-w-md mx-auto">
-        <div className="bg-surface-lowest rounded-xl border border-outline-variant/10 p-4 mb-6">
+        <div className="card-base p-4 mb-6">
           <div className="flex items-center gap-3">
             <div className="flex flex-col items-center gap-1">
               {[0, 1, 2, 3].map((i) => (

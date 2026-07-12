@@ -67,18 +67,34 @@ export default function CampaignDraftList({ sessionToken, campaignId }: Props) {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="flex items-center gap-3 text-on-surface-variant">
-          <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-          Loading drafts...
-        </div>
+      <div className="space-y-3 py-2">
+        {[1, 2, 3].map((i) => (
+          <div
+            key={i}
+            className="rounded-xl border border-outline-variant/10 bg-surface-lowest p-4 animate-skeleton-pulse"
+            style={{ animationDelay: `${i * 100}ms` }}
+          >
+            <div className="flex items-start justify-between mb-2">
+              <div className="space-y-2 flex-1">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-outline-variant/20" />
+                  <div className="h-3 w-20 rounded bg-outline-variant/20" />
+                  <div className="h-3 w-40 rounded bg-outline-variant/20" />
+                </div>
+                <div className="h-3 w-28 rounded bg-outline-variant/20" />
+              </div>
+              <div className="h-7 w-16 rounded-lg bg-outline-variant/20" />
+            </div>
+            <div className="h-3 w-16 rounded bg-outline-variant/20 mt-3" />
+          </div>
+        ))}
       </div>
     );
   }
 
   if (drafts.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-center">
+      <div className="flex flex-col items-center justify-center py-12 text-center animate-fade-in">
         <div className="w-12 h-12 rounded-xl bg-surface-high/30 flex items-center justify-center text-on-surface-variant/40 mb-3">
           <Icon name="edit_note" className="text-2xl" />
         </div>
@@ -96,7 +112,7 @@ export default function CampaignDraftList({ sessionToken, campaignId }: Props) {
         return (
           <div
             key={d.id}
-            className="rounded-xl border border-outline-variant/10 bg-surface-lowest p-4 transition-all hover:border-outline-variant/20"
+            className="card-base p-4 hover:border-outline-variant/20 transition-all"
           >
             <div className="flex items-start justify-between mb-2">
               <div className="min-w-0 flex-1">
@@ -118,14 +134,14 @@ export default function CampaignDraftList({ sessionToken, campaignId }: Props) {
               <div className="flex items-center gap-2 shrink-0 ml-3">
                 <a
                   href={`/draft`}
-                  className="px-3 py-1.5 rounded-lg bg-primary/10 text-primary text-xs font-bold hover:bg-primary/20 transition-all"
+                  className="px-3 py-1.5 rounded-lg bg-primary/10 text-primary text-xs font-bold hover:bg-primary/20 active:scale-[0.97] transition-all duration-150 focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
                 >
                   Review
                 </a>
                 {d.status === "pending" ? (
                   <button
                     onClick={() => handleApprove(d.id)}
-                    className="px-3 py-1.5 rounded-lg border border-outline-variant/20 text-on-surface text-xs font-medium hover:border-success/40 hover:text-success transition-all"
+                    className="px-3 py-1.5 rounded-lg border border-outline-variant/20 text-on-surface text-xs font-medium hover:border-success/40 hover:text-success active:scale-[0.97] transition-all duration-150 focus-visible:outline-2 focus-visible:outline-success/60 focus-visible:outline-offset-2"
                   >
                     Approve
                   </button>

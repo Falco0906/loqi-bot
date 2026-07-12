@@ -202,13 +202,16 @@ export default function CampaignDetailPage() {
             <button
               key={t}
               onClick={() => setTab(t)}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-all ${
+              className={`relative px-4 py-3 text-sm font-medium transition-all duration-150 focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2 ${
                 tab === t
-                  ? "border-primary text-primary"
-                  : "border-transparent text-on-surface-variant/60 hover:text-on-surface hover:border-outline-variant/30"
+                  ? "text-primary"
+                  : "text-on-surface-variant/60 hover:text-on-surface"
               }`}
             >
               {t}
+              {tab === t && (
+                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full" />
+              )}
             </button>
           ))}
         </div>
@@ -220,23 +223,23 @@ export default function CampaignDetailPage() {
           {tab === "Overview" && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
               <div className="lg:col-span-2 space-y-5">
-                <div className="rounded-2xl border border-outline-variant/10 bg-surface-lowest p-6">
+                <div className="card-base p-6">
                   <h2 className="text-body-lg text-on-surface font-bold mb-4">Campaign Summary</h2>
                   <div className="grid grid-cols-3 gap-4">
-                    <div className="bg-surface/50 rounded-xl p-4">
+                    <div className="bg-surface/50 rounded-xl p-4 transition-all duration-150 hover:bg-surface-high/30">
                       <p className="text-label-sm text-on-surface-variant/60 mb-1">Status</p>
                       <CampaignStatusBadge status={status} />
                     </div>
-                    <div className="bg-surface/50 rounded-xl p-4">
+                    <div className="bg-surface/50 rounded-xl p-4 transition-all duration-150 hover:bg-surface-high/30">
                       <p className="text-label-sm text-on-surface-variant/60 mb-1">Leads</p>
                       <p className="text-headline-sm text-on-surface font-bold">{leadCount}</p>
                     </div>
-                    <div className="bg-surface/50 rounded-xl p-4">
+                    <div className="bg-surface/50 rounded-xl p-4 transition-all duration-150 hover:bg-surface-high/30">
                       <p className="text-label-sm text-on-surface-variant/60 mb-1">Drafts</p>
                       <p className="text-headline-sm text-on-surface font-bold">
                         {pendingDrafts + approvedDrafts}
                       </p>
-                      <p className="text-label-sm text-on-surface-variant/40">
+                      <p className="text-label-sm text-on-surface-variant/40 mt-1">
                         {pendingDrafts} pending &middot; {approvedDrafts} approved
                       </p>
                     </div>
@@ -244,7 +247,7 @@ export default function CampaignDetailPage() {
                 </div>
 
                 {generating && genProgress ? (
-                  <div className="rounded-2xl border border-primary/20 bg-primary-container/5 p-6">
+                  <div className="card-base border-primary/20 bg-primary-container/5 p-6">
                     <div className="flex items-center gap-3 mb-4">
                       <div className="w-3 h-3 rounded-full bg-primary animate-pulse" />
                       <p className="text-body-md text-on-surface font-bold">Generating drafts...</p>
@@ -278,7 +281,7 @@ export default function CampaignDetailPage() {
               </div>
 
               <div className="space-y-5">
-                <div className="rounded-2xl border border-outline-variant/10 bg-surface-lowest p-5">
+                <div className="card-base p-5">
                   <h2 className="text-body-md text-on-surface font-bold mb-3">Quick Actions</h2>
                   <div className="space-y-2">
                     {status === "planning" || status === "ready" ? (
@@ -360,7 +363,7 @@ export default function CampaignDetailPage() {
             <div className="max-w-3xl">
               {strategy && strategy.campaigns ? (
                 <div className="space-y-5">
-                  <div className="rounded-2xl border border-primary/15 bg-primary-container/5 px-6 py-5">
+                  <div className="card-base border-primary/15 bg-primary-container/5 px-6 py-5">
                     <div className="flex items-start gap-3">
                       <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
                         <Icon name="lightbulb" className="text-primary text-base" />
@@ -380,7 +383,7 @@ export default function CampaignDetailPage() {
                     {(strategy.campaigns as Array<Record<string, unknown>>).map((sc: Record<string, unknown>, i: number) => (
                       <div
                         key={sc.id as string}
-                        className="rounded-2xl border border-outline-variant/10 bg-surface-lowest overflow-hidden"
+                        className="card-base overflow-hidden"
                       >
                         <div className="px-5 py-4 border-b border-outline-variant/10">
                           <div className="flex items-center gap-3">
@@ -434,7 +437,7 @@ export default function CampaignDetailPage() {
                     return (
                       <div
                         key={ld.lead_id as string || ld.id as string || i}
-                        className="rounded-xl border border-outline-variant/10 bg-surface-lowest p-4 flex items-center justify-between hover:border-outline-variant/20 transition-all"
+                        className="card-base p-4 flex items-center justify-between hover:border-outline-variant/20 transition-all"
                       >
                         <div className="min-w-0 flex-1">
                           <p className="text-body-md text-on-surface font-bold truncate">{name}</p>
@@ -484,7 +487,7 @@ export default function CampaignDetailPage() {
 
           {tab === "Settings" && (
             <div className="max-w-xl space-y-5">
-              <div className="rounded-2xl border border-outline-variant/10 bg-surface-lowest p-6">
+              <div className="card-base p-6">
                 <h2 className="text-body-lg text-on-surface font-bold mb-4">Campaign Settings</h2>
                 <div className="space-y-4">
                   <div>

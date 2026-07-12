@@ -39,13 +39,13 @@ export default function StrategyApproval({
   );
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden animate-fade-in">
       <div className="flex-1 overflow-y-auto px-6 pb-40">
         <div className="max-w-4xl mx-auto pt-8">
           <div className="flex items-center gap-3 mb-8">
             <button
               onClick={onBack}
-              className="p-1.5 rounded-lg hover:bg-surface-high text-on-surface-variant/60 hover:text-on-surface transition-all"
+              className="p-1.5 rounded-lg hover:bg-surface-high text-on-surface-variant/60 hover:text-on-surface transition-all duration-150 focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
             >
               <Icon name="chevron_right" className="rotate-180 text-lg" />
             </button>
@@ -61,7 +61,7 @@ export default function StrategyApproval({
           </div>
 
           {/* Campaign Name */}
-          <div className="mb-8 rounded-2xl border border-outline-variant/10 bg-surface-lowest p-5">
+          <div className="mb-8 card-base p-5">
             <label className="text-label-sm text-on-surface-variant/60 block mb-2">
               Campaign Name
             </label>
@@ -69,7 +69,7 @@ export default function StrategyApproval({
               type="text"
               value={campaignName}
               onChange={(e) => setCampaignName(e.target.value)}
-              className="w-full rounded-xl border border-outline-variant/20 bg-surface-low px-4 py-2.5 text-body-md text-on-surface outline-none focus:border-primary/50"
+              className="w-full rounded-xl border border-outline-variant/20 bg-surface-low px-4 py-2.5 text-body-md text-on-surface outline-none focus:border-primary/50 transition-all duration-150"
             />
           </div>
 
@@ -83,7 +83,7 @@ export default function StrategyApproval({
             ].map((s) => (
               <div
                 key={s.label}
-                className="rounded-xl border border-outline-variant/10 bg-surface-lowest p-4 text-center"
+                className="card-base p-4 text-center"
               >
                 <Icon name={s.icon} className="text-primary text-lg mb-2" />
                 <p className="text-headline-sm text-on-surface font-bold">{s.value}</p>
@@ -93,7 +93,7 @@ export default function StrategyApproval({
           </div>
 
           {/* Overall Recommendation */}
-          <div className="mb-8 rounded-2xl border border-primary/15 bg-primary-container/5 px-6 py-5">
+          <div className="mb-8 card-base border-primary/15 bg-primary-container/5 px-6 py-5">
             <div className="flex items-start gap-3">
               <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
                 <Icon name="lightbulb" className="text-primary text-base" />
@@ -114,7 +114,7 @@ export default function StrategyApproval({
             {campaigns.map((c, i) => (
               <div
                 key={c.id}
-                className="rounded-2xl border border-outline-variant/10 bg-surface-lowest overflow-hidden"
+                className="card-base overflow-hidden"
               >
                 <div className="px-5 py-4 border-b border-outline-variant/10 flex items-center justify-between">
                   <div className="flex items-center gap-3">
@@ -166,19 +166,19 @@ export default function StrategyApproval({
           <div className="flex items-center gap-3">
             <button
               onClick={onCancel}
-              className="px-5 py-2.5 rounded-lg border border-outline-variant/20 text-on-surface font-medium hover:border-error/40 hover:text-error transition-all text-sm"
+              className="px-5 py-2.5 rounded-lg border border-outline-variant/20 text-on-surface font-medium hover:border-error/40 hover:text-error active:scale-[0.97] transition-all duration-150 text-sm focus-visible:outline-2 focus-visible:outline-error/60 focus-visible:outline-offset-2"
             >
               Cancel
             </button>
             <button
               onClick={onEditLater}
-              className="px-5 py-2.5 rounded-lg border border-outline-variant/20 text-on-surface font-medium hover:border-primary/40 hover:text-primary transition-all text-sm"
+              className="px-5 py-2.5 rounded-lg border border-outline-variant/20 text-on-surface font-medium hover:border-primary/40 hover:text-primary active:scale-[0.97] transition-all duration-150 text-sm focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
             >
               Edit Later
             </button>
             <button
               onClick={() => onApprove(campaignName)}
-              className="px-6 py-2.5 rounded-lg bg-success text-white font-bold hover:brightness-110 active:scale-95 transition-all text-sm flex items-center gap-2"
+              className="px-6 py-2.5 rounded-lg bg-success text-white font-bold hover:brightness-110 active:scale-[0.97] transition-all duration-150 text-sm flex items-center gap-2 focus-visible:outline-2 focus-visible:outline-success/60 focus-visible:outline-offset-2"
             >
               <Icon name="check_circle" className="text-base" />
               Approve Strategy

@@ -51,7 +51,7 @@ function CampaignStrategyCard({
   };
 
   return (
-    <div className="rounded-2xl border border-outline-variant/10 bg-surface-lowest overflow-hidden transition-all hover:border-primary/20">
+    <div className="card-base overflow-hidden hover:border-primary/20 transition-all">
       <div className="px-5 py-4 border-b border-outline-variant/10 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
@@ -124,7 +124,7 @@ export default function CampaignPlanner({
   onCancel,
 }: Props) {
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden animate-fade-in">
       <div className="flex-1 overflow-y-auto px-6 pb-40">
         <div className="max-w-4xl mx-auto pt-8">
           {/* Header */}
@@ -146,7 +146,7 @@ export default function CampaignPlanner({
           </div>
 
           {/* Overall Recommendation */}
-          <div className="mb-8 rounded-2xl border border-primary/15 bg-primary-container/5 px-6 py-5">
+          <div className="mb-8 card-base border-primary/15 bg-primary-container/5 px-6 py-5">
             <div className="flex items-start gap-3">
               <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
                 <Icon name="lightbulb" className="text-primary text-base" />
@@ -189,7 +189,7 @@ export default function CampaignPlanner({
           )}
 
           {/* Customize shell (Phase 2.5 placeholder) */}
-          <div className="mt-8 rounded-2xl border border-dashed border-outline-variant/20 bg-surface-lowest/50 px-6 py-5">
+          <div className="mt-8 card-base border-dashed border-outline-variant/20 bg-surface-lowest/50 px-6 py-5">
             <div className="flex items-center gap-3 mb-3">
               <Icon name="tune" className="text-on-surface-variant/40 text-base" />
               <p className="text-label-sm text-on-surface-variant/40 uppercase tracking-wider font-medium">
@@ -226,19 +226,19 @@ export default function CampaignPlanner({
           <div className="flex items-center gap-3">
             <button
               onClick={onCancel}
-              className="px-5 py-2.5 rounded-lg border border-outline-variant/20 text-on-surface font-medium hover:border-error/40 hover:text-error transition-all text-sm"
+              className="px-5 py-2.5 rounded-lg border border-outline-variant/20 text-on-surface font-medium hover:border-error/40 hover:text-error active:scale-[0.97] transition-all duration-150 text-sm focus-visible:outline-2 focus-visible:outline-error/60 focus-visible:outline-offset-2"
             >
               Cancel
             </button>
             <button
               onClick={onCustomize}
-              className="px-5 py-2.5 rounded-lg border border-outline-variant/20 text-on-surface font-medium hover:border-primary/40 hover:text-primary transition-all text-sm"
+              className="px-5 py-2.5 rounded-lg border border-outline-variant/20 text-on-surface font-medium hover:border-primary/40 hover:text-primary active:scale-[0.97] transition-all duration-150 text-sm focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
             >
               Customize Plan
             </button>
             <button
               onClick={onAccept}
-              className="px-6 py-2.5 rounded-lg bg-primary text-on-primary font-bold hover:brightness-110 active:scale-95 transition-all text-sm flex items-center gap-2"
+              className="px-6 py-2.5 rounded-lg bg-primary text-on-primary font-bold hover:brightness-110 active:scale-[0.97] transition-all duration-150 text-sm flex items-center gap-2 focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
             >
               <Icon name="check_circle" className="text-base" />
               Accept Campaign Plan

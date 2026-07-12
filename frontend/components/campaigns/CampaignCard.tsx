@@ -37,10 +37,10 @@ function timeAgo(iso: string): string {
 
 const STATUS_ACTIONS: Record<string, { primary: string; secondary?: string; link?: string }> = {
   planning: { primary: "Continue Planning", link: `/campaigns/${"id"}` },
-  ready: { primary: "Generate Drafts" },
+  ready: { primary: "Generate Drafts", link: `/campaigns/${"id"}` },
   generating: { primary: "Generating..." },
   draft_review: { primary: "Review Drafts", link: "/draft?campaign=" },
-  ready_to_send: { primary: "Review Drafts", link: "/draft?campaign=" },
+  ready_to_send: { primary: "Launch Campaign", link: `/campaigns/${"id"}` },
   completed: { primary: "View Campaign", link: `/campaigns/${"id"}` },
   archived: { primary: "View Campaign", link: `/campaigns/${"id"}` },
 };
@@ -93,12 +93,12 @@ export default function CampaignCard({
         );
       case "ready":
         return (
-          <button
-            onClick={(e) => { e.preventDefault(); onGenerate?.(); toast("info", "Starting draft generation..."); }}
+          <Link
+            href={`/campaigns/${id}`}
             className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
           >
             {actions.primary}
-          </button>
+          </Link>
         );
       case "generating":
         return (
@@ -108,12 +108,21 @@ export default function CampaignCard({
           </span>
         );
       case "draft_review":
-      case "ready_to_send":
         return (
           <Link
             href={`/draft?campaign=${id}`}
             className="px-3 py-1.5 rounded-lg bg-secondary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
           >
+            {actions.primary}
+          </Link>
+        );
+      case "ready_to_send":
+        return (
+          <Link
+            href={`/campaigns/${id}`}
+            className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
+          >
+            <Icon name="rocket_launch" className="text-xs mr-1 align-middle inline-block" />
             {actions.primary}
           </Link>
         );

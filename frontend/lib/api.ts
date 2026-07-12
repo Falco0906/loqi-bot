@@ -361,8 +361,57 @@ export async function analyzeDraft(
   );
 }
 
+export async function askDraftQuestion(
+  sessionToken: string,
+  question: string,
+  draftText: string,
+  lead: unknown,
+  context?: {
+    campaign_id?: string;
+    campaign_name?: string;
+    company?: string;
+    contact?: string;
+    role?: string;
+    industry?: string;
+    messaging_angle?: string;
+    business_summary?: string;
+  },
+) {
+  const body: Record<string, unknown> = { question, draft_text: draftText, lead };
+  if (context) {
+    for (const [k, v] of Object.entries(context)) {
+      if (v !== undefined && v !== null) body[k] = v;
+    }
+  }
+  return fetchWithRetry<{ ok: boolean; answer?: string; error?: string }>(
+    `${API_BASE}/api/web/session/${sessionToken}/drafts/ask`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
 export async function approveDraft(sessionToken: string, draftId: string) {
-  return fetchWithRetry<{ ok: boolean; draft: unknown }>(
+  return fetchWithRetry<{
+    ok: boolean;
+    draft: {
+      id: string;
+      campaign_id?: string;
+      lead?: Record<string, unknown>;
+      subject?: string;
+      text: string;
+      status: string;
+      tone?: string;
+      length?: string;
+      lead_intelligence?: Record<string, unknown>;
+      company_intelligence?: Record<string, unknown>;
+      created_at?: string;
+    };
+    campaign_status?: string | null;
+    pending_drafts?: number;
+  }>(
     `${API_BASE}/api/web/session/${sessionToken}/drafts/${draftId}/approve`,
     { method: "POST" },
   );
@@ -446,6 +495,62 @@ export async function getCampaignSummary(sessionToken: string) {
     updated_at: string;
   }> }>(
     `${API_BASE}/api/web/session/${sessionToken}/campaigns/summary`,
+  );
+}
+
+export type NeedAttentionItem = {
+  type: string;
+  campaign_id: string | null;
+  campaign_name: string | null;
+  label: string;
+  priority: string;
+  action: string;
+};
+
+export type RecentOutcome = {
+  type: string;
+  text: string;
+  timestamp: string;
+};
+
+export type MCRecommendation = {
+  type: string;
+  text: string;
+  action: string;
+  link: string;
+};
+
+export type MCCampaign = {
+  id: string;
+  name: string;
+  status: string;
+  lead_count: number;
+  pending_drafts: number;
+  approved_drafts: number;
+  updated_at: string;
+};
+
+export type MCSummary = {
+  ok: boolean;
+  campaigns: MCCampaign[];
+  draft_counts: { pending: number; approved: number; total: number };
+  needs_attention: NeedAttentionItem[];
+  live_activity: RecentOutcome[];
+  campaign_count: number;
+  active_jobs: unknown[];
+  recommendations: MCRecommendation[];
+  kpis: {
+    estimated_reply_rate: number;
+    avg_qualification_score: number;
+    pending_reviews: number;
+    campaigns_ready: number;
+  };
+  total_leads: number;
+};
+
+export async function getMissionControl(sessionToken: string) {
+  return fetchWithRetry<MCSummary>(
+    `${API_BASE}/api/web/session/${sessionToken}/mission-control`,
   );
 }
 

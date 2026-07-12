@@ -9,6 +9,7 @@ import {
   approveDraft,
   listCampaigns,
   analyzeDraft,
+  askDraftQuestion,
   DraftAnalysis,
 } from "../../lib/api";
 import Icon from "../shared/Icon";
@@ -112,6 +113,7 @@ export default function DraftReviewWorkspace() {
     approve_all: async () => {
       if (!sessionToken) return;
       const pending = drafts.filter((d) => d.status === "pending");
+      let campaignReady = false;
       for (const d of pending) {
         try {
           const res = await approveDraft(sessionToken, d.id);
@@ -122,10 +124,15 @@ export default function DraftReviewWorkspace() {
                 pd.id === d.id ? { ...pd, status: updated.status } : pd,
               ),
             );
+            if (res.campaign_status === "ready_to_send") campaignReady = true;
           }
         } catch { /* skip */ }
       }
-      setMessage(`Approved ${pending.length} drafts`);
+      if (campaignReady) {
+        setMessage(`Approved ${pending.length} drafts — campaign is ready to launch!`);
+      } else {
+        setMessage(`Approved ${pending.length} drafts`);
+      }
     },
   });
 
@@ -340,9 +347,13 @@ export default function DraftReviewWorkspace() {
             d.id === selected.id ? { ...d, status: updated.status } : d,
           ),
         );
-        setMessage(
-          updated.status === "approved" ? "Approved" : "Marked pending",
-        );
+        if (res.campaign_status === "ready_to_send") {
+          setMessage("Campaign ready to launch!");
+        } else {
+          setMessage(
+            updated.status === "approved" ? "Approved" : "Marked pending",
+          );
+        }
       }
     } catch {
       setMessage("Failed to update");
@@ -412,6 +423,20 @@ export default function DraftReviewWorkspace() {
         setAiMessages((prev) => [
           ...prev,
           { id: `ai-${Date.now()}`, role: "assistant", text: "Sorry, I encountered an error rewriting this draft.", type: "error" },
+        ]);
+      }
+    } else if (intent === "question") {
+      try {
+        const res = await askDraftQuestion(sessionToken, text, selected.text, lead, context);
+        const answer = res.answer || "I couldn't answer that right now.";
+        setAiMessages((prev) => [
+          ...prev,
+          { id: `ai-${Date.now()}`, role: "assistant", text: answer },
+        ]);
+      } catch {
+        setAiMessages((prev) => [
+          ...prev,
+          { id: `ai-${Date.now()}`, role: "assistant", text: "Sorry, I encountered an error.", type: "error" },
         ]);
       }
     } else {
@@ -1068,20 +1093,34 @@ export default function DraftReviewWorkspace() {
 
 /* ─── Utility functions ─── */
 
-function classifyDraftIntent(input: string): "edit" | "discussion" {
+function classifyDraftIntent(input: string): "edit" | "discuss" | "question" {
   const n = input.toLowerCase().trim();
   const editPatterns = [
     /^make it/i, /^rewrite/i, /^change/i, /^update/i, /^fix/i, /^tweak/i, /^shorten/i,
     /shorter/, /longer/, /casual/, /formal/, /professional/,
     /mention/, /remove/, /^add /, /improve/, /strengthen/, /rewrite/i,
     /replace/, /\btone\b/, /softer/, /stronger/, /^less /, /^more /,
-    /conversational/, /friendly/, /cta/, /opening/, /close/, /jargon/,
+    /conversational/, /friendly/, /\bcta\b/, /opening/, /close/, /jargon/,
     /personalization/, /subject/, /polish/, /clean up/i,
   ];
   for (const p of editPatterns) {
     if (p.test(n)) return "edit";
   }
-  return "discussion";
+  const questionPatterns = [
+    /^what (is|are|does|was|were|is a|are the)/i,
+    /^what's (a |an |the )?/i,
+    /^how (does|do|is|can|would|should|is this different)/i,
+    /^why (does|do|is|are|would|can)/i,
+    /^can you explain/i,
+    /^define /i,
+    /^tell me about/i,
+    /^what does.*mean/i,
+    /^is (it|that|this) (better|worse|good|bad|correct)/i,
+  ];
+  for (const p of questionPatterns) {
+    if (p.test(n)) return "question";
+  }
+  return "discuss";
 }
 
 function generateEditSummary(oldText: string, newText: string): { summary: string; changes: string[] } {

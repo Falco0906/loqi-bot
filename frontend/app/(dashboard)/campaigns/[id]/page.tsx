@@ -324,18 +324,19 @@ export default function CampaignDetailPage() {
                         Generating Drafts...
                       </button>
                     ) : null}
-                    {status === "draft_review" || status === "ready_to_send" ? (
+                    {status === "ready_to_send" ? (
                       <button
                         onClick={async () => {
                           if (sessionToken) {
                             await updateCampaign(sessionToken, campaignId, { status: "completed" });
-                            toast("success", "Campaign marked as completed");
+                            toast("success", "Campaign launched successfully");
                             await refreshCampaign();
                           }
                         }}
-                        className="w-full inline-flex items-center justify-center px-4 py-2.5 rounded-lg border border-outline-variant/20 text-on-surface text-sm font-medium transition-all duration-150 hover:border-primary/40 hover:text-primary active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
+                        className="w-full inline-flex items-center justify-center px-4 py-2.5 rounded-lg bg-primary text-on-primary text-sm font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
                       >
-                        Mark Completed
+                        <Icon name="rocket_launch" className="text-sm mr-2" />
+                        Launch Campaign
                       </button>
                     ) : null}
                     <button

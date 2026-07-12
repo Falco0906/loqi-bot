@@ -381,3 +381,44 @@ def analyze_draft(draft_text: str, context: dict | None = None) -> dict:
     if not all(k in data for k in required):
         raise OpenAIError(f"Analysis missing required keys. Got: {list(data.keys())}")
     return data
+
+
+def answer_draft_question(question: str, draft_text: str, context: dict | None = None) -> str:
+    """Answer an educational question about outbound/copywriting, using the draft as example when helpful.
+    Returns a plain-text answer. Never modifies the draft."""
+    _log(f"answer_draft_question: question={question}")
+    context_block = ""
+    if context:
+        parts = []
+        for key, label in [
+            ("company", "Target company"),
+            ("contact", "Contact name"),
+            ("role", "Contact role"),
+            ("industry", "Industry"),
+            ("campaign_name", "Campaign"),
+            ("messaging_angle", "Messaging angle"),
+        ]:
+            val = context.get(key)
+            if val:
+                parts.append(f"{label}: {val}")
+        if parts:
+            context_block = "\n".join(parts) + "\n\n"
+
+    system_text = (
+        "You are an expert outbound/copywriting coach answering a user's educational question.\n"
+        "Rules:\n"
+        "- Answer clearly and concisely\n"
+        "- When helpful, use the provided draft as a concrete example\n"
+        "- NEVER rewrite or modify the draft\n"
+        "- NEVER suggest that the draft was updated\n"
+        "- Keep the answer educational, not directive\n"
+        "- If the user asks about a term (e.g. 'what is CTA'), define it and show how it appears in the draft\n"
+        "- Do NOT return JSON — return plain text"
+    )
+    user_text = (
+        f"{context_block}"
+        f"Current draft:\n{draft_text}\n\n"
+        f"Question: {question}\n\n"
+        "Answer the question educationally. Use the draft as an example when it helps."
+    )
+    return _send_openai_request(system_text, user_text)

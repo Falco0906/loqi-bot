@@ -443,14 +443,72 @@ async def analyze_draft_endpoint(session_token: str, payload: AnalyzeDraftReques
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class AskDraftQuestionRequest(BaseModel):
+    question: str
+    draft_text: str
+    lead: dict
+    campaign_id: str | None = None
+    campaign_name: str | None = None
+    company: str | None = None
+    contact: str | None = None
+    role: str | None = None
+    industry: str | None = None
+    messaging_angle: str | None = None
+    business_summary: str | None = None
+
+
+@app.post("/api/web/session/{session_token}/drafts/ask")
+async def ask_draft_question_endpoint(session_token: str, payload: AskDraftQuestionRequest):
+    loop = asyncio.get_event_loop()
+    try:
+        context = {}
+        for field in ("campaign_id", "campaign_name", "company", "contact", "role", "industry", "messaging_angle", "business_summary"):
+            val = getattr(payload, field, None)
+            if val:
+                context[field] = val
+        workflow_result = await loop.run_in_executor(
+            None,
+            run_workflow,
+            {"type": "draft_question", "question": payload.question, "draft_text": payload.draft_text, "context": context},
+        )
+        return {"ok": workflow_result.get("ok", False), "answer": workflow_result.get("answer"), "error": workflow_result.get("error")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/web/session/{session_token}/drafts/{draft_id}/approve")
 async def approve_draft(session_token: str, draft_id: str):
     drafts = draft_store.get(session_token, [])
+    toggled = None
+    campaign_id = None
     for d in drafts:
         if d.get("id") == draft_id:
             d["status"] = "approved" if d.get("status") != "approved" else "pending"
-            return {"ok": True, "draft": d}
-    raise HTTPException(status_code=404, detail="Draft not found")
+            toggled = d
+            campaign_id = d.get("campaign_id")
+            break
+    if not toggled:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    campaign_status = None
+    if campaign_id:
+        cdrafts = [d for d in drafts if d.get("campaign_id") == campaign_id]
+        all_approved = all(d.get("status") == "approved" for d in cdrafts)
+        campaigns = campaign_store.get(session_token, [])
+        for c in campaigns:
+            if c.get("id") == campaign_id:
+                c["status"] = "ready_to_send" if all_approved else "draft_review"
+                c["updated_at"] = datetime.now(timezone.utc).isoformat()
+                campaign_status = c["status"]
+                break
+
+    pending_drafts = sum(1 for d in draft_store.get(session_token, []) if d.get("campaign_id") == campaign_id and d.get("status") == "pending") if campaign_id else 0
+    return {
+        "ok": True,
+        "draft": toggled,
+        "campaign_status": campaign_status,
+        "pending_drafts": pending_drafts,
+    }
 
 
 @app.post("/api/web/session/{session_token}/campaigns")
@@ -606,6 +664,129 @@ async def campaign_generation_status(session_token: str, campaign_id: str):
         "total": latest.get("total", 0),
         "completed": latest.get("completed", 0),
         "batch_id": latest.get("batch_id"),
+    }
+
+
+@app.get("/api/web/session/{session_token}/mission-control")
+async def mission_control_summary(session_token: str):
+    campaigns = campaign_store.get(session_token, [])
+    drafts = draft_store.get(session_token, [])
+    now = datetime.now(timezone.utc)
+
+    campaign_list = []
+    pending_drafts = 0
+    approved_drafts = 0
+    total_leads = 0
+    for c in campaigns:
+        cid = c.get("id", "")
+        cdrafts = [d for d in drafts if d.get("campaign_id") == cid]
+        pending = sum(1 for d in cdrafts if d.get("status") == "pending")
+        approved = sum(1 for d in cdrafts if d.get("status") == "approved")
+        pending_drafts += pending
+        approved_drafts += approved
+        total_leads += c.get("lead_count", 0) or 0
+        updated_raw = c.get("updated_at")
+        updated = updated_raw if isinstance(updated_raw, str) else ""
+        created = c.get("created_at", "")
+        created_str = created if isinstance(created, str) else ""
+        campaign_list.append({
+            "id": cid,
+            "name": c.get("name", ""),
+            "status": c.get("status", "planning"),
+            "lead_count": c.get("lead_count", 0),
+            "pending_drafts": pending,
+            "approved_drafts": approved,
+            "updated_at": updated,
+            "created_at": created_str,
+        })
+
+    total_drafts = len(drafts)
+    reply_rate_heuristic = round((approved_drafts / total_drafts * 100) if total_drafts > 0 else 0)
+    qual_score_heuristic = min(100, round((total_leads / max(1, len(campaign_list)) * 10) + reply_rate_heuristic * 0.3)) if campaign_list else 0
+
+    tasks = []
+    for c in campaign_list:
+        if c["status"] in ("ready", "ready_to_send"):
+            tasks.append({"type": "launch", "campaign_id": c["id"], "campaign_name": c["name"], "label": f"{c['name']} ready to launch", "priority": "high", "action": "launch"})
+        elif c["status"] == "draft_review" and c["pending_drafts"] > 0:
+            tasks.append({"type": "review", "campaign_id": c["id"], "campaign_name": c["name"], "label": f"Review {c['pending_drafts']} drafts in {c['name']}", "priority": "high", "action": "review"})
+
+    if pending_drafts > 0 and not any(t["type"] == "review" for t in tasks):
+        tasks.append({"type": "pending_drafts", "campaign_id": None, "campaign_name": None, "label": f"{pending_drafts} drafts need review", "priority": "high", "action": "review"})
+
+    tasks.sort(key=lambda t: {"high": 0, "medium": 1, "low": 2}.get(t["priority"], 3))
+
+    activity = []
+    for c in sorted(campaign_list, key=lambda x: x["updated_at"], reverse=True)[:10]:
+        if c["status"] == "completed":
+            activity.append({"type": "campaign_completed", "text": f"Campaign completed: {c['name']}", "timestamp": c["updated_at"]})
+        elif c["status"] == "draft_review" and c["pending_drafts"] > 0:
+            activity.append({"type": "drafts_generated", "text": f"Generated {c['pending_drafts']} personalized drafts for {c['name']}", "timestamp": c["updated_at"]})
+        elif c["status"] == "ready":
+            activity.append({"type": "campaign_ready", "text": f"{c['name']} is ready for review", "timestamp": c["updated_at"]})
+        elif c["status"] == "ready_to_send":
+            activity.append({"type": "launch_ready", "text": f"{c['name']} ready to launch", "timestamp": c["updated_at"]})
+        elif c["status"] == "planning" and c["created_at"]:
+            activity.append({"type": "campaign_created", "text": f"Created campaign: {c['name']}", "timestamp": c["created_at"]})
+    if pending_drafts > 0:
+        activity.append({"type": "drafts_pending", "text": f"{pending_drafts} drafts still need review", "timestamp": now.isoformat()})
+    if approved_drafts > 0:
+        activity.append({"type": "drafts_approved", "text": f"{approved_drafts} drafts approved", "timestamp": now.isoformat()})
+    activity.sort(key=lambda x: x["timestamp"], reverse=True)
+
+    user_id = f"web:{session_token}"
+    try:
+        current_jobs = job_manager.list_active_jobs(user_id)
+    except Exception:
+        current_jobs = []
+
+    recommendations = []
+    reviewed_total = pending_drafts + approved_drafts
+    has_ready = any(c["status"] in ("ready", "ready_to_send") for c in campaign_list)
+    has_review = any(c["status"] == "draft_review" and c["pending_drafts"] > 0 for c in campaign_list)
+    has_planning = any(c["status"] == "planning" for c in campaign_list)
+    generating = any(c["status"] == "generating" for c in campaign_list)
+
+    review_campaigns = [c for c in campaign_list if c["status"] == "draft_review" and c["pending_drafts"] > 0]
+    if has_review:
+        best_review = max(review_campaigns, key=lambda x: x["pending_drafts"]) if review_campaigns else None
+        if best_review:
+            recommendations.append({"type": "review_drafts", "text": f"{best_review['name']} has {best_review['pending_drafts']} pending drafts with the highest volume. Reviewing them first will clear your queue faster.", "action": "Review Drafts", "link": "/draft"})
+    if has_ready and not has_review:
+        recommendations.append({"type": "launch_campaign", "text": f"A campaign is ready to launch. Earlier campaigns with completed drafts tend to perform 2x better when sent within 24 hours of generation.", "action": "View Campaigns", "link": "/campaigns"})
+    if has_planning and not has_review and not has_ready:
+        recommendations.append({"type": "continue_planning", "text": "Planning-stage campaigns have leads ready to be structured into outreach. Finalizing their strategy now means drafts can generate overnight.", "action": "Continue Planning", "link": "/campaigns"})
+    if reviewed_total == 0 and len(campaign_list) > 0 and not generating:
+        low_lead_campaigns = [c for c in campaign_list if c["lead_count"] > 0 and c["lead_count"] < 15]
+        if low_lead_campaigns:
+            smallest = min(low_lead_campaigns, key=lambda x: x["lead_count"])
+            recommendations.append({"type": "expand_leads", "text": f"Only {smallest['lead_count']} leads remain in {smallest['name']}. Searching adjacent industries could double your addressable pool.", "action": "Find More Leads", "link": "/discovery"})
+        else:
+            recommendations.append({"type": "generate_drafts", "text": "Your campaigns have leads ready for outreach. Running draft generation now means you can review results in the morning.", "action": "Generate Drafts", "link": "/campaigns"})
+    if len(campaign_list) == 0:
+        recommendations.append({"type": "find_leads", "text": "No campaigns exist yet. Most successful outbound operations start with at least 3 active campaigns to maintain pipeline velocity.", "action": "Find Leads", "link": "/discovery"})
+
+    kpi_campaigns_ready = sum(1 for c in campaign_list if c["status"] in ("ready", "ready_to_send"))
+    kpi_pending_reviews = pending_drafts
+    kpi_reply_rate = reply_rate_heuristic
+    kpi_qual_score = qual_score_heuristic
+
+    return {
+        "ok": True,
+        "campaigns": campaign_list[:4],
+        "draft_counts": {"pending": pending_drafts, "approved": approved_drafts, "total": len(drafts)},
+        "needs_attention": tasks[:4],
+        "live_activity": activity[:10],
+        "campaign_count": len(campaign_list),
+        "active_jobs": current_jobs,
+        "recommendations": recommendations[:3],
+        "kpis": {
+            "estimated_reply_rate": kpi_reply_rate,
+            "avg_qualification_score": kpi_qual_score,
+            "pending_reviews": kpi_pending_reviews,
+            "campaigns_ready": kpi_campaigns_ready,
+        },
+        "total_leads": total_leads,
     }
 
 

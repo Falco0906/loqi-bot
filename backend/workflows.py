@@ -1,7 +1,7 @@
 from services.gmail import send_email
 from services.google_auth import refresh_access_token
 from services.lead_provider import format_leads_message
-from services.ai import generate_outreach_email, rewrite_message, analyze_draft, OpenAIError
+from services.ai import generate_outreach_email, rewrite_message, analyze_draft, answer_draft_question, OpenAIError
 from services.lead_provider import get_leads, search_with_expansion
 from services.supabase import get_user, is_token_expired, store_leads, update_google_access_token
 from services.conversation_store import record_workflow_event
@@ -255,6 +255,18 @@ def analyze_draft_workflow(input: dict) -> dict:
         }
 
 
+def draft_question_workflow(input: dict) -> dict:
+    """Answer an educational question about the draft. Does NOT modify the draft."""
+    question = input.get("question") or ""
+    draft_text = input.get("draft_text") or ""
+    context = input.get("context") or {}
+    try:
+        answer = answer_draft_question(question, draft_text, context)
+        return {"ok": True, "type": "draft_question", "answer": answer}
+    except OpenAIError as e:
+        return {"ok": False, "type": "draft_question", "answer": str(e)}
+
+
 def send_outreach(input: dict) -> dict:
     lead = input.get("lead") or {}
     user_id = input.get("user_id")
@@ -360,6 +372,9 @@ def run_workflow(input: dict) -> dict:
 
     if workflow_type == "draft_analysis":
         return analyze_draft_workflow(input)
+
+    if workflow_type == "draft_question":
+        return draft_question_workflow(input)
 
     if workflow_type == "send_outreach":
         return send_outreach(input)

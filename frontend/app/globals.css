@@ -92,4 +92,12 @@
   .stagger-6 { animation-delay: 0.3s; }
   .stagger-7 { animation-delay: 0.35s; }
   .stagger-8 { animation-delay: 0.4s; }
+
+  @keyframes highlight-fade {
+    0% { background-color: rgba(196, 192, 255, 0.12); border-radius: 8px; }
+    100% { background-color: transparent; }
+  }
+  .animate-highlight-fade {
+    animation: highlight-fade 1.2s ease-out;
+  }
 }

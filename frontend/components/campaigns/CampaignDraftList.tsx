@@ -133,7 +133,7 @@ export default function CampaignDraftList({ sessionToken, campaignId }: Props) {
               </div>
               <div className="flex items-center gap-2 shrink-0 ml-3">
                 <a
-                  href={`/draft`}
+                  href={`/draft?campaign=${campaignId}`}
                   className="px-3 py-1.5 rounded-lg bg-primary/10 text-primary text-xs font-bold hover:bg-primary/20 active:scale-[0.97] transition-all duration-150 focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
                 >
                   Review

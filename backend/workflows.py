@@ -1,7 +1,7 @@
 from services.gmail import send_email
 from services.google_auth import refresh_access_token
 from services.lead_provider import format_leads_message
-from services.ai import generate_outreach_email, rewrite_message, OpenAIError
+from services.ai import generate_outreach_email, rewrite_message, analyze_draft, OpenAIError
 from services.lead_provider import get_leads, search_with_expansion
 from services.supabase import get_user, is_token_expired, store_leads, update_google_access_token
 from services.conversation_store import record_workflow_event
@@ -167,6 +167,7 @@ def draft_message(input: dict) -> dict:
     tone = _infer_tone(input)
     length = _infer_length(input)
     previous_message = input.get("previous_message") or ""
+    context = input.get("context") or {}
 
     company_intelligence = None
     lead_intelligence = None
@@ -185,7 +186,7 @@ def draft_message(input: dict) -> dict:
     subject = ""
     if edit_request and previous_message:
         try:
-            llm_message = rewrite_message(edit_request, previous_message)
+            llm_message = rewrite_message(edit_request, previous_message, context)
             message = f"Draft ready:\n\n---\n{llm_message}\n---"
         except OpenAIError as e:
             return {
@@ -231,6 +232,27 @@ def draft_message(input: dict) -> dict:
         "company_intelligence": company_intelligence,
         "lead_intelligence": lead_intelligence,
     }
+
+
+def analyze_draft_workflow(input: dict) -> dict:
+    """Analyze a draft and return structured coaching feedback. Does NOT modify the draft."""
+    draft_text = input.get("draft_text") or ""
+    context = input.get("context") or {}
+    try:
+        analysis = analyze_draft(draft_text, context)
+        return {
+            "ok": True,
+            "type": "draft_analysis",
+            "analysis": analysis,
+            "draft_text": draft_text,
+        }
+    except OpenAIError as e:
+        return {
+            "ok": False,
+            "type": "draft_analysis",
+            "error": str(e),
+            "draft_text": draft_text,
+        }
 
 
 def send_outreach(input: dict) -> dict:
@@ -335,6 +357,9 @@ def run_workflow(input: dict) -> dict:
 
     if workflow_type == "draft_message":
         return draft_message(input)
+
+    if workflow_type == "draft_analysis":
+        return analyze_draft_workflow(input)
 
     if workflow_type == "send_outreach":
         return send_outreach(input)

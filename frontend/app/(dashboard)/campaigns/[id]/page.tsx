@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import { getCampaign, updateCampaign, generateCampaignDrafts, getCampaignGenerationStatus } from "../../../../lib/api";
 import DraftReviewWorkspace from "../../../../components/draft/DraftReviewWorkspace";
 import CampaignStatusBadge from "../../../../components/campaigns/CampaignStatusBadge";
@@ -27,6 +28,7 @@ export default function CampaignDetailPage() {
   const [generating, setGenerating] = useState(false);
   const [genProgress, setGenProgress] = useState<{ total: number; completed: number } | null>(null);
   const [campaignError, setCampaignError] = useState<string | null>(null);
+  const [nameEdit, setNameEdit] = useState("");
 
   usePageContext("Campaign", {
     campaign_id: campaignId,
@@ -52,6 +54,8 @@ export default function CampaignDetailPage() {
     })();
     if (token) setSessionToken(token);
   }, []);
+
+  useEffect(() => { setNameEdit(campaign?.name as string || ""); }, [campaign?.name]);
 
   async function refreshCampaign() {
     if (!sessionToken) return;
@@ -161,6 +165,7 @@ export default function CampaignDetailPage() {
   }
 
   const name = campaign.name as string;
+
   const status = campaign.status as string;
   const leadCount = campaign.lead_count as number;
   const pendingDrafts = campaign.pending_drafts as number;
@@ -300,12 +305,12 @@ export default function CampaignDetailPage() {
                       </button>
                     ) : null}
                     {status === "draft_review" && pendingDrafts > 0 ? (
-                      <button
-                        onClick={() => { setTab("Drafts"); }}
+                      <Link
+                        href={`/draft?campaign=${campaignId}`}
                         className="w-full inline-flex items-center justify-center px-4 py-2.5 rounded-lg bg-secondary text-on-primary text-sm font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
                       >
                         Continue Draft Review ({pendingDrafts})
-                      </button>
+                      </Link>
                     ) : null}
                     {status === "generating" ? (
                       <button
@@ -492,11 +497,28 @@ export default function CampaignDetailPage() {
                 <div className="space-y-4">
                   <div>
                     <label className="text-label-sm text-on-surface-variant/60 block mb-1">Campaign Name</label>
-                    <input
-                      type="text"
-                      defaultValue={name}
-                      className="w-full rounded-xl border border-outline-variant/20 bg-surface-low px-4 py-2.5 text-body-md text-on-surface outline-none focus:border-primary/50"
-                    />
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={nameEdit}
+                        onChange={(e) => setNameEdit(e.target.value)}
+                        className="flex-1 rounded-xl border border-outline-variant/20 bg-surface-low px-4 py-2.5 text-body-md text-on-surface outline-none focus:border-primary/50"
+                      />
+                      <button
+                        onClick={async () => {
+                          if (!sessionToken || !nameEdit.trim()) return;
+                          try {
+                            await updateCampaign(sessionToken, campaignId, { name: nameEdit.trim() });
+                            setCampaign((prev) => prev ? { ...prev, name: nameEdit.trim() } : prev);
+                            toast("success", "Name updated");
+                          } catch { toast("error", "Failed to rename"); }
+                        }}
+                        disabled={!nameEdit.trim() || nameEdit.trim() === name}
+                        className="px-4 py-2 rounded-xl bg-primary text-on-primary text-sm font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.97] disabled:opacity-40"
+                      >
+                        Save
+                      </button>
+                    </div>
                   </div>
                   <button
                     onClick={async () => {

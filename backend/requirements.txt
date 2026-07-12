@@ -4,6 +4,7 @@ requests
 python-dotenv
 supabase
 serpapi
+psycopg2-binary
 
 # test
 pytest

@@ -142,26 +142,49 @@ def classify_intent(user_message: str, context: dict) -> str:
     raise OpenAIError(f"Unexpected intent classification: {normalized}")
 
 
-def rewrite_message(instruction: str, previous_message: str) -> str:
+def rewrite_message(instruction: str, previous_message: str, context: dict | None = None) -> str:
     """Rewrite a message based on instruction. Returns rewritten text or raises OpenAIError."""
-    print("[AI INPUT]:", previous_message)
     print("[AI INSTRUCTION]:", instruction)
     system_text = (
-        "You rewrite cold outreach messages strictly following the instruction.\n"
+        "You are an expert cold email editor. You rewrite outreach messages strictly following the instruction.\n"
+        "You edit the existing message — you do not write a new one from scratch.\n"
         "If the instruction says 'make it longer', you MUST expand the message.\n"
         "If the instruction says 'shorter', you MUST shorten it.\n"
         "Always modify the message meaningfully."
     )
+
+    context_block = ""
+    if context:
+        parts = []
+        if context.get("company"):
+            parts.append(f"Target company: {context['company']}")
+        if context.get("contact"):
+            parts.append(f"Contact name: {context['contact']}")
+        if context.get("role"):
+            parts.append(f"Contact role: {context['role']}")
+        if context.get("industry"):
+            parts.append(f"Industry: {context['industry']}")
+        if context.get("campaign_name"):
+            parts.append(f"Campaign: {context['campaign_name']}")
+        if context.get("messaging_angle"):
+            parts.append(f"Messaging angle: {context['messaging_angle']}")
+        if context.get("business_summary"):
+            parts.append(f"Business summary: {context['business_summary']}")
+        if parts:
+            context_block = "\n".join(parts) + "\n\n"
+
     user_text = (
         "Rewrite the following cold outreach message based on the instruction.\n\n"
+        f"{context_block}"
         f"Instruction: {instruction}\n\n"
         "Message:\n"
         f"{previous_message}\n\n"
         "Rules:\n"
-        "- Maintain personalization\n"
+        "- Maintain personalization and context\n"
         "- Improve clarity and impact\n"
-        "- Only change length if instruction asks\n\n"
-        "Return only the rewritten message."
+        "- Only change length if instruction asks\n"
+        "- Keep the same recipient targeting\n"
+        "- Return only the rewritten message — no explanation, no prefix"
     )
     rewritten = _send_openai_request(system_text, user_text)
     print("[AI OUTPUT]:", rewritten)
@@ -299,3 +322,62 @@ def generate_outreach_email(
         raise OpenAIError("AI response missing subject or body")
 
     return {"subject": subject, "body": body}
+
+
+def analyze_draft(draft_text: str, context: dict | None = None) -> dict:
+    """Analyze a draft and return structured coaching feedback. Returns dict or raises OpenAIError."""
+    _log(f"analyze_draft called: draft_len={len(draft_text)}")
+    context_block = ""
+    if context:
+        parts = []
+        for key, label in [
+            ("company", "Target company"),
+            ("contact", "Contact name"),
+            ("role", "Contact role"),
+            ("industry", "Industry"),
+            ("campaign_name", "Campaign"),
+            ("messaging_angle", "Messaging angle"),
+            ("business_summary", "Business summary"),
+        ]:
+            val = context.get(key)
+            if val:
+                parts.append(f"{label}: {val}")
+        if parts:
+            context_block = "\n".join(parts) + "\n\n"
+
+    system_text = (
+        "You are an expert B2B outbound coach. Analyze the cold outreach draft and return "
+        "structured feedback as valid JSON with exactly these keys:\n"
+        "{\n"
+        '  "quality_score": <0-10>,\n'
+        '  "strengths": ["<strength 1>", "<strength 2>", ...],\n'
+        '  "weaknesses": ["<weakness 1>", "<weakness 2>", ...],\n'
+        '  "biggest_opportunity": "<one-sentence advice>",\n'
+        '  "estimated_reply_rate": "<Low|Medium|High|Very High>",\n'
+        '  "recommended_actions": ["<action 1>", "<action 2>", ...]\n'
+        "}\n\n"
+        "Evaluate based on:\n"
+        "- personalization quality\n"
+        "- positioning and buyer psychology\n"
+        "- messaging clarity\n"
+        "- CTA strength\n"
+        "- industry fit\n"
+        "- objection handling\n"
+        "- overall reply probability\n\n"
+        "Return ONLY valid JSON. No markdown, no explanation outside JSON."
+    )
+    user_text = (
+        f"{context_block}"
+        f"Draft to analyze:\n\n{draft_text}\n\n"
+        "Provide structured coaching feedback as JSON."
+    )
+    result = _send_openai_request(system_text, user_text)
+    try:
+        data = json.loads(result)
+    except json.JSONDecodeError as error:
+        _log(f"analyze_draft parse error: {error}, raw: {result}")
+        raise OpenAIError(f"Failed to parse analysis as JSON: {error}")
+    required = {"quality_score", "strengths", "weaknesses", "biggest_opportunity", "estimated_reply_rate", "recommended_actions"}
+    if not all(k in data for k in required):
+        raise OpenAIError(f"Analysis missing required keys. Got: {list(data.keys())}")
+    return data

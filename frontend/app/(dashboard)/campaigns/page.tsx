@@ -58,6 +58,25 @@ export default function CampaignsPage() {
     } catch { toast("error", "Failed to archive campaign"); }
   }
 
+  async function handleRename(id: string, currentName: string) {
+    const newName = window.prompt("Rename campaign", currentName);
+    if (!newName || newName.trim() === currentName || !sessionToken) return;
+    try {
+      await updateCampaign(sessionToken, id, { name: newName.trim() });
+      toast("success", "Campaign renamed");
+      fetchCampaigns();
+    } catch { toast("error", "Failed to rename campaign"); }
+  }
+
+  async function handleUnarchive(id: string) {
+    if (!sessionToken) return;
+    try {
+      await updateCampaign(sessionToken, id, { status: "planning" });
+      toast("success", "Campaign restored");
+      fetchCampaigns();
+    } catch { toast("error", "Failed to restore campaign"); }
+  }
+
   const activeCampaigns = campaigns.filter((c) => c.status !== "archived");
   const archivedCampaigns = campaigns.filter((c) => c.status === "archived");
 
@@ -137,6 +156,7 @@ export default function CampaignsPage() {
                       updatedAt={c.updated_at as string}
                       onGenerate={() => handleGenerate(c.id as string)}
                       onArchive={() => handleArchive(c.id as string)}
+                      onRename={() => handleRename(c.id as string, c.name as string)}
                     />
                   </div>
                 ))}
@@ -160,6 +180,8 @@ export default function CampaignsPage() {
                       approvedDrafts={c.approved_drafts as number}
                       createdAt={c.created_at as string}
                       updatedAt={c.updated_at as string}
+                      onUnarchive={() => handleUnarchive(c.id as string)}
+                      onRename={() => handleRename(c.id as string, c.name as string)}
                     />
                   ))}
                 </div>

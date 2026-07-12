@@ -15,7 +15,8 @@ class JobManager:
         self._storage = JobStorage()
         self._runner = BackgroundRunner(self._storage)
 
-    def create_search_job(self, user_id: str, query: str) -> Optional[dict]:
+    async def create_search_job(self, user_id: str, query: str) -> Optional[dict]:
+        import asyncio
         from services.job_engine.registry import STAGES_SEARCH
 
         job = Job(
@@ -25,7 +26,7 @@ class JobManager:
             stage=STAGES_SEARCH[0],
             progress=0,
         )
-        created = self._storage.create_job(job)
+        created = await asyncio.to_thread(self._storage.create_job, job)
         if not created:
             return None
 

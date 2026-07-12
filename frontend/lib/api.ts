@@ -294,13 +294,69 @@ export async function refineDraft(
   editRequest: string,
   previousMessage: string,
   lead: unknown,
+  context?: {
+    campaign_id?: string;
+    campaign_name?: string;
+    company?: string;
+    contact?: string;
+    role?: string;
+    industry?: string;
+    messaging_angle?: string;
+    business_summary?: string;
+  },
 ) {
-  return fetchWithRetry<{ ok: boolean; draft: unknown }>(
+  const body: Record<string, unknown> = { edit_request: editRequest, previous_message: previousMessage, lead };
+  if (context) {
+    for (const [k, v] of Object.entries(context)) {
+      if (v !== undefined && v !== null) body[k] = v;
+    }
+  }
+  return fetchWithRetry<{ ok: boolean; draft: { id: string; text: string; status: string }; rewritten_text?: string }>(
     `${API_BASE}/api/web/session/${sessionToken}/drafts/${draftId}/refine`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ edit_request: editRequest, previous_message: previousMessage, lead }),
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export type DraftAnalysis = {
+  quality_score: number;
+  strengths: string[];
+  weaknesses: string[];
+  biggest_opportunity: string;
+  estimated_reply_rate: string;
+  recommended_actions: string[];
+};
+
+export async function analyzeDraft(
+  sessionToken: string,
+  draftText: string,
+  lead: unknown,
+  context?: {
+    campaign_id?: string;
+    campaign_name?: string;
+    company?: string;
+    contact?: string;
+    role?: string;
+    industry?: string;
+    messaging_angle?: string;
+    business_summary?: string;
+  },
+) {
+  const body: Record<string, unknown> = { draft_text: draftText, lead };
+  if (context) {
+    for (const [k, v] of Object.entries(context)) {
+      if (v !== undefined && v !== null) body[k] = v;
+    }
+  }
+  return fetchWithRetry<{ ok: boolean; analysis: DraftAnalysis | null; error?: string }>(
+    `${API_BASE}/api/web/session/${sessionToken}/drafts/analyze`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     },
   );
 }

@@ -1,6 +1,5 @@
 "use client";
 
-import Badge from "../shared/Badge";
 import Icon from "../shared/Icon";
 
 type Props = {
@@ -16,8 +15,6 @@ export default function Topbar({ title }: Props) {
         {title ? (
           <h1 className="text-headline-md text-on-surface">{title}</h1>
         ) : null}
-        <Badge variant="primary">2 active campaigns</Badge>
-        <Badge variant="secondary">New leads detected</Badge>
       </div>
 
       <div className="flex items-center gap-2">

@@ -22,7 +22,7 @@ type Props = {
   onApprove: (campaignName: string) => void;
   onBack: () => void;
   onCancel: () => void;
-  onEditLater: () => void;
+  onEditLater: (campaignName: string) => void;
 };
 
 export default function StrategyApproval({
@@ -34,9 +34,8 @@ export default function StrategyApproval({
   onCancel,
   onEditLater,
 }: Props) {
-  const [campaignName, setCampaignName] = useState(
-    `Campaign ${new Date().toLocaleDateString()}`,
-  );
+  const [campaignName, setCampaignName] = useState("");
+  const nameValid = campaignName.trim().length > 0;
 
   return (
     <div className="flex flex-col h-full overflow-hidden animate-fade-in">
@@ -61,16 +60,29 @@ export default function StrategyApproval({
           </div>
 
           {/* Campaign Name */}
-          <div className="mb-8 card-base p-5">
-            <label className="text-label-sm text-on-surface-variant/60 block mb-2">
-              Campaign Name
+          <div className="mb-8 card-base p-5 border-2 border-primary/20 bg-primary-container/5">
+            <label className="text-label-sm text-primary/80 uppercase tracking-wider font-semibold block mb-2 flex items-center gap-1.5">
+              <Icon name="edit_note" className="text-sm" />
+              Name Your Campaign
             </label>
             <input
               type="text"
               value={campaignName}
               onChange={(e) => setCampaignName(e.target.value)}
-              className="w-full rounded-xl border border-outline-variant/20 bg-surface-low px-4 py-2.5 text-body-md text-on-surface outline-none focus:border-primary/50 transition-all duration-150"
+              placeholder="e.g. Q3 E-Commerce Outreach"
+              className={`w-full rounded-xl border-2 bg-surface-low px-4 py-3 text-body-md text-on-surface outline-none transition-all duration-150 placeholder:text-on-surface-variant/30 ${
+                campaignName.trim()
+                  ? "border-primary/40 focus:border-primary"
+                  : "border-error/30 focus:border-error"
+              }`}
+              autoFocus
             />
+            {!campaignName.trim() && (
+              <p className="text-[11px] text-error/70 mt-1.5 flex items-center gap-1">
+                <Icon name="warning" className="text-xs" />
+                A campaign name is required before approving
+              </p>
+            )}
           </div>
 
           {/* Summary stats */}
@@ -171,14 +183,16 @@ export default function StrategyApproval({
               Cancel
             </button>
             <button
-              onClick={onEditLater}
-              className="px-5 py-2.5 rounded-lg border border-outline-variant/20 text-on-surface font-medium hover:border-primary/40 hover:text-primary active:scale-[0.97] transition-all duration-150 text-sm focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
+              onClick={() => onEditLater(campaignName)}
+              disabled={!nameValid}
+              className="px-5 py-2.5 rounded-lg border border-outline-variant/20 text-on-surface font-medium hover:border-primary/40 hover:text-primary active:scale-[0.97] transition-all duration-150 text-sm focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2 disabled:opacity-40"
             >
               Edit Later
             </button>
             <button
               onClick={() => onApprove(campaignName)}
-              className="px-6 py-2.5 rounded-lg bg-success text-white font-bold hover:brightness-110 active:scale-[0.97] transition-all duration-150 text-sm flex items-center gap-2 focus-visible:outline-2 focus-visible:outline-success/60 focus-visible:outline-offset-2"
+              disabled={!nameValid}
+              className="px-6 py-2.5 rounded-lg bg-success text-white font-bold hover:brightness-110 active:scale-[0.97] transition-all duration-150 text-sm flex items-center gap-2 focus-visible:outline-2 focus-visible:outline-success/60 focus-visible:outline-offset-2 disabled:opacity-40"
             >
               <Icon name="check_circle" className="text-base" />
               Approve Strategy

@@ -8,6 +8,7 @@ const navItems = [
   { label: "Mission Control", href: "/mission-control", icon: "dashboard" },
   { label: "Discovery", href: "/discovery", icon: "explore" },
   { label: "Campaigns", href: "/campaigns", icon: "campaign" },
+  { label: "Drafts", href: "/draft", icon: "edit_note" },
   { label: "Campaign Intelligence", href: "/campaign-intelligence", icon: "insights" },
 ];
 

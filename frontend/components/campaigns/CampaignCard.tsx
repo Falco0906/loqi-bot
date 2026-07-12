@@ -1,3 +1,6 @@
+"use client";
+
+import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import Icon from "../shared/Icon";
 import CampaignStatusBadge from "./CampaignStatusBadge";
@@ -15,7 +18,12 @@ type Props = {
   onContinue?: () => void;
   onGenerate?: () => void;
   onArchive?: () => void;
+  onUnarchive?: () => void;
   onDelete?: () => void;
+  onRename?: () => void;
+  onDuplicate?: () => void;
+  onMerge?: () => void;
+  onSplit?: () => void;
 };
 
 function timeAgo(iso: string): string {
@@ -26,6 +34,16 @@ function timeAgo(iso: string): string {
   if (ms < 86400000) return `${Math.floor(ms / 3600000)}h ago`;
   return `${Math.floor(ms / 86400000)}d ago`;
 }
+
+const STATUS_ACTIONS: Record<string, { primary: string; secondary?: string; link?: string }> = {
+  planning: { primary: "Continue Planning", link: `/campaigns/${"id"}` },
+  ready: { primary: "Generate Drafts" },
+  generating: { primary: "Generating..." },
+  draft_review: { primary: "Review Drafts", link: "/draft?campaign=" },
+  ready_to_send: { primary: "Review Drafts", link: "/draft?campaign=" },
+  completed: { primary: "View Campaign", link: `/campaigns/${"id"}` },
+  archived: { primary: "View Campaign", link: `/campaigns/${"id"}` },
+};
 
 export default function CampaignCard({
   id,
@@ -39,19 +57,103 @@ export default function CampaignCard({
   onContinue,
   onGenerate,
   onArchive,
+  onUnarchive,
+  onDelete,
+  onRename,
+  onDuplicate,
+  onMerge,
+  onSplit,
 }: Props) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const hasDrafts = pendingDrafts > 0 || approvedDrafts > 0;
+  const actions = STATUS_ACTIONS[status] || STATUS_ACTIONS.planning;
+
+  const primaryAction = (() => {
+    switch (status) {
+      case "planning":
+        return (
+          <Link
+            href={`/campaigns/${id}`}
+            className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
+          >
+            {actions.primary}
+          </Link>
+        );
+      case "ready":
+        return (
+          <button
+            onClick={(e) => { e.preventDefault(); onGenerate?.(); toast("info", "Starting draft generation..."); }}
+            className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
+          >
+            {actions.primary}
+          </button>
+        );
+      case "generating":
+        return (
+          <span className="px-3 py-1.5 rounded-lg bg-outline-variant/20 text-on-surface-variant/60 text-xs font-medium cursor-not-allowed">
+            <span className="inline-block w-3 h-3 border-2 border-on-surface-variant/30 border-t-transparent rounded-full animate-spin mr-1 align-middle" />
+            {actions.primary}
+          </span>
+        );
+      case "draft_review":
+      case "ready_to_send":
+        return (
+          <Link
+            href={`/draft?campaign=${id}`}
+            className="px-3 py-1.5 rounded-lg bg-secondary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
+          >
+            {actions.primary}
+          </Link>
+        );
+      default:
+        return (
+          <Link
+            href={`/campaigns/${id}`}
+            className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
+          >
+            {actions.primary}
+          </Link>
+        );
+    }
+  })();
+
+  const secondaryAction = (() => {
+    if (status === "draft_review" || status === "ready_to_send") {
+      return (
+        <Link
+          href={`/campaigns/${id}`}
+          className="px-3 py-1.5 rounded-lg border border-outline-variant/20 text-on-surface text-xs font-medium transition-all duration-150 hover:border-primary/40 hover:text-primary active:scale-[0.95]"
+        >
+          Campaign Details
+        </Link>
+      );
+    }
+    return null;
+  })();
+
   return (
-    <Link
-      href={`/campaigns/${id}`}
-      className="block card-interactive p-5"
-    >
+    <div className="block card-interactive p-5">
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
             <Icon name="campaign" className="text-primary text-lg" />
           </div>
           <div className="min-w-0">
-            <h3 className="text-body-lg text-on-surface font-bold truncate">{name}</h3>
+            <Link href={`/campaigns/${id}`} className="hover:underline">
+              <h3 className="text-body-lg text-on-surface font-bold truncate">{name}</h3>
+            </Link>
             <p className="text-label-sm text-on-surface-variant/60">
               Created {timeAgo(createdAt)}
             </p>
@@ -63,17 +165,17 @@ export default function CampaignCard({
       <div className="flex items-center gap-5 mb-4">
         <div className="text-center">
           <p className="text-headline-sm text-on-surface font-bold">{leadCount}</p>
-          <p className="text-label-sm text-on-surface-variant/60">{leadCount === 1 ? "Lead" : "Leads"}</p>
+          <p className="text-label-sm text-on-surface-variant/60">Leads</p>
         </div>
         <div className="w-px h-8 bg-outline-variant/10" />
         <div className="text-center">
           <p className="text-headline-sm text-on-surface font-bold">{pendingDrafts}</p>
-          <p className="text-label-sm text-on-surface-variant/60">Pending</p>
+          <p className="text-label-sm text-on-surface-variant/60">Drafts Pending</p>
         </div>
         <div className="w-px h-8 bg-outline-variant/10" />
         <div className="text-center">
           <p className="text-headline-sm text-on-surface font-bold">{approvedDrafts}</p>
-          <p className="text-label-sm text-on-surface-variant/60">Approved</p>
+          <p className="text-label-sm text-on-surface-variant/60">Drafts Approved</p>
         </div>
         <div className="w-px h-8 bg-outline-variant/10" />
         <div className="text-center">
@@ -85,25 +187,82 @@ export default function CampaignCard({
       </div>
 
       <div className="flex items-center gap-2 pt-3 border-t border-outline-variant/10">
-        <button
-          onClick={(e) => { e.preventDefault(); onContinue?.(); }}
-          className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
-        >
-          Open
-        </button>
-        <button
-          onClick={(e) => { e.preventDefault(); onGenerate?.(); toast("info", "Starting draft generation..."); }}
-          className="px-3 py-1.5 rounded-lg border border-outline-variant/20 text-on-surface text-xs font-medium transition-all duration-150 hover:border-primary/40 hover:text-primary active:scale-[0.95] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
-        >
-          Generate Drafts
-        </button>
-        <button
-          onClick={(e) => { e.preventDefault(); onArchive?.(); toast("success", "Campaign archived"); }}
-          className="px-3 py-1.5 rounded-lg border border-outline-variant/20 text-on-surface-variant/60 text-xs font-medium transition-all duration-150 hover:border-error/40 hover:text-error active:scale-[0.95] ml-auto focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
-        >
-          Archive
-        </button>
+        {primaryAction}
+        {secondaryAction}
+
+        {/* Overflow menu */}
+        <div className="relative ml-auto" ref={menuRef}>
+          <button
+            onClick={(e) => { e.preventDefault(); setMenuOpen((prev) => !prev); }}
+            className="p-1.5 rounded-lg text-on-surface-variant/50 hover:text-on-surface hover:bg-surface-high/60 transition-all"
+            aria-label="Campaign actions"
+          >
+            <Icon name="more_horiz" className="text-lg" />
+          </button>
+
+          {menuOpen && (
+            <div
+              className="absolute right-0 top-full mt-1 w-44 rounded-xl border border-outline-variant/10 bg-surface-lowest shadow-xl py-1 z-50 animate-scale-in"
+              onClick={(e) => e.preventDefault()}
+            >
+              <button
+                onClick={() => { setMenuOpen(false); onRename?.(); }}
+                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-on-surface hover:bg-surface/60 transition-all"
+              >
+                <Icon name="edit_note" className="text-sm text-on-surface-variant" />
+                Rename
+              </button>
+              <button
+                onClick={() => { setMenuOpen(false); onDuplicate?.(); }}
+                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-on-surface hover:bg-surface/60 transition-all"
+              >
+                <Icon name="add_circle" className="text-sm text-on-surface-variant" />
+                Duplicate
+              </button>
+              {status === "archived" ? (
+                <button
+                  onClick={() => { setMenuOpen(false); onUnarchive?.(); toast("success", "Campaign restored"); }}
+                  className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-on-surface hover:bg-surface/60 transition-all"
+                >
+                  <Icon name="refresh" className="text-sm text-on-surface-variant" />
+                  Unarchive
+                </button>
+              ) : (
+                <button
+                  onClick={() => { setMenuOpen(false); onArchive?.(); toast("success", "Campaign archived"); }}
+                  className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-on-surface hover:bg-surface/60 transition-all"
+                >
+                  <Icon name="folder_zip" className="text-sm text-on-surface-variant" />
+                  Archive
+                </button>
+              )}
+              <hr className="border-outline-variant/10 my-1" />
+              <button
+                onClick={() => { setMenuOpen(false); onMerge?.(); }}
+                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-on-surface hover:bg-surface/60 transition-all"
+              >
+                <Icon name="tune" className="text-sm text-on-surface-variant" />
+                Merge
+              </button>
+              <button
+                onClick={() => { setMenuOpen(false); onSplit?.(); }}
+                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-on-surface hover:bg-surface/60 transition-all"
+              >
+                <Icon name="tune" className="text-sm text-on-surface-variant" />
+                Split
+              </button>
+              <hr className="border-outline-variant/10 my-1" />
+              <button
+                onClick={() => { setMenuOpen(false); onDelete?.(); }}
+                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-error hover:bg-error/5 transition-all"
+              >
+                <Icon name="close" className="text-sm" />
+                Delete
+              </button>
+            </div>
+          )}
+        </div>
       </div>
-    </Link>
+    </div>
   );
 }

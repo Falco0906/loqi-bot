@@ -1,11 +1,15 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   listDrafts,
   updateDraft,
   refineDraft,
   approveDraft,
+  listCampaigns,
+  analyzeDraft,
+  DraftAnalysis,
 } from "../../lib/api";
 import Icon from "../shared/Icon";
 import { toast } from "../shared/Toast";
@@ -24,11 +28,48 @@ type DraftEntry = {
   length?: string;
   lead_intelligence?: Record<string, unknown> | null;
   company_intelligence?: Record<string, unknown> | null;
+  campaign_id?: string;
+  campaign_name?: string;
+  created_at?: string;
 };
 
+type CampaignInfo = {
+  id: string;
+  name: string;
+  status: string;
+  lead_count: number;
+  pending_drafts: number;
+  approved_drafts: number;
+};
+
+type AiMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  type?: "edit_result" | "analysis" | "error";
+  changes?: string[];
+  analysis?: DraftAnalysis | null;
+  oldText?: string;
+  newText?: string;
+};
+
+type DraftEditEntry = {
+  draftId: string;
+  previousText: string;
+  previousStatus: string;
+};
+
+function getCampaignLabel(cid: string, cmap: Map<string, string>): string {
+  return cmap.get(cid) || "Uncategorized";
+}
+
 export default function DraftReviewWorkspace() {
+  const searchParams = useSearchParams();
+  const campaignParam = searchParams?.get("campaign") || null;
+
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<DraftEntry[]>([]);
+  const [campaigns, setCampaigns] = useState<CampaignInfo[]>([]);
   const [selectedIndex, setSelectedIndex] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [backendError, setBackendError] = useState(false);
@@ -38,16 +79,31 @@ export default function DraftReviewWorkspace() {
   const [refining, setRefining] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
+  const [filterCampaign, setFilterCampaign] = useState<string>(campaignParam || "__all__");
+  const [filterStatus, setFilterStatus] = useState<string>("__all__");
+  const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set());
+
+  const [aiMessages, setAiMessages] = useState<AiMessage[]>([]);
+  const [aiInput, setAiInput] = useState("");
+  const [aiSending, setAiSending] = useState(false);
+  const [editHistory, setEditHistory] = useState<DraftEditEntry[]>([]);
+  const [showDiffId, setShowDiffId] = useState<string | null>(null);
+  const [highlightKey, setHighlightKey] = useState(0);
+  const aiEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (campaignParam) {
+      setFilterCampaign(campaignParam);
+      setExpandedCampaigns(new Set([campaignParam]));
+    }
+  }, [campaignParam]);
+
   usePageContext("Draft Review", {
     drafts_count: drafts.length,
     selected_index: selectedIndex,
+    filter_campaign: filterCampaign,
+    filter_status: filterStatus,
     selected_name: (drafts[selectedIndex]?.lead as Record<string, unknown>)?.name as string | null ?? null,
-    selected_company: (drafts[selectedIndex]?.lead as Record<string, unknown>)?.company as string | null ?? null,
-    selected_status: drafts[selectedIndex]?.status ?? null,
-    selected_text: drafts[selectedIndex]?.text?.slice(0, 200) ?? null,
-    selected_subject: drafts[selectedIndex]?.subject ?? null,
-    approved_count: drafts.filter((d) => d.status === "approved").length,
-    pending_count: drafts.filter((d) => d.status === "pending").length,
   });
 
   useActionHandlers({
@@ -81,7 +137,7 @@ export default function DraftReviewWorkspace() {
     if (token) setSessionToken(token);
   }, []);
 
-  const fetchDrafts = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     if (!sessionToken) {
       setLoading(false);
       return;
@@ -89,9 +145,17 @@ export default function DraftReviewWorkspace() {
     setLoading(true);
     setBackendError(false);
     try {
-      const res = await listDrafts(sessionToken);
-      if (res.ok && Array.isArray(res.drafts)) {
-        setDrafts(res.drafts as DraftEntry[]);
+      const [draftRes, campaignRes] = await Promise.allSettled([
+        listDrafts(sessionToken),
+        listCampaigns(sessionToken),
+      ]);
+
+      if (draftRes.status === "fulfilled" && draftRes.value.ok && Array.isArray(draftRes.value.drafts)) {
+        setDrafts(draftRes.value.drafts as DraftEntry[]);
+      }
+
+      if (campaignRes.status === "fulfilled" && campaignRes.value.ok && Array.isArray(campaignRes.value.campaigns)) {
+        setCampaigns(campaignRes.value.campaigns as CampaignInfo[]);
       }
     } catch {
       setBackendError(true);
@@ -101,15 +165,98 @@ export default function DraftReviewWorkspace() {
   }, [sessionToken]);
 
   useEffect(() => {
-    fetchDrafts();
-  }, [fetchDrafts]);
+    fetchData();
+  }, [fetchData]);
 
-  const selected = drafts[selectedIndex] || null;
+  const campaignMap = new Map<string, string>();
+  for (const c of campaigns) {
+    campaignMap.set(c.id, c.name);
+  }
+  for (const d of drafts) {
+    const cid = d.campaign_id as string | undefined;
+    if (cid && !campaignMap.has(cid)) {
+      const cname = (d.campaign_name as string) || "Unknown Campaign";
+      campaignMap.set(cid, cname);
+    }
+  }
 
-  function handleSelect(index: number) {
-    setSelectedIndex(index);
-    setEditing(false);
-    setMessage(null);
+  const draftsByCampaign = new Map<string, DraftEntry[]>();
+  for (const d of drafts) {
+    const cid = (d.campaign_id as string) || "__none__";
+    if (!draftsByCampaign.has(cid)) draftsByCampaign.set(cid, []);
+    draftsByCampaign.get(cid)!.push(d);
+  }
+
+  const sortedCampaignIds = Array.from(draftsByCampaign.keys()).sort((a, b) => {
+    const nameA = getCampaignLabel(a, campaignMap).toLowerCase();
+    const nameB = getCampaignLabel(b, campaignMap).toLowerCase();
+    return nameA.localeCompare(nameB);
+  });
+
+  const toggleCampaign = (cid: string) => {
+    setExpandedCampaigns((prev) => {
+      const next = new Set(prev);
+      if (next.has(cid)) next.delete(cid);
+      else next.add(cid);
+      return next;
+    });
+  };
+
+  const expandAll = () => {
+    setExpandedCampaigns(new Set(sortedCampaignIds));
+  };
+
+  const collapseAll = () => {
+    setExpandedCampaigns(new Set());
+  };
+
+  const sortedDraftsForCampaign = (drafts: DraftEntry[]): { pending: DraftEntry[]; approved: DraftEntry[] } => {
+    const pending = drafts
+      .filter((d) => d.status === "pending" || d.status === "needs_review")
+      .sort((a, b) => {
+        const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return bTime - aTime;
+      });
+    const approved = drafts
+      .filter((d) => d.status === "approved")
+      .sort((a, b) => {
+        const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return bTime - aTime;
+      });
+    return { pending, approved };
+  };
+
+  const allSortedDrafts = (() => {
+    const result: { draft: DraftEntry; campaignId: string }[] = [];
+    for (const cid of sortedCampaignIds) {
+      if (filterCampaign !== "__all__" && cid !== filterCampaign) continue;
+      const drafts = draftsByCampaign.get(cid) || [];
+      const { pending, approved } = sortedDraftsForCampaign(drafts);
+      for (const d of pending) result.push({ draft: d, campaignId: cid });
+      for (const d of approved) result.push({ draft: d, campaignId: cid });
+    }
+    if (filterStatus === "pending") return result.filter((r) => r.draft.status === "pending" || r.draft.status === "needs_review");
+    if (filterStatus === "approved") return result.filter((r) => r.draft.status === "approved");
+    return result;
+  })();
+
+  const globalIndexMap = new Map<string, number>();
+  allSortedDrafts.forEach((item, i) => {
+    globalIndexMap.set(item.draft.id, i);
+  });
+
+  const selected = allSortedDrafts[selectedIndex]?.draft || null;
+  const selectedCampaignId = allSortedDrafts[selectedIndex]?.campaignId || null;
+
+  function handleSelectDraft(draftId: string) {
+    const idx = globalIndexMap.get(draftId);
+    if (idx !== undefined) {
+      setSelectedIndex(idx);
+      setEditing(false);
+      setMessage(null);
+    }
   }
 
   function startEditing() {
@@ -202,6 +349,153 @@ export default function DraftReviewWorkspace() {
     }
   }
 
+  async function handleAiSend() {
+    const text = aiInput.trim();
+    if (!text || aiSending || !selected || !sessionToken) return;
+
+    const userMsg: AiMessage = { id: `user-${Date.now()}`, role: "user", text };
+    setAiMessages((prev) => [...prev, userMsg]);
+    setAiInput("");
+    setAiSending(true);
+
+    const lead = selected.lead || {};
+    const context = {
+      campaign_id: selected.campaign_id,
+      campaign_name: selected.campaign_name,
+      company: (lead.company as string) || undefined,
+      contact: (lead.name as string) || undefined,
+      role: (lead.title as string) || undefined,
+      industry: (lead.company_industry as string) || undefined,
+      messaging_angle: (selected.lead_intelligence?.recommended_pitch as string) || undefined,
+      business_summary: (lead.company_description as string) || undefined,
+    };
+
+    const intent = classifyDraftIntent(text);
+
+    if (intent === "edit") {
+      try {
+        const res = await refineDraft(
+          sessionToken,
+          selected.id,
+          text,
+          selected.text,
+          lead,
+          context,
+        );
+        const rewritten = res.rewritten_text || "";
+        if (rewritten) {
+          const oldText = selected.text;
+          const oldStatus = selected.status;
+          const { summary, changes } = generateEditSummary(oldText, rewritten);
+          setEditHistory((prev) => [...prev, { draftId: selected.id, previousText: oldText, previousStatus: oldStatus }]);
+          setHighlightKey((k) => k + 1);
+          setDrafts((prev) =>
+            prev.map((d) =>
+              d.id === selected.id
+                ? { ...d, text: rewritten, status: "pending" }
+                : d,
+            ),
+          );
+          const msgId = `ai-${Date.now()}`;
+          setAiMessages((prev) => [
+            ...prev,
+            { id: msgId, role: "assistant", text: `✓ Draft updated — ${summary}`, type: "edit_result", changes, oldText, newText: rewritten },
+          ]);
+          toast("success", "Draft updated");
+        } else {
+          setAiMessages((prev) => [
+            ...prev,
+            { id: `ai-${Date.now()}`, role: "assistant", text: "I couldn't make meaningful changes. Try a different instruction.", type: "error" },
+          ]);
+        }
+      } catch {
+        setAiMessages((prev) => [
+          ...prev,
+          { id: `ai-${Date.now()}`, role: "assistant", text: "Sorry, I encountered an error rewriting this draft.", type: "error" },
+        ]);
+      }
+    } else {
+      try {
+        const res = await analyzeDraft(sessionToken, selected.text, lead, context);
+        if (res.ok && res.analysis) {
+          setAiMessages((prev) => [
+            ...prev,
+            { id: `ai-${Date.now()}`, role: "assistant", text: `Analysis complete`, type: "analysis", analysis: res.analysis },
+          ]);
+        } else {
+          setAiMessages((prev) => [
+            ...prev,
+            { id: `ai-${Date.now()}`, role: "assistant", text: "I couldn't analyze the draft right now.", type: "error" },
+          ]);
+        }
+      } catch {
+        setAiMessages((prev) => [
+          ...prev,
+          { id: `ai-${Date.now()}`, role: "assistant", text: "Sorry, the analysis failed.", type: "error" },
+        ]);
+      }
+    }
+
+    setAiSending(false);
+  }
+
+  function handleUndo() {
+    if (!selected || editHistory.length === 0) return;
+    const lastEdit = [...editHistory].reverse().find((e) => e.draftId === selected.id);
+    if (!lastEdit) return;
+    setEditHistory((prev) => prev.filter((e) => e !== lastEdit));
+    setDrafts((prev) =>
+      prev.map((d) =>
+        d.id === selected.id
+          ? { ...d, text: lastEdit.previousText, status: lastEdit.previousStatus }
+          : d,
+      ),
+    );
+    toast("info", "Undone — previous version restored");
+  }
+
+  function handleApplyEdit(newText: string) {
+    if (!selected || !sessionToken) return;
+    setDrafts((prev) =>
+      prev.map((d) =>
+        d.id === selected.id ? { ...d, text: newText, status: "pending" } : d,
+      ),
+    );
+    toast("success", "Draft updated");
+  }
+
+  useEffect(() => {
+    aiEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [aiMessages]);
+
+  const handleAiQuickAction = (instruction: string) => {
+    setAiInput(instruction);
+  };
+
+  const hasUndo = useMemo(() => {
+    if (!selected) return false;
+    return editHistory.some((e) => e.draftId === selected.id);
+  }, [editHistory, selected]);
+
+  const adaptiveSuggestions = useMemo(() => {
+    const suggestions: string[] = [];
+    const lastMsg = aiMessages.length > 0 ? aiMessages[aiMessages.length - 1] : null;
+    if (lastMsg?.type === "analysis" && lastMsg.analysis?.recommended_actions) {
+      suggestions.push(...lastMsg.analysis.recommended_actions.slice(0, 3));
+    }
+    if (suggestions.length === 0) {
+      suggestions.push("Improve personalization", "Rewrite opening", "Strengthen CTA");
+    }
+    return suggestions;
+  }, [aiMessages]);
+
+  const commonActions = [
+    { key: "shorter", label: "Shorter" },
+    { key: "longer", label: "Longer" },
+    { key: "professional", label: "Professional" },
+    { key: "conversational", label: "Conversational" },
+  ];
+
   /* ── Empty: backend error ── */
   if (!loading && backendError) {
     return (
@@ -209,14 +503,12 @@ export default function DraftReviewWorkspace() {
         <div className="w-16 h-16 rounded-2xl bg-error/10 flex items-center justify-center text-error mb-4">
           <Icon name="warning" className="text-3xl" />
         </div>
-        <p className="text-body-lg text-on-surface-variant/80 font-medium">
-          Backend unavailable
-        </p>
+        <p className="text-body-lg text-on-surface-variant/80 font-medium">Backend unavailable</p>
         <p className="mt-1.5 text-body-md text-on-surface-variant/50 max-w-sm leading-relaxed">
           Could not load drafts. Make sure the backend server is running.
         </p>
         <button
-          onClick={fetchDrafts}
+          onClick={fetchData}
           className="mt-6 inline-flex items-center gap-1.5 rounded-lg border border-error/30 px-4 py-2 text-label-sm font-semibold text-error hover:bg-error/5 transition-all active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
         >
           <Icon name="refresh" className="text-sm" />
@@ -230,22 +522,15 @@ export default function DraftReviewWorkspace() {
   if (loading) {
     return (
       <div className="flex h-full overflow-hidden animate-fade-in">
-        <aside className="w-72 shrink-0 border-r border-outline-variant/10 bg-surface-lowest p-4 space-y-3">
+        <aside className="w-80 shrink-0 border-r border-outline-variant/10 bg-surface-lowest p-4 space-y-3">
           <div className="h-5 w-24 animate-skeleton-pulse bg-surface-high/50 rounded-lg" />
-          {[1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="flex items-start gap-2 animate-skeleton-pulse" style={{ animationDelay: `${i * 0.05}s` }}>
-              <div className="w-8 h-8 rounded-lg bg-surface-high/50 shrink-0" />
-              <div className="flex-1 space-y-1.5">
-                <div className="h-3 w-28 bg-surface-high/50 rounded" />
-                <div className="h-2 w-20 bg-surface-high/50 rounded" />
-              </div>
-            </div>
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-12 animate-skeleton-pulse bg-surface-high/50 rounded-lg" />
           ))}
         </aside>
         <section className="flex-1 p-6 space-y-4">
           <div className="h-4 w-48 animate-skeleton-pulse bg-surface-high/50 rounded-lg" />
           <div className="h-64 animate-skeleton-pulse bg-surface-highest/20 rounded-xl" />
-          <div className="h-32 animate-skeleton-pulse bg-surface-highest/20 rounded-xl" />
         </section>
       </div>
     );
@@ -274,78 +559,154 @@ export default function DraftReviewWorkspace() {
     );
   }
 
-  const approvedCount = drafts.filter((d) => d.status === "approved").length;
-  const needsReviewCount = drafts.filter(
-    (d) => d.status === "needs_review",
-  ).length;
-
   return (
     <div className="flex h-full overflow-hidden">
       {/* ─── Draft Queue — left panel ─── */}
-      <aside className="w-72 shrink-0 border-r border-outline-variant/10 bg-surface-lowest overflow-y-auto flex flex-col">
+      <aside className="w-80 shrink-0 border-r border-outline-variant/10 bg-surface-lowest overflow-y-auto flex flex-col">
         <div className="px-4 py-4 border-b border-outline-variant/10">
-          <h2 className="text-headline-sm font-bold text-on-surface">
-            Draft Queue
-          </h2>
-          <p className="text-xs text-on-surface-variant mt-0.5">
-            {drafts.length} {drafts.length === 1 ? "draft" : "drafts"}
-            {approvedCount > 0 ? ` \u00b7 ${approvedCount} approved` : ""}
-            {needsReviewCount > 0
-              ? ` \u00b7 ${needsReviewCount} needs review`
-              : ""}
-          </p>
-        </div>
-        <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {drafts.map((d, i) => {
-            const name =
-              (d.lead?.name as string) ||
-              [
-                d.lead?.first_name as string,
-                d.lead?.last_name as string,
-              ]
-                .filter(Boolean)
-                .join(" ") ||
-              "Unknown";
-            const company = (d.lead?.company as string) || "";
-            const preview = d.text ? d.text.slice(0, 80).trim() : "";
-            const isSelected = i === selectedIndex;
-            return (
-              <button
-                key={d.id}
-                onClick={() => handleSelect(i)}
-                className={`w-full text-left rounded-lg px-3 py-2.5 transition-all duration-100 focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2 ${
-                  isSelected
-                    ? "bg-primary-container/20 border border-primary/20"
-                    : "hover:bg-surface/60 border border-transparent"
-                }`}
+          <div className="flex items-center justify-between">
+            <h2 className="text-headline-sm font-bold text-on-surface">Drafts</h2>
+            <span className="text-xs text-on-surface-variant/50">
+              {drafts.length} total
+            </span>
+          </div>
+
+          {/* Filters */}
+          <div className="mt-3 space-y-2">
+            <div className="flex gap-2">
+              <select
+                value={filterCampaign}
+                onChange={(e) => { setFilterCampaign(e.target.value); setSelectedIndex(0); }}
+                className="flex-1 rounded-lg border border-outline-variant/20 bg-surface-low px-2.5 py-1.5 text-xs text-on-surface outline-none focus:border-primary/50"
               >
-                <div className="flex items-start gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-[#1F1F23] flex items-center justify-center text-on-surface-variant/40 text-xs font-bold shrink-0 mt-0.5">
-                    {name.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <p className="text-sm font-bold text-on-surface truncate">
-                        {name}
-                      </p>
-                      <StatusDot status={d.status} />
-                    </div>
-                    {company ? (
-                      <p className="text-xs text-on-surface-variant truncate">
-                        {company}
-                      </p>
-                    ) : null}
-                    {preview ? (
-                      <p className="text-[11px] text-on-surface-variant/50 truncate mt-1 leading-snug">
-                        {preview}
-                        {d.text.length > 80 ? "..." : ""}
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
+                <option value="__all__">All Campaigns</option>
+                {Array.from(campaignMap.entries()).map(([cid, cname]) => (
+                  <option key={cid} value={cid}>{cname}</option>
+                ))}
+              </select>
+              <select
+                value={filterStatus}
+                onChange={(e) => { setFilterStatus(e.target.value); setSelectedIndex(0); }}
+                className="flex-1 rounded-lg border border-outline-variant/20 bg-surface-low px-2.5 py-1.5 text-xs text-on-surface outline-none focus:border-primary/50"
+              >
+                <option value="__all__">All</option>
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+              </select>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={expandAll}
+                className="flex-1 rounded-lg border border-outline-variant/20 px-2.5 py-1.5 text-[10px] text-on-surface-variant/60 hover:text-on-surface transition-all"
+              >
+                Expand All
               </button>
-            );
-          })}
+              <button
+                onClick={collapseAll}
+                className="flex-1 rounded-lg border border-outline-variant/20 px-2.5 py-1.5 text-[10px] text-on-surface-variant/60 hover:text-on-surface transition-all"
+              >
+                Collapse All
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-2 space-y-2">
+          {filterCampaign !== "__all__" ? (
+            <>
+              {(() => {
+                const cid = filterCampaign;
+                const campaignDrafts = draftsByCampaign.get(cid) || [];
+                const { pending, approved } = sortedDraftsForCampaign(campaignDrafts);
+                const label = getCampaignLabel(cid, campaignMap);
+                return (
+                  <div key={cid}>
+                    <div className="flex items-center gap-2 px-2 py-1.5">
+                      <span className="text-xs font-bold text-on-surface truncate">{label}</span>
+                      <span className="text-[10px] text-on-surface-variant/40 ml-auto">
+                        {pending.length + approved.length} drafts
+                      </span>
+                    </div>
+                    {pending.length > 0 && (
+                      <div className="mb-1">
+                        <p className="px-2 py-1 text-[10px] text-on-surface-variant/40 uppercase tracking-wider font-medium">
+                          Pending ({pending.length})
+                        </p>
+                        <div className="space-y-0.5">
+                          {pending.map((d) => (
+                            <DraftQueueItem key={d.id} draft={d} selected={d.id === selected?.id} onSelect={handleSelectDraft} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {approved.length > 0 && (
+                      <div>
+                        <p className="px-2 py-1 text-[10px] text-on-surface-variant/40 uppercase tracking-wider font-medium">
+                          Approved ({approved.length})
+                        </p>
+                        <div className="space-y-0.5">
+                          {approved.map((d) => (
+                            <DraftQueueItem key={d.id} draft={d} selected={d.id === selected?.id} onSelect={handleSelectDraft} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </>
+          ) : (
+            sortedCampaignIds.map((cid) => {
+              const campaignDrafts = draftsByCampaign.get(cid) || [];
+              const { pending, approved } = sortedDraftsForCampaign(campaignDrafts);
+              const label = getCampaignLabel(cid, campaignMap);
+              const isExpanded = expandedCampaigns.has(cid);
+              const totalInCampaign = pending.length + approved.length;
+
+              return (
+                <div key={cid}>
+                  <button
+                    onClick={() => toggleCampaign(cid)}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-surface/60 transition-all text-left"
+                  >
+                    <Icon
+                      name="chevron_right"
+                      className={`text-sm text-on-surface-variant/40 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+                    />
+                    <span className="text-xs font-bold text-on-surface truncate flex-1">{label}</span>
+                    <span className="text-[10px] text-on-surface-variant/40">
+                      {pending.length} Pending &middot; {approved.length} Approved
+                    </span>
+                  </button>
+
+                  {isExpanded && (
+                    <div className="ml-2 space-y-1 mt-1 mb-2">
+                      {pending.length > 0 && (
+                        <div>
+                          <p className="px-2 py-0.5 text-[10px] text-on-surface-variant/40 uppercase tracking-wider">
+                            Pending
+                          </p>
+                          {pending.map((d) => (
+                            <DraftQueueItem key={d.id} draft={d} selected={d.id === selected?.id} onSelect={handleSelectDraft} />
+                          ))}
+                        </div>
+                      )}
+                      {approved.length > 0 && (
+                        <div>
+                          <p className="px-2 py-0.5 text-[10px] text-on-surface-variant/40 uppercase tracking-wider">
+                            Approved
+                          </p>
+                          {approved.map((d) => (
+                            <DraftQueueItem key={d.id} draft={d} selected={d.id === selected?.id} onSelect={handleSelectDraft} />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
         </div>
       </aside>
 
@@ -356,9 +717,7 @@ export default function DraftReviewWorkspace() {
           <div className="flex items-center justify-between px-6 py-3 border-b border-outline-variant/10 bg-surface-lowest/50">
             <div className="flex items-center gap-3 min-w-0">
               <div className="w-9 h-9 rounded-lg bg-[#1F1F23] flex items-center justify-center text-on-surface-variant/40 text-sm font-bold shrink-0">
-                {(
-                  (selected.lead?.name as string) || "U"
-                ).charAt(0).toUpperCase()}
+                {((selected.lead?.name as string) || "U").charAt(0).toUpperCase()}
               </div>
               <div className="min-w-0">
                 <h3 className="font-bold text-on-surface text-sm truncate">
@@ -366,9 +725,7 @@ export default function DraftReviewWorkspace() {
                 </h3>
                 <p className="text-xs text-on-surface-variant truncate">
                   {(selected.lead?.title as string) || ""}
-                  {selected.lead?.company
-                    ? ` \u2022 ${selected.lead.company}`
-                    : ""}
+                  {selected.lead?.company ? ` \u2022 ${selected.lead.company}` : ""}
                 </p>
               </div>
             </div>
@@ -399,11 +756,8 @@ export default function DraftReviewWorkspace() {
           <div className="flex-1 overflow-y-auto px-6 py-4">
             {editing ? (
               <div className="space-y-4">
-                {/* Subject field */}
                 <div>
-                  <label className="block text-label-md text-on-surface-variant uppercase tracking-wider mb-1">
-                    Subject
-                  </label>
+                  <label className="block text-label-md text-on-surface-variant uppercase tracking-wider mb-1">Subject</label>
                   <input
                     type="text"
                     value={editSubject}
@@ -412,27 +766,17 @@ export default function DraftReviewWorkspace() {
                     placeholder="Email subject line..."
                   />
                 </div>
-                {/* Recipient field */}
                 <div>
-                  <label className="block text-label-md text-on-surface-variant uppercase tracking-wider mb-1">
-                    To
-                  </label>
+                  <label className="block text-label-md text-on-surface-variant uppercase tracking-wider mb-1">To</label>
                   <input
                     type="text"
-                    value={
-                      ((selected.lead?.email as string) ||
-                        (selected.lead?.name as string) ||
-                        "") as string
-                    }
+                    value={((selected.lead?.email as string) || (selected.lead?.name as string) || "") as string}
                     readOnly
                     className="w-full rounded-xl border border-outline-variant/10 bg-surface-lowest/50 px-4 py-2.5 text-sm text-on-surface-variant/60 outline-none cursor-not-allowed"
                   />
                 </div>
-                {/* Body */}
                 <div>
-                  <label className="block text-label-md text-on-surface-variant uppercase tracking-wider mb-1">
-                    Message
-                  </label>
+                  <label className="block text-label-md text-on-surface-variant uppercase tracking-wider mb-1">Message</label>
                   <textarea
                     value={editBody}
                     onChange={(e) => setEditBody(e.target.value)}
@@ -440,36 +784,25 @@ export default function DraftReviewWorkspace() {
                   />
                 </div>
                 <div className="flex gap-2">
-                  <button
-                    onClick={saveEdit}
-                    className="px-5 py-2 bg-primary text-on-primary text-sm font-bold rounded-lg transition-all duration-150 hover:brightness-110 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
-                  >
+                  <button onClick={saveEdit} className="px-5 py-2 bg-primary text-on-primary text-sm font-bold rounded-lg transition-all duration-150 hover:brightness-110 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2">
                     Save Changes
                   </button>
-                  <button
-                    onClick={cancelEditing}
-                    className="px-5 py-2 border border-outline-variant/20 text-on-surface text-sm font-medium rounded-lg transition-all duration-150 hover:bg-surface active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
-                  >
+                  <button onClick={cancelEditing} className="px-5 py-2 border border-outline-variant/20 text-on-surface text-sm font-medium rounded-lg transition-all duration-150 hover:bg-surface active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2">
                     Cancel
                   </button>
                 </div>
               </div>
             ) : (
               <div className="space-y-6">
-                {/* Read-only subject */}
                 {selected.subject ? (
                   <div>
-                    <p className="text-label-md text-on-surface-variant uppercase tracking-wider mb-1">
-                      Subject
-                    </p>
-                    <p className="text-sm font-bold text-on-surface">
-                      {selected.subject}
-                    </p>
+                    <p className="text-label-md text-on-surface-variant uppercase tracking-wider mb-1">Subject</p>
+                    <p className="text-sm font-bold text-on-surface">{selected.subject}</p>
                   </div>
                 ) : null}
-                {/* Read-only body */}
                 <div
-                  className="whitespace-pre-wrap text-sm text-on-surface leading-relaxed cursor-pointer"
+                  key={highlightKey}
+                  className="whitespace-pre-wrap text-sm text-on-surface leading-relaxed cursor-pointer transition-all duration-500 animate-highlight-fade"
                   onClick={startEditing}
                 >
                   {selected.text}
@@ -482,184 +815,249 @@ export default function DraftReviewWorkspace() {
           <div className="flex items-center justify-between px-6 py-3 border-t border-outline-variant/10 bg-surface-lowest/50">
             <p className="text-xs text-on-surface-variant/50">
               {selected.tone ? `Tone: ${selected.tone}` : ""}
-              {selected.length
-                ? ` \u00b7 Length: ${selected.length}`
-                : ""}
+              {selected.length ? ` \u00b7 Length: ${selected.length}` : ""}
             </p>
-            <button
-              onClick={startEditing}
-              className="flex items-center gap-1.5 px-4 py-2 border border-outline-variant/20 text-on-surface text-sm font-medium rounded-lg transition-all duration-150 hover:border-primary/40 hover:text-primary active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
-            >
-              <Icon name="edit_note" className="text-base" />
-              Edit
-            </button>
+            <div className="flex items-center gap-2">
+              {hasUndo && (
+                <button
+                  onClick={handleUndo}
+                  className="flex items-center gap-1.5 px-3 py-2 border border-outline-variant/20 text-on-surface text-xs font-medium rounded-lg transition-all duration-150 hover:border-error/40 hover:text-error active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
+                >
+                  <Icon name="undo" className="text-sm" />
+                  Undo
+                </button>
+              )}
+              <button
+                onClick={startEditing}
+                className="flex items-center gap-1.5 px-4 py-2 border border-outline-variant/20 text-on-surface text-sm font-medium rounded-lg transition-all duration-150 hover:border-primary/40 hover:text-primary active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
+              >
+                <Icon name="edit_note" className="text-base" />
+                Edit
+              </button>
+            </div>
           </div>
         </section>
       ) : null}
 
-      {/* ─── AI Copilot + Context — right panel ─── */}
+      {/* ─── Inspector — right panel ─── */}
       {selected ? (
-        <aside className="w-80 shrink-0 border-l border-outline-variant/10 bg-surface-lowest overflow-y-auto">
-          {/* AI Copilot */}
-          <div>
-            <div className="px-4 py-3 border-b border-outline-variant/10">
-              <h3 className="text-label-md text-on-surface-variant uppercase tracking-wider font-bold">
-                AI Copilot
-              </h3>
+        <aside className="w-80 shrink-0 border-l border-outline-variant/10 bg-surface-lowest flex flex-col">
+          {/* Context section (fixed header) */}
+          <div className="shrink-0 border-b border-outline-variant/10">
+            <div className="px-4 py-3">
+              <h3 className="text-label-md text-on-surface-variant uppercase tracking-wider font-bold">Context</h3>
             </div>
-            <div className="p-3 space-y-1">
-              {[
-                { key: "shorter", label: "Shorter", icon: "chevron_right" },
-                { key: "longer", label: "Longer", icon: "chevron_right" },
-                {
-                  key: "professional",
-                  label: "Professional",
-                  icon: "auto_awesome",
-                },
-                { key: "hiring", label: "Mention Hiring", icon: "trending_up" },
-                {
-                  key: "expansion",
-                  label: "Mention Expansion",
-                  icon: "trending_up",
-                },
-                {
-                  key: "rewrite_cta",
-                  label: "Rewrite CTA",
-                  icon: "edit_note",
-                },
-              ].map((action) => (
-                <button
-                  key={action.key}
-                  onClick={() => handleRefine(action.key)}
-                  disabled={refining === action.key}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-on-surface hover:bg-surface/60 transition-all duration-100 disabled:opacity-50 active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
-                >
-                  <Icon
-                    name={action.icon}
-                    className="text-sm text-on-surface-variant shrink-0"
-                  />
-                  <span className="font-medium">{action.label}</span>
-                  {refining === action.key ? (
-                    <span className="ml-auto w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                  ) : null}
-                </button>
-              ))}
+            <div className="px-4 pb-3 space-y-2 max-h-[200px] overflow-y-auto">
+              {(() => { const c = selected.lead?.company as string | undefined; return c ? <InspectorRow label="Company" value={c} /> : null; })()}
+              {(() => { const t = selected.lead?.title as string | undefined; return t ? <InspectorRow label="Role" value={t} /> : null; })()}
+              {(() => { const ind = selected.lead?.company_industry as string | undefined; return ind ? <InspectorRow label="Industry" value={ind} /> : null; })()}
+              {(() => { const desc = selected.lead?.company_description as string | undefined; return desc ? <InspectorRow label="Business" value={desc} /> : null; })()}
+              {selected.lead_intelligence?.recommended_pitch ? (
+                <InspectorRow label="Messaging Angle" value={selected.lead_intelligence.recommended_pitch as string} />
+              ) : null}
+              {(() => {
+                const signals = selected.lead?.buying_signals as string[] | undefined;
+                return signals && signals.length > 0 ? <InspectorRow label="Signals" value={signals.slice(0, 3).join(", ")} /> : null;
+              })()}
+              {selected.lead_intelligence?.objection_risk ? (
+                <InspectorRow label="Objection Risk" value={selected.lead_intelligence.objection_risk as string} />
+              ) : null}
             </div>
           </div>
 
-          {/* Context Panel */}
-          <div className="border-t border-outline-variant/10">
-            <div className="px-4 py-3">
-              <h3 className="text-label-md text-on-surface-variant uppercase tracking-wider font-bold">
-                Context
-              </h3>
+          {/* AI Assistant section */}
+          <div className="shrink-0 border-b border-outline-variant/10">
+            <div className="px-4 py-3 flex items-center justify-between">
+              <h3 className="text-label-md text-on-surface-variant uppercase tracking-wider font-bold">AI Assistant</h3>
             </div>
-            <div className="px-4 pb-4 space-y-4">
-              {(() => {
-                const c = selected.lead?.company as string | undefined;
-                return c ? (
-                  <ContextSection label="Company" value={c} />
-                ) : null;
-              })()}
-              {(() => {
-                const t = selected.lead?.title as string | undefined;
-                return t ? (
-                  <ContextSection label="Role" value={t} />
-                ) : null;
-              })()}
-              {(() => {
-                const ind = selected.lead
-                  ?.company_industry as string | undefined;
-                return ind ? (
-                  <ContextSection label="Industry" value={ind} />
-                ) : null;
-              })()}
 
-              {(() => {
-                const desc = selected.lead
-                  ?.company_description as string | undefined;
-                return desc ? (
-                  <ContextSection label="Business Summary" value={desc} />
-                ) : null;
-              })()}
+            {/* Common quick actions (always visible) */}
+            <div className="px-4 pb-1">
+              <div className="flex flex-wrap gap-1.5">
+                {commonActions.map((action) => (
+                  <button
+                    key={action.key}
+                    onClick={() => handleRefine(action.key)}
+                    disabled={refining === action.key}
+                    className="px-2.5 py-1 rounded-lg border border-outline-variant/15 text-[10px] font-medium text-on-surface hover:bg-surface/60 transition-all disabled:opacity-50 active:scale-[0.95]"
+                  >
+                    {refining === action.key ? (
+                      <span className="inline-flex items-center gap-1">
+                        <span className="w-2.5 h-2.5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                        Applying...
+                      </span>
+                    ) : action.label}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-              {selected.lead_intelligence?.recommended_pitch ? (
-                <ContextSection
-                  label="Messaging Angle"
-                  value={
-                    selected.lead_intelligence.recommended_pitch as string
-                  }
-                />
-              ) : null}
+            {/* Adaptive suggestions */}
+            {adaptiveSuggestions.length > 0 && (
+              <div className="px-4 pb-3">
+                <p className="text-[9px] text-on-surface-variant/40 uppercase tracking-wider mb-1.5 font-medium">Suggested</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {adaptiveSuggestions.map((s, i) => (
+                    <button
+                      key={i}
+                      onClick={() => { setAiInput(s); }}
+                      className="px-2.5 py-1 rounded-lg bg-primary-container/10 border border-primary/15 text-[10px] font-medium text-primary hover:bg-primary-container/20 transition-all active:scale-[0.95]"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
 
-              {(() => {
-                const why = selected.lead_intelligence
-                  ?.why_selected as string[] | undefined;
-                if (why && why.length > 0) {
-                  return (
-                    <ContextSection
-                      label="Why Loqi picked this lead"
-                      value={why.slice(0, 2).join("; ")}
-                    />
-                  );
-                }
-                return null;
-              })()}
-              {(() => {
-                const breakdown = selected.lead
-                  ?.commercial_score_breakdown as
-                  | { highlights?: string[] }
-                  | undefined;
-                return breakdown?.highlights &&
-                  breakdown.highlights.length > 0 ? (
-                  <ContextSection
-                    label="Why Loqi picked this lead"
-                    value={breakdown.highlights.slice(0, 2).join("; ")}
-                  />
-                ) : null;
-              })()}
+          {/* Conversation (scrollable) */}
+          <div className="flex-1 overflow-y-auto p-3 space-y-3">
+            {aiMessages.length === 0 ? (
+              <p className="text-[10px] text-on-surface-variant/40 text-center py-4">
+                Ask AI about this draft — try typing "make this shorter" or "mention they are hiring"
+              </p>
+            ) : (
+              aiMessages.map((msg) => (
+                <div key={msg.id} className="space-y-1">
+                  {msg.role === "user" ? (
+                    <div className="flex justify-end">
+                      <div className="max-w-[90%] rounded-xl px-3 py-2 text-xs leading-relaxed bg-primary-container/20 text-on-surface">
+                        {msg.text}
+                      </div>
+                    </div>
+                  ) : msg.type === "edit_result" ? (
+                    <div className="rounded-xl px-3 py-2 text-xs leading-relaxed bg-surface/60 text-on-surface space-y-1.5">
+                      <p className="text-secondary font-semibold">{msg.text}</p>
+                      {msg.changes && msg.changes.length > 0 && (
+                        <ul className="space-y-0.5">
+                          {msg.changes.map((c, i) => (
+                            <li key={i} className="text-on-surface-variant/80 flex items-start gap-1.5">
+                              <span className="text-secondary mt-0.5">•</span>
+                              {c}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      <div className="flex gap-2 pt-1">
+                        {msg.oldText && msg.newText && (
+                          <button
+                            onClick={() => setShowDiffId(showDiffId === msg.id ? null : msg.id)}
+                            className="text-[10px] font-medium text-primary hover:underline"
+                          >
+                            {showDiffId === msg.id ? "Hide Diff" : "Show Diff"}
+                          </button>
+                        )}
+                        <button onClick={handleUndo} className="text-[10px] font-medium text-on-surface-variant/60 hover:text-on-surface transition-colors">
+                          Undo
+                        </button>
+                      </div>
+                      {showDiffId === msg.id && msg.oldText && msg.newText && (
+                        <div className="mt-2 rounded-lg border border-outline-variant/15 overflow-hidden text-[10px] font-mono leading-relaxed">
+                          {diffLines(msg.oldText, msg.newText).map((line, i) => (
+                            <div
+                              key={i}
+                              className={`px-2 py-0.5 ${
+                                line.type === "added" ? "bg-success/10 text-success" :
+                                line.type === "removed" ? "bg-error/10 text-error" : "text-on-surface-variant/60"
+                              }`}
+                            >
+                              {line.type === "added" ? "+ " : line.type === "removed" ? "- " : "  "}
+                              {line.line || " "}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : msg.type === "analysis" && msg.analysis ? (
+                    <div className="rounded-xl px-3 py-2.5 text-xs leading-relaxed bg-surface/60 text-on-surface space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-on-surface">Quality</span>
+                        <span className={`font-bold ${
+                          msg.analysis.quality_score >= 8 ? "text-success" :
+                          msg.analysis.quality_score >= 6 ? "text-tertiary" : "text-error"
+                        }`}>
+                          {msg.analysis.quality_score}/10
+                        </span>
+                      </div>
+                      {msg.analysis.strengths.length > 0 && (
+                        <div>
+                          <p className="text-[10px] text-success uppercase tracking-wider font-medium mb-0.5">Strengths</p>
+                          <ul className="space-y-0.5">
+                            {msg.analysis.strengths.map((s, i) => (
+                              <li key={i} className="text-on-surface-variant/80 flex items-start gap-1.5">
+                                <span className="text-success mt-0.5">+</span> {s}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {msg.analysis.weaknesses.length > 0 && (
+                        <div>
+                          <p className="text-[10px] text-error uppercase tracking-wider font-medium mb-0.5">Weaknesses</p>
+                          <ul className="space-y-0.5">
+                            {msg.analysis.weaknesses.map((w, i) => (
+                              <li key={i} className="text-on-surface-variant/80 flex items-start gap-1.5">
+                                <span className="text-error mt-0.5">−</span> {w}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {msg.analysis.biggest_opportunity && (
+                        <div>
+                          <p className="text-[10px] text-primary uppercase tracking-wider font-medium mb-0.5">Biggest Opportunity</p>
+                          <p className="text-on-surface-variant/90">{msg.analysis.biggest_opportunity}</p>
+                        </div>
+                      )}
+                      {msg.analysis.estimated_reply_rate && (
+                        <div className="flex items-center gap-2 pt-1 border-t border-outline-variant/10">
+                          <span className="text-[10px] text-on-surface-variant/50 uppercase tracking-wider">Reply Rate</span>
+                          <span className={`text-[10px] font-bold ${
+                            msg.analysis.estimated_reply_rate === "Very High" ? "text-success" :
+                            msg.analysis.estimated_reply_rate === "High" ? "text-secondary" :
+                            msg.analysis.estimated_reply_rate === "Medium" ? "text-tertiary" : "text-error"
+                          }`}>
+                            {msg.analysis.estimated_reply_rate}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex justify-start">
+                      <div className="max-w-[90%] rounded-xl px-3 py-2 text-xs leading-relaxed bg-surface/60 text-on-surface">
+                        {msg.text}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+            <div ref={aiEndRef} />
+          </div>
 
-              {(() => {
-                const signals = selected.lead
-                  ?.buying_signals as string[] | undefined;
-                return signals && signals.length > 0 ? (
-                  <ContextSection
-                    label="Growth Signals"
-                    value={signals.slice(0, 3).join(", ")}
-                  />
-                ) : null;
-              })()}
-
-              {(() => {
-                const events = selected.lead
-                  ?.recent_events as string[] | undefined;
-                return events && events.length > 0 ? (
-                  <ContextSection
-                    label="Recent Events"
-                    value={events.slice(0, 3).join("; ")}
-                  />
-                ) : null;
-              })()}
-
-              {selected.lead_intelligence?.objection_risk ? (
-                <ContextSection
-                  label="Objection Risk"
-                  value={
-                    selected.lead_intelligence.objection_risk as string
-                  }
-                />
-              ) : null}
-
-              {(() => {
-                const pp = selected.lead
-                  ?.pain_points as string[] | undefined;
-                return pp && pp.length > 0 ? (
-                  <ContextSection
-                    label="Pain Points"
-                    value={pp.slice(0, 3).join(", ")}
-                  />
-                ) : null;
-              })()}
+          {/* Prompt box (always visible at bottom of inspector) */}
+          <div className="shrink-0 border-t border-outline-variant/10 p-3">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={aiInput}
+                onChange={(e) => setAiInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleAiSend(); } }}
+                placeholder="Ask AI..."
+                className="flex-1 rounded-lg border border-outline-variant/20 bg-surface-low px-3 py-2 text-xs text-on-surface outline-none focus:border-primary/50 placeholder:text-on-surface-variant/30"
+              />
+              <button
+                onClick={handleAiSend}
+                disabled={aiSending || !aiInput.trim()}
+                className="px-3 py-2 rounded-lg bg-primary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95] disabled:opacity-50"
+              >
+                {aiSending ? (
+                  <span className="w-3 h-3 border-2 border-on-primary border-t-transparent rounded-full animate-spin block" />
+                ) : (
+                  <Icon name="arrow_forward" className="text-xs" />
+                )}
+              </button>
             </div>
           </div>
         </aside>
@@ -668,7 +1066,124 @@ export default function DraftReviewWorkspace() {
   );
 }
 
+/* ─── Utility functions ─── */
+
+function classifyDraftIntent(input: string): "edit" | "discussion" {
+  const n = input.toLowerCase().trim();
+  const editPatterns = [
+    /^make it/i, /^rewrite/i, /^change/i, /^update/i, /^fix/i, /^tweak/i, /^shorten/i,
+    /shorter/, /longer/, /casual/, /formal/, /professional/,
+    /mention/, /remove/, /^add /, /improve/, /strengthen/, /rewrite/i,
+    /replace/, /\btone\b/, /softer/, /stronger/, /^less /, /^more /,
+    /conversational/, /friendly/, /cta/, /opening/, /close/, /jargon/,
+    /personalization/, /subject/, /polish/, /clean up/i,
+  ];
+  for (const p of editPatterns) {
+    if (p.test(n)) return "edit";
+  }
+  return "discussion";
+}
+
+function generateEditSummary(oldText: string, newText: string): { summary: string; changes: string[] } {
+  const oldWords = oldText.split(/\s+/).filter(Boolean).length;
+  const newWords = newText.split(/\s+/).filter(Boolean).length;
+  const pct = oldWords > 0 ? Math.round(((newWords - oldWords) / oldWords) * 100) : 0;
+  const changes: string[] = [];
+
+  if (Math.abs(pct) >= 3) {
+    changes.push(`${pct > 0 ? "Extended" : "Shortened"} by ${Math.abs(pct)}%`);
+  } else {
+    changes.push("Similar length");
+  }
+
+  const oldLower = oldText.toLowerCase();
+  const newLower = newText.toLowerCase();
+
+  const casualWords = ["hey", "hi", "just", "thought", "wanted", "checking"];
+  const formalWords = ["dear", "sincerely", "regards", "opportunity", "pleasure"];
+  const oldCasual = casualWords.filter((w) => oldLower.includes(w)).length;
+  const newCasual = casualWords.filter((w) => newLower.includes(w)).length;
+  if (newCasual > oldCasual) changes.push("More conversational tone");
+  else if (newCasual < oldCasual) changes.push("More formal tone");
+
+  const oldFormal = formalWords.filter((w) => oldLower.includes(w)).length;
+  const newFormal = formalWords.filter((w) => newLower.includes(w)).length;
+  if (newFormal > oldFormal) changes.push("More formal tone");
+  else if (newFormal < oldFormal && newCasual <= oldCasual) changes.push("Less formal tone");
+
+  if (oldLower.includes("you") && !newLower.includes("you")) changes.push("Less direct personalization");
+  if (!oldLower.includes("you") && newLower.includes("you")) changes.push("More direct personalization");
+
+  const ctaWords = ["meet", "chat", "talk", "call", "discuss", "book", "schedule", "reply", " let "];
+  const oldCta = ctaWords.some((w) => oldLower.includes(w));
+  const newCta = ctaWords.some((w) => newLower.includes(w));
+  if (!oldCta && newCta) changes.push("Added CTA");
+  else if (oldCta && !newCta) changes.push("Removed CTA");
+
+  return {
+    summary: pct <= -5 ? "Shortened draft" : pct >= 5 ? "Extended draft" : "Updated draft",
+    changes: changes.length > 0 ? changes : ["Refined messaging"],
+  };
+}
+
+function diffLines(oldText: string, newText: string): { type: "same" | "added" | "removed"; line: string }[] {
+  const oldLines = oldText.split("\n");
+  const newLines = newText.split("\n");
+  const result: { type: "same" | "added" | "removed"; line: string }[] = [];
+  const maxLen = Math.max(oldLines.length, newLines.length);
+  for (let i = 0; i < maxLen; i++) {
+    if (i < oldLines.length && i < newLines.length) {
+      if (oldLines[i] === newLines[i]) {
+        result.push({ type: "same", line: oldLines[i] });
+      } else {
+        result.push({ type: "removed", line: oldLines[i] });
+        result.push({ type: "added", line: newLines[i] });
+      }
+    } else if (i < oldLines.length) {
+      result.push({ type: "removed", line: oldLines[i] });
+    } else {
+      result.push({ type: "added", line: newLines[i] });
+    }
+  }
+  return result;
+}
+
 /* ─── Sub-components ─── */
+
+function DraftQueueItem({ draft, selected, onSelect }: { draft: DraftEntry; selected: boolean; onSelect: (id: string) => void }) {
+  const name =
+    (draft.lead?.name as string) ||
+    [draft.lead?.first_name as string, draft.lead?.last_name as string].filter(Boolean).join(" ") ||
+    "Unknown";
+  const company = (draft.lead?.company as string) || "";
+  const preview = draft.text ? draft.text.slice(0, 70).trim() : "";
+  return (
+    <button
+      onClick={() => onSelect(draft.id)}
+      className={`w-full text-left rounded-lg px-2.5 py-2 transition-all duration-100 focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2 ${
+        selected
+          ? "bg-primary-container/20 border border-primary/20"
+          : "hover:bg-surface/60 border border-transparent"
+      }`}
+    >
+      <div className="flex items-start gap-2">
+        <div className="w-7 h-7 rounded-lg bg-[#1F1F23] flex items-center justify-center text-on-surface-variant/40 text-[10px] font-bold shrink-0 mt-0.5">
+          {name.charAt(0).toUpperCase()}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <p className="text-xs font-bold text-on-surface truncate">{name}</p>
+            <StatusDot status={draft.status} />
+          </div>
+          {company ? <p className="text-[10px] text-on-surface-variant truncate">{company}</p> : null}
+          {preview ? (
+            <p className="text-[10px] text-on-surface-variant/50 truncate mt-0.5 leading-snug">{preview}{draft.text.length > 70 ? "..." : ""}</p>
+          ) : null}
+        </div>
+      </div>
+    </button>
+  );
+}
 
 function StatusDot({ status }: { status: string }) {
   const colors: Record<string, string> = {
@@ -676,52 +1191,29 @@ function StatusDot({ status }: { status: string }) {
     pending: "bg-tertiary",
     needs_review: "bg-error",
   };
-  return (
-    <span
-      className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-        colors[status] || "bg-on-surface-variant/40"
-      }`}
-      title={status}
-    />
-  );
+  return <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${colors[status] || "bg-on-surface-variant/40"}`} title={status} />;
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const labels: Record<string, string> = {
-    approved: "Approved",
-    pending: "Pending",
-    needs_review: "Needs Review",
-  };
+  const labels: Record<string, string> = { approved: "Approved", pending: "Pending", needs_review: "Needs Review" };
   const colors: Record<string, string> = {
     approved: "bg-secondary/10 text-secondary",
     pending: "bg-tertiary/10 text-tertiary",
     needs_review: "bg-error/10 text-error",
   };
   return (
-    <span
-      className={`text-xs font-bold px-2.5 py-1 rounded-full ${
-        colors[status] || "bg-surface-high text-on-surface-variant"
-      }`}
-    >
+    <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${colors[status] || "bg-surface-high text-on-surface-variant"}`}>
       {labels[status] || status}
     </span>
   );
 }
 
-function ContextSection({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
+function InspectorRow({ label, value }: { label: string; value: string }) {
   if (!value || value === "\u2014") return null;
   return (
-    <div>
-      <p className="text-[10px] text-on-surface-variant uppercase tracking-wider mb-0.5 font-bold">
-        {label}
-      </p>
-      <p className="text-sm text-on-surface leading-snug">{value}</p>
+    <div className="flex items-start gap-2">
+      <p className="text-[10px] text-on-surface-variant/50 uppercase tracking-wider font-medium shrink-0 w-20 leading-snug pt-0.5">{label}</p>
+      <p className="text-xs text-on-surface leading-snug">{value}</p>
     </div>
   );
 }

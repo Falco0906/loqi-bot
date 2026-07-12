@@ -169,6 +169,11 @@ def startup_event():
     except Exception as e:
         log.warning("Supabase connection test failed: %s", e)
     register_workflows()
+    try:
+        from services.migration import apply_migrations
+        apply_migrations()
+    except Exception as e:
+        log.warning("Migration check failed: %s", e)
     log.info("Job engine initialized")
 
 
@@ -283,6 +288,14 @@ class RefineDraftRequest(BaseModel):
     edit_request: str
     previous_message: str
     lead: dict
+    campaign_id: str | None = None
+    campaign_name: str | None = None
+    company: str | None = None
+    contact: str | None = None
+    role: str | None = None
+    industry: str | None = None
+    messaging_angle: str | None = None
+    business_summary: str | None = None
 
 
 class UpdateDraftRequest(BaseModel):
@@ -369,21 +382,63 @@ async def refine_draft(session_token: str, draft_id: str, payload: RefineDraftRe
 
     loop = asyncio.get_event_loop()
     try:
+        workflow_input = {
+            "type": "draft_message",
+            "lead": payload.lead,
+            "edit_request": payload.edit_request,
+            "previous_message": payload.previous_message,
+        }
+        context = {}
+        for field in ("campaign_id", "campaign_name", "company", "contact", "role", "industry", "messaging_angle", "business_summary"):
+            val = getattr(payload, field, None)
+            if val:
+                context[field] = val
+        if context:
+            workflow_input["context"] = context
+
         workflow_result = await loop.run_in_executor(
             None,
             run_workflow,
-            {
-                "type": "draft_message",
-                "lead": payload.lead,
-                "edit_request": payload.edit_request,
-                "previous_message": payload.previous_message,
-            },
+            workflow_input,
         )
         new_body = _parse_draft_body(workflow_result.get("message", ""))
+        rewritten_text = new_body or target["text"]
         if new_body:
             target["text"] = new_body
             target["status"] = "pending"
-        return {"ok": True, "draft": target}
+        return {"ok": True, "draft": target, "rewritten_text": rewritten_text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class AnalyzeDraftRequest(BaseModel):
+    draft_text: str
+    lead: dict
+    campaign_id: str | None = None
+    campaign_name: str | None = None
+    company: str | None = None
+    contact: str | None = None
+    role: str | None = None
+    industry: str | None = None
+    messaging_angle: str | None = None
+    business_summary: str | None = None
+
+
+@app.post("/api/web/session/{session_token}/drafts/analyze")
+async def analyze_draft_endpoint(session_token: str, payload: AnalyzeDraftRequest):
+    loop = asyncio.get_event_loop()
+    try:
+        context = {}
+        for field in ("campaign_id", "campaign_name", "company", "contact", "role", "industry", "messaging_angle", "business_summary"):
+            val = getattr(payload, field, None)
+            if val:
+                context[field] = val
+        workflow_result = await loop.run_in_executor(
+            None,
+            run_workflow,
+            {"type": "draft_analysis", "draft_text": payload.draft_text, "context": context},
+        )
+        return {"ok": workflow_result.get("ok", False), "analysis": workflow_result.get("analysis"), "error": workflow_result.get("error")}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -738,14 +793,17 @@ class StartSearchRequest(BaseModel):
 
 
 @app.post("/api/jobs/search")
-def start_search(payload: StartSearchRequest, request: Request):
+async def start_search(payload: StartSearchRequest, request: Request):
     session_token = request.headers.get("x-session-token", "")
-    summary = engine.get_web_session_summary(session_token) if session_token else None
+    if session_token:
+        summary = await asyncio.to_thread(engine.get_web_session_summary, session_token)
+    else:
+        summary = None
     user_id = summary.get("user_id") if summary else None
     if not user_id:
         raise HTTPException(status_code=401, detail="Valid session required")
 
-    result = job_manager.create_search_job(user_id=user_id, query=payload.query)
+    result = await job_manager.create_search_job(user_id=user_id, query=payload.query)
     if not result:
         raise HTTPException(status_code=500, detail="Failed to create job")
     return result

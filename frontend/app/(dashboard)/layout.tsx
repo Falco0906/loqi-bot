@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { usePathname } from "next/navigation";
 import Sidebar from "../../components/layout/Sidebar";
 import Topbar from "../../components/layout/Topbar";
 import CopilotPanel from "../../components/copilot/CopilotPanel";
@@ -16,8 +17,11 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const pathname = usePathname();
   const { healthy, retry } = useBackendHealth();
   const [sessionToken, setSessionToken] = useState<string | null>(null);
+
+  const isDraftPage = pathname?.startsWith("/draft");
 
   useEffect(() => {
     const token = (() => {
@@ -31,10 +35,7 @@ export default function DashboardLayout({
     return (
       <div className="flex h-full items-center justify-center bg-obsidian">
         <div className="flex flex-col items-center gap-4 animate-fade-in">
-          <div className="flex items-center gap-3 text-on-surface-variant/60">
-            <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-            Connecting to backend...
-          </div>
+          <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
         </div>
       </div>
     );
@@ -54,7 +55,7 @@ export default function DashboardLayout({
             {children}
           </main>
           <ToastContainer />
-          <CopilotPanel />
+          {!isDraftPage && <CopilotPanel />}
         </div>
       </div>
     </CopilotProvider>

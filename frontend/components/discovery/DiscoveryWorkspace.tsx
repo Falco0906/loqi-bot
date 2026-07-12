@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { sendMessage, getExportCsvUrl, batchDraft as batchDraftApi, analyzeCampaigns, saveCampaign as saveCampaignApi, generateCampaignDrafts, startSearchJob, listActiveJobs, getJobResults } from "../../lib/api";
 import type { Lead } from "../../lib/types";
 import Icon from "../shared/Icon";
+import { toast } from "../shared/Toast";
 import LeadCard from "./LeadCard";
 import BatchActionBar from "./BatchActionBar";
 import BatchProgress from "./BatchProgress";
@@ -140,7 +141,11 @@ export default function DiscoveryWorkspace() {
       try { return localStorage.getItem("loqi_active_job"); }
       catch { return null; }
     })();
-    if (stored) setActiveJobId(stored);
+    if (stored) {
+      setActiveJobId(stored);
+      setSearching(true);
+      setHasSearched(true);
+    }
   }, [sessionToken]);
 
   useEffect(() => {
@@ -252,8 +257,26 @@ export default function DiscoveryWorkspace() {
     setApproval(null);
   }
 
-  function handleEditLater() {
-    if (!approval) return;
+  async function handleEditLater(campaignName: string) {
+    if (!approval || !sessionToken) return;
+    const name = campaignName.trim() || window.prompt("Name your campaign")?.trim();
+    if (!name) return;
+    const { campaigns, overallRecommendation, totalLeads } = approval;
+    const selectedLeads = Array.from(selectedIndices).map((i) => leads[i]).filter(Boolean);
+    try {
+      await saveCampaignApi(
+        sessionToken,
+        name,
+        "",
+        totalLeads,
+        { campaigns, overall_recommendation: overallRecommendation },
+        "planning",
+        selectedLeads,
+      );
+      toast("success", "Campaign saved as draft");
+    } catch {
+      /* silent */
+    }
     setApproval(null);
     setPlanning(false);
     clearSelection();
@@ -265,8 +288,13 @@ export default function DiscoveryWorkspace() {
     clearSelection();
   }
 
-  function handleCustomizePlan() {
-    /* Phase 2.5 — UI shell only */
+  function handleCustomizePlan(customizedCampaigns: CampaignResult[], recommendation: string) {
+    if (!planResult) return;
+    setPlanResult({
+      campaigns: customizedCampaigns,
+      overallRecommendation: recommendation,
+      totalLeads: planResult.totalLeads,
+    });
   }
 
   function handleCancelPlan() {

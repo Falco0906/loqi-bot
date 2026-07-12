@@ -98,12 +98,15 @@ def _simplify_lead_title(lead_title: str) -> str:
 
 
 def generate_leads(input: dict) -> dict:
+    import time; _t0 = time.time()
     service = input.get("service") or ""
     target = input.get("target") or ""
     user_id = input.get("user_id")
     workflow_session_id = input.get("workflow_session_id")
+    print(f"[TRACE] 5b | ENTERED workflows.generate_leads | +0ms")
 
     result = search_with_expansion(service, target)
+    print(f"[TRACE] 7 | search_with_expansion DONE | +{int((time.time()-_t0)*1000)}ms | {len(result.get('leads',[]))} leads | ok={result.get('ok')}")
     leads = result.get("leads", [])
     icp = result.get("icp")
 

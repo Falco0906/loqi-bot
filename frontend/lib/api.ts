@@ -43,10 +43,13 @@ async function fetchWithRetry<T>(
   const timeout = options.timeout ?? 10000;
   const retries = options.retries ?? 2;
   let lastError: Error | null = null;
+  const _start = Date.now();
+  console.log(`[FETCH_TRACE] fetchWithRetry | url=${url.split('/').pop()} | timeout=${timeout}ms | retries=${retries} | started`);
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) {
       const delay = attempt === 1 ? 500 : 1000;
+      console.log(`[FETCH_TRACE] fetchWithRetry | attempt=${attempt} | backing off ${delay}ms`);
       await new Promise((r) => setTimeout(r, delay));
     }
 
@@ -54,6 +57,7 @@ async function fetchWithRetry<T>(
     const timeoutId = setTimeout(() => controller.abort(), timeout);
 
     try {
+      console.log(`[FETCH_TRACE] fetchWithRetry | attempt=${attempt} | fetch started`);
       const response = await fetch(url, {
         method: options.method || "GET",
         headers: options.headers,
@@ -63,6 +67,7 @@ async function fetchWithRetry<T>(
       });
 
       clearTimeout(timeoutId);
+      console.log(`[FETCH_TRACE] fetchWithRetry | attempt=${attempt} | fetch DONE | status=${response.status} | duration=${Date.now()-_start}ms`);
 
       if (!response.ok) {
         const text = await response.text();
@@ -76,6 +81,7 @@ async function fetchWithRetry<T>(
     } catch (err) {
       clearTimeout(timeoutId);
       lastError = err as Error;
+      console.log(`[FETCH_TRACE] fetchWithRetry | attempt=${attempt} | CATCH | err=${err instanceof Error ? err.name : 'unknown'} | duration=${Date.now()-_start}ms`);
 
       if (err instanceof ApiError) throw err;
 
@@ -89,6 +95,7 @@ async function fetchWithRetry<T>(
     }
   }
 
+  console.log(`[FETCH_TRACE] fetchWithRetry | EXHAUSTED | throwing ${lastError instanceof Error ? lastError.name : 'unknown'} | duration=${Date.now()-_start}ms`);
   throw lastError || new NetworkError("Failed to fetch");
 }
 
@@ -412,4 +419,61 @@ export async function getCampaignGenerationStatus(sessionToken: string, campaign
 
 export function getExportCsvUrl(sessionToken: string) {
   return `${API_BASE}/api/web/session/${sessionToken}/export-csv`;
+}
+
+/* ─── Job Engine ─── */
+
+export type JobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+
+export type JobResponse = {
+  id: string;
+  user_id: string;
+  type: string;
+  status: JobStatus;
+  stage: string;
+  progress: number;
+  query: string;
+  error_message: string | null;
+  result_ready: boolean;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+};
+
+export async function startSearchJob(sessionToken: string, query: string) {
+  return fetchWithRetry<{ job_id: string; status: string }>(
+    `${API_BASE}/api/jobs/search`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-session-token": sessionToken },
+      body: JSON.stringify({ query }),
+      timeout: 5000,
+      retries: 0,
+    },
+  );
+}
+
+export async function getJob(jobId: string) {
+  return fetchWithRetry<JobResponse>(
+    `${API_BASE}/api/jobs/${jobId}`,
+    { timeout: 5000, retries: 0 },
+  );
+}
+
+export async function getJobResults(jobId: string) {
+  return fetchWithRetry<{ ok: boolean; leads: Record<string, unknown>[] }>(
+    `${API_BASE}/api/jobs/${jobId}/results`,
+    { timeout: 5000, retries: 0 },
+  );
+}
+
+export async function listActiveJobs(sessionToken: string) {
+  return fetchWithRetry<{ jobs: JobResponse[] }>(
+    `${API_BASE}/api/jobs`,
+    {
+      headers: { "x-session-token": sessionToken },
+      timeout: 5000,
+      retries: 0,
+    },
+  );
 }

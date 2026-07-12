@@ -93,6 +93,7 @@ def search_with_expansion(service: str, target: str) -> dict:
     Keeps ICP extraction, search expansion, and commercial qualification
     exactly as they were. Only the lead retrieval is delegated to the provider.
     """
+    import time; _t0 = time.time()
     provider = get_provider()
 
     _log(f"Using {type(provider).__name__}")
@@ -103,6 +104,7 @@ def search_with_expansion(service: str, target: str) -> dict:
     try:
         from services.icp_extractor import extract_structured_icp
         icp = extract_structured_icp(combined_input)
+        print(f"[TRACE] 6a | ICP EXTRACTION DONE | extract_structured_icp | +{int((time.time()-_t0)*1000)}ms | mode={icp.get('mode')}")
 
         _log(f"ICP extracted: mode={icp.get('mode')}, offer='{icp.get('offer')}")
         _log(f"buyer_industries: {icp.get('buyer_industries', [])}")
@@ -110,17 +112,20 @@ def search_with_expansion(service: str, target: str) -> dict:
         _log(f"excluded_roles: {icp.get('excluded_roles', [])}")
     except Exception as e:
         _log(f"ICP extraction failed: {e}, using fallback")
+        print(f"[TRACE] 6a | ICP EXTRACTION FAILED | extract_structured_icp | +{int((time.time()-_t0)*1000)}ms | error={e}")
         icp = None
 
     try:
         from services.search_expansion import expand_search_intent
         expansion = expand_search_intent(service, target, icp)
+        print(f"[TRACE] 6b | SEARCH EXPANSION DONE | expand_search_intent | +{int((time.time()-_t0)*1000)}ms | {len(expansion.get('search_queries', []))} queries")
 
         _log(f"Expansion result: {len(expansion.get('search_queries', []))} queries")
         _log(f"buyer_roles: {expansion.get('roles', [])[:3]}...")
         _log(f"buyer_industries: {expansion.get('industries', [])}")
     except Exception as e:
         _log(f"Expansion failed: {e}, falling back to deterministic")
+        print(f"[TRACE] 6b | SEARCH EXPANSION FAILED | expand_search_intent | +{int((time.time()-_t0)*1000)}ms | error={e}")
         expansion = None
 
     try:
@@ -129,6 +134,7 @@ def search_with_expansion(service: str, target: str) -> dict:
             search_expansion=expansion or {},
             limit=20,
         )
+        print(f"[TRACE] 6c | PROVIDER SEARCH DONE | provider.search_leads | +{int((time.time()-_t0)*1000)}ms | {len(result.get('leads',[]))} leads")
 
         if not result.get("ok"):
             return {

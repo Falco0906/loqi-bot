@@ -129,6 +129,8 @@ class ConversationEngine:
         messages: list[dict],
         events: list[dict],
     ) -> dict:
+        import time; _t0 = time.time()
+        print(f"[TRACE] 9 | SERIALIZATION STARTED | _finish_response | +0ms")
         for message in messages:
             if message.get("role") != "assistant":
                 continue
@@ -500,11 +502,14 @@ class ConversationEngine:
         username: str | None = None,
         transport_metadata: dict | None = None,
     ) -> dict:
+        import time; _t0 = time.time()
+        print(f"[TRACE] 2 | ENTERED ENGINE | handle_message | +0ms")
         user = get_or_create_channel_user(
             channel=channel,
             external_user_id=external_user_id,
             username=username,
         )
+        print(f"[TRACE] 3 | SESSION LOOKUP DONE | get_or_create_channel_user | +{int((time.time()-_t0)*1000)}ms")
         if user is None:
             return {
                 "ok": False,
@@ -657,6 +662,7 @@ class ConversationEngine:
         print(f"[DEBUG] service={service}, target={target}, selected_lead_id={selected_lead_id}, has_draft={has_draft}")
 
         parsed_service, parsed_target, signals = extract_single_message_fields(normalized_text)
+        print(f"[TRACE] 4 | FIELD EXTRACTION DONE | extract_single_message_fields | +{int((time.time()-_t0)*1000)}ms")
         print(f"[DEBUG] parsed_service={parsed_service}, parsed_target={parsed_target}, signals={signals}")
 
         if self._is_greeting(normalized_text) and not parsed_service and not parsed_target:
@@ -897,6 +903,7 @@ class ConversationEngine:
             if normalized_text.isdigit():
                 print(f"[WORKFLOW] numeric reply with selected_lead — treating as lead re-selection")
         elif not normalized_text.isdigit() and not is_send_intent:
+            print(f"[TRACE] 5 | LEAD SEARCH STARTED | run_workflow(generate_leads) | +{int((time.time()-_t0)*1000)}ms")
             print(f"[WORKFLOW] no selected_lead and non-send text — triggering lead search")
             transition_text = _get_pre_lead_search_transition()
             outputs.extend(
@@ -915,6 +922,7 @@ class ConversationEngine:
                     "workflow_session_id": workflow_session_id,
                 }
             )
+            print(f"[TRACE] 8 | LEAD SEARCH FINISHED | run_workflow returned | +{int((time.time()-_t0)*1000)}ms | ok={workflow_result.get('ok')}")
             if not workflow_result.get("ok"):
                 error_msg = workflow_result.get("error", "")
                 print(f"[WORKFLOW] Lead search failed: {error_msg}")
@@ -957,6 +965,7 @@ class ConversationEngine:
                 session_context=context,
                 workflow_state={"stage": "awaiting_action"},
             )
+            print(f"[TRACE] 4b | INTENT CLASSIFICATION STARTED | classify_intent | +{int((time.time()-_t0)*1000)}ms")
             classified_intent = classify_intent(
                 normalized_text,
                 {
@@ -968,6 +977,7 @@ class ConversationEngine:
                     "user_message_count": len(user_messages),
                 },
             )
+            print(f"[TRACE] 4c | INTENT CLASSIFICATION DONE | classify_intent | +{int((time.time()-_t0)*1000)}ms | intent={classified_intent}")
         except Exception as e:
             print(f"[WORKFLOW] Intent classification failed: {e} — using natural action parsing")
             action, detail = classify_natural_action(

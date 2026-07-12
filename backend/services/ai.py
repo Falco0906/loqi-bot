@@ -54,7 +54,9 @@ def _send_openai_request(system_text: str, user_text: str) -> str:
     }
 
     try:
+        import time; _t0 = time.time()
         _log(f"_send_openai_request payload: {payload}")
+        print(f"[TRACE] AI-REQ-START | _send_openai_request | +0ms")
         response = requests.post(
             OPENAI_RESPONSES_URL,
             headers=headers,
@@ -73,6 +75,7 @@ def _send_openai_request(system_text: str, user_text: str) -> str:
         response.raise_for_status()
         
         data = response.json()
+        print(f"[TRACE] AI-REQ-END | _send_openai_request | +{int((time.time()-_t0)*1000)}ms | status={response.status_code}")
         _log(f"_send_openai_request status: {response.status_code}")
         
         output_text = _extract_response_text(data)

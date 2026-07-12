@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { sendMessage, getExportCsvUrl, batchDraft as batchDraftApi, analyzeCampaigns, saveCampaign as saveCampaignApi, generateCampaignDrafts } from "../../lib/api";
+import { sendMessage, getExportCsvUrl, batchDraft as batchDraftApi, analyzeCampaigns, saveCampaign as saveCampaignApi, generateCampaignDrafts, startSearchJob, listActiveJobs, getJobResults } from "../../lib/api";
 import type { Lead } from "../../lib/types";
 import Icon from "../shared/Icon";
 import LeadCard from "./LeadCard";
@@ -15,6 +15,7 @@ import StrategyApproval from "../planner/StrategyApproval";
 import GenerationProgress from "../planner/GenerationProgress";
 import { usePageContext } from "../../hooks/usePageContext";
 import { useActionHandlers } from "../../hooks/useActionHandlers";
+import { useJobPolling } from "../../hooks/useJobPolling";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
@@ -38,6 +39,8 @@ export default function DiscoveryWorkspace() {
   const [hasSearched, setHasSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const jobState = useJobPolling(activeJobId);
 
   /* ── Selection ── */
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
@@ -131,6 +134,31 @@ export default function DiscoveryWorkspace() {
     if (token) setSessionToken(token);
   }, []);
 
+  useEffect(() => {
+    if (!sessionToken) return;
+    const stored = (() => {
+      try { return localStorage.getItem("loqi_active_job"); }
+      catch { return null; }
+    })();
+    if (stored) setActiveJobId(stored);
+  }, [sessionToken]);
+
+  useEffect(() => {
+    if (jobState.done && jobState.leads.length > 0) {
+      setLeads(jobState.leads as Lead[]);
+      setSearching(false);
+      setHasSearched(true);
+      setActiveJobId(null);
+      try { localStorage.removeItem("loqi_active_job"); } catch {}
+    }
+    if (jobState.done && (jobState.status === "failed" || jobState.status === "cancelled")) {
+      setSearching(false);
+      setActiveJobId(null);
+      if (jobState.error) setError(jobState.error);
+      try { localStorage.removeItem("loqi_active_job"); } catch {}
+    }
+  }, [jobState.done]);
+
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault();
     const q = searchQuery.trim();
@@ -148,18 +176,11 @@ export default function DiscoveryWorkspace() {
     setPlanResult(null);
 
     try {
-      const res = await sendMessage(sessionToken, q);
-      for (const msg of res.messages) {
-        const data = msg.data as Record<string, unknown> | undefined;
-        const msgLeads = data?.leads;
-        if (Array.isArray(msgLeads) && msgLeads.length > 0) {
-          setLeads(msgLeads as Lead[]);
-          break;
-        }
-      }
+      const { job_id } = await startSearchJob(sessionToken, q);
+      setActiveJobId(job_id);
+      try { localStorage.setItem("loqi_active_job", job_id); } catch {}
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Search failed");
-    } finally {
+      setError(err instanceof Error ? err.message : "Failed to start search");
       setSearching(false);
     }
   }
@@ -443,18 +464,23 @@ export default function DiscoveryWorkspace() {
         {searching ? (
           <>
             <div className="bg-primary-container/10 border border-primary/20 rounded-xl px-4 py-3 flex items-center justify-between mb-6 animate-fade-in">
-              <div className="flex items-center gap-3">
-                <Icon name="auto_awesome" className="text-primary animate-pulse" />
-                <p className="text-primary font-medium">
-                  Researching leads...{" "}
-                  <span className="text-on-surface-variant opacity-70">Scanning for best matches</span>
-                </p>
+              <div className="flex items-center gap-3 min-w-0">
+                <Icon name="auto_awesome" className="text-primary animate-pulse shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-primary font-medium truncate">
+                    {jobState.stage || "Starting..."}
+                  </p>
+                  <div className="w-full bg-primary/10 rounded-full h-1 mt-2 max-w-[200px]">
+                    <div
+                      className="h-full bg-primary rounded-full transition-all duration-500"
+                      style={{ width: `${jobState.progress}%` }}
+                    />
+                  </div>
+                </div>
               </div>
-              <div className="flex items-center gap-1">
-                <div className="w-1 h-4 bg-primary animate-bounce" style={{ animationDelay: "0.1s" }} />
-                <div className="w-1 h-4 bg-primary animate-bounce" style={{ animationDelay: "0.2s" }} />
-                <div className="w-1 h-4 bg-primary animate-bounce" style={{ animationDelay: "0.3s" }} />
-              </div>
+              <span className="text-label-sm text-on-surface-variant/60 shrink-0 ml-3">
+                {jobState.progress}%
+              </span>
             </div>
             <div className="space-y-3 animate-fade-in">
               {[1, 2, 3, 4].map((i) => (

@@ -21,6 +21,8 @@ from services.supabase import save_google_tokens, test_supabase_connection
 from services.telegram import send_message
 from services.campaign_planner import analyze_campaigns
 from workflows import run_workflow
+from services.job_engine import job_manager
+from workflow_dispatcher import register_workflows
 
 load_dotenv()
 
@@ -166,6 +168,8 @@ def startup_event():
         test_supabase_connection()
     except Exception as e:
         log.warning("Supabase connection test failed: %s", e)
+    register_workflows()
+    log.info("Job engine initialized")
 
 
 @app.get("/", response_class=PlainTextResponse)
@@ -228,6 +232,8 @@ async def get_web_session_messages(session_token: str):
 
 @app.post("/api/web/session/{session_token}/messages")
 async def post_web_session_message(session_token: str, payload: SendWebMessageRequest):
+    import time; _t0 = time.time()
+    print(f"[TRACE] 1 | ENTERED ENDPOINT | post_web_session_message | +0ms")
     summary = engine.get_web_session_summary(session_token)
 
     if summary is None:
@@ -258,12 +264,14 @@ async def post_web_session_message(session_token: str, payload: SendWebMessageRe
         msg = _message(role="assistant", message_type="text", text=response_text)
         return {"ok": True, "messages": [msg], "events": []}
 
-    return engine.handle_message(
+    _result = engine.handle_message(
         channel="web",
         external_user_id=session_token,
         text=payload.text,
         username=summary.get("display_name"),
     )
+    print(f"[TRACE] 10 | RESPONSE RETURNED | post_web_session_message | +{int((time.time()-_t0)*1000)}ms")
+    return _result
 
 
 class BatchDraftRequest(BaseModel):
@@ -721,6 +729,55 @@ async def google_callback(code: str, state: str):
         raise
     except Exception as error:
         raise HTTPException(status_code=500, detail=str(error)) from error
+
+
+# ── Job Engine API ──
+
+class StartSearchRequest(BaseModel):
+    query: str
+
+
+@app.post("/api/jobs/search")
+def start_search(payload: StartSearchRequest, request: Request):
+    session_token = request.headers.get("x-session-token", "")
+    summary = engine.get_web_session_summary(session_token) if session_token else None
+    user_id = summary.get("user_id") if summary else None
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Valid session required")
+
+    result = job_manager.create_search_job(user_id=user_id, query=payload.query)
+    if not result:
+        raise HTTPException(status_code=500, detail="Failed to create job")
+    return result
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job(job_id: str):
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+@app.get("/api/jobs/{job_id}/results")
+def get_job_results(job_id: str):
+    result = job_manager.get_job_results(job_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Job not ready"))
+    return result
+
+
+@app.get("/api/jobs")
+def list_jobs(request: Request):
+    session_token = request.headers.get("x-session-token", "")
+    summary = engine.get_web_session_summary(session_token) if session_token else None
+    user_id = summary.get("user_id") if summary else None
+    if not user_id:
+        return {"jobs": []}
+    jobs = job_manager.list_active_jobs(user_id)
+    return {"jobs": jobs}
 
 
 if __name__ == "__main__":

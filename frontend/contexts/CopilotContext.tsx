@@ -88,14 +88,12 @@ export function CopilotProvider({
     async (action: CopilotAction) => {
       if (action.type === "navigate" && action.path) {
         router.push(action.path);
-        setOpen(false);
         return;
       }
       if (action.type === "action" && action.action) {
         const handler = handlersRef.current.get(action.action);
         if (handler) {
           await handler(action.payload);
-          setOpen(false);
           return;
         }
       }
@@ -129,6 +127,7 @@ export function CopilotProvider({
       Discovery: ["select_all", "clear_selection", "compare", "plan_campaign", "search", "save_campaign", "export_csv"],
       Campaign: ["generate_drafts"],
       "Draft Review": ["approve", "approve_all", "refine"],
+      "Mission Control": ["navigate"],
     };
     return map[ctx.page] || [];
   }, [pageContext]);
@@ -158,12 +157,14 @@ export function CopilotProvider({
         }
 
         const ctx = pageContext;
+        const history = messages.map((m) => ({ role: m.role, text: m.text }));
         console.log(`[COPILOT_TRACE] send() | calling copilotMessage() with timeout=20000 retries=1`);
         const res = await copilotMessage(token, {
           text: text.trim(),
           currentPage: ctx?.page || "unknown",
           pageContext: ctx?.data,
           availableActions: buildAvailableActions(),
+          messageHistory: history,
         });
         console.log(`[COPILOT_TRACE] send() | copilotMessage() DONE | duration=${Date.now()-_start}ms | ok=${res.ok}`);
 

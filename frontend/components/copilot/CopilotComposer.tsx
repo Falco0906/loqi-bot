@@ -32,7 +32,7 @@ export default function CopilotComposer({ onSend, disabled }: Props) {
           type="text"
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          placeholder="Ask Loqi..."
+          placeholder="Tell Loqi what to do..."
           disabled={disabled}
           className="flex-1 border-none bg-transparent text-body-md text-on-surface outline-none placeholder:text-on-surface-variant/40 disabled:opacity-50"
           aria-label="Ask Loqi"

@@ -1,0 +1,92 @@
+{
+  "workflow_id": "test-p2b",
+  "session_token": "s1",
+  "plan": {
+    "id": "test-p2b",
+    "goal": "Phase 2B test",
+    "reasoning": "Test",
+    "estimated_duration": "",
+    "estimated_steps": 3,
+    "risk_level": "low",
+    "requires_approval": false,
+    "status": "draft",
+    "steps": [
+      {
+        "id": "0d6470b4",
+        "title": "S1",
+        "description": "",
+        "action_type": "search_leads",
+        "required_inputs": [],
+        "dependencies": [],
+        "estimated_duration": "",
+        "approval_required": false,
+        "retryable": true,
+        "status": "pending"
+      },
+      {
+        "id": "39b33aec",
+        "title": "S2",
+        "description": "",
+        "action_type": "create_campaign",
+        "required_inputs": [],
+        "dependencies": [],
+        "estimated_duration": "",
+        "approval_required": false,
+        "retryable": true,
+        "status": "pending"
+      },
+      {
+        "id": "3cb2851a",
+        "title": "S3",
+        "description": "",
+        "action_type": "generate_drafts",
+        "required_inputs": [],
+        "dependencies": [],
+        "estimated_duration": "",
+        "approval_required": false,
+        "retryable": true,
+        "status": "pending"
+      }
+    ]
+  },
+  "status": "cancelled",
+  "current_step_index": 1,
+  "completed_steps": [],
+  "failed_steps": [],
+  "pending_step": null,
+  "logs": [
+    {
+      "timestamp": "2026-07-13T06:33:16.368045+00:00",
+      "level": "info",
+      "message": "Status: planned -> running",
+      "metadata": {}
+    },
+    {
+      "timestamp": "2026-07-13T06:33:16.368078+00:00",
+      "level": "info",
+      "message": "Status: running -> cancelled",
+      "metadata": {}
+    },
+    {
+      "timestamp": "2026-07-13T06:33:16.368096+00:00",
+      "level": "info",
+      "message": "Workflow cancelled by user",
+      "metadata": {}
+    }
+  ],
+  "events": [],
+  "metrics": {
+    "step_durations": [],
+    "retry_count": 0,
+    "failure_count": 0,
+    "cancel_count": 0,
+    "approval_wait_start": null,
+    "total_approval_wait_seconds": 0,
+    "workflow_duration_seconds": 0
+  },
+  "started_at": "2026-07-13T06:33:16.368034+00:00",
+  "updated_at": "2026-07-13T06:33:16.368099+00:00",
+  "completed_at": "2026-07-13T06:33:16.368062+00:00",
+  "resource_locks": [],
+  "_persisted_at": "2026-07-13T06:33:16.368176+00:00"
+}

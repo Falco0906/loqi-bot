@@ -5,6 +5,7 @@ import Link from "next/link";
 import { getMissionControl } from "../../lib/api";
 import type { MCSummary } from "../../lib/api";
 import Icon from "../shared/Icon";
+import { usePageContext } from "../../hooks/usePageContext";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
@@ -68,89 +69,28 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   generate_drafts: "Generating drafts",
 };
 
-function buildBrief(data: MCSummary): string[] {
-  const lines: string[] = [];
-  const campaigns = data.campaigns;
-  const readyCampaigns = campaigns.filter((c) => c.status === "ready_to_send");
-  const completedCampaigns = campaigns.filter((c) => c.status === "completed");
-
-  const generatedEvents = data.live_activity.filter((a) => a.type === "drafts_generated");
-  const totalGenerated = generatedEvents.reduce((sum, e) => {
-    const m = e.text.match(/(\d+)/);
-    return sum + (m ? parseInt(m[1], 10) : 0);
-  }, 0);
-
-  const topRec = data.recommendations[0];
-
-  if (totalGenerated > 0) {
-    const readyName = readyCampaigns[0]?.name;
-    if (readyName) {
-      lines.push(`Loqi generated ${totalGenerated} personalized drafts and ${readyCampaigns.length === 1 ? `${readyName} is` : `${readyCampaigns.length} campaigns are`} ready to launch.`);
-    } else {
-      lines.push(`Loqi generated ${totalGenerated} personalized drafts.`);
-    }
-    if (data.draft_counts.pending > 0) {
-      lines.push(`${data.draft_counts.pending} still need${data.draft_counts.pending === 1 ? "s" : ""} review before they can be sent.`);
-    }
-  } else if (readyCampaigns.length > 0) {
-    const name = readyCampaigns[0].name;
-    if (readyCampaigns.length === 1) {
-      lines.push(`Loqi finished everything you left running.`);
-      lines.push(`${name} is ready to launch.`);
-    } else {
-      lines.push(`${readyCampaigns.length} campaigns are ready to launch, including ${name}.`);
-    }
-  } else if (completedCampaigns.length > 0) {
-    lines.push(`Loqi finished everything you left running.`);
-    if (completedCampaigns.length === 1) {
-      lines.push(`${completedCampaigns[0].name} completed successfully.`);
-    } else {
-      lines.push(`${completedCampaigns.length} campaigns completed successfully.`);
-    }
-  } else {
-    const activeCount = campaigns.filter((c) => !["completed", "archived"].includes(c.status)).length;
-    const activeNames = campaigns.filter((c) => !["completed", "archived"].includes(c.status)).map((c) => c.name);
-    if (activeCount === 1 && activeNames[0]) {
-      lines.push(`${activeNames[0]} is still in progress.`);
-    } else if (activeCount > 0) {
-      lines.push(`${activeCount} campaigns are still in progress.`);
-    }
-    if (data.draft_counts.pending > 0) {
-      lines.push(`${data.draft_counts.pending} draft${data.draft_counts.pending > 1 ? "s" : ""} still need${data.draft_counts.pending === 1 ? "s" : ""} review.`);
-    }
+function buildBriefLines(data: MCSummary): string[] {
+  if (data.brief?.lines && data.brief.lines.length > 0) {
+    return data.brief.lines;
   }
-
-  if (topRec) {
-    const name = readyCampaigns[0]?.name;
-    if (topRec.type === "review_drafts") {
-      lines.push(`I recommend reviewing your pending drafts first.`);
-    } else if (topRec.type === "launch_campaign" && name) {
-      lines.push(`I'd recommend launching ${name} before generating new campaigns.`);
-    } else if (topRec.type === "continue_planning") {
-      lines.push(`I'd recommend continuing your planning to keep things moving.`);
-    } else if (topRec.type === "expand_leads") {
-      const recName = topRec.text.match(/(\w[\w\s]+)\./)?.[1];
-      lines.push(`Consider expanding your lead sources${recName ? ` for ${recName}` : ""}.`);
-    } else {
-      const text = topRec.action.charAt(0).toLowerCase() + topRec.action.slice(1);
-      lines.push(`I recommend ${text}.`);
-    }
-  }
-
-  if (lines.length === 0) {
-    if (data.campaign_count > 0) {
-      lines.push("All campaigns are up to date.");
-    } else {
-      lines.push("No campaigns yet. Start by discovering leads.");
-    }
-  }
-
-  return lines;
+  return ["Everything looks up to date."];
 }
 
 export default function MissionControlDashboard() {
   const [data, setData] = useState<MCSummary | null>(null);
   const [loading, setLoading] = useState(true);
+
+  usePageContext("Mission Control", {
+    campaign_count: data?.campaign_count ?? 0,
+    campaigns_ready: data?.kpis.campaigns_ready ?? 0,
+    pending_reviews: data?.draft_counts.pending ?? 0,
+    approved_drafts: data?.draft_counts.approved ?? 0,
+    total_leads: data?.total_leads ?? 0,
+    needs_attention: data?.needs_attention.length ?? 0,
+    recommendations: data?.recommendations.length ?? 0,
+    top_priority: data?.workspace_analysis?.campaign_priorities?.[0]?.name ?? "",
+    health: data?.workspace_analysis?.workspace_health?.overall_health ?? "",
+  });
 
   useEffect(() => {
     const token = (() => {
@@ -164,7 +104,7 @@ export default function MissionControlDashboard() {
       .finally(() => setLoading(false));
   }, []);
 
-  const briefLines = useMemo(() => data ? buildBrief(data) : [], [data]);
+  const briefLines = useMemo(() => data ? buildBriefLines(data) : [], [data]);
 
   const actionButtons = useMemo(() => {
     const btns: { label: string; href: string; icon: string }[] = [];
@@ -449,7 +389,7 @@ function KpiCard({ icon, label, value, sub }: { icon: string; label: string; val
   );
 }
 
-function NeedAttentionCard({ item, index }: { item: { type: string; label: string; priority: string; action: string; campaign_id: string | null; campaign_name: string | null }; index: number }) {
+function NeedAttentionCard({ item, index }: { item: { type: string; label: string; action: string; campaign_id: string | null; campaign_name: string | null }; index: number }) {
   const actionHref = item.action === "review" ? "/draft" : "/campaigns";
   const actionLabelMap: Record<string, string> = { review: "Review", launch: "Launch" };
 
@@ -505,11 +445,34 @@ function JobCard({ job }: { job: Record<string, unknown> }) {
   );
 }
 
+function effortEstimate(campaign: { status: string; pending_drafts: number; approved_drafts: number; lead_count: number }): string {
+  switch (campaign.status) {
+    case "ready_to_send":
+      return "~Ready now";
+    case "draft_review": {
+      const n = campaign.pending_drafts;
+      if (n <= 3) return `~${n} review${n > 1 ? "s" : ""} left`;
+      return `${n} approvals needed`;
+    }
+    case "planning":
+      return campaign.lead_count > 0 ? "~2 min" : "~10 min";
+    case "generating":
+      return "In progress";
+    case "ready":
+      return "~1 min";
+    case "completed":
+      return "Done";
+    default:
+      return "";
+  }
+}
+
 function ContinueCard({ campaign, index }: { campaign: { id: string; name: string; status: string; lead_count: number; pending_drafts: number; approved_drafts: number; updated_at: string }; index: number }) {
   const progress = campaignProgress(campaign.status);
   const stage = STATUS_STAGE[campaign.status] || 0;
   const step = nextStep(campaign.status);
   const ready = isReady(campaign.status);
+  const effort = effortEstimate(campaign);
 
   const actionHref = campaign.status === "draft_review" ? `/draft?campaign=${campaign.id}` : `/campaigns/${campaign.id}`;
 
@@ -526,9 +489,9 @@ function ContinueCard({ campaign, index }: { campaign: { id: string; name: strin
             <span className={`text-[11px] font-semibold ${ready ? "text-success" : "text-on-surface-variant/50"}`}>
               {ready ? "Ready immediately" : "In progress"}
             </span>
-            {campaign.pending_drafts > 0 && (
-              <span className="text-[11px] text-on-surface-variant/40">
-                {campaign.pending_drafts} draft{campaign.pending_drafts > 1 ? "s" : ""} pending
+            {effort && (
+              <span className="text-[11px] text-on-surface-variant/40 bg-surface-high/15 rounded-full px-2 py-0.5">
+                {effort}
               </span>
             )}
           </div>
@@ -555,10 +518,9 @@ function ContinueCard({ campaign, index }: { campaign: { id: string; name: strin
   );
 }
 
-function RecommendationCard({ rec, index }: { rec: { type: string; text: string; action: string; link: string }; index: number }) {
-  const parts = rec.text.split(". ").filter(Boolean);
-  const observation = parts[0] ? parts[0] + (parts[0].endsWith(".") ? "" : ".") : "";
-  const reason = parts.slice(1).join(". ").trim();
+function RecommendationCard({ rec, index }: { rec: { type: string; observation: string; reason: string; action: string; confidence: string; link: string; why_details?: string[] }; index: number }) {
+  const confidenceColor = rec.confidence === "high" ? "text-success" : rec.confidence === "medium" ? "text-warning" : "text-on-surface-variant/40";
+  const [showWhy, setShowWhy] = useState(false);
 
   return (
     <div
@@ -569,25 +531,49 @@ function RecommendationCard({ rec, index }: { rec: { type: string; text: string;
         <div className="w-7 h-7 rounded-lg bg-primary-container/10 flex items-center justify-center text-primary shrink-0 mt-0.5">
           <Icon name="auto_awesome" className="text-xs" />
         </div>
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-on-surface leading-snug">{observation}</p>
-          {reason && (
-            <p className="text-xs text-on-surface-variant/60 mt-1 leading-relaxed">{reason}</p>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <p className="text-sm font-medium text-on-surface leading-snug">{rec.observation}</p>
+            <span className={`text-[10px] font-semibold uppercase ${confidenceColor}`}>{rec.confidence}</span>
+          </div>
+          {rec.reason && (
+            <p className="text-xs text-on-surface-variant/60 leading-relaxed">{rec.reason}</p>
           )}
-          <Link
-            href={rec.link}
-            className="inline-flex items-center gap-1 mt-2 text-xs font-semibold text-primary hover:underline"
-          >
-            {rec.action}
-            <Icon name="chevron_right" className="text-xs" />
-          </Link>
+          <div className="flex items-center gap-3 mt-2">
+            <Link
+              href={rec.link}
+              className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline"
+            >
+              {rec.action}
+              <Icon name="chevron_right" className="text-xs" />
+            </Link>
+            {rec.why_details && rec.why_details.length > 0 && (
+              <button
+                onClick={(e) => { e.preventDefault(); setShowWhy(!showWhy); }}
+                className="inline-flex items-center gap-1 text-xs text-on-surface-variant/40 hover:text-on-surface-variant/70 transition-colors"
+              >
+                <Icon name={showWhy ? "expand_less" : "help_outline"} className="text-xs" />
+                {showWhy ? "Hide why" : "Why?"}
+              </button>
+            )}
+          </div>
+          {showWhy && rec.why_details && rec.why_details.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-surface-high/20">
+              {rec.why_details.map((d, i) => (
+                <div key={i} className="flex items-center gap-2 py-0.5">
+                  <Icon name="check_circle" className="text-[10px] text-success shrink-0" />
+                  <span className="text-xs text-on-surface-variant/60">{d}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function ActivityRow({ item, index }: { item: { type: string; text: string; timestamp: string }; index: number }) {
+function ActivityRow({ item, index }: { item: { type: string; text: string; timestamp: string; count?: number; grouped?: boolean }; index: number }) {
   const iconMap: Record<string, string> = {
     campaign_completed: "check_circle",
     drafts_generated: "edit_note",
@@ -596,6 +582,7 @@ function ActivityRow({ item, index }: { item: { type: string; text: string; time
     campaign_created: "add_circle",
     drafts_pending: "edit_note",
     drafts_approved: "task_alt",
+    draft_approved: "task_alt",
   };
   const colorMap: Record<string, string> = {
     campaign_completed: "text-success",
@@ -605,6 +592,7 @@ function ActivityRow({ item, index }: { item: { type: string; text: string; time
     campaign_created: "text-primary",
     drafts_pending: "text-warning",
     drafts_approved: "text-success",
+    draft_approved: "text-success",
   };
   return (
     <div
@@ -616,6 +604,11 @@ function ActivityRow({ item, index }: { item: { type: string; text: string; time
       </div>
       <div className="flex-1 min-w-0 flex items-center gap-3">
         <p className="text-sm text-on-surface leading-snug flex-1 min-w-0">{item.text}</p>
+        {item.grouped && item.count && item.count > 1 && (
+          <span className="text-[10px] font-bold text-on-surface-variant/30 bg-surface-high/20 rounded-full px-2 py-0.5 shrink-0">
+            {item.count}
+          </span>
+        )}
         <p className="text-[11px] text-on-surface-variant/35 shrink-0 tabular-nums">{shortTime(item.timestamp)}</p>
       </div>
     </div>

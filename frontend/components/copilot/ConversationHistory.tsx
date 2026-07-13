@@ -31,7 +31,7 @@ export default function ConversationHistory({
         </div>
         <p className="text-body-md text-on-surface font-bold mb-1">Loqi OS</p>
         <p className="text-label-sm text-on-surface-variant/60 max-w-xs">
-          Ask me anything about your campaigns, leads, or drafts.
+          Your workspace is ready. Tell me what to do.
         </p>
       </div>
     );

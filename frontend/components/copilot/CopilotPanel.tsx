@@ -27,8 +27,8 @@ export default function CopilotPanel() {
       <button
         onClick={() => setOpen(true)}
         className="fixed bottom-6 right-6 z-40 w-12 h-12 rounded-full bg-primary text-on-primary shadow-lg shadow-primary/20 flex items-center justify-center hover:brightness-110 hover:shadow-primary/30 hover:scale-105 active:scale-95 transition-all duration-150"
-        title="Open AI Workspace (⌘K)"
-        aria-label="Open AI Workspace"
+        title="Open Loqi OS (⌘K)"
+        aria-label="Open Loqi OS"
       >
         <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor">
           <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM6 10h2v2H6v-2zm0 4h6v2H6v-2zm8-4h4v2h-4v-2zm0 4h4v2h-4v-2zM6 14h2v2H6v-2zm8-4h4v2h-4v-2z" />
@@ -43,7 +43,7 @@ export default function CopilotPanel() {
       onClick={() => setOpen(false)}
       role="dialog"
       aria-modal="true"
-      aria-label="AI Workspace"
+      aria-label="Loqi OS"
     >
       <div
         className="w-full max-w-sm h-[calc(100vh-5rem)] rounded-2xl border border-outline-variant/20 bg-surface-lowest shadow-2xl flex flex-col overflow-hidden animate-slide-up"
@@ -56,7 +56,7 @@ export default function CopilotPanel() {
                 <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12z" />
               </svg>
             </div>
-            <span className="text-body-md text-on-surface font-bold">AI Workspace</span>
+            <span className="text-body-md text-on-surface font-bold">Loqi OS</span>
           </div>
           <div className="flex items-center gap-1">
             <button
@@ -73,7 +73,7 @@ export default function CopilotPanel() {
               onClick={() => setOpen(false)}
               className="p-1.5 rounded-lg text-on-surface-variant/50 hover:text-on-surface hover:bg-surface-high/60 transition-all duration-150 active:scale-95"
               title="Close (ESC)"
-              aria-label="Close AI Workspace"
+              aria-label="Close Loqi OS"
             >
               <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
                 <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" />
@@ -92,7 +92,7 @@ export default function CopilotPanel() {
           <div className="px-4 pt-1 pb-0.5">
             <div className="flex items-center gap-2 text-label-sm text-on-surface-variant/40">
               <span className="w-1.5 h-1.5 rounded-full bg-success/60" />
-              AI Workspace
+              Loqi OS
             </div>
           </div>
           <CopilotComposer onSend={send} disabled={sending} />

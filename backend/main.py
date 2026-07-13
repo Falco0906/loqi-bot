@@ -23,6 +23,32 @@ from services.campaign_planner import analyze_campaigns
 from workflows import run_workflow
 from services.job_engine import job_manager
 from workflow_dispatcher import register_workflows
+from services.workspace_memory import record as record_memory, record_campaign_open, record_draft_review, record_search
+from services.workspace_timeline import (
+    add_event as add_timeline_event,
+    record_search_started,
+    record_search_completed,
+    record_campaign_created,
+    record_drafts_generated,
+    record_draft_approved,
+    record_campaign_ready,
+    record_campaign_launched,
+)
+from services.workspace_snapshot import build_snapshot
+from services.recommendation_engine import generate_recommendations
+from services.executive_brief import generate_brief
+from services.draft_intelligence import analyze_draft as analyze_draft_intelligence
+from services.rewrite_engine import execute_rewrite
+from services.rewrite_history import push as push_rewrite_history, undo as undo_rewrite_history, get_history as get_rewrite_history, get_current_version as get_draft_version
+from services.draft_comparison import compare_versions
+from services.workflow_planner import plan_workflow
+from services.workflow_models import PlanningInput
+from services.workflow_executor import execute as execute_workflow, approve as approve_workflow, pause as pause_workflow, resume as resume_workflow, cancel as cancel_workflow
+from services.workflow_runtime import get_runtime, get_active_runtimes, get_all_runtimes, get_history as get_workflow_history
+from services.workflow_progress import calculate_progress
+from services.workflow_events import get_events as get_workflow_events, get_latest_sequence
+from services.workflow_models import WorkflowPlan
+from services.workflow_recovery import recover_all
 
 load_dotenv()
 
@@ -41,11 +67,133 @@ draft_store: dict[str, list[dict[str, Any]]] = {}
 campaign_store: dict[str, list[dict[str, Any]]] = {}
 
 
+def _build_copilot_workspace_context(session_token: str, current_page: str | None = None, page_context: dict | None = None) -> dict:
+    campaigns = campaign_store.get(session_token, [])
+    drafts = draft_store.get(session_token, [])
+    total_leads = sum(c.get("lead_count", 0) or 0 for c in campaigns)
+    from services.workspace_snapshot import build_snapshot
+    snapshot = build_snapshot(session_token, campaigns, drafts, total_leads)
+    analysis = snapshot.get("analysis", {})
+
+    active_workflows = get_active_runtimes(session_token)
+    workflow_context = []
+    for wf in active_workflows:
+        progress = calculate_progress(wf)
+        workflow_context.append({
+            "workflow_id": wf.workflow_id,
+            "goal": wf.plan.get("goal", ""),
+            "status": wf.status.value,
+            "progress": progress,
+        })
+
+    result = {
+        "snapshot": {
+            "campaigns": snapshot.get("campaigns", []),
+            "campaign_count": snapshot.get("campaign_count", 0),
+            "campaigns_ready": snapshot.get("campaigns_ready", 0),
+            "campaigns_draft_review": snapshot.get("campaigns_draft_review", 0),
+            "drafts": snapshot.get("drafts", {}),
+            "total_leads": snapshot.get("total_leads", 0),
+            "jobs": snapshot.get("jobs", {}),
+            "memory": snapshot.get("memory", {}),
+            "timeline": snapshot.get("timeline", []),
+            "active_workflows": workflow_context,
+        },
+        "analysis": {
+            "current_focus": analysis.get("current_focus"),
+            "recommended_next_action": analysis.get("recommended_next_action"),
+            "campaign_priorities": analysis.get("campaign_priorities", []),
+            "workspace_health": analysis.get("workspace_health"),
+            "cross_campaign_insights": analysis.get("cross_campaign_insights", []),
+            "workflow_continuation": analysis.get("workflow_continuation"),
+            "attention_items": analysis.get("attention_items", []),
+        },
+    }
+
+    if current_page == "Draft Review" and page_context:
+        selected_index = page_context.get("selected_index")
+        if selected_index is not None and drafts:
+            try:
+                idx = int(selected_index)
+                if 0 <= idx < len(drafts):
+                    d = drafts[idx]
+                    result["current_draft"] = {
+                        "id": d.get("id"),
+                        "subject": d.get("subject", ""),
+                        "text_preview": d.get("text", "")[:300],
+                        "lead_name": d.get("lead", {}).get("name", ""),
+                        "lead_company": d.get("lead", {}).get("company", ""),
+                        "lead_title": d.get("lead", {}).get("title", ""),
+                        "campaign_name": d.get("campaign_name", ""),
+                        "tone": d.get("tone"),
+                        "length": d.get("length"),
+                        "status": d.get("status"),
+                    }
+                    intel = d.get("draft_intelligence")
+                    if intel:
+                        result["current_draft"]["draft_intelligence"] = intel
+                    hist = get_rewrite_history(session_token, d.get("id", ""))
+                    if hist:
+                        result["current_draft"]["rewrite_history"] = hist[:3]
+
+                    draft_text = d.get("text", "")
+                    try:
+                        from services.draft_intelligence import analyze_draft as _analyze
+                        new_intel = _analyze(draft_text, {
+                            "campaign_name": d.get("campaign_name"),
+                            "company": d.get("lead", {}).get("company"),
+                            "contact": d.get("lead", {}).get("name"),
+                            "role": d.get("lead", {}).get("title"),
+                        })
+                        result["current_draft"]["draft_intelligence"] = new_intel.to_dict()
+                    except Exception:
+                        pass
+            except (ValueError, IndexError):
+                pass
+
+    return result
+
+
 def _parse_draft_body(message: str) -> str | None:
     if "Draft ready:" not in message or "---" not in message:
         return None
     parts = message.split("---")
     return parts[1].strip() if len(parts) >= 3 else None
+
+
+_SYNONYM_STRATEGY_TABLE: list[tuple[list[str], str]] = [
+    (["short", "concise", "punchy", "tighten", "trim", "cut", "fluff", "reduce"], "shorten"),
+    (["longer", "expand", "more detail", "elaborate", "add more", "extend"], "lengthen"),
+    (["professional", "polish", "formal", "corporate", "executive"], "professional"),
+    (["casual", "conversational", "friendly", "human", "less formal", "natural", "like a founder"], "casual"),
+    (["hiring", "growing", "team", "join us"], "hiring"),
+    (["expansion", "expanding", "office", "new market"], "expansion"),
+    (["cta", "call to action", "ending", "better ending", "ask"], "rewrite_cta"),
+    (["funding", "raised", "series", "investment", "investor"], "mention_funding"),
+    (["personalize", "personal", "customize", "tailor", "specific to"], "personalize"),
+    (["aggressive", "urgent", "direct", "bold", "confident", "sound more confident"], "aggressive"),
+    (["soften", "softer", "gentle", "gentler", "lower pressure", "less pushy"], "softer"),
+    (["growth", "growing", "momentum", "traction"], "mention_growth"),
+    (["launch", "product", "feature", "new"], "mention_product_launch"),
+    (["punchy", "impactful", "stronger", "powerful", "persuasive"], "shorten"),
+    (["robotic", "robot", "stiff", "less salesy", "salesy"], "casual"),
+    (["curiosity", "intriguing", "hook"], "personalize"),
+    (["credibility", "proof", "social proof", "testimonial", "case study"], "mention_growth"),
+    (["opening", "first sentence", "intro", "stronger start", "hook"], "personalize"),
+]
+
+
+def _classify_rewrite_strategy(instruction: str) -> str:
+    """Map a user's edit instruction to a rewrite strategy using synonym matching."""
+    lower = instruction.lower()
+    best_match = None
+    best_count = 0
+    for keywords, strategy in _SYNONYM_STRATEGY_TABLE:
+        match_count = sum(1 for kw in keywords if kw in lower)
+        if match_count > best_count:
+            best_count = match_count
+            best_match = strategy
+    return best_match or "custom"
 
 
 async def _process_batch_drafts(
@@ -102,13 +250,17 @@ async def _process_batch_drafts(
     job["status"] = "completed"
 
     campaign_id = job.get("campaign_id")
+    campaign_name = None
     if campaign_id:
         campaigns = campaign_store.get(session_token, [])
         for c in campaigns:
             if c.get("id") == campaign_id:
                 c["status"] = "draft_review"
                 c["updated_at"] = datetime.now(timezone.utc).isoformat()
+                campaign_name = c.get("name")
                 break
+    if campaign_name:
+        record_drafts_generated(session_token, campaign_name, job.get("completed", 0))
 
 # ── Logging Middleware ──
 
@@ -149,6 +301,7 @@ class CopilotContextModel(BaseModel):
     current_page: str | None = None
     page_context: dict | None = None
     available_actions: list[str] | None = None
+    message_history: list[dict] | None = None
 
 
 class SendWebMessageRequest(BaseModel):
@@ -175,6 +328,12 @@ def startup_event():
     except Exception as e:
         log.warning("Migration check failed: %s", e)
     log.info("Job engine initialized")
+    try:
+        recovered = recover_all()
+        if recovered["total_recovered"] > 0:
+            log.info("Workflow recovery: %s", recovered)
+    except Exception as e:
+        log.warning("Workflow recovery failed: %s", e)
 
 
 @app.get("/", response_class=PlainTextResponse)
@@ -256,16 +415,44 @@ async def post_web_session_message(session_token: str, payload: SendWebMessageRe
         )
 
     if payload.copilot and payload.copilot.current_page:
+        workspace_context = _build_copilot_workspace_context(
+            session_token,
+            current_page=payload.copilot.current_page,
+            page_context=payload.copilot.page_context,
+        )
+        analysis = workspace_context.get("analysis", {})
+        snapshot = workspace_context.get("snapshot", {})
+        cf = analysis.get("current_focus", {})
+        rna = analysis.get("recommended_next_action", {})
+        priorities = analysis.get("campaign_priorities", [])
+        health = analysis.get("workspace_health", {})
+        print(
+            f"[COPILOT_DEBUG] page={payload.copilot.current_page} "
+            f"message=\"{payload.text[:60]}\" "
+            f"campaign_count={snapshot.get('campaign_count', 0)} "
+            f"pending_drafts={snapshot.get('drafts', {}).get('pending', 0)} "
+            f"campaigns_ready={snapshot.get('campaigns_ready', 0)} "
+            f"focus={cf.get('focus', 'none')} "
+            f"recommended={rna.get('title', 'none')} "
+            f"top_priority={priorities[0].get('name', 'none') if priorities else 'none'} "
+            f"health={health.get('overall_health', 'unknown')} "
+            f"timeline_events={len(snapshot.get('timeline', []))} "
+            f"memory_action={snapshot.get('memory', {}).get('last_action', 'none')}"
+        )
         from services.conversational_response_generator import generate_copilot_response
         response_text = generate_copilot_response(
             user_message=payload.text,
-            copilot_context=payload.copilot.model_dump(),
+            copilot_context={
+                **(payload.copilot.model_dump()),
+                "workspace_context": workspace_context,
+            },
             context={
                 "user_id": summary.get("user_id"),
                 "service": "",
                 "target": "",
             },
         )
+        print(f"[COPILOT_TRACE] page={payload.copilot.current_page} message={payload.text[:60]} history_len={len(payload.copilot.message_history or [])}")
         msg = _message(role="assistant", message_type="text", text=response_text)
         return {"ok": True, "messages": [msg], "events": []}
 
@@ -380,19 +567,71 @@ async def refine_draft(session_token: str, draft_id: str, payload: RefineDraftRe
     if not target:
         raise HTTPException(status_code=404, detail="Draft not found")
 
+    context = {}
+    for field in ("campaign_id", "campaign_name", "company", "contact", "role", "industry", "messaging_angle", "business_summary"):
+        val = getattr(payload, field, None)
+        if val:
+            context[field] = val
+
     loop = asyncio.get_event_loop()
     try:
+        if payload.edit_request and payload.previous_message:
+            strategy = _classify_rewrite_strategy(payload.edit_request)
+            rewrite_result = await loop.run_in_executor(
+                None,
+                execute_rewrite,
+                payload.previous_message,
+                strategy,
+                context or None,
+                payload.edit_request if strategy == "custom" else None,
+            )
+            previous_text = target["text"]
+            target["text"] = rewrite_result.text
+            target["status"] = "pending"
+
+            version = push_rewrite_history(
+                session_token, draft_id,
+                previous_text=previous_text,
+                reason=payload.edit_request,
+                strategy=strategy,
+                change_summary=rewrite_result.change_summary,
+            )
+
+            comparison = await loop.run_in_executor(
+                None,
+                compare_versions,
+                previous_text,
+                rewrite_result.text,
+                rewrite_result.change_summary,
+            )
+
+            try:
+                intelligence = await loop.run_in_executor(
+                    None,
+                    analyze_draft_intelligence,
+                    rewrite_result.text,
+                    context or None,
+                )
+            except Exception:
+                intelligence = None
+
+            return {
+                "ok": True,
+                "draft": target,
+                "rewritten_text": rewrite_result.text,
+                "change_summary": rewrite_result.change_summary,
+                "draft_intelligence": intelligence.to_dict() if intelligence else None,
+                "version": version,
+                "confidence": rewrite_result.confidence,
+                "comparison": comparison.to_dict(),
+            }
+
         workflow_input = {
             "type": "draft_message",
             "lead": payload.lead,
             "edit_request": payload.edit_request,
             "previous_message": payload.previous_message,
         }
-        context = {}
-        for field in ("campaign_id", "campaign_name", "company", "contact", "role", "industry", "messaging_angle", "business_summary"):
-            val = getattr(payload, field, None)
-            if val:
-                context[field] = val
         if context:
             workflow_input["context"] = context
 
@@ -404,8 +643,18 @@ async def refine_draft(session_token: str, draft_id: str, payload: RefineDraftRe
         new_body = _parse_draft_body(workflow_result.get("message", ""))
         rewritten_text = new_body or target["text"]
         if new_body:
+            previous_text = target["text"]
             target["text"] = new_body
             target["status"] = "pending"
+
+            push_rewrite_history(
+                session_token, draft_id,
+                previous_text=previous_text,
+                reason=payload.edit_request or "AI rewrite",
+                strategy="custom",
+                change_summary=["✓ Draft rewritten"],
+            )
+
         return {"ok": True, "draft": target, "rewritten_text": rewritten_text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -433,12 +682,30 @@ async def analyze_draft_endpoint(session_token: str, payload: AnalyzeDraftReques
             val = getattr(payload, field, None)
             if val:
                 context[field] = val
+
         workflow_result = await loop.run_in_executor(
             None,
             run_workflow,
             {"type": "draft_analysis", "draft_text": payload.draft_text, "context": context},
         )
-        return {"ok": workflow_result.get("ok", False), "analysis": workflow_result.get("analysis"), "error": workflow_result.get("error")}
+
+        intelligence = None
+        try:
+            intelligence = await loop.run_in_executor(
+                None,
+                analyze_draft_intelligence,
+                payload.draft_text,
+                context or None,
+            )
+        except Exception:
+            pass
+
+        return {
+            "ok": workflow_result.get("ok", False),
+            "analysis": workflow_result.get("analysis"),
+            "draft_intelligence": intelligence.to_dict() if intelligence else None,
+            "error": workflow_result.get("error"),
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -503,12 +770,71 @@ async def approve_draft(session_token: str, draft_id: str):
                 break
 
     pending_drafts = sum(1 for d in draft_store.get(session_token, []) if d.get("campaign_id") == campaign_id and d.get("status") == "pending") if campaign_id else 0
+    if toggled and toggled.get("status") == "approved":
+        lead_name = toggled.get("lead", {}).get("name", "Unknown")
+        campaign_name = None
+        if campaign_id:
+            for c in campaign_store.get(session_token, []):
+                if c.get("id") == campaign_id:
+                    campaign_name = c.get("name")
+                    break
+        record_draft_approved(session_token, lead_name, campaign_name)
+        if campaign_status == "ready_to_send" and campaign_name:
+            record_campaign_ready(session_token, campaign_name)
     return {
         "ok": True,
         "draft": toggled,
         "campaign_status": campaign_status,
         "pending_drafts": pending_drafts,
     }
+
+
+@app.post("/api/web/session/{session_token}/drafts/{draft_id}/undo")
+async def undo_draft(session_token: str, draft_id: str):
+    drafts = draft_store.get(session_token, [])
+    target = next((d for d in drafts if d.get("id") == draft_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    entry = undo_rewrite_history(session_token, draft_id)
+    if entry is None:
+        raise HTTPException(status_code=400, detail="No history to undo")
+
+    target["text"] = entry.previous_text
+    target["status"] = "pending"
+    return {
+        "ok": True,
+        "draft": target,
+        "undo": entry.to_dict(),
+    }
+
+
+@app.get("/api/web/session/{session_token}/drafts/{draft_id}/history")
+async def draft_rewrite_history(session_token: str, draft_id: str):
+    return {
+        "ok": True,
+        "history": get_rewrite_history(session_token, draft_id),
+        "current_version": get_draft_version(session_token, draft_id),
+    }
+
+
+class CompareDraftVersionsRequest(BaseModel):
+    old_text: str
+    new_text: str
+    change_summary: list[str] | None = None
+
+
+@app.post("/api/web/session/{session_token}/drafts/compare")
+async def compare_draft_versions(session_token: str, payload: CompareDraftVersionsRequest):
+    try:
+        comparison = compare_versions(
+            payload.old_text,
+            payload.new_text,
+            payload.change_summary,
+        )
+        return {"ok": True, "comparison": comparison.to_dict()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/web/session/{session_token}/campaigns")
@@ -529,52 +855,46 @@ async def save_campaign(session_token: str, payload: SaveCampaignRequest):
         "updated_at": now,
     }
     campaign_store[session_token].append(campaign)
+    record_campaign_created(session_token, payload.name)
     return {"ok": True, "campaign": campaign}
 
 
 @app.get("/api/web/session/{session_token}/campaigns")
 async def list_campaigns(session_token: str):
+    from services.workspace_snapshot import enrich_campaigns
     campaigns = campaign_store.get(session_token, [])
-
-    def _enrich(c: dict) -> dict:
-        cid = c.get("id", "")
-        drafts = [d for d in draft_store.get(session_token, []) if d.get("campaign_id") == cid]
-        pending = sum(1 for d in drafts if d.get("status") == "pending")
-        approved = sum(1 for d in drafts if d.get("status") == "approved")
-        return {**c, "pending_drafts": pending, "approved_drafts": approved}
-
-    return {"ok": True, "campaigns": [_enrich(c) for c in campaigns]}
+    drafts = draft_store.get(session_token, [])
+    return {"ok": True, "campaigns": enrich_campaigns(campaigns, drafts)}
 
 
 @app.get("/api/web/session/{session_token}/campaigns/summary")
 async def campaign_summary(session_token: str):
+    from services.workspace_snapshot import enrich_campaigns
     campaigns = campaign_store.get(session_token, [])
-    items = []
-    for c in campaigns:
-        cid = c.get("id", "")
-        drafts = [d for d in draft_store.get(session_token, []) if d.get("campaign_id") == cid]
-        pending = sum(1 for d in drafts if d.get("status") == "pending")
-        items.append({
-            "id": cid,
-            "name": c.get("name", ""),
-            "status": c.get("status", "planning"),
-            "lead_count": c.get("lead_count", 0),
-            "pending_drafts": pending,
-            "updated_at": c.get("updated_at", ""),
-        })
+    drafts = draft_store.get(session_token, [])
+    enriched = enrich_campaigns(campaigns, drafts)
+    items = [{
+        "id": c.get("id", ""),
+        "name": c.get("name", ""),
+        "status": c.get("status", "planning"),
+        "lead_count": c.get("lead_count", 0),
+        "pending_drafts": c.get("pending_drafts", 0),
+        "updated_at": c.get("updated_at", ""),
+    } for c in enriched]
     return {"ok": True, "campaigns": items}
 
 
 @app.get("/api/web/session/{session_token}/campaigns/{campaign_id}")
 async def get_campaign(session_token: str, campaign_id: str):
+    from services.workspace_snapshot import enrich_campaigns
     campaigns = campaign_store.get(session_token, [])
-    target = next((c for c in campaigns if c.get("id") == campaign_id), None)
+    drafts = draft_store.get(session_token, [])
+    enriched = enrich_campaigns(campaigns, drafts)
+    target = next((c for c in enriched if c.get("id") == campaign_id), None)
     if not target:
         raise HTTPException(status_code=404, detail="Campaign not found")
-    drafts = [d for d in draft_store.get(session_token, []) if d.get("campaign_id") == campaign_id]
-    pending = sum(1 for d in drafts if d.get("status") == "pending")
-    approved = sum(1 for d in drafts if d.get("status") == "approved")
-    return {"ok": True, "campaign": {**target, "pending_drafts": pending, "approved_drafts": approved}}
+    record_campaign_open(session_token, campaign_id, target.get("name", ""))
+    return {"ok": True, "campaign": target}
 
 
 @app.put("/api/web/session/{session_token}/campaigns/{campaign_id}")
@@ -586,7 +906,12 @@ async def update_campaign(session_token: str, campaign_id: str, payload: UpdateC
     if payload.name is not None:
         target["name"] = payload.name
     if payload.status is not None:
+        old_status = target.get("status", "")
         target["status"] = payload.status
+        if payload.status == "completed" and old_status != "completed":
+            record_campaign_launched(session_token, target.get("name", ""))
+        elif payload.status in ("ready", "ready_to_send"):
+            record_campaign_ready(session_token, target.get("name", ""))
     target["updated_at"] = datetime.now(timezone.utc).isoformat()
     return {"ok": True, "campaign": target}
 
@@ -673,120 +998,63 @@ async def mission_control_summary(session_token: str):
     drafts = draft_store.get(session_token, [])
     now = datetime.now(timezone.utc)
 
-    campaign_list = []
-    pending_drafts = 0
-    approved_drafts = 0
-    total_leads = 0
-    for c in campaigns:
-        cid = c.get("id", "")
-        cdrafts = [d for d in drafts if d.get("campaign_id") == cid]
-        pending = sum(1 for d in cdrafts if d.get("status") == "pending")
-        approved = sum(1 for d in cdrafts if d.get("status") == "approved")
-        pending_drafts += pending
-        approved_drafts += approved
-        total_leads += c.get("lead_count", 0) or 0
-        updated_raw = c.get("updated_at")
-        updated = updated_raw if isinstance(updated_raw, str) else ""
-        created = c.get("created_at", "")
-        created_str = created if isinstance(created, str) else ""
-        campaign_list.append({
-            "id": cid,
-            "name": c.get("name", ""),
-            "status": c.get("status", "planning"),
-            "lead_count": c.get("lead_count", 0),
-            "pending_drafts": pending,
-            "approved_drafts": approved,
-            "updated_at": updated,
-            "created_at": created_str,
-        })
+    total_leads = sum(c.get("lead_count", 0) or 0 for c in campaigns)
+    pending_drafts = sum(1 for d in drafts if d.get("status") == "pending")
+    approved_drafts = sum(1 for d in drafts if d.get("status") == "approved")
+    reply_rate_heuristic = round((approved_drafts / len(drafts) * 100) if drafts else 0)
 
-    total_drafts = len(drafts)
-    reply_rate_heuristic = round((approved_drafts / total_drafts * 100) if total_drafts > 0 else 0)
-    qual_score_heuristic = min(100, round((total_leads / max(1, len(campaign_list)) * 10) + reply_rate_heuristic * 0.3)) if campaign_list else 0
+    snapshot = build_snapshot(session_token, campaigns, drafts, total_leads)
+    analysis = snapshot.get("analysis", {})
+    recommendations = generate_recommendations(snapshot)
+    brief = generate_brief(snapshot, recommendations)
 
-    tasks = []
-    for c in campaign_list:
-        if c["status"] in ("ready", "ready_to_send"):
-            tasks.append({"type": "launch", "campaign_id": c["id"], "campaign_name": c["name"], "label": f"{c['name']} ready to launch", "priority": "high", "action": "launch"})
-        elif c["status"] == "draft_review" and c["pending_drafts"] > 0:
-            tasks.append({"type": "review", "campaign_id": c["id"], "campaign_name": c["name"], "label": f"Review {c['pending_drafts']} drafts in {c['name']}", "priority": "high", "action": "review"})
-
-    if pending_drafts > 0 and not any(t["type"] == "review" for t in tasks):
-        tasks.append({"type": "pending_drafts", "campaign_id": None, "campaign_name": None, "label": f"{pending_drafts} drafts need review", "priority": "high", "action": "review"})
-
-    tasks.sort(key=lambda t: {"high": 0, "medium": 1, "low": 2}.get(t["priority"], 3))
-
-    activity = []
-    for c in sorted(campaign_list, key=lambda x: x["updated_at"], reverse=True)[:10]:
-        if c["status"] == "completed":
-            activity.append({"type": "campaign_completed", "text": f"Campaign completed: {c['name']}", "timestamp": c["updated_at"]})
-        elif c["status"] == "draft_review" and c["pending_drafts"] > 0:
-            activity.append({"type": "drafts_generated", "text": f"Generated {c['pending_drafts']} personalized drafts for {c['name']}", "timestamp": c["updated_at"]})
-        elif c["status"] == "ready":
-            activity.append({"type": "campaign_ready", "text": f"{c['name']} is ready for review", "timestamp": c["updated_at"]})
-        elif c["status"] == "ready_to_send":
-            activity.append({"type": "launch_ready", "text": f"{c['name']} ready to launch", "timestamp": c["updated_at"]})
-        elif c["status"] == "planning" and c["created_at"]:
-            activity.append({"type": "campaign_created", "text": f"Created campaign: {c['name']}", "timestamp": c["created_at"]})
-    if pending_drafts > 0:
-        activity.append({"type": "drafts_pending", "text": f"{pending_drafts} drafts still need review", "timestamp": now.isoformat()})
-    if approved_drafts > 0:
-        activity.append({"type": "drafts_approved", "text": f"{approved_drafts} drafts approved", "timestamp": now.isoformat()})
-    activity.sort(key=lambda x: x["timestamp"], reverse=True)
-
+    campaign_list = snapshot.get("campaigns", [])
     user_id = f"web:{session_token}"
     try:
         current_jobs = job_manager.list_active_jobs(user_id)
     except Exception:
         current_jobs = []
 
-    recommendations = []
-    reviewed_total = pending_drafts + approved_drafts
-    has_ready = any(c["status"] in ("ready", "ready_to_send") for c in campaign_list)
-    has_review = any(c["status"] == "draft_review" and c["pending_drafts"] > 0 for c in campaign_list)
-    has_planning = any(c["status"] == "planning" for c in campaign_list)
-    generating = any(c["status"] == "generating" for c in campaign_list)
+    attention_items = analysis.get("attention_items", [])[:4]
+    needs_attention = [
+        {
+            "type": a.get("action", "").lower().replace(" ", "_"),
+            "campaign_id": a.get("campaign_id"),
+            "campaign_name": a.get("campaign_name"),
+            "label": a.get("title", ""),
+            "action": a.get("action", "review"),
+        }
+        for a in attention_items
+    ]
 
-    review_campaigns = [c for c in campaign_list if c["status"] == "draft_review" and c["pending_drafts"] > 0]
-    if has_review:
-        best_review = max(review_campaigns, key=lambda x: x["pending_drafts"]) if review_campaigns else None
-        if best_review:
-            recommendations.append({"type": "review_drafts", "text": f"{best_review['name']} has {best_review['pending_drafts']} pending drafts with the highest volume. Reviewing them first will clear your queue faster.", "action": "Review Drafts", "link": "/draft"})
-    if has_ready and not has_review:
-        recommendations.append({"type": "launch_campaign", "text": f"A campaign is ready to launch. Earlier campaigns with completed drafts tend to perform 2x better when sent within 24 hours of generation.", "action": "View Campaigns", "link": "/campaigns"})
-    if has_planning and not has_review and not has_ready:
-        recommendations.append({"type": "continue_planning", "text": "Planning-stage campaigns have leads ready to be structured into outreach. Finalizing their strategy now means drafts can generate overnight.", "action": "Continue Planning", "link": "/campaigns"})
-    if reviewed_total == 0 and len(campaign_list) > 0 and not generating:
-        low_lead_campaigns = [c for c in campaign_list if c["lead_count"] > 0 and c["lead_count"] < 15]
-        if low_lead_campaigns:
-            smallest = min(low_lead_campaigns, key=lambda x: x["lead_count"])
-            recommendations.append({"type": "expand_leads", "text": f"Only {smallest['lead_count']} leads remain in {smallest['name']}. Searching adjacent industries could double your addressable pool.", "action": "Find More Leads", "link": "/discovery"})
-        else:
-            recommendations.append({"type": "generate_drafts", "text": "Your campaigns have leads ready for outreach. Running draft generation now means you can review results in the morning.", "action": "Generate Drafts", "link": "/campaigns"})
-    if len(campaign_list) == 0:
-        recommendations.append({"type": "find_leads", "text": "No campaigns exist yet. Most successful outbound operations start with at least 3 active campaigns to maintain pipeline velocity.", "action": "Find Leads", "link": "/discovery"})
-
-    kpi_campaigns_ready = sum(1 for c in campaign_list if c["status"] in ("ready", "ready_to_send"))
-    kpi_pending_reviews = pending_drafts
-    kpi_reply_rate = reply_rate_heuristic
-    kpi_qual_score = qual_score_heuristic
+    from services.workspace_timeline import get_grouped_events
+    grouped_activity = get_grouped_events(session_token, limit=10)
 
     return {
         "ok": True,
         "campaigns": campaign_list[:4],
         "draft_counts": {"pending": pending_drafts, "approved": approved_drafts, "total": len(drafts)},
-        "needs_attention": tasks[:4],
-        "live_activity": activity[:10],
+        "needs_attention": needs_attention,
+        "live_activity": grouped_activity,
         "campaign_count": len(campaign_list),
         "active_jobs": current_jobs,
         "recommendations": recommendations[:3],
         "kpis": {
-            "estimated_reply_rate": kpi_reply_rate,
-            "avg_qualification_score": kpi_qual_score,
-            "pending_reviews": kpi_pending_reviews,
-            "campaigns_ready": kpi_campaigns_ready,
+            "estimated_reply_rate": reply_rate_heuristic,
+            "pending_reviews": pending_drafts,
+            "campaigns_ready": analysis.get("workspace_health", {}).get("campaigns_ready", 0),
         },
         "total_leads": total_leads,
+        "brief": brief,
+        "workspace_memory": snapshot.get("memory", {}),
+        "workspace_analysis": {
+            "current_focus": analysis.get("current_focus"),
+            "recommended_next_action": analysis.get("recommended_next_action"),
+            "campaign_priorities": analysis.get("campaign_priorities", [])[:8],
+            "workspace_health": analysis.get("workspace_health"),
+            "cross_campaign_insights": analysis.get("cross_campaign_insights", []),
+            "workflow_continuation": analysis.get("workflow_continuation"),
+        },
     }
 
 
@@ -1017,6 +1285,171 @@ def list_jobs(request: Request):
         return {"jobs": []}
     jobs = job_manager.list_active_jobs(user_id)
     return {"jobs": jobs}
+
+
+@app.post("/api/web/session/{session_token}/plan")
+async def plan_workflow_endpoint(session_token: str, payload: PlanningInput):
+    campaigns = campaign_store.get(session_token, [])
+    drafts = draft_store.get(session_token, [])
+    total_leads = sum(c.get("lead_count", 0) or 0 for c in campaigns)
+    snapshot = build_snapshot(session_token, campaigns, drafts, total_leads)
+    result = plan_workflow(
+        objective=payload.objective,
+        snapshot=snapshot,
+        current_page=payload.current_page,
+    )
+    return {
+        "ok": True,
+        "plan": result.primary_plan.model_dump(),
+        "alternative_plan": result.alternative_plan.model_dump(),
+        "recommendation": result.recommendation,
+        "confidence": result.confidence,
+    }
+
+
+class ExecuteWorkflowRequest(BaseModel):
+    plan_id: str
+    goal: str
+    reasoning: str = ""
+    estimated_duration: str = ""
+    risk_level: str = "low"
+    requires_approval: bool = False
+    steps: list[dict]
+
+
+@app.post("/api/web/session/{session_token}/workflows/execute")
+async def execute_workflow_endpoint(session_token: str, payload: ExecuteWorkflowRequest):
+    plan = WorkflowPlan(
+        id=payload.plan_id,
+        goal=payload.goal,
+        reasoning=payload.reasoning,
+        estimated_duration=payload.estimated_duration,
+        risk_level=payload.risk_level,
+        requires_approval=payload.requires_approval,
+        steps=payload.steps,
+    )
+    runtime = execute_workflow(plan, session_token)
+    progress = calculate_progress(runtime)
+    return {
+        "ok": True,
+        "workflow_id": runtime.workflow_id,
+        "status": runtime.status.value,
+        "progress": progress,
+        "runtime": runtime.summary(),
+    }
+
+
+@app.get("/api/web/session/{session_token}/workflows/{workflow_id}")
+async def get_workflow_status(session_token: str, workflow_id: str):
+    runtime = get_runtime(workflow_id)
+    if not runtime:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    progress = calculate_progress(runtime)
+    return {
+        "ok": True,
+        "runtime": runtime.to_dict(),
+        "progress": progress,
+    }
+
+
+@app.get("/api/web/session/{session_token}/workflows/{workflow_id}/events")
+async def get_workflow_events_endpoint(session_token: str, workflow_id: str):
+    runtime = get_runtime(workflow_id)
+    if not runtime:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    return {
+        "ok": True,
+        "events": get_workflow_events(workflow_id),
+    }
+
+
+@app.post("/api/web/session/{session_token}/workflows/{workflow_id}/approve")
+async def approve_workflow_step(session_token: str, workflow_id: str):
+    try:
+        runtime = approve_workflow(workflow_id)
+        progress = calculate_progress(runtime)
+        return {
+            "ok": True,
+            "workflow_id": runtime.workflow_id,
+            "status": runtime.status.value,
+            "progress": progress,
+            "runtime": runtime.summary(),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/web/session/{session_token}/workflows")
+async def list_workflows(session_token: str):
+    workflows = get_all_runtimes(session_token)
+    return {
+        "ok": True,
+        "workflows": [wf.summary() for wf in workflows],
+        "active": [calculate_progress(wf) for wf in get_active_runtimes(session_token)],
+    }
+
+
+@app.get("/api/web/session/{session_token}/workflows/history")
+async def workflow_history(session_token: str, status: str | None = None, limit: int = 50):
+    return {
+        "ok": True,
+        "history": get_workflow_history(session_token, status_filter=status, limit=limit),
+    }
+
+
+@app.get("/api/web/session/{session_token}/workflows/{workflow_id}/events/stream")
+async def workflow_events_after(session_token: str, workflow_id: str, after: int = 0):
+    runtime = get_runtime(workflow_id)
+    if not runtime:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    return {
+        "ok": True,
+        "events": get_workflow_events(workflow_id, after_sequence=after),
+        "latest_sequence": get_latest_sequence(workflow_id),
+    }
+
+
+@app.post("/api/web/session/{session_token}/workflows/{workflow_id}/pause")
+async def pause_workflow_endpoint(session_token: str, workflow_id: str):
+    try:
+        runtime = pause_workflow(workflow_id)
+        progress = calculate_progress(runtime)
+        return {
+            "ok": True,
+            "workflow_id": runtime.workflow_id,
+            "status": runtime.status.value,
+            "progress": progress,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/web/session/{session_token}/workflows/{workflow_id}/resume")
+async def resume_workflow_endpoint(session_token: str, workflow_id: str):
+    try:
+        runtime = resume_workflow(workflow_id)
+        progress = calculate_progress(runtime)
+        return {
+            "ok": True,
+            "workflow_id": runtime.workflow_id,
+            "status": runtime.status.value,
+            "progress": progress,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/web/session/{session_token}/workflows/{workflow_id}/cancel")
+async def cancel_workflow_endpoint(session_token: str, workflow_id: str):
+    try:
+        runtime = cancel_workflow(workflow_id)
+        return {
+            "ok": True,
+            "workflow_id": runtime.workflow_id,
+            "status": runtime.status.value,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 if __name__ == "__main__":

@@ -12,7 +12,10 @@ export type ActionType =
   | "refine"
   | "search"
   | "save_campaign"
-  | "export_csv";
+  | "export_csv"
+  | "launch_campaign"
+  | "view_drafts"
+  | "open_campaign";
 
 export type CopilotAction = {
   type: "navigate" | "action";
@@ -104,5 +107,20 @@ export const ACTION_REGISTRY: Record<ActionType, ActionDefinition> = {
     label: "Export CSV",
     description: "Export leads to CSV",
     page: "Discovery",
+  },
+  launch_campaign: {
+    id: "launch_campaign",
+    label: "Launch Campaign",
+    description: "Launch a campaign",
+  },
+  view_drafts: {
+    id: "view_drafts",
+    label: "View Drafts",
+    description: "Go to draft review",
+  },
+  open_campaign: {
+    id: "open_campaign",
+    label: "Open Campaign",
+    description: "Open a specific campaign",
   },
 };

@@ -2,36 +2,10 @@
 
 Exercises the real HTTP endpoints via TestClient.
 Mocks only the OpenAI call so tests are deterministic and cost-free.
+Fixtures are in conftest.py.
 """
 
 import pytest
-from fastapi.testclient import TestClient
-
-
-@pytest.fixture(autouse=True)
-def _mock_openai(monkeypatch):
-    """Mock OpenAI calls so the Copilot endpoint returns deterministic text."""
-
-    def mock_send_openai(*args, **kwargs):
-        return "I see you're on Mission Control. What would you like to do?"
-
-    import services.conversational_response_generator as crg
-    monkeypatch.setattr(crg, "_send_openai_request", mock_send_openai)
-
-
-@pytest.fixture(scope="module")
-def client():
-    from main import app
-    return TestClient(app)
-
-
-@pytest.fixture(scope="module")
-def session_token(client):
-    resp = client.post("/api/web/session", json={})
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data.get("ok") is True
-    return data["session_token"]
 
 
 class TestHealth:

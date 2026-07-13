@@ -151,6 +151,7 @@ export async function copilotMessage(
     currentPage?: string;
     pageContext?: Record<string, unknown>;
     availableActions?: string[];
+    messageHistory?: Array<{ role: string; text: string }>;
   },
 ) {
   return fetchWithRetry<{
@@ -165,14 +166,15 @@ export async function copilotMessage(
       timeout: 20000,
       retries: 1,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        text: params.text,
-        copilot: {
-          current_page: params.currentPage,
-          page_context: params.pageContext,
-          available_actions: params.availableActions,
-        },
-      }),
+        body: JSON.stringify({
+          text: params.text,
+          copilot: {
+            current_page: params.currentPage,
+            page_context: params.pageContext,
+            available_actions: params.availableActions,
+            message_history: params.messageHistory,
+          },
+        }),
     },
   );
 }
@@ -311,7 +313,7 @@ export async function refineDraft(
       if (v !== undefined && v !== null) body[k] = v;
     }
   }
-  return fetchWithRetry<{ ok: boolean; draft: { id: string; text: string; status: string }; rewritten_text?: string }>(
+  return fetchWithRetry<{ ok: boolean; draft: { id: string; text: string; status: string }; rewritten_text?: string; change_summary?: string[]; draft_intelligence?: DraftIntelligence | null; version?: number; confidence?: string; comparison?: { improvements: Array<{ category: string; description: string }>; regressions: Array<{ category: string; description: string }>; added: string[]; removed: string[]; length_change_pct: number } }>(
     `${API_BASE}/api/web/session/${sessionToken}/drafts/${draftId}/refine`,
     {
       method: "POST",
@@ -320,6 +322,38 @@ export async function refineDraft(
     },
   );
 }
+
+export type DraftIntelligenceCategory = {
+  score: number;
+  label?: string;
+  reason: string;
+  improvement: string;
+};
+
+export type DraftIntelligence = {
+  opening_strength: DraftIntelligenceCategory;
+  personalization_quality: DraftIntelligenceCategory;
+  pain_alignment: DraftIntelligenceCategory;
+  relevance: DraftIntelligenceCategory;
+  credibility: DraftIntelligenceCategory;
+  cta_strength: DraftIntelligenceCategory;
+  readability: DraftIntelligenceCategory;
+  length: DraftIntelligenceCategory;
+  tone: DraftIntelligenceCategory;
+  confidence: DraftIntelligenceCategory;
+  patterns: string[];
+  strengths: string[];
+  weaknesses: string[];
+  opportunities: string[];
+  persona_analysis?: Record<string, unknown> | null;
+  persona?: Record<string, unknown> | null;
+  company_context?: Record<string, unknown> | null;
+  messaging_strategy?: Record<string, unknown> | null;
+  cta_recommendation?: Record<string, unknown> | null;
+  objection_predictions?: Record<string, unknown>[] | null;
+  trust_suggestions?: Record<string, unknown>[] | null;
+  framework_recommendation?: Record<string, unknown> | null;
+};
 
 export type DraftAnalysis = {
   quality_score: number;
@@ -351,12 +385,45 @@ export async function analyzeDraft(
       if (v !== undefined && v !== null) body[k] = v;
     }
   }
-  return fetchWithRetry<{ ok: boolean; analysis: DraftAnalysis | null; error?: string }>(
+  return fetchWithRetry<{ ok: boolean; analysis: DraftAnalysis | null; draft_intelligence?: DraftIntelligence | null; error?: string }>(
     `${API_BASE}/api/web/session/${sessionToken}/drafts/analyze`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+    },
+  );
+}
+
+export async function undoDraft(sessionToken: string, draftId: string) {
+  return fetchWithRetry<{ ok: boolean; draft: { id: string; text: string; status: string }; undo?: { previous_text: string; reason: string; strategy: string; change_summary: string[]; version: number; timestamp: string } }>(
+    `${API_BASE}/api/web/session/${sessionToken}/drafts/${draftId}/undo`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    },
+  );
+}
+
+export async function getDraftHistory(sessionToken: string, draftId: string) {
+  return fetchWithRetry<{ ok: boolean; history: Array<{ previous_text: string; reason: string; strategy: string; change_summary: string[]; version: number; timestamp: string }>; current_version?: number }>(
+    `${API_BASE}/api/web/session/${sessionToken}/drafts/${draftId}/history`,
+    { cache: "no-store" },
+  );
+}
+
+export async function compareDraftVersions(
+  sessionToken: string,
+  oldText: string,
+  newText: string,
+  changeSummary?: string[],
+) {
+  return fetchWithRetry<{ ok: boolean; comparison: { improvements: Array<{ category: string; description: string }>; regressions: Array<{ category: string; description: string }>; added: string[]; removed: string[]; length_change_pct: number } }>(
+    `${API_BASE}/api/web/session/${sessionToken}/drafts/compare`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ old_text: oldText, new_text: newText, change_summary: changeSummary }),
     },
   );
 }
@@ -511,13 +578,18 @@ export type RecentOutcome = {
   type: string;
   text: string;
   timestamp: string;
+  count?: number;
+  grouped?: boolean;
 };
 
 export type MCRecommendation = {
   type: string;
-  text: string;
+  observation: string;
+  reason: string;
   action: string;
+  confidence: string;
   link: string;
+  why_details?: string[];
 };
 
 export type MCCampaign = {
@@ -528,6 +600,12 @@ export type MCCampaign = {
   pending_drafts: number;
   approved_drafts: number;
   updated_at: string;
+};
+
+export type MCBrief = {
+  greeting: string;
+  lines: string[];
+  suggestion: string;
 };
 
 export type MCSummary = {
@@ -541,11 +619,20 @@ export type MCSummary = {
   recommendations: MCRecommendation[];
   kpis: {
     estimated_reply_rate: number;
-    avg_qualification_score: number;
     pending_reviews: number;
     campaigns_ready: number;
   };
   total_leads: number;
+  brief: MCBrief;
+  workspace_memory: Record<string, unknown>;
+  workspace_analysis: {
+    current_focus: Record<string, unknown>;
+    recommended_next_action: Record<string, unknown>;
+    campaign_priorities: Array<Record<string, unknown>>;
+    workspace_health: Record<string, unknown>;
+    cross_campaign_insights: Array<Record<string, unknown>>;
+    workflow_continuation: Record<string, unknown>;
+  };
 };
 
 export async function getMissionControl(sessionToken: string) {

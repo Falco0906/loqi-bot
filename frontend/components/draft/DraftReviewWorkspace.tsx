@@ -7,6 +7,9 @@ import {
   updateDraft,
   refineDraft,
   approveDraft,
+  sendDraft,
+  scheduleDraft,
+  cancelScheduleDraft,
   listCampaigns,
   analyzeDraft,
   askDraftQuestion,
@@ -90,6 +93,11 @@ export default function DraftReviewWorkspace() {
   const [editHistory, setEditHistory] = useState<DraftEditEntry[]>([]);
   const [showDiffId, setShowDiffId] = useState<string | null>(null);
   const [highlightKey, setHighlightKey] = useState(0);
+  const [sendingId, setSendingId] = useState<string | null>(null);
+  const [showSchedulePicker, setShowSchedulePicker] = useState(false);
+  const [scheduleTime, setScheduleTime] = useState("");
+  const [schedulingId, setSchedulingId] = useState<string | null>(null);
+  const [cancellingScheduleId, setCancellingScheduleId] = useState<string | null>(null);
   const aiEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -226,7 +234,7 @@ export default function DraftReviewWorkspace() {
         return bTime - aTime;
       });
     const approved = drafts
-      .filter((d) => d.status === "approved")
+      .filter((d) => d.status === "approved" || d.status === "sent" || d.status === "scheduled")
       .sort((a, b) => {
         const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
         const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
@@ -357,6 +365,73 @@ export default function DraftReviewWorkspace() {
       }
     } catch {
       setMessage("Failed to update");
+    }
+  }
+
+  async function handleSend() {
+    if (!selected || !sessionToken) return;
+    setSendingId(selected.id);
+    try {
+      const res = await sendDraft(sessionToken, selected.id);
+      if (res.ok) {
+        setDrafts((prev) =>
+          prev.map((d) =>
+            d.id === selected.id ? { ...d, status: "sent" } : d,
+          ),
+        );
+        setMessage("Draft sent successfully");
+      } else {
+        setMessage(res.send_result?.error ? `Send failed: ${res.send_result.error as string}` : "Send failed");
+      }
+    } catch {
+      setMessage("Send request failed");
+    } finally {
+      setSendingId(null);
+    }
+  }
+
+  async function handleSchedule() {
+    if (!selected || !sessionToken || !scheduleTime) return;
+    setSchedulingId(selected.id);
+    try {
+      const res = await scheduleDraft(sessionToken, selected.id, new Date(scheduleTime).toISOString());
+      if (res.ok) {
+        setDrafts((prev) =>
+          prev.map((d) =>
+            d.id === selected.id ? { ...d, status: "scheduled" } : d,
+          ),
+        );
+        setMessage(`Scheduled for ${new Date(scheduleTime).toLocaleString()}`);
+        setShowSchedulePicker(false);
+      } else {
+        setMessage(res.error || "Schedule failed");
+      }
+    } catch {
+      setMessage("Schedule request failed");
+    } finally {
+      setSchedulingId(null);
+    }
+  }
+
+  async function handleCancelSchedule() {
+    if (!selected || !sessionToken) return;
+    setCancellingScheduleId(selected.id);
+    try {
+      const res = await cancelScheduleDraft(sessionToken, selected.id);
+      if (res.ok) {
+        setDrafts((prev) =>
+          prev.map((d) =>
+            d.id === selected.id ? { ...d, status: "pending" } : d,
+          ),
+        );
+        setMessage("Schedule cancelled");
+      } else {
+        setMessage(res.error || "Cancel failed");
+      }
+    } catch {
+      setMessage("Cancel request failed");
+    } finally {
+      setCancellingScheduleId(null);
     }
   }
 
@@ -766,6 +841,39 @@ export default function DraftReviewWorkspace() {
               >
                 {selected.status === "approved" ? "Unapprove" : "Approve"}
               </button>
+              {selected.status === "approved" ? (
+                <button
+                  onClick={handleSend}
+                  disabled={sendingId === selected.id}
+                  className="px-3 py-1.5 text-xs font-bold rounded-lg bg-primary text-on-primary border border-primary transition-all duration-150 hover:brightness-110 active:scale-[0.95] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2 disabled:opacity-50"
+                >
+                  {sendingId === selected.id ? (
+                    <span className="inline-flex items-center gap-1">
+                      <span className="w-2.5 h-2.5 border-2 border-on-primary border-t-transparent rounded-full animate-spin" />
+                      Sending...
+                    </span>
+                  ) : (
+                    "Send Now"
+                  )}
+                </button>
+              ) : null}
+              {selected.status === "approved" && !showSchedulePicker ? (
+                <button
+                  onClick={() => { setShowSchedulePicker(true); setScheduleTime(""); }}
+                  className="px-3 py-1.5 text-xs font-bold rounded-lg border border-outline-variant/20 text-on-surface hover:border-info/40 hover:text-info transition-all duration-150 active:scale-[0.95]"
+                >
+                  Schedule
+                </button>
+              ) : null}
+              {selected.status === "scheduled" ? (
+                <button
+                  onClick={handleCancelSchedule}
+                  disabled={cancellingScheduleId === selected.id}
+                  className="px-3 py-1.5 text-xs font-bold rounded-lg border border-error/30 text-error hover:bg-error/5 transition-all duration-150 active:scale-[0.95] disabled:opacity-50"
+                >
+                  {cancellingScheduleId === selected.id ? "Cancelling..." : "Cancel Schedule"}
+                </button>
+              ) : null}
             </div>
           </div>
 
@@ -774,6 +882,38 @@ export default function DraftReviewWorkspace() {
             <div className="mx-6 mt-3 rounded-lg bg-primary-container/10 border border-primary/20 px-3 py-2 text-sm text-primary animate-scale-in flex items-center gap-2">
               <Icon name="check_circle" className="text-sm shrink-0" />
               {message}
+            </div>
+          ) : null}
+
+          {/* Schedule picker */}
+          {showSchedulePicker && selected?.status === "approved" ? (
+            <div className="mx-6 mt-3 rounded-lg bg-surface/80 border border-info/20 px-4 py-3 animate-scale-in">
+              <p className="text-xs text-on-surface-variant mb-2">Schedule send time:</p>
+              <div className="flex gap-2">
+                <input
+                  type="datetime-local"
+                  value={scheduleTime}
+                  onChange={(e) => setScheduleTime(e.target.value)}
+                  className="flex-1 rounded-lg border border-outline-variant/20 bg-surface-low px-3 py-1.5 text-xs text-on-surface outline-none focus:border-info/50"
+                />
+                <button
+                  onClick={handleSchedule}
+                  disabled={!scheduleTime || schedulingId === selected.id}
+                  className="px-3 py-1.5 text-xs font-bold rounded-lg bg-info text-on-info border border-info transition-all duration-150 hover:brightness-110 active:scale-[0.95] disabled:opacity-50"
+                >
+                  {schedulingId === selected.id ? (
+                    <span className="inline-flex items-center gap-1">
+                      <span className="w-2.5 h-2.5 border-2 border-on-info border-t-transparent rounded-full animate-spin" />
+                    </span>
+                  ) : "Confirm"}
+                </button>
+                <button
+                  onClick={() => setShowSchedulePicker(false)}
+                  className="px-3 py-1.5 text-xs font-medium rounded-lg border border-outline-variant/20 text-on-surface hover:bg-surface transition-all"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           ) : null}
 
@@ -1229,16 +1369,20 @@ function StatusDot({ status }: { status: string }) {
     approved: "bg-secondary",
     pending: "bg-tertiary",
     needs_review: "bg-error",
+    sent: "bg-primary",
+    scheduled: "bg-info",
   };
   return <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${colors[status] || "bg-on-surface-variant/40"}`} title={status} />;
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const labels: Record<string, string> = { approved: "Approved", pending: "Pending", needs_review: "Needs Review" };
+  const labels: Record<string, string> = { approved: "Approved", pending: "Pending", needs_review: "Needs Review", sent: "Sent", scheduled: "Scheduled" };
   const colors: Record<string, string> = {
     approved: "bg-secondary/10 text-secondary",
     pending: "bg-tertiary/10 text-tertiary",
     needs_review: "bg-error/10 text-error",
+    sent: "bg-primary/10 text-primary",
+    scheduled: "bg-info/10 text-info",
   };
   return (
     <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${colors[status] || "bg-surface-high text-on-surface-variant"}`}>

@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import WorkspaceContainer from "../../../components/layout/WorkspaceContainer";
 import DraftReviewWorkspace from "../../../components/draft/DraftReviewWorkspace";
 
 function DraftFallback() {
@@ -27,8 +28,10 @@ function DraftFallback() {
 
 export default function DraftPage() {
   return (
-    <Suspense fallback={<DraftFallback />}>
-      <DraftReviewWorkspace />
-    </Suspense>
+    <WorkspaceContainer>
+      <Suspense fallback={<DraftFallback />}>
+        <DraftReviewWorkspace />
+      </Suspense>
+    </WorkspaceContainer>
   );
 }

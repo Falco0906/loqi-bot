@@ -76,6 +76,31 @@ def _execute_wait_for_user(step: WorkflowStep, session_token: str, context: dict
     return {"ok": True, "action": "wait_for_user", "message": step.title, "requires_approval": True}
 
 
+def _execute_create_reply_draft(step: WorkflowStep, session_token: str, context: dict) -> dict:
+    _log(f"execute_create_reply_draft: {step.title}")
+    return {"ok": True, "action": "create_reply_draft", "message": f"Creating reply draft: {step.title}"}
+
+
+def _execute_update_reply_draft(step: WorkflowStep, session_token: str, context: dict) -> dict:
+    _log(f"execute_update_reply_draft: {step.title}")
+    return {"ok": True, "action": "update_reply_draft", "message": "Updating reply draft"}
+
+
+def _execute_send_reply(step: WorkflowStep, session_token: str, context: dict) -> dict:
+    _log(f"execute_send_reply: {step.title}")
+    return {"ok": True, "action": "send_reply", "message": f"Sending reply: {step.title}"}
+
+
+def _execute_schedule_reply(step: WorkflowStep, session_token: str, context: dict) -> dict:
+    _log(f"execute_schedule_reply: {step.title}")
+    return {"ok": True, "action": "schedule_reply", "message": f"Scheduling reply: {step.title}"}
+
+
+def _execute_delete_draft(step: WorkflowStep, session_token: str, context: dict) -> dict:
+    _log(f"execute_delete_draft: {step.title}")
+    return {"ok": True, "action": "delete_draft", "message": "Deleting draft"}
+
+
 EXECUTOR_REGISTRY: dict[ActionType, callable] = {
     ActionType.SEARCH_LEADS: _execute_search_leads,
     ActionType.EXPAND_SEARCH: _execute_expand_search,
@@ -90,6 +115,11 @@ EXECUTOR_REGISTRY: dict[ActionType, callable] = {
     ActionType.NAVIGATE: _execute_navigate,
     ActionType.ANALYZE_CAMPAIGN: _execute_analyze_campaign,
     ActionType.WAIT_FOR_USER: _execute_wait_for_user,
+    ActionType.CREATE_REPLY_DRAFT: _execute_create_reply_draft,
+    ActionType.UPDATE_REPLY_DRAFT: _execute_update_reply_draft,
+    ActionType.SEND_REPLY: _execute_send_reply,
+    ActionType.SCHEDULE_REPLY: _execute_schedule_reply,
+    ActionType.DELETE_DRAFT: _execute_delete_draft,
 }
 
 

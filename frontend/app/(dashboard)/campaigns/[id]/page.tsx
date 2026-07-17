@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { getCampaign, updateCampaign, generateCampaignDrafts, getCampaignGenerationStatus } from "../../../../lib/api";
+import { getCampaign, updateCampaign, generateCampaignDrafts, getCampaignGenerationStatus, getCampaignLaunchProgress } from "../../../../lib/api";
 import DraftReviewWorkspace from "../../../../components/draft/DraftReviewWorkspace";
 import CampaignStatusBadge from "../../../../components/campaigns/CampaignStatusBadge";
 import CampaignDraftList from "../../../../components/campaigns/CampaignDraftList";
@@ -27,6 +27,8 @@ export default function CampaignDetailPage() {
   const [tab, setTab] = useState<Tab>("Overview");
   const [generating, setGenerating] = useState(false);
   const [genProgress, setGenProgress] = useState<{ total: number; completed: number } | null>(null);
+  const [launching, setLaunching] = useState(false);
+  const [launchProgress, setLaunchProgress] = useState<{ sent: number; total: number } | null>(null);
   const [campaignError, setCampaignError] = useState<string | null>(null);
   const [nameEdit, setNameEdit] = useState("");
 
@@ -325,19 +327,60 @@ export default function CampaignDetailPage() {
                       </button>
                     ) : null}
                     {status === "ready_to_send" ? (
-                      <button
-                        onClick={async () => {
-                          if (sessionToken) {
-                            await updateCampaign(sessionToken, campaignId, { status: "completed" });
-                            toast("success", "Campaign launched successfully");
-                            await refreshCampaign();
-                          }
-                        }}
-                        className="w-full inline-flex items-center justify-center px-4 py-2.5 rounded-lg bg-primary text-on-primary text-sm font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
-                      >
-                        <Icon name="rocket_launch" className="text-sm mr-2" />
-                        Launch Campaign
-                      </button>
+                      launching ? (
+                        <div className="card-base border-primary/20 bg-primary-container/5 p-4">
+                          <div className="flex items-center gap-3 mb-3">
+                            <div className="w-3 h-3 rounded-full bg-primary animate-pulse" />
+                            <p className="text-body-md text-on-surface font-bold">Launching campaign...</p>
+                          </div>
+                          {launchProgress ? (
+                            <>
+                              <div className="w-full bg-outline-variant/10 rounded-full h-2 overflow-hidden">
+                                <div
+                                  className="h-full bg-primary rounded-full transition-all duration-500"
+                                  style={{ width: `${launchProgress.total > 0 ? Math.round((launchProgress.sent / launchProgress.total) * 100) : 0}%` }}
+                                />
+                              </div>
+                              <p className="text-label-sm text-on-surface-variant/60 mt-2">
+                                {launchProgress.sent} of {launchProgress.total} sent
+                              </p>
+                            </>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <button
+                          onClick={async () => {
+                            if (sessionToken) {
+                              setLaunching(true);
+                              setLaunchProgress(null);
+                              try {
+                                await updateCampaign(sessionToken, campaignId, { status: "completed" });
+                                const poll = setInterval(async () => {
+                                  try {
+                                  const res = await getCampaignLaunchProgress(sessionToken, campaignId);
+                                    if (res.ok) {
+                                      setLaunchProgress({ sent: res.launch_sent, total: res.launch_total });
+                                      if (res.launch_complete) {
+                                        clearInterval(poll);
+                                        setLaunching(false);
+                                        toast("success", `Campaign launched — ${res.launch_sent} emails sent`);
+                                        await refreshCampaign();
+                                      }
+                                    }
+                                  } catch { /* silent */ }
+                                }, 1000);
+                              } catch {
+                                setLaunching(false);
+                                toast("error", "Failed to launch campaign");
+                              }
+                            }
+                          }}
+                          className="w-full inline-flex items-center justify-center px-4 py-2.5 rounded-lg bg-primary text-on-primary text-sm font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
+                        >
+                          <Icon name="rocket_launch" className="text-sm mr-2" />
+                          Launch Campaign
+                        </button>
+                      )
                     ) : null}
                     <button
                       onClick={() => router.push("/discovery")}

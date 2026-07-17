@@ -53,6 +53,7 @@ def build_snapshot(
     drafts: list[dict],
     total_leads: int = 0,
     force_refresh: bool = False,
+    user_id: str | None = None,
 ) -> dict:
     ck = _make_cache_key(session_token, campaigns, drafts)
     if not force_refresh and _cache.get(ck):
@@ -61,7 +62,8 @@ def build_snapshot(
 
     _log(f"building new snapshot (campaigns={len(campaigns)}, drafts={len(drafts)})")
 
-    user_id = f"web:{session_token}"
+    if user_id is None:
+        user_id = f"web:{session_token}"
 
     enriched = enrich_campaigns(campaigns, drafts)
 

@@ -5,6 +5,7 @@ import { listCampaigns, updateCampaign, archiveCampaign } from "../../../lib/api
 import CampaignCard from "../../../components/campaigns/CampaignCard";
 import Icon from "../../../components/shared/Icon";
 import { toast } from "../../../components/shared/Toast";
+import WorkspaceContainer from "../../../components/layout/WorkspaceContainer";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
@@ -94,8 +95,9 @@ export default function CampaignsPage() {
   }
 
   return (
-    <div className="h-full overflow-y-auto px-6 py-6">
-      <div className="max-w-5xl mx-auto">
+    <WorkspaceContainer>
+      <div className="h-full overflow-y-auto px-6 py-6">
+        <div className="max-w-5xl mx-auto">
         <div className="flex items-center gap-3 mb-8">
           <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
             <Icon name="campaign" className="text-primary text-xl" />
@@ -191,5 +193,6 @@ export default function CampaignsPage() {
         )}
       </div>
     </div>
+    </WorkspaceContainer>
   );
 }

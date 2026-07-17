@@ -484,6 +484,27 @@ export async function approveDraft(sessionToken: string, draftId: string) {
   );
 }
 
+export async function sendDraft(sessionToken: string, draftId: string) {
+  return fetchWithRetry<{ ok: boolean; send_result?: Record<string, unknown> }>(
+    `${API_BASE}/api/web/session/${sessionToken}/drafts/${draftId}/send`,
+    { method: "POST" },
+  );
+}
+
+export async function scheduleDraft(sessionToken: string, draftId: string, sendAt: string) {
+  return fetchWithRetry<{ ok: boolean; schedule_id?: string; error?: string }>(
+    `${API_BASE}/api/web/session/${sessionToken}/drafts/${draftId}/schedule`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ send_at: sendAt }) },
+  );
+}
+
+export async function cancelScheduleDraft(sessionToken: string, draftId: string) {
+  return fetchWithRetry<{ ok: boolean; error?: string }>(
+    `${API_BASE}/api/web/session/${sessionToken}/drafts/${draftId}/cancel-schedule`,
+    { method: "POST" },
+  );
+}
+
 /* ─── Campaigns ─── */
 
 export async function saveCampaign(
@@ -715,6 +736,168 @@ export async function getJobResults(jobId: string) {
   );
 }
 
+/* ─── Provider / Communication Intelligence (Dev Tooling) ─── */
+
+export async function getGmailAuthUrl(sessionToken?: string) {
+  const params = sessionToken ? `?session_token=${encodeURIComponent(sessionToken)}` : '';
+  return fetchWithRetry<{ ok: boolean; url: string }>(
+    `${API_BASE}/api/auth/gmail/url${params}`,
+  );
+}
+
+export async function getGmailCallback(code: string) {
+  return fetchWithRetry<{ ok: boolean; provider_id?: string; email?: string; error?: string }>(
+    `${API_BASE}/api/auth/gmail/callback?code=${encodeURIComponent(code)}`,
+  );
+}
+
+export async function listProviders(sessionToken: string) {
+  return fetchWithRetry<{ ok: boolean; providers: Array<{
+    id: string; provider_type: string; status: string;
+    email: string; last_sync: string; sync_cursor: string; created_at: string;
+  }> }>(
+    `${API_BASE}/api/web/session/${sessionToken}/providers`,
+  );
+}
+
+export async function connectProvider(sessionToken: string, providerType: string, authToken: string, email?: string) {
+  return fetchWithRetry<{ ok: boolean; provider: Record<string, unknown> }>(
+    `${API_BASE}/api/web/session/${sessionToken}/providers/connect`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider_type: providerType, auth_token: authToken, email }),
+    },
+  );
+}
+
+export async function disconnectProvider(sessionToken: string, providerId: string) {
+  return fetchWithRetry<{ ok: boolean }>(
+    `${API_BASE}/api/web/session/${sessionToken}/providers/${providerId}/disconnect`,
+    { method: "POST" },
+  );
+}
+
+export async function getProviderHealth(sessionToken: string, providerId: string) {
+  return fetchWithRetry<{ ok: boolean; provider_id: string; status: string; last_sync: string }>(
+    `${API_BASE}/api/web/session/${sessionToken}/providers/${providerId}/health`,
+  );
+}
+
+export async function syncProvider(sessionToken: string, providerId: string, cursor?: string) {
+  const params = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+  return fetchWithRetry<{ ok: boolean; result: {
+    provider_id: string; threads_synced: number; messages_synced: number;
+    new_conversations: number; errors: string[]; cursor: string; duration_ms: number;
+  } }>(
+    `${API_BASE}/api/web/session/${sessionToken}/providers/${providerId}/sync${params}`,
+    { method: "POST", timeout: 30000 },
+  );
+}
+
+export async function getProviderStatus(sessionToken: string, providerId: string) {
+  return fetchWithRetry<{ ok: boolean; provider_id: string; provider_type: string; status: string;
+    connected: boolean; last_sync: string; sync_cursor: string; watching: boolean;
+  }>(`${API_BASE}/api/web/session/${sessionToken}/providers/${providerId}/status`);
+}
+
+export async function getProviderThreads(sessionToken: string, providerId: string) {
+  return fetchWithRetry<{ ok: boolean; provider_id: string; threads: Array<Record<string, unknown>>; total: number }>(
+    `${API_BASE}/api/web/session/${sessionToken}/providers/${providerId}/threads`,
+  );
+}
+
+export async function getProviderMessages(sessionToken: string, providerId: string) {
+  return fetchWithRetry<{ ok: boolean; provider_id: string; total_messages_seen: number; recent_messages?: Record<string, unknown>[]; mailbox_email?: string }>(
+    `${API_BASE}/api/web/session/${sessionToken}/providers/${providerId}/messages`,
+  );
+}
+
+export async function getProviderEvents(sessionToken: string, providerId?: string, after?: number) {
+  const params = new URLSearchParams();
+  if (providerId) params.set("provider_id", providerId);
+  if (after !== undefined) params.set("after", String(after));
+  const qs = params.toString();
+  return fetchWithRetry<{ ok: boolean; events: Array<{
+    id: string; event_type: string; provider_id: string;
+    message: string; timestamp: string; sequence: number; metadata: Record<string, unknown>;
+  }>; latest_sequence: number }>(
+    `${API_BASE}/api/web/session/${sessionToken}/providers/events${qs ? '?' + qs : ''}`,
+  );
+}
+
+export async function getRegisteredProviderTypes(sessionToken: string) {
+  return fetchWithRetry<{ ok: boolean; types: string[] }>(
+    `${API_BASE}/api/web/session/${sessionToken}/providers/registered`,
+  );
+}
+
+export async function analyzeConversationMessage(sessionToken: string, text: string, conversationId?: string, sender?: string) {
+  return fetchWithRetry<{ ok: boolean; intelligence: Record<string, unknown>; memory: Record<string, unknown> }>(
+    `${API_BASE}/api/web/session/${sessionToken}/communication/analyze`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, conversation_id: conversationId || "", sender: sender || "lead" }),
+    },
+  );
+}
+
+export async function getConversationTimeline(sessionToken: string, conversationId: string) {
+  return fetchWithRetry<{ ok: boolean; events: Array<Record<string, unknown>>; total: number }>(
+    `${API_BASE}/api/web/session/${sessionToken}/communication/${conversationId}/timeline`,
+  );
+}
+
+export async function planWorkflow(sessionToken: string, objective: string) {
+  return fetchWithRetry<{ ok: boolean; plan: Record<string, unknown>; alternative_plan: Record<string, unknown>; recommendation: string; confidence: string }>(
+    `${API_BASE}/api/web/session/${sessionToken}/plan`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ objective, current_page: "dev-providers" }),
+    },
+  );
+}
+
+export type ProviderDiagnostics = {
+  providers: Array<Record<string, unknown>>;
+  provider_summary?: { total: number; healthy: number; offline: number; last_sync: string };
+  conversation_intelligence?: Record<string, unknown>;
+};
+
+export async function getWorkspaceContext(sessionToken: string, conversationId?: string) {
+  const params = new URLSearchParams();
+  if (conversationId) params.set("conversation_id", conversationId);
+  const qs = params.toString();
+  return fetchWithRetry<Record<string, unknown>>(
+    `${API_BASE}/api/web/session/${sessionToken}/workspace-context${qs ? '?' + qs : ''}`,
+  );
+}
+
+export async function getCommunicationSummary(sessionToken: string, text: string) {
+  return fetchWithRetry<{ ok: boolean; summary: string }>(
+    `${API_BASE}/api/web/session/${sessionToken}/communication/summary`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    },
+  );
+}
+
+export async function getCommunicationRecommend(sessionToken: string, text: string) {
+  return fetchWithRetry<{ ok: boolean; recommendation: Record<string, unknown> }>(
+    `${API_BASE}/api/web/session/${sessionToken}/communication/recommend`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    },
+  );
+}
+
+
 export async function listActiveJobs(sessionToken: string) {
   return fetchWithRetry<{ jobs: JobResponse[] }>(
     `${API_BASE}/api/jobs`,
@@ -723,5 +906,139 @@ export async function listActiveJobs(sessionToken: string) {
       timeout: 5000,
       retries: 0,
     },
+  );
+}
+
+// ── Outbound API ──
+
+export async function outboundCreateDraft(sessionToken: string, payload: Record<string, unknown>) {
+  return fetchWithRetry<{ ok: boolean; draft: Record<string, unknown> }>(
+    `${API_BASE}/api/web/session/${sessionToken}/outbound/drafts`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
+  );
+}
+
+export async function outboundUpdateDraft(sessionToken: string, draftId: string, payload: Record<string, unknown>) {
+  return fetchWithRetry<{ ok: boolean; draft: Record<string, unknown> }>(
+    `${API_BASE}/api/web/session/${sessionToken}/outbound/drafts/${draftId}`,
+    { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
+  );
+}
+
+export async function outboundDeleteDraft(sessionToken: string, draftId: string, providerId: string) {
+  return fetchWithRetry<{ ok: boolean }>(
+    `${API_BASE}/api/web/session/${sessionToken}/outbound/drafts/${draftId}?provider_id=${encodeURIComponent(providerId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function outboundSend(sessionToken: string, payload: Record<string, unknown>) {
+  return fetchWithRetry<{ ok: boolean; send_result?: Record<string, unknown>; error?: string }>(
+    `${API_BASE}/api/web/session/${sessionToken}/outbound/send`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
+  );
+}
+
+export async function outboundSchedule(sessionToken: string, payload: Record<string, unknown>) {
+  return fetchWithRetry<{ ok: boolean; schedule_id?: string; error?: string }>(
+    `${API_BASE}/api/web/session/${sessionToken}/outbound/schedule`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
+  );
+}
+
+export async function outboundCancelSchedule(sessionToken: string, scheduleId: string, providerId: string) {
+  return fetchWithRetry<{ ok: boolean }>(
+    `${API_BASE}/api/web/session/${sessionToken}/outbound/schedule/${scheduleId}?provider_id=${encodeURIComponent(providerId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function outboundListDrafts(sessionToken: string, providerId?: string) {
+  const params = providerId ? `?provider_id=${encodeURIComponent(providerId)}` : '';
+  return fetchWithRetry<{ ok: boolean; drafts: Record<string, unknown>[]; total: number }>(
+    `${API_BASE}/api/web/session/${sessionToken}/outbound/drafts${params}`,
+  );
+}
+
+export async function outboundGetDraft(sessionToken: string, draftId: string) {
+  return fetchWithRetry<{ ok: boolean; draft: Record<string, unknown> }>(
+    `${API_BASE}/api/web/session/${sessionToken}/outbound/drafts/${draftId}`,
+  );
+}
+
+export async function outboundApproveDraft(sessionToken: string, draftId: string, auto = false) {
+  const params = auto ? '?auto=true' : '';
+  return fetchWithRetry<{ ok: boolean; draft: Record<string, unknown> }>(
+    `${API_BASE}/api/web/session/${sessionToken}/outbound/drafts/${draftId}/approve${params}`,
+    { method: "POST" },
+  );
+}
+
+export async function outboundRejectDraft(sessionToken: string, draftId: string) {
+  return fetchWithRetry<{ ok: boolean; draft: Record<string, unknown> }>(
+    `${API_BASE}/api/web/session/${sessionToken}/outbound/drafts/${draftId}/reject`,
+    { method: "POST" },
+  );
+}
+
+export async function outboundGetHistory(sessionToken: string, providerId?: string) {
+  const params = providerId ? `?provider_id=${encodeURIComponent(providerId)}` : '';
+  return fetchWithRetry<{ ok: boolean; history: Record<string, unknown>[] }>(
+    `${API_BASE}/api/web/session/${sessionToken}/outbound/history${params}`,
+  );
+}
+
+export async function outboundGetEvents(sessionToken: string, providerId?: string, after?: number) {
+  const params = new URLSearchParams();
+  if (providerId) params.set("provider_id", providerId);
+  if (after !== undefined) params.set("after", String(after));
+  const qs = params.toString();
+  return fetchWithRetry<{ ok: boolean; events: Record<string, unknown>[]; latest_sequence: number }>(
+    `${API_BASE}/api/web/session/${sessionToken}/outbound/events${qs ? '?' + qs : ''}`,
+  );
+}
+
+export async function outboundGetDraftVersions(sessionToken: string, draftId: string) {
+  return fetchWithRetry<{ ok: boolean; versions: Record<string, unknown>[] }>(
+    `${API_BASE}/api/web/session/${sessionToken}/outbound/drafts/${draftId}/versions`,
+  );
+}
+
+export async function outboundApproveAll(sessionToken: string, auto = false) {
+  return fetchWithRetry<{ ok: boolean; total: number; created: number; failed: number; results: Record<string, unknown>[] }>(
+    `${API_BASE}/api/web/session/${sessionToken}/outbound/approve-all`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ auto }) },
+  );
+}
+
+export async function getCampaignLaunchProgress(sessionToken: string, campaignId: string) {
+  return fetchWithRetry<{ ok: boolean; launch_sent: number; launch_total: number; launch_complete: boolean }>(
+    `${API_BASE}/api/web/session/${sessionToken}/campaigns/${campaignId}/launch-progress`,
+  );
+}
+
+/* ─── Conversations (workspace) ─── */
+
+export async function listConversations(sessionToken: string) {
+  return fetchWithRetry<{ ok: boolean; conversations: Record<string, unknown>[] }>(
+    `${API_BASE}/api/web/session/${sessionToken}/conversations`,
+  );
+}
+
+export async function getConversation(sessionToken: string, conversationId: string) {
+  return fetchWithRetry<{ ok: boolean; conversation: Record<string, unknown> }>(
+    `${API_BASE}/api/web/session/${sessionToken}/conversations/${conversationId}`,
+  );
+}
+
+export async function getConversationEvents(sessionToken: string, conversationId: string) {
+  return fetchWithRetry<{ ok: boolean; events: Record<string, unknown>[] }>(
+    `${API_BASE}/api/web/session/${sessionToken}/conversations/${conversationId}/timeline`,
+  );
+}
+
+export async function getConversationMessages(sessionToken: string, conversationId: string) {
+  return fetchWithRetry<{ ok: boolean; messages: Record<string, unknown>[] }>(
+    `${API_BASE}/api/web/session/${sessionToken}/conversations/${conversationId}/messages`,
   );
 }

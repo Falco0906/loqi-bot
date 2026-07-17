@@ -1,5 +1,10 @@
+import WorkspaceContainer from "../../../components/layout/WorkspaceContainer";
 import DiscoveryWorkspace from "../../../components/discovery/DiscoveryWorkspace";
 
 export default function DiscoveryPage() {
-  return <DiscoveryWorkspace />;
+  return (
+    <WorkspaceContainer>
+      <DiscoveryWorkspace />
+    </WorkspaceContainer>
+  );
 }

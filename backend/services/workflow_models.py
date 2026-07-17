@@ -39,6 +39,11 @@ class ActionType(str, Enum):
     NAVIGATE = "navigate"
     ANALYZE_CAMPAIGN = "analyze_campaign"
     WAIT_FOR_USER = "wait_for_user"
+    CREATE_REPLY_DRAFT = "create_reply_draft"
+    UPDATE_REPLY_DRAFT = "update_reply_draft"
+    SEND_REPLY = "send_reply"
+    SCHEDULE_REPLY = "schedule_reply"
+    DELETE_DRAFT = "delete_draft"
 
 
 class WorkflowStep(BaseModel):

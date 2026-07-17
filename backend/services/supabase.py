@@ -609,3 +609,72 @@ def save_user_preference(user_id: str, key: str, value: str) -> None:
         _log(f"save_user_preference success")
     except Exception as error:
         _log(f"save_user_preference error: {error}")
+
+
+def save_provider_credentials(
+    user_id: str,
+    provider_id: str,
+    *,
+    access_token: str,
+    refresh_token: str,
+    token_expiry: str,
+    email: str,
+    client_id: str = "",
+    client_secret: str = "",
+) -> bool:
+    """Persist provider credentials to the users table.
+    Uses a synthetic telegram_id ('provider:<user_id>') to create/lookup the user record.
+    This avoids requiring a real Supabase auth user.
+    """
+    _log(f"save_provider_credentials: user_id={user_id}, provider_id={provider_id}, email={email}")
+    synthetic_id = f"provider:{user_id}"
+    user = get_or_create_user(synthetic_id, username=f"Provider:{provider_id[:8]}")
+    if not user:
+        _log("save_provider_credentials: failed to get or create user")
+        return False
+    result = save_google_tokens(
+        user["id"],
+        email=email,
+        telegram_chat_id=None,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_expiry=token_expiry,
+    )
+    if result:
+        try:
+            client = get_supabase_client()
+            if client:
+                client.table("users").update({
+                    "google_client_id": client_id,
+                    "google_client_secret": client_secret,
+                    "google_provider_id": provider_id,
+                }).eq("id", user["id"]).execute()
+        except Exception as e:
+            _log(f"save_provider_credentials: extra fields update error: {e}")
+    return result is not None
+
+
+def load_all_provider_credentials() -> list[dict]:
+    """Load all persisted provider credentials from the users table.
+    Returns list of dicts with: user_id, provider_id, access_token, refresh_token, token_expiry, email, client_id, client_secret
+    """
+    _log("load_all_provider_credentials called")
+    client = get_supabase_client()
+    if client is None:
+        _log("load_all_provider_credentials: no client")
+        return []
+    try:
+        result = (
+            client.table("users")
+            .select("id, email, google_access_token, google_refresh_token, token_expiry, google_client_id, google_client_secret, google_provider_id, telegram_id")
+            .neq("google_refresh_token", "")
+            .neq("google_refresh_token", None)
+            .execute()
+        )
+        rows = getattr(result, "data", None) or []
+        rows = [r for r in rows if r.get("telegram_id", "").startswith("provider:")]
+        _log(f"load_all_provider_credentials: found {len(rows)} credential records")
+        return rows
+    except Exception as e:
+        _log(f"load_all_provider_credentials error: {e}")
+        return []

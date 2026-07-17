@@ -4,12 +4,17 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Icon from "../shared/Icon";
 
-const navItems = [
+const coreWorkflow = [
   { label: "Mission Control", href: "/mission-control", icon: "dashboard" },
   { label: "Discovery", href: "/discovery", icon: "explore" },
   { label: "Campaigns", href: "/campaigns", icon: "campaign" },
-  { label: "Drafts", href: "/draft", icon: "edit_note" },
+  { label: "Draft Review", href: "/draft", icon: "edit_note" },
+];
+
+const utilityPages = [
+  { label: "Conversations", href: "/conversations", icon: "forum" },
   { label: "Campaign Intelligence", href: "/campaign-intelligence", icon: "insights" },
+  { label: "Settings", href: "/settings", icon: "settings" },
 ];
 
 function NavIcon({ icon, active }: { icon: string; active: boolean }) {
@@ -23,6 +28,27 @@ function NavIcon({ icon, active }: { icon: string; active: boolean }) {
 
 export default function Sidebar() {
   const pathname = usePathname();
+
+  function renderNavItem(item: { label: string; href: string; icon: string }) {
+    const active = pathname === item.href || (item.href !== "/mission-control" && pathname.startsWith(item.href));
+    return (
+      <Link
+        key={item.href}
+        href={item.href}
+        className={`group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150 ${
+          active
+            ? "bg-primary-container/15 text-primary"
+            : "text-on-surface-variant/70 hover:bg-surface-high/60 hover:text-on-surface"
+        }`}
+      >
+        {active && (
+          <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 rounded-full bg-primary" />
+        )}
+        <NavIcon icon={item.icon} active={active} />
+        <span>{item.label}</span>
+      </Link>
+    );
+  }
 
   return (
     <aside className="fixed left-0 top-0 z-30 flex h-full w-64 flex-col border-r border-outline-variant/10 bg-charcoal/95 backdrop-blur-xl">
@@ -41,26 +67,17 @@ export default function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 space-y-0.5 px-3 py-4">
-        {navItems.map((item) => {
-          const active = pathname === item.href || (item.href !== "/mission-control" && pathname.startsWith(item.href));
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150 ${
-                active
-                  ? "bg-primary-container/15 text-primary"
-                  : "text-on-surface-variant/70 hover:bg-surface-high/60 hover:text-on-surface"
-              }`}
-            >
-              {active && (
-                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 rounded-full bg-primary" />
-              )}
-              <NavIcon icon={item.icon} active={active} />
-              <span>{item.label}</span>
-            </Link>
-          );
-        })}
+        <div className="mb-1 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-on-surface-variant/30">
+          Workspace
+        </div>
+        {coreWorkflow.map(renderNavItem)}
+
+        <div className="my-2 border-t border-outline-variant/10" />
+
+        <div className="mb-1 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-on-surface-variant/30">
+          Utilities
+        </div>
+        {utilityPages.map(renderNavItem)}
       </nav>
 
       {/* Bottom */}

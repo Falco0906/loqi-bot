@@ -49,6 +49,33 @@ from services.workflow_progress import calculate_progress
 from services.workflow_events import get_events as get_workflow_events, get_latest_sequence
 from services.workflow_models import WorkflowPlan
 from services.workflow_recovery import recover_all
+from services.conversation_models import ConversationMessage
+from services.communication.provider_registry import (
+    register_provider, get_provider, list_providers,
+    instantiate_provider, register_instance, remove_instance,
+    disconnect_provider as registry_disconnect, health_check,
+    list_registered_types,
+)
+from services.outbound.outbound_registry import (
+    get_provider as get_outbound_provider,
+    list_providers as outbound_list_providers,
+    register_instance as outbound_register_instance,
+    remove_instance as outbound_remove_instance,
+)
+from services.communication.provider_models import (
+    ProviderType, ProviderStatus, CommunicationProvider,
+)
+from services.communication.communication_store import store as communication_store
+from services.communication.provider_events import get_events as get_provider_events, latest_sequence
+from services.communication.gmail_provider import GmailProvider
+from services.communication.gmail_sync import sync_all, sync_thread
+from services.reply_intelligence import analyze_message
+from services.conversation_memory import memory_store, create_or_update_memory
+from services.followup_reasoner import recommend_followup
+from services.reply_summary import generate_summary
+from services.conversation_timeline import get_events as get_conversation_events
+from services.conversation_models import FollowupAction, BuyingSignal, SignalStrength, ConversationStage
+from services.buying_signal import detect_signals
 
 load_dotenv()
 
@@ -67,12 +94,12 @@ draft_store: dict[str, list[dict[str, Any]]] = {}
 campaign_store: dict[str, list[dict[str, Any]]] = {}
 
 
-def _build_copilot_workspace_context(session_token: str, current_page: str | None = None, page_context: dict | None = None) -> dict:
+def _build_copilot_workspace_context(session_token: str, current_page: str | None = None, page_context: dict | None = None, conversation_id: str | None = None, user_id: str | None = None) -> dict:
     campaigns = campaign_store.get(session_token, [])
     drafts = draft_store.get(session_token, [])
     total_leads = sum(c.get("lead_count", 0) or 0 for c in campaigns)
     from services.workspace_snapshot import build_snapshot
-    snapshot = build_snapshot(session_token, campaigns, drafts, total_leads)
+    snapshot = build_snapshot(session_token, campaigns, drafts, total_leads, user_id=user_id)
     analysis = snapshot.get("analysis", {})
 
     active_workflows = get_active_runtimes(session_token)
@@ -151,6 +178,54 @@ def _build_copilot_workspace_context(session_token: str, current_page: str | Non
             except (ValueError, IndexError):
                 pass
 
+    providers = communication_store.list_providers()
+    if providers:
+        provider_list = []
+        for p in providers:
+            instance = get_provider(p.id)
+            health_val = instance.health().value if instance else p.status.value
+            provider_list.append({
+                "id": p.id,
+                "provider_type": p.provider_type.value,
+                "status": health_val,
+                "email": p.metadata.get("email", ""),
+                "last_sync": p.last_sync,
+            })
+        result["providers"] = provider_list
+        result["provider_summary"] = {
+            "total": len(providers),
+            "healthy": sum(1 for p in provider_list if p["status"] == "healthy"),
+            "offline": sum(1 for p in provider_list if p["status"] == "offline"),
+            "last_sync": max((p["last_sync"] for p in provider_list if p["last_sync"]), default=""),
+        }
+
+    if conversation_id:
+        mem = memory_store.get(conversation_id)
+        if mem:
+            events = get_conversation_events(conversation_id)
+            sigs = [BuyingSignal(signal=s, strength="medium", confidence=50, reason="") for s in mem.buying_signals] if mem.buying_signals else []
+            obj_sigs = [s.model_dump() for s in sigs] if sigs else []
+            result["conversation_intelligence"] = {
+                "conversation_id": conversation_id,
+                "current_stage": mem.current_stage.value,
+                "summary": mem.summary,
+                "open_questions": mem.open_questions,
+                "outstanding_objections": mem.outstanding_objections,
+                "pain_points": mem.pain_points,
+                "business_goals": mem.business_goals,
+                "competitor_mentioned": mem.competitor_mentioned,
+                "decision_makers": mem.decision_makers,
+                "buying_signals": mem.buying_signals,
+                "last_recommendation": mem.last_recommendation,
+                "last_followup": mem.last_followup,
+                "key_risks": mem.key_risks,
+                "key_opportunities": mem.key_opportunities,
+                "urgency": mem.urgency,
+                "decision_confidence": mem.decision_confidence,
+                "top_objection": mem.top_objection,
+                "timeline_events": [e.model_dump() for e in events],
+            }
+
     return result
 
 
@@ -159,6 +234,273 @@ def _parse_draft_body(message: str) -> str | None:
         return None
     parts = message.split("---")
     return parts[1].strip() if len(parts) >= 3 else None
+
+
+def _find_outbound_gmail_provider_id() -> str:
+    """Find the first registered Gmail outbound provider instance ID.
+    Returns empty string if none found.
+    """
+    providers = outbound_list_providers()
+    for pid, inst in providers.items():
+        if hasattr(inst, 'provider_type') and inst.provider_type == "gmail":
+            return pid
+    return ""
+
+
+def _register_outbound_gmail_instance(comm_provider_id: str) -> None:
+    """Create and register a GmailOutboundProvider instance from a connected communication provider.
+    Copies tokens from the communication provider into the outbound provider.
+    """
+    from services.outbound.gmail_outbound import GmailOutboundProvider
+    comm_instance = get_provider(comm_provider_id)
+    if not comm_instance:
+        log.warning("[outbound] No communication provider found for %s", comm_provider_id)
+        return
+    access_token = getattr(comm_instance, '_access_token', '')
+    refresh_token = getattr(comm_instance, '_refresh_token', '')
+    client_id = getattr(comm_instance, '_client_id', '')
+    client_secret = getattr(comm_instance, '_client_secret', '')
+    token_expiry = getattr(comm_instance, '_token_expiry', 0.0)
+    if not access_token and not refresh_token:
+        log.warning("[outbound] No tokens available for provider %s", comm_provider_id)
+        return
+    outbound = GmailOutboundProvider()
+    outbound.configure(
+        provider_id=comm_provider_id,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        client_id=client_id,
+        client_secret=client_secret,
+        token_expiry=token_expiry,
+    )
+    outbound_register_instance(comm_provider_id, outbound)
+    log.info("[outbound] Registered GmailOutboundProvider instance for %s", comm_provider_id)
+
+
+def _save_provider_credentials(provider_id: str, session_token: str) -> None:
+    """Persist provider credentials to Supabase for startup recovery."""
+    from services.supabase import save_provider_credentials
+    comm_instance = get_provider(provider_id)
+    if not comm_instance:
+        log.warning("[startup] No comm instance found for %s", provider_id)
+        return
+    access_token = getattr(comm_instance, '_access_token', '')
+    refresh_token = getattr(comm_instance, '_refresh_token', '')
+    client_id = getattr(comm_instance, '_client_id', '')
+    client_secret = getattr(comm_instance, '_client_secret', '')
+    token_expiry = getattr(comm_instance, '_token_expiry', 0.0)
+    email = getattr(comm_instance, '_mailbox_email', '')
+    if not access_token and not refresh_token:
+        log.warning("[startup] No tokens to persist for provider %s", provider_id)
+        return
+    import time
+    expiry_iso = datetime.fromtimestamp(token_expiry, tz=timezone.utc).isoformat() if token_expiry else ""
+    save_provider_credentials(
+        session_token, provider_id,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_expiry=expiry_iso,
+        email=email,
+        client_id=client_id,
+        client_secret=client_secret,
+    )
+
+
+def _restore_providers_on_startup() -> None:
+    """On startup, load saved provider credentials from Supabase and restore instances.
+    Refreshes tokens if expired.
+    """
+    log.info("[startup] Attempting provider restoration from Supabase")
+    from services.supabase import load_all_provider_credentials
+    from services.outbound.gmail_outbound import GmailOutboundProvider
+    from services.communication.gmail_provider import GmailProvider
+    from services.google_auth import refresh_access_token
+    records = load_all_provider_credentials()
+    if not records:
+        log.info("[startup] No saved provider credentials found")
+        return
+    restored = 0
+    for row in records:
+        try:
+            user_id = row.get("id", "")
+            provider_id = row.get("google_provider_id", "") or str(uuid.uuid4())
+            refresh_token = row.get("google_refresh_token", "")
+            access_token = row.get("google_access_token", "")
+            email = row.get("email", "")
+            client_id = row.get("google_client_id", "") or os.getenv("GOOGLE_CLIENT_ID", "")
+            client_secret = row.get("google_client_secret", "") or os.getenv("GOOGLE_CLIENT_SECRET", "")
+            token_expiry_str = row.get("token_expiry", "")
+            token_expiry = 0.0
+            if token_expiry_str:
+                try:
+                    token_expiry = datetime.fromisoformat(token_expiry_str.replace("Z", "+00:00")).timestamp()
+                except Exception:
+                    token_expiry = 0.0
+            if not refresh_token:
+                log.warning("[startup] No refresh_token for provider %s, skipping", provider_id[:12])
+                continue
+            import time
+            if token_expiry <= time.time() + 60:
+                log.info("[startup] Token expired for provider %s, refreshing", provider_id[:12])
+                try:
+                    token_result = refresh_access_token(refresh_token)
+                    if token_result and token_result.get("access_token"):
+                        access_token = token_result["access_token"]
+                        token_expiry = time.time() + token_result.get("expires_in", 3600)
+                        from services.supabase import update_google_access_token
+                        update_google_access_token(
+                            user_id,
+                            access_token=access_token,
+                            token_expiry=datetime.fromtimestamp(token_expiry, tz=timezone.utc).isoformat(),
+                        )
+                except Exception as e:
+                    log.warning("[startup] Token refresh failed for provider %s: %s", provider_id[:12], e)
+                    continue
+            comm_provider = GmailProvider()
+            from services.communication.provider_models import ProviderType
+            comm_record = comm_provider.connect(
+                auth_token=access_token,
+                user_id=user_id,
+                email=email,
+                refresh_token=refresh_token,
+                client_id=client_id,
+                client_secret=client_secret,
+            )
+            register_instance(comm_record.id, comm_provider)
+            outbound = GmailOutboundProvider()
+            outbound.configure(
+                provider_id=comm_record.id,
+                access_token=access_token,
+                refresh_token=refresh_token,
+                client_id=client_id,
+                client_secret=client_secret,
+                token_expiry=token_expiry,
+            )
+            outbound_register_instance(comm_record.id, outbound)
+            log.info("[startup] Restored provider %s (%s)", comm_record.id[:12], email)
+            restored += 1
+        except Exception as e:
+            log.warning("[startup] Failed to restore provider: %s", e)
+    log.info("[startup] Provider restoration complete: %d restored", restored)
+
+
+def _get_outbound_provider_for_draft(outbound_draft) -> str:
+    """Get a working outbound provider ID for a draft.
+    Falls back to the first registered Gmail provider if the draft's provider_id is not found.
+    """
+    if outbound_draft and outbound_draft.provider_id and get_outbound_provider(outbound_draft.provider_id):
+        return outbound_draft.provider_id
+    found = _find_outbound_gmail_provider_id()
+    if found:
+        if outbound_draft:
+            outbound_draft.provider_id = found
+            from services.outbound.draft_store import draft_store as outbound_draft_store
+            outbound_draft_store.update(outbound_draft)
+        return found
+    return outbound_draft.provider_id if outbound_draft else ""
+
+
+def _sync_draft_to_outbound(legacy_draft: dict, session_token: str) -> None:
+    """Sync a legacy campaign draft into the outbound DraftStore.
+    
+    Uses workflow_id to store campaign_id for later lookup.
+    Stores lead metadata in the DraftMessage metadata field.
+    """
+    from services.outbound.draft_store import draft_store as outbound_draft_store
+    from services.outbound.outbound_models import DraftMessage, DraftStatus, ApprovalState, Recipient
+    now = datetime.now(timezone.utc).isoformat()
+    lead = legacy_draft.get("lead", {})
+    lead_email = lead.get("email", "")
+    lead_name = lead.get("name") or f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip() or "Unknown"
+    legacy_status = legacy_draft.get("status", "pending")
+    status_map = {
+        "pending": DraftStatus.PENDING_APPROVAL,
+        "approved": DraftStatus.APPROVED,
+        "rejected": DraftStatus.REJECTED,
+        "draft": DraftStatus.DRAFT,
+        "sent": DraftStatus.SENT,
+    }
+    real_provider_id = _find_outbound_gmail_provider_id()
+    outbound_draft = DraftMessage(
+        id=legacy_draft.get("id", ""),
+        provider_id=real_provider_id or "campaign",
+        workflow_id=legacy_draft.get("campaign_id", ""),
+        subject=legacy_draft.get("subject", ""),
+        body=legacy_draft.get("text", ""),
+        recipient=Recipient(email=lead_email, name=lead_name),
+        sender=Recipient(email="", name=""),
+        status=status_map.get(legacy_status, DraftStatus.PENDING_APPROVAL),
+        approval_state=ApprovalState.APPROVED if legacy_status == "approved" else ApprovalState.PENDING,
+        created_at=legacy_draft.get("created_at", now),
+        updated_at=now,
+        metadata={
+            "lead": lead,
+            "tone": legacy_draft.get("tone"),
+            "length": legacy_draft.get("length"),
+            "lead_intelligence": legacy_draft.get("lead_intelligence"),
+            "company_intelligence": legacy_draft.get("company_intelligence"),
+            "session_token": session_token,
+        },
+    )
+    existing = outbound_draft_store.get(outbound_draft.id)
+    if existing:
+        outbound_draft_store.update(outbound_draft)
+    else:
+        outbound_draft_store.create(outbound_draft)
+
+
+def _outbound_to_legacy_draft(od: "DraftMessage") -> dict:
+    """Convert an outbound DraftMessage back to legacy dict format for backward compat."""
+    from services.outbound.outbound_models import DraftStatus
+    lead = od.metadata.get("lead", {}) if od.metadata else {}
+    status_map = {
+        DraftStatus.DRAFT: "pending",
+        DraftStatus.PENDING_APPROVAL: "pending",
+        DraftStatus.APPROVED: "approved",
+        DraftStatus.AUTO_APPROVED: "approved",
+        DraftStatus.REJECTED: "rejected",
+        DraftStatus.SENDING: "sending",
+        DraftStatus.SENT: "sent",
+        DraftStatus.SCHEDULED: "scheduled",
+        DraftStatus.FAILED: "failed",
+        DraftStatus.CANCELLED: "cancelled",
+        DraftStatus.ARCHIVED: "archived",
+    }
+    return {
+        "id": od.id,
+        "campaign_id": od.workflow_id,
+        "lead": lead,
+        "subject": od.subject,
+        "text": od.body,
+        "status": status_map.get(od.status, "pending"),
+        "tone": od.metadata.get("tone") if od.metadata else None,
+        "length": od.metadata.get("length") if od.metadata else None,
+        "lead_intelligence": od.metadata.get("lead_intelligence") if od.metadata else None,
+        "company_intelligence": od.metadata.get("company_intelligence") if od.metadata else None,
+        "created_at": od.created_at,
+        "external_draft_id": od.external_draft_id,
+        "gmail_message_id": od.gmail_message_id,
+        "gmail_thread_id": od.gmail_thread_id,
+    }
+
+
+def _get_outbound_drafts_for_session(session_token: str) -> list[dict]:
+    """Get all legacy-format drafts for a session from the outbound DraftStore.
+    Merges with legacy draft_store for drafts not yet synced.
+    """
+    from services.outbound.draft_store import draft_store as outbound_draft_store
+    outbound_all = outbound_draft_store.list_all()
+    result = []
+    seen_ids = set()
+    for od in outbound_all.drafts:
+        if od.metadata and od.metadata.get("session_token") == session_token:
+            result.append(_outbound_to_legacy_draft(od))
+            seen_ids.add(od.id)
+    legacy_drafts = draft_store.get(session_token, [])
+    for ld in legacy_drafts:
+        if ld.get("id") not in seen_ids:
+            result.append(ld)
+    return result
 
 
 _SYNONYM_STRATEGY_TABLE: list[tuple[list[str], str]] = [
@@ -242,6 +584,8 @@ async def _process_batch_drafts(
             if session_token not in draft_store:
                 draft_store[session_token] = []
             draft_store[session_token].append(draft_entry)
+
+            _sync_draft_to_outbound(draft_entry, session_token)
 
         except Exception as e:
             print(f"[batch] Draft failed for lead {i} ({name}): {e}")
@@ -328,17 +672,130 @@ def startup_event():
     except Exception as e:
         log.warning("Migration check failed: %s", e)
     log.info("Job engine initialized")
+    _register_outbound_providers()
+    _start_outbound_scheduler()
+
+
+def _register_outbound_providers() -> None:
+    try:
+        from services.outbound.outbound_registry import register_outbound_provider
+        from services.outbound.gmail_outbound import GmailOutboundProvider
+        register_outbound_provider(GmailOutboundProvider)
+        log.info("GmailOutboundProvider registered")
+    except Exception as e:
+        log.warning("Failed to register GmailOutboundProvider: %s", e)
+
+
+_scheduler_task: asyncio.Task | None = None
+
+
+def _start_outbound_scheduler() -> None:
+    global _scheduler_task
+    try:
+        from services.outbound.outbound_scheduler import outbound_scheduler
+        _scheduler_task = asyncio.create_task(outbound_scheduler.run())
+        log.info("Outbound scheduler started")
+    except Exception as e:
+        log.warning("Failed to start outbound scheduler: %s", e)
     try:
         recovered = recover_all()
         if recovered["total_recovered"] > 0:
             log.info("Workflow recovery: %s", recovered)
     except Exception as e:
         log.warning("Workflow recovery failed: %s", e)
+    try:
+        register_provider(GmailProvider)
+        log.info("Gmail provider registered")
+    except Exception as e:
+        log.warning("Gmail provider registration failed: %s", e)
+    try:
+        _restore_providers_on_startup()
+    except Exception as e:
+        log.warning("Provider startup restoration failed: %s", e)
 
 
 @app.get("/", response_class=PlainTextResponse)
 def read_root():
     return "Loqi backend running"
+
+
+# ── Gmail OAuth Endpoints ──
+
+
+@app.get("/api/auth/gmail/url")
+def gmail_auth_url(session_token: str = ""):
+    from services.google_auth import get_google_auth_url
+    try:
+        state = f"dev_providers:{session_token}" if session_token else "dev_providers"
+        url = get_google_auth_url(state=state)
+        return {"ok": True, "url": url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class GmailCallbackResponse(BaseModel):
+    ok: bool
+    provider_id: str = ""
+    email: str = ""
+    error: str = ""
+
+
+@app.get("/api/auth/gmail/callback")
+def gmail_auth_callback(code: str = "", state: str = "", error: str = ""):
+    import json
+    from services.google_auth import exchange_code_for_tokens, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+    from fastapi.responses import HTMLResponse
+    ok = False
+    provider_id = ""
+    email_val = ""
+    error_msg = error or ""
+    try:
+        if error:
+            raise Exception(f"Google OAuth error: {error}")
+        if not code:
+            raise Exception("No authorization code provided")
+        tokens = exchange_code_for_tokens(code)
+        access_token = tokens.get("access_token", "")
+        refresh_token = tokens.get("refresh_token", "")
+        email_val = tokens.get("email", "")
+        from services.communication.gmail_provider import GmailProvider
+        provider = GmailProvider()
+        _user_id = "gmail_user"
+        if state and ":" in state:
+            _parts = state.split(":", 1)
+            if len(_parts) == 2 and _parts[1]:
+                _user_id = _parts[1]
+        provider_record = provider.connect(
+            auth_token=access_token,
+            user_id=_user_id,
+            email=email_val,
+            scope=",".join(["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"]),
+            refresh_token=refresh_token,
+            client_id=GOOGLE_CLIENT_ID,
+            client_secret=GOOGLE_CLIENT_SECRET,
+        )
+        register_instance(provider_record.id, provider)
+        _register_outbound_gmail_instance(provider_record.id)
+        _save_provider_credentials(provider_record.id, _user_id)
+        ok = True
+        provider_id = provider_record.id
+    except Exception as e:
+        error_msg = str(e)
+    payload = json.dumps({"ok": ok, "provider_id": provider_id, "email": email_val, "error": error_msg})
+    status_text = "✓ Gmail Connected" if ok else "✗ Gmail Connection Failed"
+    html = f"""<!DOCTYPE html>
+<html><body style="font-family:sans-serif;background:#0f172a;color:#e2e8f0;padding:40px;text-align:center">
+<h2>{status_text}</h2>
+<p style="color:#94a3b8">{email_val or error_msg}</p>
+<p style="color:#6b7280;font-size:13px">You can close this window.</p>
+<script>
+if (window.opener) {{
+    window.opener.postMessage({{ type: 'gmail-oauth', payload: {payload} }}, '*');
+    setTimeout(function() {{ window.close(); }}, 500);
+}}
+</script>
+</body></html>"""
+    return HTMLResponse(content=html)
 
 
 @app.get("/health")
@@ -419,6 +876,7 @@ async def post_web_session_message(session_token: str, payload: SendWebMessageRe
             session_token,
             current_page=payload.copilot.current_page,
             page_context=payload.copilot.page_context,
+            user_id=summary.get("user_id"),
         )
         analysis = workspace_context.get("analysis", {})
         snapshot = workspace_context.get("snapshot", {})
@@ -546,8 +1004,8 @@ async def analyze_campaigns_endpoint(session_token: str, payload: BatchDraftRequ
 
 @app.get("/api/web/session/{session_token}/drafts")
 async def list_drafts(session_token: str):
-    drafts = draft_store.get(session_token, [])
-    return {"ok": True, "drafts": drafts}
+    merged = _get_outbound_drafts_for_session(session_token)
+    return {"ok": True, "drafts": merged}
 
 
 @app.put("/api/web/session/{session_token}/drafts/{draft_id}")
@@ -743,6 +1201,41 @@ async def ask_draft_question_endpoint(session_token: str, payload: AskDraftQuest
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _call_outbound_approval(draft_id: str, legacy_draft: dict) -> None:
+    """Adapter: after legacy approval, also execute through outbound engine.
+    Creates Gmail draft via outbound pipeline if provider is configured.
+    Errors are logged but don't block the legacy flow.
+    """
+    try:
+        from services.outbound.outbound_registry import create_draft as reg_create_draft
+        from services.outbound.draft_store import draft_store as outbound_draft_store
+        from services.outbound.outbound_models import DraftStatus
+        outbound_draft = outbound_draft_store.get(draft_id)
+        if not outbound_draft:
+            log.warning("[outbound_adapter] Draft %s not found in outbound store", draft_id)
+            return
+        if outbound_draft.status in (DraftStatus.APPROVED, DraftStatus.AUTO_APPROVED, DraftStatus.SENT):
+            return
+        outbound_draft_store.approve(draft_id)
+        real_provider_id = _get_outbound_provider_for_draft(outbound_draft)
+        if not real_provider_id:
+            log.warning("[outbound_adapter] No Gmail outbound provider registered — cannot create Gmail draft for %s", draft_id)
+            return
+        log.info("[outbound_adapter] Calling create_draft for %s via provider %s", draft_id, real_provider_id)
+        provider_result = reg_create_draft(real_provider_id, outbound_draft)
+        if provider_result and provider_result.external_draft_id:
+            updated = outbound_draft_store.get(draft_id)
+            if updated:
+                updated.external_draft_id = provider_result.external_draft_id
+                if provider_result.thread_id:
+                    updated.thread_id = provider_result.thread_id
+                updated.provider_id = real_provider_id
+                outbound_draft_store.update(updated)
+                log.info("[outbound_adapter] Gmail draft created — external_id=%s", provider_result.external_draft_id)
+    except Exception as e:
+        log.warning("[outbound_adapter] approve_draft failed for %s: %s", draft_id, e)
+
+
 @app.post("/api/web/session/{session_token}/drafts/{draft_id}/approve")
 async def approve_draft(session_token: str, draft_id: str):
     drafts = draft_store.get(session_token, [])
@@ -755,7 +1248,30 @@ async def approve_draft(session_token: str, draft_id: str):
             campaign_id = d.get("campaign_id")
             break
     if not toggled:
-        raise HTTPException(status_code=404, detail="Draft not found")
+        from services.outbound.draft_store import draft_store as outbound_draft_store
+        outbound_draft = outbound_draft_store.get(draft_id)
+        if not outbound_draft:
+            raise HTTPException(status_code=404, detail="Draft not found")
+        _sync_draft_to_outbound({
+            "id": outbound_draft.id,
+            "campaign_id": outbound_draft.workflow_id,
+            "lead": outbound_draft.metadata.get("lead", {}) if outbound_draft.metadata else {},
+            "subject": outbound_draft.subject,
+            "text": outbound_draft.body,
+            "status": outbound_draft.status.value,
+            "tone": outbound_draft.metadata.get("tone") if outbound_draft.metadata else None,
+            "length": outbound_draft.metadata.get("length") if outbound_draft.metadata else None,
+            "created_at": outbound_draft.created_at,
+        }, session_token)
+        drafts = draft_store.get(session_token, [])
+        for d in drafts:
+            if d.get("id") == draft_id:
+                d["status"] = "approved" if d.get("status") != "approved" else "pending"
+                toggled = d
+                campaign_id = d.get("campaign_id")
+                break
+        if not toggled:
+            raise HTTPException(status_code=404, detail="Draft not found")
 
     campaign_status = None
     if campaign_id:
@@ -781,6 +1297,7 @@ async def approve_draft(session_token: str, draft_id: str):
         record_draft_approved(session_token, lead_name, campaign_name)
         if campaign_status == "ready_to_send" and campaign_name:
             record_campaign_ready(session_token, campaign_name)
+        _call_outbound_approval(draft_id, toggled)
     return {
         "ok": True,
         "draft": toggled,
@@ -835,6 +1352,692 @@ async def compare_draft_versions(session_token: str, payload: CompareDraftVersio
         return {"ok": True, "comparison": comparison.to_dict()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Communication Intelligence Endpoints ──
+
+
+class AnalyzeMessageRequest(BaseModel):
+    text: str
+    conversation_id: str = ""
+    sender: str = "lead"
+    subject: str = ""
+
+
+@app.post("/api/web/session/{session_token}/communication/analyze")
+async def communication_analyze(session_token: str, payload: AnalyzeMessageRequest):
+    msg = ConversationMessage(
+        text=payload.text,
+        sender=payload.sender,
+        subject=payload.subject,
+    )
+    existing = memory_store.get(payload.conversation_id) if payload.conversation_id else None
+    intelligence, memory = analyze_message(
+        message=msg,
+        conversation_id=payload.conversation_id,
+        existing_memory=existing,
+    )
+    return {
+        "ok": True,
+        "intelligence": intelligence.model_dump(),
+        "memory": memory.model_dump(),
+    }
+
+
+@app.post("/api/web/session/{session_token}/communication/memory/update")
+async def communication_memory_update(session_token: str, payload: AnalyzeMessageRequest):
+    msg = ConversationMessage(text=payload.text, sender=payload.sender, subject=payload.subject)
+    cid = payload.conversation_id or msg.id
+    from services.intent_detector import detect_intents
+    from services.conversation_classifier import classify_stage
+    from services.followup_reasoner import recommend_followup
+    intents = detect_intents(msg.text)
+    signals = detect_signals(msg.text)
+    stage, reasoning = classify_stage([], msg.text)
+    recommendation = recommend_followup(intents, signals, stage)
+    existing = memory_store.get(cid)
+    memory = create_or_update_memory(
+        conversation_id=cid,
+        message=msg,
+        intents=intents,
+        buying_signals=signals,
+        stage=stage,
+        stage_reasoning=reasoning,
+        followup_action=recommendation.action.value,
+        existing_memory=existing,
+    )
+    return {
+        "ok": True,
+        "memory": memory.model_dump(),
+    }
+
+
+class RecommendRequest(BaseModel):
+    text: str
+    conversation_id: str = ""
+
+
+@app.post("/api/web/session/{session_token}/communication/recommend")
+async def communication_recommend(session_token: str, payload: RecommendRequest):
+    from services.intent_detector import detect_intents
+    intents = detect_intents(payload.text)
+    signals = detect_signals(payload.text)
+    stage = ConversationStage.ENGAGED
+    recommendation = recommend_followup(intents, signals, stage)
+    return {
+        "ok": True,
+        "recommendation": recommendation.model_dump(),
+    }
+
+
+class SummaryRequest(BaseModel):
+    text: str
+    conversation_id: str = ""
+
+
+@app.post("/api/web/session/{session_token}/communication/summary")
+async def communication_summary(session_token: str, payload: SummaryRequest):
+    from services.intent_detector import detect_intents
+    intents = detect_intents(payload.text)
+    signals = detect_signals(payload.text)
+    stage = ConversationStage.ENGAGED
+    from services.followup_reasoner import recommend_followup
+    recommendation = recommend_followup(intents, signals, stage)
+    summary = generate_summary(intents, signals, recommendation)
+    return {
+        "ok": True,
+        "summary": summary,
+    }
+
+
+@app.get("/api/web/session/{session_token}/communication/{conversation_id}/timeline")
+async def communication_timeline(session_token: str, conversation_id: str):
+    events = get_conversation_events(conversation_id)
+    return {
+        "ok": True,
+        "events": [e.model_dump() for e in events],
+        "total": len(events),
+    }
+
+
+# ── Workspace Context Endpoint (for dev tooling) ──
+
+
+class DevWorkspaceContextRequest(BaseModel):
+    conversation_id: str = ""
+
+
+@app.get("/api/web/session/{session_token}/workspace-context")
+async def dev_workspace_context(session_token: str, conversation_id: str = ""):
+    """Returns workspace context with provider info for the dev providers page."""
+    ctx = _build_copilot_workspace_context(
+        session_token,
+        current_page="Mission Control",
+        conversation_id=conversation_id or None,
+    )
+    return ctx
+
+
+# ── Provider Endpoints ──
+
+
+class ProviderConnectRequest(BaseModel):
+    provider_type: str  # "gmail", "outlook", etc.
+    auth_token: str
+    email: str = ""
+    scope: str = ""
+
+
+@app.post("/api/web/session/{session_token}/providers/connect")
+async def provider_connect(session_token: str, payload: ProviderConnectRequest):
+    try:
+        ptype = ProviderType(payload.provider_type)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unknown provider type: {payload.provider_type}")
+
+    instance = instantiate_provider(ptype)
+    if not instance:
+        raise HTTPException(status_code=400, detail=f"Provider not registered: {payload.provider_type}")
+
+    provider = instance.connect(
+        auth_token=payload.auth_token,
+        user_id=session_token,
+        email=payload.email,
+        scope=payload.scope,
+    )
+    register_instance(provider.id, instance)
+    if ptype == ProviderType.GMAIL:
+        _register_outbound_gmail_instance(provider.id)
+    return {"ok": True, "provider": provider.model_dump()}
+
+
+@app.post("/api/web/session/{session_token}/providers/{provider_id}/disconnect")
+async def provider_disconnect(session_token: str, provider_id: str):
+    success = registry_disconnect(provider_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Provider not found or already disconnected")
+    return {"ok": True}
+
+
+@app.get("/api/web/session/{session_token}/providers")
+async def provider_list(session_token: str):
+    providers = communication_store.get_user_providers(session_token)
+    result = []
+    for p in providers:
+        instance = get_provider(p.id)
+        health_val = instance.health().value if instance else p.status.value
+        result.append({
+            "id": p.id,
+            "provider_type": p.provider_type.value,
+            "status": health_val,
+            "email": p.metadata.get("email", ""),
+            "last_sync": p.last_sync,
+            "sync_cursor": p.sync_cursor,
+            "created_at": p.created_at,
+        })
+    return {"ok": True, "providers": result}
+
+
+@app.get("/api/web/session/{session_token}/providers/{provider_id}/health")
+async def provider_health(session_token: str, provider_id: str):
+    instance = get_provider(provider_id)
+    if not instance:
+        raise HTTPException(status_code=404, detail="Provider not found")
+    status = instance.health()
+    provider = communication_store.get_provider(provider_id)
+    return {
+        "ok": True,
+        "provider_id": provider_id,
+        "status": status.value,
+        "last_sync": provider.last_sync if provider else "",
+    }
+
+
+@app.post("/api/web/session/{session_token}/providers/{provider_id}/sync")
+async def provider_sync(session_token: str, provider_id: str, cursor: str = ""):
+    from services.communication.provider_registry import sync_provider as registry_sync
+    if cursor:
+        result = registry_sync(provider_id, cursor=cursor)
+    else:
+        from services.communication.gmail_sync import sync_all
+        instance = get_provider(provider_id)
+        if not instance:
+            raise HTTPException(status_code=404, detail="Provider not found")
+        result = sync_all(instance)
+    return {
+        "ok": True,
+        "result": result.model_dump() if result else None,
+    }
+
+
+@app.get("/api/web/session/{session_token}/providers/{provider_id}/status")
+async def provider_status(session_token: str, provider_id: str):
+    provider = communication_store.get_provider(provider_id)
+    if not provider:
+        raise HTTPException(status_code=404, detail="Provider not found")
+    instance = get_provider(provider_id)
+    health_val = instance.health().value if instance else provider.status.value
+    cursor = communication_store.get_cursor(provider_id)
+    return {
+        "ok": True,
+        "provider_id": provider_id,
+        "provider_type": provider.provider_type.value,
+        "status": health_val,
+        "connected": instance is not None,
+        "last_sync": provider.last_sync,
+        "sync_cursor": cursor.cursor if cursor else "",
+        "watching": getattr(instance, "_watching", False) if instance else False,
+    }
+
+
+@app.get("/api/web/session/{session_token}/providers/{provider_id}/threads")
+async def provider_threads(session_token: str, provider_id: str):
+    """List all tracked thread mappings for a provider."""
+    store = communication_store
+    all_threads = store.get_all_threads()
+    provider_threads = [t for t in all_threads if t.provider_id == provider_id]
+    return {
+        "ok": True,
+        "provider_id": provider_id,
+        "threads": [t.model_dump() for t in provider_threads],
+        "total": len(provider_threads),
+    }
+
+
+@app.get("/api/web/session/{session_token}/providers/{provider_id}/messages")
+async def provider_messages(session_token: str, provider_id: str):
+    """Get message count, mailbox info, and recent activity for a provider."""
+    count = communication_store.message_count()
+    recent = communication_store.get_recent_messages(limit=10)
+    return {
+        "ok": True,
+        "provider_id": provider_id,
+        "total_messages_seen": count,
+        "recent_messages": recent,
+        "mailbox_email": "",
+    }
+
+
+@app.get("/api/web/session/{session_token}/providers/events")
+async def provider_events_endpoint(session_token: str, provider_id: str = "", after: int = 0):
+    events = get_provider_events(provider_id=provider_id, after_sequence=after)
+    return {
+        "ok": True,
+        "events": [
+            {
+                "id": e.id,
+                "event_type": e.event_type.value,
+                "provider_id": e.provider_id,
+                "message": e.message,
+                "timestamp": e.timestamp,
+                "sequence": e.sequence,
+                "metadata": e.metadata,
+            }
+            for e in events
+        ],
+        "latest_sequence": latest_sequence(),
+    }
+
+
+@app.get("/api/web/session/{session_token}/providers/registered")
+async def provider_registered_types(session_token: str):
+    return {
+        "ok": True,
+        "types": [t.value for t in list_registered_types()],
+    }
+
+
+# ── Outbound Endpoints ──
+
+
+from services.outbound.outbound_models import (
+    DraftMessage as OutboundDraftMessage,
+    SendRequest as OutboundSendRequest,
+    Recipient,
+)
+from services.outbound.draft_store import draft_store as outbound_draft_store
+from services.outbound.outbound_persistence import outbound_persistence
+from services.outbound.outbound_executor import executor as outbound_executor
+from services.outbound.outbound_events import (
+    get_events as get_outbound_events,
+    latest_sequence as outbound_latest_sequence,
+)
+
+
+class OutboundCreateDraftRequest(BaseModel):
+    provider_id: str
+    conversation_id: str = ""
+    thread_id: str = ""
+    workflow_id: str = ""
+    subject: str
+    body: str
+    recipient_email: str
+    recipient_name: str = ""
+    sender_email: str
+    sender_name: str = ""
+    cc: list[dict] = []
+    bcc: list[dict] = []
+    reply_to_message_id: str = ""
+    in_reply_to: str = ""
+    references: str = ""
+
+
+class OutboundUpdateDraftRequest(BaseModel):
+    provider_id: str
+    draft_id: str
+    external_draft_id: str = ""
+    subject: str = ""
+    body: str = ""
+    recipient_email: str = ""
+    recipient_name: str = ""
+
+
+class OutboundSendRequest(BaseModel):
+    provider_id: str
+    draft_id: str = ""
+    conversation_id: str = ""
+    thread_id: str = ""
+    workflow_id: str = ""
+    subject: str = ""
+    body: str = ""
+    recipient_email: str = ""
+    recipient_name: str = ""
+    sender_email: str = ""
+    sender_name: str = ""
+
+
+class OutboundScheduleRequest(BaseModel):
+    provider_id: str
+    draft_id: str
+    send_at: str
+
+
+class OutboundDeleteDraftRequest(BaseModel):
+    provider_id: str
+    draft_id: str
+
+
+@app.post("/api/web/session/{session_token}/outbound/drafts")
+async def outbound_create_draft(session_token: str, payload: OutboundCreateDraftRequest):
+    draft = OutboundDraftMessage(
+        provider_id=payload.provider_id,
+        conversation_id=payload.conversation_id,
+        thread_id=payload.thread_id,
+        workflow_id=payload.workflow_id,
+        subject=payload.subject,
+        body=payload.body,
+        recipient=Recipient(email=payload.recipient_email, name=payload.recipient_name),
+        sender=Recipient(email=payload.sender_email, name=payload.sender_name),
+        cc=[Recipient(**c) for c in payload.cc],
+        bcc=[Recipient(**b) for b in payload.bcc],
+        reply_to_message_id=payload.reply_to_message_id,
+        in_reply_to=payload.in_reply_to,
+        references=payload.references,
+    )
+    from services.outbound.outbound_registry import create_draft as reg_create_draft
+    outbound_draft_store.create(draft)
+    result = reg_create_draft(payload.provider_id, draft)
+    if result:
+        outbound_draft_store.update(result)
+    return {"ok": True, "draft": draft.model_dump()}
+
+
+@app.patch("/api/web/session/{session_token}/outbound/drafts/{draft_id}")
+async def outbound_update_draft(session_token: str, draft_id: str, payload: OutboundUpdateDraftRequest):
+    existing = outbound_draft_store.get(draft_id)
+    if not existing:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Draft not found")
+    update_data = {}
+    if payload.subject:
+        update_data["subject"] = payload.subject
+    if payload.body:
+        update_data["body"] = payload.body
+    if payload.recipient_email:
+        update_data["recipient"] = Recipient(email=payload.recipient_email, name=payload.recipient_name)
+    updated = existing.model_copy(update=update_data)
+    outbound_draft_store.update(updated)
+    if payload.external_draft_id:
+        from services.outbound.outbound_registry import update_draft as reg_update_draft
+        reg_result = reg_update_draft(payload.provider_id, updated)
+        if reg_result:
+            outbound_draft_store.update(reg_result)
+    return {"ok": True, "draft": updated.model_dump()}
+
+
+@app.delete("/api/web/session/{session_token}/outbound/drafts/{draft_id}")
+async def outbound_delete_draft(session_token: str, draft_id: str, provider_id: str = ""):
+    draft = outbound_draft_store.get(draft_id)
+    if draft and draft.external_draft_id and provider_id:
+        from services.outbound.outbound_registry import delete_draft as reg_delete_draft
+        reg_delete_draft(provider_id, draft.external_draft_id)
+    result = outbound_draft_store.delete(draft_id)
+    return {"ok": result}
+
+
+@app.post("/api/web/session/{session_token}/drafts/{draft_id}/send")
+async def send_draft(session_token: str, draft_id: str):
+    from services.outbound.draft_store import draft_store as outbound_draft_store
+    outbound_draft = outbound_draft_store.get(draft_id)
+    if not outbound_draft:
+        legacy_drafts = draft_store.get(session_token, [])
+        legacy = next((d for d in legacy_drafts if d.get("id") == draft_id), None)
+        if not legacy:
+            raise HTTPException(status_code=404, detail="Draft not found in any store")
+        _sync_draft_to_outbound(legacy, session_token)
+        outbound_draft = outbound_draft_store.get(draft_id)
+        if not outbound_draft:
+            raise HTTPException(status_code=500, detail="Failed to sync draft to outbound store")
+    real_provider_id = _get_outbound_provider_for_draft(outbound_draft)
+    if not real_provider_id:
+        return {"ok": False, "error": "No Gmail outbound provider registered"}
+    log.info("[send_draft] Sending draft %s via provider %s", draft_id, real_provider_id)
+    result = outbound_executor.execute("send_reply", {
+        "provider_id": real_provider_id,
+        "draft_id": outbound_draft.id,
+        "conversation_id": outbound_draft.conversation_id,
+        "thread_id": outbound_draft.thread_id,
+        "workflow_id": outbound_draft.workflow_id,
+        "subject": outbound_draft.subject,
+        "body": outbound_draft.body,
+        "recipient": {"email": outbound_draft.recipient.email, "name": outbound_draft.recipient.name},
+        "sender": {"email": outbound_draft.sender.email, "name": outbound_draft.sender.name},
+    })
+    if result.get("ok"):
+        outbound_draft_store.mark_sent(draft_id)
+        legacy_drafts = draft_store.get(session_token, [])
+        for d in legacy_drafts:
+            if d.get("id") == draft_id:
+                d["status"] = "sent"
+                break
+        send_data = result.get("send_result", {})
+        try:
+            from services.conversations.integration import create_conversation_from_send
+            create_conversation_from_send(
+                provider_id=real_provider_id,
+                provider_type="gmail",
+                external_thread_id=send_data.get("thread_id", ""),
+                external_message_id=send_data.get("external_message_id", ""),
+                subject=outbound_draft.subject,
+                from_email=outbound_draft.sender.email,
+                from_name=outbound_draft.sender.name,
+                to_email=outbound_draft.recipient.email,
+                to_name=outbound_draft.recipient.name,
+                body=outbound_draft.body,
+                campaign_id=outbound_draft.workflow_id or "",
+                workflow_id=outbound_draft.workflow_id or "",
+            )
+        except Exception as e:
+            log.warning("[send_draft] Failed to create conversation: %s", e)
+    return {"ok": result.get("ok", False), "send_result": result}
+
+
+class ScheduleDraftRequest(BaseModel):
+    send_at: str  # ISO 8601 datetime string
+
+
+@app.post("/api/web/session/{session_token}/drafts/{draft_id}/schedule")
+async def schedule_draft(session_token: str, draft_id: str, payload: ScheduleDraftRequest):
+    from services.outbound.draft_store import draft_store as outbound_draft_store
+    from services.outbound.outbound_scheduler import outbound_scheduler
+    outbound_draft = outbound_draft_store.get(draft_id)
+    if not outbound_draft:
+        legacy_drafts = draft_store.get(session_token, [])
+        legacy = next((d for d in legacy_drafts if d.get("id") == draft_id), None)
+        if not legacy:
+            raise HTTPException(status_code=404, detail="Draft not found in any store")
+        _sync_draft_to_outbound(legacy, session_token)
+        outbound_draft = outbound_draft_store.get(draft_id)
+        if not outbound_draft:
+            raise HTTPException(status_code=500, detail="Failed to sync draft to outbound store")
+    real_provider_id = _get_outbound_provider_for_draft(outbound_draft)
+    if not real_provider_id:
+        return {"ok": False, "error": "No Gmail outbound provider registered"}
+    log.info("[schedule_draft] Scheduling draft %s at %s via provider %s", draft_id, payload.send_at, real_provider_id)
+    result = outbound_scheduler.schedule(draft_id, real_provider_id, payload.send_at)
+    if result.get("ok"):
+        legacy_drafts = draft_store.get(session_token, [])
+        for d in legacy_drafts:
+            if d.get("id") == draft_id:
+                d["status"] = "scheduled"
+                break
+    return result
+
+
+@app.post("/api/web/session/{session_token}/drafts/{draft_id}/cancel-schedule")
+async def cancel_schedule_draft(session_token: str, draft_id: str):
+    from services.outbound.draft_store import draft_store as outbound_draft_store
+    from services.outbound.outbound_scheduler import outbound_scheduler
+    outbound_draft = outbound_draft_store.get(draft_id)
+    if not outbound_draft:
+        raise HTTPException(status_code=404, detail="Draft not found in outbound store")
+    result = outbound_scheduler.cancel_schedule(draft_id, outbound_draft.provider_id)
+    if result.get("ok"):
+        legacy_drafts = draft_store.get(session_token, [])
+        for d in legacy_drafts:
+            if d.get("id") == draft_id:
+                d["status"] = "pending"
+                break
+    return result
+
+
+@app.post("/api/web/session/{session_token}/outbound/send")
+async def outbound_send(session_token: str, payload: OutboundSendRequest):
+    result = outbound_executor.execute("send_reply", {
+        "provider_id": payload.provider_id,
+        "draft_id": payload.draft_id,
+        "conversation_id": payload.conversation_id,
+        "thread_id": payload.thread_id,
+        "workflow_id": payload.workflow_id,
+        "subject": payload.subject,
+        "body": payload.body,
+        "recipient": {"email": payload.recipient_email, "name": payload.recipient_name} if payload.recipient_email else {},
+        "sender": {"email": payload.sender_email, "name": payload.sender_name} if payload.sender_email else {},
+    })
+    return result
+
+
+@app.post("/api/web/session/{session_token}/outbound/schedule")
+async def outbound_schedule(session_token: str, payload: OutboundScheduleRequest):
+    from services.outbound.outbound_scheduler import outbound_scheduler
+    result = outbound_scheduler.schedule(payload.draft_id, payload.provider_id, payload.send_at)
+    return result
+
+
+@app.delete("/api/web/session/{session_token}/outbound/schedule/{schedule_id}")
+async def outbound_cancel_schedule(session_token: str, schedule_id: str, provider_id: str = ""):
+    from services.outbound.outbound_scheduler import outbound_scheduler
+    result = outbound_scheduler.cancel_schedule(schedule_id, provider_id)
+    return result
+
+
+@app.get("/api/web/session/{session_token}/outbound/drafts")
+async def outbound_list_drafts(session_token: str, provider_id: str = ""):
+    if provider_id:
+        result = outbound_draft_store.list_by_provider(provider_id)
+    else:
+        result = outbound_draft_store.list_all()
+    return {"ok": True, "drafts": [d.model_dump() for d in result.drafts], "total": result.total}
+
+
+@app.get("/api/web/session/{session_token}/outbound/drafts/{draft_id}")
+async def outbound_get_draft(session_token: str, draft_id: str):
+    draft = outbound_draft_store.get(draft_id)
+    if not draft:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return {"ok": True, "draft": draft.model_dump()}
+
+
+@app.post("/api/web/session/{session_token}/outbound/drafts/{draft_id}/approve")
+async def outbound_approve_draft(session_token: str, draft_id: str, auto: bool = False):
+    result = outbound_draft_store.approve(draft_id, auto=auto)
+    if not result:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Draft not found")
+    try:
+        from services.outbound.outbound_registry import create_draft as reg_create_draft
+        provider_result = reg_create_draft(result.provider_id, result)
+        if not provider_result:
+            err = "No provider registered for " + result.provider_id
+            outbound_draft_store.mark_failed(draft_id, err)
+            raise HTTPException(status_code=502, detail=err)
+        if not provider_result.external_draft_id:
+            err = "Provider created draft but returned no external_draft_id"
+            outbound_draft_store.mark_failed(draft_id, err)
+            raise HTTPException(status_code=502, detail=err)
+        updated = outbound_draft_store.get(draft_id)
+        if updated:
+            updated.external_draft_id = provider_result.external_draft_id
+            if provider_result.thread_id:
+                updated.thread_id = provider_result.thread_id
+            outbound_draft_store.update(updated)
+        return {"ok": True, "draft": updated.model_dump() if updated else result.model_dump()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        outbound_draft_store.mark_failed(draft_id, str(e))
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.post("/api/web/session/{session_token}/outbound/drafts/{draft_id}/reject")
+async def outbound_reject_draft(session_token: str, draft_id: str):
+    result = outbound_draft_store.reject(draft_id)
+    if not result:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return {"ok": True, "draft": result.model_dump()}
+
+
+class ApproveAllRequest(BaseModel):
+    auto: bool = False
+
+
+@app.post("/api/web/session/{session_token}/outbound/approve-all")
+async def outbound_approve_all(session_token: str, payload: ApproveAllRequest):
+    all_drafts = outbound_draft_store.list_all()
+    pending = [d for d in all_drafts.drafts if d.status.value in ("draft", "pending_approval")]
+    if not pending:
+        return {"ok": True, "total": 0, "created": 0, "failed": 0, "results": []}
+    from services.outbound.outbound_registry import create_draft as reg_create_draft
+    results = []
+    for draft in pending:
+        try:
+            outbound_draft_store.approve(draft.id, auto=payload.auto)
+            provider_result = reg_create_draft(draft.provider_id, draft)
+            if not provider_result or not provider_result.external_draft_id:
+                outbound_draft_store.mark_failed(draft.id, "No provider or no external_draft_id returned")
+                results.append({"draft_id": draft.id, "ok": False, "error": "No provider or no external_draft_id"})
+            else:
+                updated = outbound_draft_store.get(draft.id)
+                if updated:
+                    updated.external_draft_id = provider_result.external_draft_id
+                    if provider_result.thread_id:
+                        updated.thread_id = provider_result.thread_id
+                    outbound_draft_store.update(updated)
+                results.append({"draft_id": draft.id, "ok": True})
+        except Exception as e:
+            outbound_draft_store.mark_failed(draft.id, str(e))
+            results.append({"draft_id": draft.id, "ok": False, "error": str(e)})
+    created = sum(1 for r in results if r["ok"])
+    failed = sum(1 for r in results if not r["ok"])
+    return {"ok": True, "total": len(pending), "created": created, "failed": failed, "results": results}
+
+
+@app.get("/api/web/session/{session_token}/outbound/history")
+async def outbound_history(session_token: str, provider_id: str = ""):
+    history = outbound_persistence.get_history(provider_id=provider_id)
+    return {"ok": True, "history": [h.model_dump() for h in history]}
+
+
+@app.get("/api/web/session/{session_token}/outbound/events")
+async def outbound_events_endpoint(session_token: str, provider_id: str = "", after: int = 0):
+    events = get_outbound_events(provider_id=provider_id, after_sequence=after)
+    return {
+        "ok": True,
+        "events": [
+            {
+                "id": e.id,
+                "event_type": e.event_type.value,
+                "provider_id": e.provider_id,
+                "message": e.message,
+                "timestamp": e.timestamp,
+                "sequence": e.sequence,
+                "metadata": e.metadata,
+            }
+            for e in events
+        ],
+        "latest_sequence": outbound_latest_sequence(),
+    }
+
+
+@app.get("/api/web/session/{session_token}/outbound/drafts/{draft_id}/versions")
+async def outbound_draft_versions(session_token: str, draft_id: str):
+    versions = outbound_draft_store.get_versions(draft_id)
+    return {"ok": True, "versions": [v.model_dump() for v in versions]}
+
+
+# ── Campaign Endpoints ──
 
 
 @app.post("/api/web/session/{session_token}/campaigns")
@@ -897,6 +2100,20 @@ async def get_campaign(session_token: str, campaign_id: str):
     return {"ok": True, "campaign": target}
 
 
+@app.get("/api/web/session/{session_token}/campaigns/{campaign_id}/launch-progress")
+async def campaign_launch_progress(session_token: str, campaign_id: str):
+    campaigns = campaign_store.get(session_token, [])
+    target = next((c for c in campaigns if c.get("id") == campaign_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return {
+        "ok": True,
+        "launch_sent": target.get("launch_sent", 0),
+        "launch_total": target.get("launch_total", 0),
+        "launch_complete": target.get("launch_sent", 0) >= target.get("launch_total", 0) if target.get("launch_total", 0) > 0 else False,
+    }
+
+
 @app.put("/api/web/session/{session_token}/campaigns/{campaign_id}")
 async def update_campaign(session_token: str, campaign_id: str, payload: UpdateCampaignRequest):
     campaigns = campaign_store.get(session_token, [])
@@ -910,10 +2127,111 @@ async def update_campaign(session_token: str, campaign_id: str, payload: UpdateC
         target["status"] = payload.status
         if payload.status == "completed" and old_status != "completed":
             record_campaign_launched(session_token, target.get("name", ""))
+            _dispatch_campaign_sends(session_token, target)
         elif payload.status in ("ready", "ready_to_send"):
             record_campaign_ready(session_token, target.get("name", ""))
     target["updated_at"] = datetime.now(timezone.utc).isoformat()
     return {"ok": True, "campaign": target}
+
+
+def _dispatch_campaign_sends(session_token: str, campaign: dict) -> dict:
+    campaign_id = campaign.get("id", "")
+    from services.outbound.draft_store import draft_store as outbound_draft_store
+    all_outbound = outbound_draft_store.list_by_workflow(campaign_id)
+    approved = [d for d in all_outbound.drafts
+                if d.status.value in ("approved", "auto_approved")]
+    if not approved:
+        legacy_drafts = _get_outbound_drafts_for_session(session_token)
+        legacy_approved = [d for d in legacy_drafts
+                           if d.get("campaign_id") == campaign_id and d.get("status") == "approved"]
+        if legacy_approved:
+            for ld in legacy_approved:
+                _sync_draft_to_outbound(ld, session_token)
+            approved = [outbound_draft_store.get(ld["id"])
+                        for ld in legacy_approved]
+            approved = [d for d in approved if d and d.status.value in ("approved", "auto_approved")]
+    if not approved:
+        log.info("[campaign_launch] No approved drafts found for campaign %s", campaign_id)
+        return {"ok": True, "total": 0, "sent": 0, "failed": 0, "results": []}
+
+    real_provider_id = _find_outbound_gmail_provider_id()
+    if not real_provider_id:
+        log.warning("[campaign_launch] No Gmail outbound provider registered")
+        total = len(approved)
+        campaign["total_sends"] = total
+        campaign["sent_count"] = 0
+        campaign["failed_count"] = total
+        return {"ok": False, "error": "No Gmail outbound provider registered",
+                "total": total, "sent": 0, "failed": total, "results": []}
+
+    log.info("[campaign_launch] Dispatching %d approved drafts via provider %s", len(approved), real_provider_id)
+    results = []
+    for draft in approved:
+        try:
+            r = outbound_executor.execute("send_reply", {
+                "provider_id": real_provider_id,
+                "draft_id": draft.id,
+                "conversation_id": draft.conversation_id,
+                "thread_id": draft.thread_id,
+                "workflow_id": draft.workflow_id,
+                "subject": draft.subject,
+                "body": draft.body,
+                "recipient": {"email": draft.recipient.email, "name": draft.recipient.name},
+                "sender": {"email": draft.sender.email, "name": draft.sender.name},
+            })
+            if r.get("ok"):
+                campaign["sent_count"] = campaign.get("sent_count", 0) + 1
+                outbound_draft_store.mark_sent(draft.id)
+                try:
+                    from services.conversations.integration import create_conversation_from_send
+                    send_data = r.get("send_result", {})
+                    create_conversation_from_send(
+                        provider_id=real_provider_id,
+                        provider_type="gmail",
+                        external_thread_id=send_data.get("thread_id", ""),
+                        external_message_id=send_data.get("external_message_id", ""),
+                        subject=draft.subject,
+                        from_email=draft.sender.email,
+                        from_name=draft.sender.name,
+                        to_email=draft.recipient.email,
+                        to_name=draft.recipient.name,
+                        body=draft.body,
+                        campaign_id=campaign_id,
+                        workflow_id=draft.workflow_id or campaign_id,
+                    )
+                except Exception as conv_err:
+                    log.warning("[campaign_launch] Failed to create conversation: %s", conv_err)
+            else:
+                campaign["failed_count"] = campaign.get("failed_count", 0) + 1
+            results.append({"draft_id": draft.id, "ok": r.get("ok", False), "error": r.get("error")})
+            _update_campaign_launch_progress(session_token, campaign_id,
+                                              sum(1 for r2 in results if r2["ok"]),
+                                              len(results))
+        except Exception as e:
+            campaign["failed_count"] = campaign.get("failed_count", 0) + 1
+            results.append({"draft_id": draft.id, "ok": False, "error": str(e)})
+            _update_campaign_launch_progress(session_token, campaign_id,
+                                              sum(1 for r2 in results if r2["ok"]),
+                                              len(results))
+    total = len(approved)
+    sent = sum(1 for r in results if r["ok"])
+    campaign["total_sends"] = total
+    campaign["sent_count"] = sent
+    campaign["failed_count"] = total - sent
+    log.info("[campaign_launch] Complete: %d/%d sent, %d failed", sent, total, total - sent)
+    return {"ok": True, "total": total, "sent": sent, "failed": total - sent, "results": results}
+
+
+def _update_campaign_launch_progress(session_token: str, campaign_id: str,
+                                     sent_count: int, total_count: int) -> None:
+    """Store launch progress in the campaign dict so frontend can poll it."""
+    campaigns = campaign_store.get(session_token, [])
+    for c in campaigns:
+        if c.get("id") == campaign_id:
+            c["launch_sent"] = sent_count
+            c["launch_total"] = total_count
+            c["updated_at"] = datetime.now(timezone.utc).isoformat()
+            break
 
 
 @app.delete("/api/web/session/{session_token}/campaigns/{campaign_id}")
@@ -929,7 +2247,7 @@ async def delete_campaign(session_token: str, campaign_id: str):
 
 @app.get("/api/web/session/{session_token}/campaigns/{campaign_id}/drafts")
 async def list_campaign_drafts(session_token: str, campaign_id: str):
-    all_drafts = draft_store.get(session_token, [])
+    all_drafts = _get_outbound_drafts_for_session(session_token)
     filtered = [d for d in all_drafts if d.get("campaign_id") == campaign_id]
     return {"ok": True, "drafts": filtered}
 
@@ -1003,15 +2321,22 @@ async def mission_control_summary(session_token: str):
     approved_drafts = sum(1 for d in drafts if d.get("status") == "approved")
     reply_rate_heuristic = round((approved_drafts / len(drafts) * 100) if drafts else 0)
 
-    snapshot = build_snapshot(session_token, campaigns, drafts, total_leads)
+    from services.conversation_engine import ConversationEngine
+    _engine = ConversationEngine()
+    summary = _engine.get_web_session_summary(session_token)
+    db_user_id = summary.get("user_id") if summary else None
+
+    snapshot = build_snapshot(session_token, campaigns, drafts, total_leads, user_id=db_user_id)
     analysis = snapshot.get("analysis", {})
     recommendations = generate_recommendations(snapshot)
     brief = generate_brief(snapshot, recommendations)
 
     campaign_list = snapshot.get("campaigns", [])
-    user_id = f"web:{session_token}"
     try:
-        current_jobs = job_manager.list_active_jobs(user_id)
+        if db_user_id:
+            current_jobs = job_manager.list_active_jobs(db_user_id)
+        else:
+            current_jobs = []
     except Exception:
         current_jobs = []
 
@@ -1292,7 +2617,10 @@ async def plan_workflow_endpoint(session_token: str, payload: PlanningInput):
     campaigns = campaign_store.get(session_token, [])
     drafts = draft_store.get(session_token, [])
     total_leads = sum(c.get("lead_count", 0) or 0 for c in campaigns)
-    snapshot = build_snapshot(session_token, campaigns, drafts, total_leads)
+    from services.conversation_engine import ConversationEngine
+    _summary = ConversationEngine().get_web_session_summary(session_token)
+    _db_user_id = _summary.get("user_id") if _summary else None
+    snapshot = build_snapshot(session_token, campaigns, drafts, total_leads, user_id=_db_user_id)
     result = plan_workflow(
         objective=payload.objective,
         snapshot=snapshot,
@@ -1450,6 +2778,56 @@ async def cancel_workflow_endpoint(session_token: str, workflow_id: str):
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── Conversation Routes ──
+
+@app.get("/api/web/session/{session_token}/conversations")
+async def list_conversations_route(session_token: str):
+    from services.conversations.conversation_store import conversation_store
+    conversations = conversation_store.list_conversations(limit=100)
+    return {
+        "ok": True,
+        "conversations": [c.to_dict() for c in conversations],
+    }
+
+
+@app.get("/api/web/session/{session_token}/conversations/{conversation_id}")
+async def get_conversation_route(session_token: str, conversation_id: str):
+    from services.conversations.conversation_store import conversation_store
+    convo = conversation_store.get_conversation(conversation_id)
+    if not convo:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {
+        "ok": True,
+        "conversation": convo.to_dict(),
+    }
+
+
+@app.get("/api/web/session/{session_token}/conversations/{conversation_id}/timeline")
+async def get_conversation_timeline_route(session_token: str, conversation_id: str):
+    from services.conversations.conversation_store import conversation_store
+    convo = conversation_store.get_conversation(conversation_id)
+    if not convo:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    events = conversation_store.get_timeline(conversation_id)
+    return {
+        "ok": True,
+        "events": [e.to_dict() for e in events],
+    }
+
+
+@app.get("/api/web/session/{session_token}/conversations/{conversation_id}/messages")
+async def get_conversation_messages_route(session_token: str, conversation_id: str):
+    from services.conversations.conversation_store import conversation_store
+    convo = conversation_store.get_conversation(conversation_id)
+    if not convo:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    messages = conversation_store.get_messages_for_conversation(conversation_id)
+    return {
+        "ok": True,
+        "messages": [m.to_dict() for m in messages],
+    }
 
 
 if __name__ == "__main__":

@@ -906,6 +906,48 @@ def generate_copilot_response(
             text = msg.get("text", "")[:200]
             system += f"{role}: {text}\n"
 
+    conversation_intel = wc.get("conversation_intelligence")
+    if conversation_intel:
+        system += "\n--- Communication Intelligence ---\n"
+        system += f"Stage: {conversation_intel.get('current_stage', 'unknown')}\n"
+        system += f"Summary: {conversation_intel.get('summary', '')}\n"
+        if conversation_intel.get('open_questions'):
+            system += f"Open questions: {'; '.join(conversation_intel['open_questions'][:3])}\n"
+        if conversation_intel.get('outstanding_objections'):
+            system += f"Objections: {'; '.join(conversation_intel['outstanding_objections'][:3])}\n"
+        if conversation_intel.get('pain_points'):
+            system += f"Pain points: {'; '.join(conversation_intel['pain_points'][:3])}\n"
+        if conversation_intel.get('business_goals'):
+            system += f"Business goals: {'; '.join(conversation_intel['business_goals'][:3])}\n"
+        if conversation_intel.get('buying_signals'):
+            system += f"Buying signals: {'; '.join(conversation_intel['buying_signals'][:3])}\n"
+        if conversation_intel.get('key_risks'):
+            system += f"Risks: {'; '.join(conversation_intel['key_risks'][:3])}\n"
+        if conversation_intel.get('key_opportunities'):
+            system += f"Opportunities: {'; '.join(conversation_intel['key_opportunities'][:3])}\n"
+        if conversation_intel.get('competitor_mentioned'):
+            system += f"Competitor: {conversation_intel['competitor_mentioned']}\n"
+        if conversation_intel.get('decision_confidence'):
+            system += f"Decision confidence: {conversation_intel['decision_confidence']}/100\n"
+        if conversation_intel.get('urgency'):
+            system += f"Urgency: {conversation_intel['urgency']}\n"
+        system += "\nWhen discussing conversations, reason like a Senior SDR. Don't just repeat what the lead said — interpret it. For example, instead of 'They asked about pricing', say 'Pricing requests usually indicate active evaluation rather than casual curiosity. Combined with the implementation questions, I'd classify this as a strong buying signal.' Use the structured intelligence above to provide strategic reasoning.\n"
+
+    providers = wc.get("providers", [])
+    if providers:
+        system += "\n--- Connected Providers ---\n"
+        for p in providers:
+            system += f"  - {p.get('provider_type', '?')} ({p.get('status', '?')})"
+            if p.get('email'):
+                system += f" — {p['email']}"
+            if p.get('last_sync'):
+                system += f", last sync: {p['last_sync']}"
+            system += "\n"
+        ps = wc.get("provider_summary", {})
+        if ps:
+            system += f"Provider health: {ps.get('healthy', 0)} healthy, {ps.get('offline', 0)} offline\n"
+        system += "You can discuss provider health, sync status, and connected accounts.\n"
+
     user_text = f"User message: {user_message.strip()}"
 
     _log(f"Copilot request: page={current_page}, campaigns={snapshot.get('campaign_count', 0)}, focus={analysis.get('current_focus', {}).get('focus', 'none') if analysis else 'none'}, history_len={len(message_history)}")

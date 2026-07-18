@@ -323,7 +323,6 @@ class TestInvalidTaskTransitions:
         (TaskState.READY, TaskState.WAITING_APPROVAL),
         (TaskState.READY, TaskState.RETRYING),
         (TaskState.READY, TaskState.READY),
-        (TaskState.RUNNING, TaskState.READY),
         (TaskState.RUNNING, TaskState.BLOCKED),
         (TaskState.RUNNING, TaskState.SKIPPED),
         (TaskState.COMPLETED, TaskState.PENDING),

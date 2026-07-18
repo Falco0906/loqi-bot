@@ -14,15 +14,19 @@ terminal or stable state.
 
 from __future__ import annotations
 
+import asyncio
+import random
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from services.execution.dispatcher import AdapterResolver, Dispatcher
-from services.execution.enums import SessionState, TaskState
+from services.execution.enums import ExecutionEventType, SessionState, TaskState
+from services.execution.event_bus import EventBus
 from services.execution.exceptions import (
     ExecutionDispatchError,
     ExecutionSessionError,
 )
+from services.execution.recovery_manager import RecoveryError, RecoveryManager
 from services.execution.execution_context import ExecutionContext
 from services.execution.execution_models import (
     ExecutionEvent,
@@ -30,6 +34,7 @@ from services.execution.execution_models import (
     ExecutionSession,
     ExecutionTask,
     ExecutionResult,
+    RetryDecision,
     RetryPolicy,
     TaskResult,
 )
@@ -56,13 +61,16 @@ class ExecutionEngine:
     stable state.
     """
 
-    def __init__(self):
+    def __init__(self, event_bus: Optional[EventBus] = None):
         self._sessions: dict[str, ExecutionSession] = {}
+        self._schedulers: dict[str, Scheduler] = {}
+        self.event_bus = event_bus or EventBus()
 
     async def execute(
         self,
         plan: Any,
         resolver: Optional[AdapterResolver] = None,
+        retry_policy: Optional[RetryPolicy] = None,
     ) -> ExecutionSession:
         """Execute a validated plan.
 
@@ -80,6 +88,12 @@ class ExecutionEngine:
         continuous loop until the session is terminal or no more tasks can
         be dispatched.
 
+        Args:
+            plan: The validated Plan to execute.
+            resolver: Optional adapter resolver for dispatching tasks.
+            retry_policy: Optional override for the default RetryPolicy.
+                          When None, RetryPolicy.default() is used.
+
         Returns:
             The completed ExecutionSession.
 
@@ -89,15 +103,78 @@ class ExecutionEngine:
         validate_plan_for_execution(plan)
 
         session = self._create_session(plan)
-        self._initialize(session)
+        self._initialize(session, retry_policy)
         validate_session_initialization(session)
 
         scheduler = Scheduler(session)
         scheduler.initialize()
 
         self._sessions[session.id] = session
+        self._schedulers[session.id] = scheduler
+        session.start_time = datetime.now(timezone.utc)
+
+        self.event_bus.publish(
+            ExecutionEvent(
+                session_id=session.id,
+                event_type=ExecutionEventType.SESSION_STARTED,
+                data={
+                    "plan_id": session.plan_id,
+                    "task_count": len(session.tasks),
+                },
+            )
+        )
 
         await self._run_scheduler(session, scheduler, resolver)
+
+        self._schedulers.pop(session.id, None)
+
+        return session
+
+    async def recover(
+        self,
+        session: ExecutionSession,
+        resolver: AdapterResolver,
+    ) -> ExecutionSession:
+        """Recover and resume execution of a previously interrupted session.
+
+        Stages:
+          1. validate  — verify session integrity
+          2. fix       — apply recovery state transitions
+          3. rebuild   — reconstruct scheduler from session state
+          4. run       — invoke the same execution loop as fresh execution
+
+        Args:
+            session: The recovered ExecutionSession.
+            resolver: Adapter resolver for dispatching tasks.
+
+        Returns:
+            The completed ExecutionSession.
+
+        Raises:
+            RecoveryError: If session validation fails.
+        """
+        RecoveryManager.validate(session)
+        RecoveryManager.fix_states(session)
+        scheduler = RecoveryManager.rebuild_scheduler(session)
+
+        self._sessions[session.id] = session
+        self._schedulers[session.id] = scheduler
+        session.start_time = datetime.now(timezone.utc)
+
+        self.event_bus.publish(
+            ExecutionEvent(
+                session_id=session.id,
+                event_type=ExecutionEventType.SESSION_STARTED,
+                data={
+                    "session_id": session.id,
+                    "reason": "recovery",
+                },
+            )
+        )
+
+        await self._run_scheduler(session, scheduler, resolver)
+
+        self._schedulers.pop(session.id, None)
 
         return session
 
@@ -123,6 +200,19 @@ class ExecutionEngine:
             if session.status.is_terminal:
                 session.end_time = datetime.now(timezone.utc)
             session.updated_at = datetime.now(timezone.utc)
+
+            event_type = (
+                ExecutionEventType.SESSION_COMPLETED
+                if session.status == SessionState.COMPLETED
+                else ExecutionEventType.SESSION_FAILED
+            )
+            self.event_bus.publish(
+                ExecutionEvent(
+                    session_id=session.id,
+                    event_type=event_type,
+                    data={"status": session.status.value},
+                )
+            )
 
     async def _legacy_scheduler_step(
         self,
@@ -190,11 +280,37 @@ class ExecutionEngine:
         resolver: AdapterResolver,
     ) -> None:
         """Execute a single task: dispatch and handle the result."""
+        self.event_bus.publish(
+            ExecutionEvent(
+                session_id=session.id,
+                task_id=task.id,
+                event_type=ExecutionEventType.TASK_READY,
+                data={"task_type": task.plan_task.type.value},
+            )
+        )
+
+        is_retry = task.attempts > 0
         StateMachine.transition_task(task, TaskState.RUNNING)
+
+        self.event_bus.publish(
+            ExecutionEvent(
+                session_id=session.id,
+                task_id=task.id,
+                event_type=(
+                    ExecutionEventType.TASK_RETRY_STARTED
+                    if is_retry
+                    else ExecutionEventType.TASK_STARTED
+                ),
+                data={
+                    "attempt": task.attempts,
+                    "task_type": task.plan_task.type.value,
+                },
+            )
+        )
 
         context = ExecutionContext(session_id=session.id)
         result = await self._dispatch_safe(task, context, resolver)
-        await self._handle_result(task, scheduler, result)
+        await self._handle_result(task, session, scheduler, result)
 
     @staticmethod
     async def _dispatch_safe(
@@ -219,6 +335,8 @@ class ExecutionEngine:
                 error_type="permanent",
                 metadata={"unsupported_task": True},
             )
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             return TaskResult(
                 task_id=task.id,
@@ -229,25 +347,183 @@ class ExecutionEngine:
                 metadata={"adapter_exception": type(e).__name__},
             )
 
-    @staticmethod
     async def _handle_result(
+        self,
         task: ExecutionTask,
+        session: ExecutionSession,
         scheduler: Scheduler,
         result: TaskResult,
     ) -> None:
-        """Handle a dispatch result.
+        """Handle a dispatch result with retry support.
 
-        Success  → transition COMPLETED, mark completed in scheduler.
-        Failure  → transition FAILED, mark failed in scheduler.
+        Success         → COMPLETED, mark_completed.
+        Transient fail  → retry if attempts remain, else FAILED.
+        Permanent fail  → FAILED, mark_failed.
         """
         task.result = result
 
         if result.success:
-            StateMachine.transition_task(task, TaskState.COMPLETED)
-            scheduler.mark_completed(task.id)
+            await self._handle_success(task, session, scheduler)
         else:
+            await self._handle_failure(task, session, scheduler, result)
+
+    async def _handle_success(
+        self,
+        task: ExecutionTask,
+        session: ExecutionSession,
+        scheduler: Scheduler,
+    ) -> None:
+        """Handle a successful task result."""
+        StateMachine.transition_task(task, TaskState.COMPLETED)
+        scheduler.mark_completed(task.id)
+
+        self.event_bus.publish(
+            ExecutionEvent(
+                session_id=session.id,
+                task_id=task.id,
+                event_type=ExecutionEventType.TASK_COMPLETED,
+                data={
+                    "task_type": task.plan_task.type.value,
+                    "attempts": task.attempts,
+                },
+            )
+        )
+
+    async def _handle_failure(
+        self,
+        task: ExecutionTask,
+        session: ExecutionSession,
+        scheduler: Scheduler,
+        result: TaskResult,
+    ) -> None:
+        """Handle a failed task result — retry transient or fail permanently."""
+        decision = self._should_retry(task, result)
+        if decision.should_retry:
+            self.event_bus.publish(
+                ExecutionEvent(
+                    session_id=session.id,
+                    task_id=task.id,
+                    event_type=ExecutionEventType.TASK_RETRY_SCHEDULED,
+                    data={
+                        "delay_seconds": decision.delay_seconds,
+                        "remaining_attempts": decision.remaining_attempts,
+                        "task_type": task.plan_task.type.value,
+                        "error": result.error,
+                    },
+                )
+            )
+            await self._schedule_retry(task, scheduler, decision)
+        else:
+            if task.attempts > 0:
+                self.event_bus.publish(
+                    ExecutionEvent(
+                        session_id=session.id,
+                        task_id=task.id,
+                        event_type=ExecutionEventType.TASK_RETRY_EXHAUSTED,
+                        data={
+                            "task_type": task.plan_task.type.value,
+                            "attempts": task.attempts,
+                            "error": result.error,
+                        },
+                    )
+                )
+
             StateMachine.transition_task(task, TaskState.FAILED)
-            scheduler.mark_failed(task.id)
+
+            self.event_bus.publish(
+                ExecutionEvent(
+                    session_id=session.id,
+                    task_id=task.id,
+                    event_type=ExecutionEventType.TASK_FAILED,
+                    data={
+                        "task_type": task.plan_task.type.value,
+                        "error": result.error,
+                        "error_type": result.error_type,
+                        "attempts": task.attempts,
+                    },
+                )
+            )
+
+            skipped = scheduler.mark_failed(task.id)
+            for skipped_id in skipped:
+                self.event_bus.publish(
+                    ExecutionEvent(
+                        session_id=session.id,
+                        task_id=skipped_id,
+                        event_type=ExecutionEventType.TASK_SKIPPED,
+                        data={
+                            "task_type": session.tasks[skipped_id].plan_task.type.value,
+                            "reason": "upstream_failure",
+                        },
+                    )
+                )
+
+    # ------------------------------------------------------------------
+    # Retry helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compute_backoff(task: ExecutionTask) -> float:
+        """Compute the retry delay using the task's RetryPolicy.
+
+        Applies exponential backoff, max delay cap, and optional jitter.
+        The attempt count used for the backoff exponent is the *next*
+        attempt (i.e., the retry being scheduled), which is
+        ``task.attempts`` before increment (0-based).
+        """
+        policy = task.retry_policy
+        delay = policy.backoff_base_seconds * (policy.backoff_multiplier ** task.attempts)
+        delay = min(delay, policy.max_backoff_seconds)
+        if policy.jitter:
+            delay *= random.uniform(0.5, 1.5)
+        return delay
+
+    @staticmethod
+    def _should_retry(task: ExecutionTask, result: TaskResult) -> RetryDecision:
+        """Evaluate whether a task should be retried.
+
+        A retry occurs only when:
+          - The result is a failure (success=False)
+          - The error type is in the task's retryable_error_types set
+          - The task has remaining attempts according to its RetryPolicy
+
+        Returns a RetryDecision with the computed delay and remaining count.
+        """
+        if result.success:
+            return RetryDecision(should_retry=False)
+        if result.error_type not in task.retry_policy.retryable_error_types:
+            return RetryDecision(should_retry=False)
+
+        next_attempt = task.attempts + 1
+        remaining = task.max_attempts - next_attempt
+        if remaining <= 0:
+            return RetryDecision(should_retry=False)
+
+        delay = ExecutionEngine._compute_backoff(task)
+
+        return RetryDecision(
+            should_retry=True,
+            delay_seconds=delay,
+            remaining_attempts=remaining,
+        )
+
+    @staticmethod
+    async def _schedule_retry(
+        task: ExecutionTask,
+        scheduler: Scheduler,
+        decision: RetryDecision,
+    ) -> None:
+        """Execute a retry: transition states, increment attempts, wait, requeue.
+
+        Attempts are incremented *after* both state transitions succeed to
+        avoid leaving the task with an inconsistent attempt count if a
+        transition fails.
+        """
+        StateMachine.transition_task(task, TaskState.RETRYING)
+        StateMachine.transition_task(task, TaskState.WAITING)
+        task.attempts += 1
+        await asyncio.sleep(decision.delay_seconds)
+        scheduler.requeue(task.id)
 
     def _create_session(self, plan: Any) -> ExecutionSession:
         """Create an ExecutionSession from a validated Plan."""
@@ -265,13 +541,13 @@ class ExecutionEngine:
         )
         return session
 
-    def _initialize(self, session: ExecutionSession) -> None:
+    def _initialize(self, session: ExecutionSession, retry_policy: Optional[RetryPolicy] = None) -> None:
         """Initialize runtime state for a session.
 
         Wraps each Plan Task into an ExecutionTask, builds the in-degree
         map, identifies root tasks, and initializes metrics.
         """
-        default_policy = RetryPolicy.default()
+        default_policy = retry_policy or RetryPolicy.default()
 
         for plan_task in session.plan.tasks:
             etask = wrap_task(plan_task, default_policy)
@@ -338,6 +614,23 @@ class ExecutionEngine:
         for etask in session.tasks.values():
             if not etask.status.is_terminal:
                 StateMachine.transition_task(etask, TaskState.CANCELLED)
+                self.event_bus.publish(
+                    ExecutionEvent(
+                        session_id=session.id,
+                        task_id=etask.id,
+                        event_type=ExecutionEventType.TASK_CANCELLED,
+                        data={"task_type": etask.plan_task.type.value},
+                    )
+                )
+
+        self.event_bus.publish(
+            ExecutionEvent(
+                session_id=session.id,
+                event_type=ExecutionEventType.SESSION_CANCELLED,
+                data={"status": session.status.value},
+            )
+        )
+
         return session
 
     def pause(self, session_id: str) -> ExecutionSession:
@@ -377,7 +670,11 @@ class ExecutionEngine:
                 f"Cannot approve task {task_id}: "
                 f"status is {etask.status.value} (expected WAITING_APPROVAL)"
             )
-        StateMachine.transition_task(etask, TaskState.READY)
+        scheduler = self._schedulers.get(session_id)
+        if scheduler:
+            scheduler.requeue(task_id)
+        else:
+            StateMachine.transition_task(etask, TaskState.READY)
         session.updated_at = datetime.now(timezone.utc)
         return session
 
@@ -395,6 +692,37 @@ class ExecutionEngine:
                 f"status is {etask.status.value} (expected WAITING_APPROVAL)"
             )
         StateMachine.transition_task(etask, TaskState.SKIPPED)
+
+        scheduler = self._schedulers.get(session_id)
+        if scheduler:
+            skipped = scheduler.mark_skipped(task_id)
+            for skipped_id in skipped:
+                skipped_task = session.tasks.get(skipped_id)
+                task_type = skipped_task.plan_task.type.value if skipped_task else "unknown"
+                self.event_bus.publish(
+                    ExecutionEvent(
+                        session_id=session.id,
+                        task_id=skipped_id,
+                        event_type=ExecutionEventType.TASK_SKIPPED,
+                        data={
+                            "task_type": task_type,
+                            "reason": "approval_rejected_cascade",
+                        },
+                    )
+                )
+
+        self.event_bus.publish(
+            ExecutionEvent(
+                session_id=session.id,
+                task_id=etask.id,
+                event_type=ExecutionEventType.TASK_SKIPPED,
+                data={
+                    "task_type": etask.plan_task.type.value,
+                    "reason": "approval_rejected",
+                },
+            )
+        )
+
         session.updated_at = datetime.now(timezone.utc)
         return session
 

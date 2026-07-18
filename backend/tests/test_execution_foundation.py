@@ -205,7 +205,7 @@ class TestExecutionEventType:
         assert ExecutionEventType.WAITING_COMPLETED.value == "waiting.completed"
 
     def test_count(self):
-        assert len(ExecutionEventType) == 19
+        assert len(ExecutionEventType) == 22
 
 
 # ---------------------------------------------------------------------------

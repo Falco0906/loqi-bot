@@ -343,3 +343,22 @@ class InDegreeEntry:
     task_id: str
     remaining: int = 0
     total: int = 0
+
+
+@dataclass
+class RetryDecision:
+    """Decision produced by evaluating whether a task should be retried.
+
+    Used to encapsulate retry logic so that eventing and metrics layers
+    can observe why a retry occurred without scattering retry calculations
+    throughout the pipeline.
+
+    Attributes:
+        should_retry: True if the task qualifies for a retry attempt.
+        delay_seconds: How long to wait before the next attempt.
+        remaining_attempts: How many attempts remain (including this one).
+    """
+
+    should_retry: bool = False
+    delay_seconds: float = 0.0
+    remaining_attempts: int = 0

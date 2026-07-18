@@ -4,6 +4,8 @@ Phase 3.6.4A — Foundation implementation.
 Phase 3.6.4B — Scheduler & State Machine.
 Phase 3.6.4C — Dispatcher & Base Adapter.
 Phase 3.6.4D — Adapter Registry.
+Phase 3.6.4F — Retry Engine.
+Phase 3.6.4G — Event Bus.
 """
 
 from services.execution.adapter_registry import AdapterDescriptor, AdapterRegistry
@@ -14,6 +16,7 @@ from services.execution.enums import (
     SessionState,
     TaskState,
 )
+from services.execution.event_bus import EventBus, EventSubscriber
 from services.execution.exceptions import (
     ExecutionAdapterError,
     ExecutionDispatchError,
@@ -37,6 +40,7 @@ from services.execution.execution_models import (
 )
 from services.execution.execution_context import ExecutionContext
 from services.execution.execution_pipeline import ExecutionEngine, get_pipeline
+from services.execution.metrics_collector import AdapterMetricsSnapshot, MetricsCollector, MetricsSnapshot
 from services.execution.scheduler import Scheduler
 from services.execution.state_machine import StateMachine
 from services.execution.validation import (
@@ -53,6 +57,9 @@ __all__ = [
     # Dispatcher
     "AdapterResolver",
     "Dispatcher",
+    # Event Bus
+    "EventBus",
+    "EventSubscriber",
     # Enums
     "ExecutionEventType",
     "SessionState",
@@ -88,4 +95,8 @@ __all__ = [
     # Validation
     "validate_plan_for_execution",
     "validate_session_initialization",
+    # Metrics Collector
+    "AdapterMetricsSnapshot",
+    "MetricsCollector",
+    "MetricsSnapshot",
 ]

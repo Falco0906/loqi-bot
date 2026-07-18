@@ -80,12 +80,25 @@ class Scheduler:
             )
 
     def _enqueue_root_tasks(self) -> None:
-        """Enqueue all tasks with in-degree 0 as READY."""
+        """Enqueue all tasks with in-degree 0 as READY.
+
+        Promotes only PENDING tasks to READY and enqueues them.
+        Tasks already in READY state are enqueued without transition.
+        Other non-terminal states (WAITING_APPROVAL, WAITING, RETRYING,
+        RUNNING, BLOCKED) are left unchanged — they are handled by
+        recovery state fixing or by their respective lifecycle paths.
+
+        Terminal tasks are always skipped.
+        """
         for tid, entry in self.in_degree.items():
             if entry.remaining == 0:
                 etask = self.session.tasks[tid]
-                StateMachine.transition_task(etask, TaskState.READY)
-                self._ready_queue.append(tid)
+                if etask.status.is_terminal:
+                    continue
+                if etask.status == TaskState.PENDING:
+                    StateMachine.transition_task(etask, TaskState.READY)
+                if etask.status == TaskState.READY:
+                    self._ready_queue.append(tid)
 
     # ------------------------------------------------------------------
     # Ready Queue
@@ -152,7 +165,8 @@ class Scheduler:
             entry.remaining -= 1
 
             if entry.remaining == 0:
-                StateMachine.transition_task(etask, TaskState.READY)
+                if etask.status != TaskState.READY:
+                    StateMachine.transition_task(etask, TaskState.READY)
                 self._ready_queue.append(downstream_id)
                 newly_ready.append(downstream_id)
 
@@ -227,6 +241,22 @@ class Scheduler:
                     skipped.extend(self.mark_skipped(downstream_id))
 
         return skipped
+
+    def requeue(self, task_id: str) -> None:
+        """Re-queue a task for execution (retry-unaware).
+
+        Releases the task from the running set, transitions it to READY,
+        and appends it to the ready queue. The scheduler does not track
+        why the task is being requeued — it may be a retry, an external
+        re-trigger, or any other reason.
+
+        The caller is responsible for any upstream state transitions and
+        for ensuring the task is not in a terminal state.
+        """
+        self._running.discard(task_id)
+        etask = self.session.tasks[task_id]
+        StateMachine.transition_task(etask, TaskState.READY)
+        self._ready_queue.append(task_id)
 
     # ------------------------------------------------------------------
     # Terminal Detection

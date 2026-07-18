@@ -1042,3 +1042,44 @@ export async function getConversationMessages(sessionToken: string, conversation
     `${API_BASE}/api/web/session/${sessionToken}/conversations/${conversationId}/messages`,
   );
 }
+
+export async function getConversationReasoning(sessionToken: string, conversationId: string) {
+  return fetchWithRetry<{ ok: boolean; reasoning: Record<string, unknown> | null }>(
+    `${API_BASE}/api/web/session/${sessionToken}/conversations/${conversationId}/reasoning`,
+  );
+}
+
+export async function getConversationPlan(sessionToken: string, conversationId: string) {
+  return fetchWithRetry<{
+    ok: boolean;
+    plan: Record<string, unknown> | null;
+    graph: {
+      nodes: Array<{ id: string; type: string; status: string; label: string; dependencies: string[]; approval: string }>;
+      edges: Array<{ source: string; target: string }>;
+    } | null;
+    explainability: Record<string, unknown> | null;
+    validation: {
+      valid: boolean;
+      issues: Array<{ severity: string; code: string; message: string; task_id: string }>;
+      warnings: Array<{ severity: string; code: string; message: string; task_id: string }>;
+    } | null;
+  }>(
+    `${API_BASE}/api/web/session/${sessionToken}/conversations/${conversationId}/plan`,
+    { method: "POST", cache: "no-store" },
+  );
+}
+
+export async function generateConversationReply(
+  sessionToken: string,
+  conversationId: string,
+  payload: { styles?: string[]; variant_count?: number },
+) {
+  return fetchWithRetry<{ ok: boolean; generation: Record<string, unknown> | null; reasoning: Record<string, unknown> }>(
+    `${API_BASE}/api/web/session/${sessionToken}/conversations/${conversationId}/generate-reply`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}

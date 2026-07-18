@@ -862,9 +862,10 @@ class TestIndependentTasks:
 class TestSessionTiming:
     """Session timing fields are populated correctly."""
 
-    def test_session_start_time_not_set_initially(self, engine, single_plan, success_resolver):
+    def test_session_start_time_set_on_execution(self, engine, single_plan, success_resolver):
         session = asyncio.run(engine.execute(single_plan, resolver=success_resolver))
-        assert session.start_time is None
+        assert session.start_time is not None
+        assert isinstance(session.start_time, datetime)
 
     def test_session_end_time_set_for_terminal(self, engine, single_plan, success_resolver):
         session = asyncio.run(engine.execute(single_plan, resolver=success_resolver))

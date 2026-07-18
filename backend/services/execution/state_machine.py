@@ -30,6 +30,7 @@ _TASK_TRANSITIONS: dict[TaskState, set[TaskState]] = {
         TaskState.CANCELLED,
     },
     TaskState.RUNNING: {
+        TaskState.READY,
         TaskState.COMPLETED,
         TaskState.FAILED,
         TaskState.WAITING,
@@ -49,6 +50,7 @@ _TASK_TRANSITIONS: dict[TaskState, set[TaskState]] = {
     },
     TaskState.RETRYING: {
         TaskState.READY,
+        TaskState.WAITING,
         TaskState.FAILED,
         TaskState.CANCELLED,
     },

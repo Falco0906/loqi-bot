@@ -4,9 +4,40 @@ import { useEffect, useState, use } from "react";
 import Link from "next/link";
 import WorkspaceContainer from "../../../../components/layout/WorkspaceContainer";
 import Icon from "../../../../components/shared/Icon";
-import { getConversation, getConversationEvents, getConversationMessages } from "../../../../lib/api";
+import { getConversation, getConversationEvents, getConversationMessages, getConversationReasoning, generateConversationReply } from "../../../../lib/api";
+import ReasoningPanel from "../../../../components/conversations/ReasoningPanel";
+import ReplyDraftPanel from "../../../../components/conversations/ReplyDraftPanel";
+import ExecutionPlanPanel from "../../../../components/conversations/ExecutionPlanPanel";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
+
+type ReasoningData = Parameters<typeof ReasoningPanel>[0]["reasoning"];
+type GenerationMeta = {
+  generation_id: string;
+  provider: string;
+  model: string;
+  latency_ms: number;
+  token_usage: Record<string, unknown>;
+  generated_at: string;
+  template_used: string;
+  style_used: string;
+  prompt_builder_version: string;
+  template_library_version: string;
+  style_engine_version: string;
+  context_builder_version: string;
+  pipeline_version: string;
+  reasoning_version: string;
+};
+
+type GenerationResult = {
+  conversation_id: string;
+  variants: Array<{
+    style: string;
+    drafts: Array<{ content: string; original_content: string; style: string; variant_index: number }>;
+  }>;
+  metadata: GenerationMeta;
+  validation_results: Array<{ severity: string; code: string; message: string; field: string }>;
+};
 
 const STATUS_LABELS: Record<string, string> = {
   new: "New",
@@ -68,6 +99,7 @@ export default function ConversationDetailPage({ params }: { params: Params }) {
   const [conversation, setConversation] = useState<Record<string, unknown> | null>(null);
   const [timeline, setTimeline] = useState<Record<string, unknown>[]>([]);
   const [messages, setMessages] = useState<Record<string, unknown>[]>([]);
+  const [reasoning, setReasoning] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -85,11 +117,13 @@ export default function ConversationDetailPage({ params }: { params: Params }) {
       getConversation(sessionToken, id),
       getConversationEvents(sessionToken, id),
       getConversationMessages(sessionToken, id),
+      getConversationReasoning(sessionToken, id),
     ])
-      .then(([convRes, timelineRes, msgsRes]) => {
+      .then(([convRes, timelineRes, msgsRes, reasonRes]) => {
         if (convRes.ok) setConversation(convRes.conversation);
         if (timelineRes.ok) setTimeline(timelineRes.events || []);
         if (msgsRes.ok) setMessages(msgsRes.messages || []);
+        if (reasonRes.ok && reasonRes.reasoning) setReasoning(reasonRes.reasoning);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -320,42 +354,25 @@ export default function ConversationDetailPage({ params }: { params: Params }) {
                 </div>
               )}
 
-              {/* Suggested Actions */}
-              <div className="rounded-xl border border-outline-variant/10 bg-charcoal/50 p-4">
-                <h3 className="text-xs font-semibold text-on-surface-variant/70 uppercase tracking-wider mb-3">Suggested Actions</h3>
-                <div className="space-y-2">
-                  <button
-                    disabled
-                    className="w-full rounded-lg border border-outline-variant/10 px-3 py-2 text-xs text-on-surface-variant/50 text-left hover:bg-surface-high/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    title="Coming in a future phase"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Icon name="share" className="text-sm" />
-                      <span>Send Follow-up</span>
-                    </div>
-                  </button>
-                  <button
-                    disabled
-                    className="w-full rounded-lg border border-outline-variant/10 px-3 py-2 text-xs text-on-surface-variant/50 text-left hover:bg-surface-high/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    title="Coming in a future phase"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Icon name="auto_awesome" className="text-sm" />
-                      <span>Generate Reply</span>
-                    </div>
-                  </button>
-                  <button
-                    disabled
-                    className="w-full rounded-lg border border-outline-variant/10 px-3 py-2 text-xs text-on-surface-variant/50 text-left hover:bg-surface-high/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    title="Coming in a future phase"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Icon name="calendar_today" className="text-sm" />
-                      <span>Schedule Meeting</span>
-                    </div>
-                  </button>
-                </div>
-              </div>
+              {/* Reasoning Panel */}
+              {reasoning && <ReasoningPanel reasoning={reasoning as ReasoningData} />}
+
+              {/* Execution Plan Panel */}
+              {sessionToken && (
+                <ExecutionPlanPanel conversationId={id} sessionToken={sessionToken} />
+              )}
+
+              {/* Reply Draft Panel */}
+              {sessionToken && (
+                <ReplyDraftPanel
+                  conversationId={id}
+                  sessionToken={sessionToken}
+                  onGenerate={async (cid, styles, variantCount) => {
+                    const res = await generateConversationReply(sessionToken, cid, { styles, variant_count: variantCount });
+                    return (res.generation || null) as GenerationResult | null;
+                  }}
+                />
+              )}
             </div>
           </div>
         </div>

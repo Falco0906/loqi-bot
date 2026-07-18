@@ -80,6 +80,9 @@ class ExecutionEventType(str, Enum):
     TASK_COMPLETED = "task.completed"
     TASK_FAILED = "task.failed"
     TASK_RETRYING = "task.retrying"
+    TASK_RETRY_SCHEDULED = "task.retry_scheduled"
+    TASK_RETRY_STARTED = "task.retry_started"
+    TASK_RETRY_EXHAUSTED = "task.retry_exhausted"
     TASK_CANCELLED = "task.cancelled"
     TASK_SKIPPED = "task.skipped"
 

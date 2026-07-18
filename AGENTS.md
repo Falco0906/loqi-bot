@@ -94,6 +94,22 @@ OpenCode is only responsible for modifying code.
 
 ---
 
+---
+
+# Protected Layers
+
+These layers must never be modified outside their designated phase type.
+Violations must be flagged before any edit is made.
+
+| Layer | Owns | Only modified by |
+|---|---|---|
+| **1. Design System** | Colors, spacing, typography, shadows, elevations, animations, `globals.css`, `tailwind.config.ts`, CSS variables, theme tokens, background/surface classes | UI-focused phases |
+| **2. Architecture** | WorkspaceContainer, routing, layouts, providers, registries, context, service boundaries | Architecture phases |
+| **3. Intelligence** | Knowledge registry, reasoning pipeline, reply generation engine, AI providers, prompt construction | AI phases |
+| **4. Product Features** | Discovery, Campaigns, Conversations, Draft Review, Settings, Copilot, and all page-level components | Feature phases |
+
+When a task spans multiple layers, stop and ask which layer the change belongs to.
+
 # Avoid
 
 - overengineering infra

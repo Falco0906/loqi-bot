@@ -76,6 +76,9 @@ from services.reply_summary import generate_summary
 from services.conversation_timeline import get_events as get_conversation_events
 from services.conversation_models import FollowupAction, BuyingSignal, SignalStrength, ConversationStage
 from services.buying_signal import detect_signals
+from services.planner.planning_pipeline import get_pipeline as get_planning_pipeline, PlanningPipeline
+from services.planner.plan_validator import ValidationResult
+from services.planner.exceptions import PlanningValidationError
 
 load_dotenv()
 
@@ -2827,6 +2830,220 @@ async def get_conversation_messages_route(session_token: str, conversation_id: s
     return {
         "ok": True,
         "messages": [m.to_dict() for m in messages],
+    }
+
+
+@app.get("/api/web/session/{session_token}/conversations/{conversation_id}/reasoning")
+async def get_conversation_reasoning_route(session_token: str, conversation_id: str):
+    from services.conversations.conversation_store import conversation_store
+    from services.conversation_intelligence.intelligence_pipeline import IntelligencePipeline
+    from services.reasoning.reasoning_pipeline import get_pipeline as get_reasoning_pipeline
+
+    convo = conversation_store.get_conversation(conversation_id)
+    if not convo:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    messages = conversation_store.get_messages_for_conversation(conversation_id)
+    if not messages:
+        return {"ok": True, "reasoning": None}
+
+    # Build intelligence from latest message
+    latest = messages[-1]
+    msg_body = latest.body or latest.body_preview or ""
+    msg_subject = latest.subject or ""
+
+    intel_pipeline = IntelligencePipeline()
+    intelligence = intel_pipeline.analyze_message(
+        message_body=msg_body,
+        lead_id=conversation_id,
+        subject=msg_subject,
+    )
+
+    # Run reasoning pipeline
+    reasoning_pipeline = get_reasoning_pipeline()
+    result = reasoning_pipeline.reason(intelligence)
+
+    return {
+        "ok": True,
+        "reasoning": result.to_dict(),
+    }
+
+
+@app.post("/api/web/session/{session_token}/conversations/{conversation_id}/plan")
+async def get_conversation_plan_route(session_token: str, conversation_id: str):
+    from services.conversations.conversation_store import conversation_store
+    from services.conversation_intelligence.intelligence_pipeline import IntelligencePipeline
+    from services.reasoning.reasoning_pipeline import get_pipeline as get_reasoning_pipeline
+
+    convo = conversation_store.get_conversation(conversation_id)
+    if not convo:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    messages = conversation_store.get_messages_for_conversation(conversation_id)
+    if not messages:
+        return {"ok": True, "plan": None, "validation": None}
+
+    latest = messages[-1]
+    msg_body = latest.body or latest.body_preview or ""
+    msg_subject = latest.subject or ""
+
+    intel_pipeline = IntelligencePipeline()
+    intelligence = intel_pipeline.analyze_message(
+        message_body=msg_body,
+        lead_id=conversation_id,
+        subject=msg_subject,
+    )
+
+    reasoning_pipeline = get_reasoning_pipeline()
+    reasoning_result = reasoning_pipeline.reason(intelligence)
+
+    planning_pipeline = get_planning_pipeline()
+    try:
+        plan, validation = planning_pipeline.plan(reasoning_result)
+    except PlanningValidationError as e:
+        return {
+            "ok": False,
+            "error": e.message,
+            "error_type": "PlanningValidationError",
+            "validation": {
+                "valid": False,
+                "issues": e.context.get("issues", []),
+                "warnings": [],
+            },
+        }
+
+    graph_edges = plan.get_all_dependency_pairs()
+    graph_nodes = [
+        {
+            "id": t.id,
+            "type": t.type.value,
+            "status": t.status.value,
+            "label": t.label,
+            "dependencies": t.dependencies,
+            "approval": t.approval.value,
+        }
+        for t in plan.tasks
+    ]
+
+    validation_dict = None
+    if validation:
+        validation_dict = {
+            "valid": validation.valid,
+            "issues": [
+                {"severity": i.severity, "code": i.code, "message": i.message, "task_id": i.task_id, "suggested_fix": i.suggested_fix}
+                for i in validation.issues
+            ],
+            "warnings": [
+                {"severity": w.severity, "code": w.code, "message": w.message, "task_id": w.task_id, "suggested_fix": w.suggested_fix}
+                for w in validation.warnings
+            ],
+        }
+
+    explainability = _build_plan_explainability(plan)
+
+    return {
+        "ok": True,
+        "plan": plan.to_dict(),
+        "graph": {
+            "nodes": graph_nodes,
+            "edges": [{"source": s, "target": t} for s, t in graph_edges],
+        },
+        "explainability": explainability,
+        "validation": validation_dict,
+    }
+
+
+def _build_plan_explainability(plan):
+    from services.planner.planning_models import PlanGoal
+    goal = plan.goal or PlanGoal()
+    return {
+        "goal": {
+            "outcome": goal.outcome,
+            "target_action": goal.target_action,
+            "priority": goal.priority,
+        },
+        "strategy": plan.strategy,
+        "task_chain": [
+            {
+                "id": t.id,
+                "label": t.label,
+                "type": t.type.value,
+                "reason": t.reasoning_trace,
+                "goal": t.reasoning_goal,
+                "approval": t.approval.value,
+            }
+            for t in plan.tasks
+        ],
+        "total_tasks": len(plan.tasks),
+        "strategy_version": plan.version,
+    }
+
+
+@app.post("/api/web/session/{session_token}/conversations/{conversation_id}/generate-reply")
+async def generate_reply_route(
+    session_token: str,
+    conversation_id: str,
+    body: dict = None,
+):
+    from services.conversations.conversation_store import conversation_store
+    from services.conversation_intelligence.intelligence_pipeline import IntelligencePipeline
+    from services.reasoning.reasoning_pipeline import get_pipeline as get_reasoning_pipeline
+    from services.reply_generation.generation_pipeline import GenerationPipeline
+    from services.reply_generation.generation_models import GenerationStyle
+
+    convo = conversation_store.get_conversation(conversation_id)
+    if not convo:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    messages = conversation_store.get_messages_for_conversation(conversation_id)
+    if not messages:
+        return {"ok": True, "generation": None}
+
+    payload = body or {}
+    style_names = payload.get("styles", ["professional"])
+    styles = []
+    for name in style_names:
+        try:
+            styles.append(GenerationStyle(name))
+        except ValueError:
+            pass
+    if not styles:
+        styles = [GenerationStyle.PROFESSIONAL]
+
+    latest = messages[-1]
+    msg_body = latest.body or latest.body_preview or ""
+    msg_subject = latest.subject or ""
+
+    intel_pipeline = IntelligencePipeline()
+    intelligence = intel_pipeline.analyze_message(
+        message_body=msg_body,
+        lead_id=conversation_id,
+        subject=msg_subject,
+    )
+
+    reasoning_pipeline = get_reasoning_pipeline()
+    reasoning = reasoning_pipeline.reason(intelligence)
+
+    latest_texts = []
+    for m in messages[-3:]:
+        preview = m.body_preview or (m.body or "")[:200]
+        direction = "Prospect" if m.direction == "inbound" else "You"
+        if preview:
+            latest_texts.append(f"[{direction}]: {preview}")
+
+    gen_pipeline = GenerationPipeline()
+    result = gen_pipeline.generate(
+        intelligence=intelligence,
+        reasoning=reasoning,
+        styles=styles,
+        variant_count=payload.get("variant_count", 1),
+        latest_messages=latest_texts,
+    )
+
+    return {
+        "ok": True,
+        "generation": result.to_dict(),
+        "reasoning": reasoning.to_dict(),
     }
 
 

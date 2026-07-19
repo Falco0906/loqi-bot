@@ -5,6 +5,7 @@ import logging
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
@@ -87,7 +88,30 @@ log = logging.getLogger("loqi")
 
 request_id_var: ContextVar[str] = ContextVar("request_id")
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    required_vars = ["OPENAI_API_KEY"]
+    missing = [v for v in required_vars if not os.getenv(v)]
+    if missing:
+        log.warning("Missing required environment variables: %s", ", ".join(missing))
+    log.info("SUPABASE_URL=%s", "set" if os.getenv("SUPABASE_URL") else "not set")
+    log.info("SUPABASE_KEY=%s", "set" if os.getenv("SUPABASE_KEY") else "not set")
+    try:
+        test_supabase_connection()
+    except Exception as e:
+        log.warning("Supabase connection test failed: %s", e)
+    register_workflows()
+    try:
+        from services.migration import apply_migrations
+        apply_migrations()
+    except Exception as e:
+        log.warning("Migration check failed: %s", e)
+    log.info("Job engine initialized")
+    _register_outbound_providers()
+    _start_outbound_scheduler()
+    yield
+
+app = FastAPI(lifespan=lifespan)
 engine = ConversationEngine()
 _start_time = time.time()
 
@@ -654,29 +678,6 @@ class CopilotContextModel(BaseModel):
 class SendWebMessageRequest(BaseModel):
     text: str
     copilot: CopilotContextModel | None = None
-
-
-@app.on_event("startup")
-def startup_event():
-    required_vars = ["OPENAI_API_KEY"]
-    missing = [v for v in required_vars if not os.getenv(v)]
-    if missing:
-        log.warning("Missing required environment variables: %s", ", ".join(missing))
-    log.info("SUPABASE_URL=%s", "set" if os.getenv("SUPABASE_URL") else "not set")
-    log.info("SUPABASE_KEY=%s", "set" if os.getenv("SUPABASE_KEY") else "not set")
-    try:
-        test_supabase_connection()
-    except Exception as e:
-        log.warning("Supabase connection test failed: %s", e)
-    register_workflows()
-    try:
-        from services.migration import apply_migrations
-        apply_migrations()
-    except Exception as e:
-        log.warning("Migration check failed: %s", e)
-    log.info("Job engine initialized")
-    _register_outbound_providers()
-    _start_outbound_scheduler()
 
 
 def _register_outbound_providers() -> None:

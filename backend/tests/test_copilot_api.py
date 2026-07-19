@@ -219,7 +219,7 @@ class TestInvalidPayload:
     def test_invalid_json_returns_422(self, client, session_token):
         resp = client.post(
             f"/api/web/session/{session_token}/messages",
-            data="not valid json",
+            content="not valid json",
             headers={"Content-Type": "application/json"},
         )
         assert resp.status_code == 422

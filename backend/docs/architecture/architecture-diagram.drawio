@@ -1,0 +1,216 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="Architecture" id="loqi-arch">
+    <mxGraphModel dx="1420" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="850" background="#ffffff" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Layers background -->
+        <mxCell id="bg1" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F4FD;strokeColor=#5B9BD5;arcSize=10;verticalAlign=top;fontSize=16;fontStyle=1;spacingTop=6;" parent="1" vertex="1">
+          <mxGeometry x="40" y="40" width="600" height="140"/>
+        </mxCell>
+        <mxCell id="bg1lbl" value="Layer 5 — Adapter Registry" style="text;html=1;fillColor=none;strokeColor=none;fontColor=#2E75B6;fontSize=11;fontStyle=1;verticalAlign=top;align=left;spacingLeft=8;" parent="1" vertex="1">
+          <mxGeometry x="40" y="40" width="600" height="20"/>
+        </mxCell>
+
+        <mxCell id="bg2" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;arcSize=10;verticalAlign=top;fontSize=16;fontStyle=1;spacingTop=6;" parent="1" vertex="1">
+          <mxGeometry x="40" y="190" width="600" height="110"/>
+        </mxCell>
+        <mxCell id="bg2lbl" value="Layer 4 — Credential Framework" style="text;html=1;fillColor=none;strokeColor=none;fontColor=#9A7B20;fontSize=11;fontStyle=1;verticalAlign=top;align=left;spacingLeft=8;" parent="1" vertex="1">
+          <mxGeometry x="40" y="190" width="600" height="20"/>
+        </mxCell>
+
+        <mxCell id="bg3" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E2EFDA;strokeColor=#70AD47;arcSize=10;verticalAlign=top;fontSize=16;fontStyle=1;spacingTop=6;" parent="1" vertex="1">
+          <mxGeometry x="40" y="310" width="600" height="110"/>
+        </mxCell>
+        <mxCell id="bg3lbl" value="Layer 3 — Capability System" style="text;html=1;fillColor=none;strokeColor=none;fontColor=#507E32;fontSize=11;fontStyle=1;verticalAlign=top;align=left;spacingLeft=8;" parent="1" vertex="1">
+          <mxGeometry x="40" y="310" width="600" height="20"/>
+        </mxCell>
+
+        <mxCell id="bg4" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE4EC;strokeColor=#C0392B;arcSize=10;verticalAlign=top;fontSize=16;fontStyle=1;spacingTop=6;" parent="1" vertex="1">
+          <mxGeometry x="40" y="430" width="600" height="130"/>
+        </mxCell>
+        <mxCell id="bg4lbl" value="Layer 2 — Adapter SDK Foundation" style="text;html=1;fillColor=none;strokeColor=none;fontColor=#A93226;fontSize=11;fontStyle=1;verticalAlign=top;align=left;spacingLeft=8;" parent="1" vertex="1">
+          <mxGeometry x="40" y="430" width="600" height="20"/>
+        </mxCell>
+
+        <mxCell id="bg5" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F0E6F6;strokeColor=#8E44AD;arcSize=10;verticalAlign=top;fontSize=16;fontStyle=1;spacingTop=6;" parent="1" vertex="1">
+          <mxGeometry x="40" y="570" width="600" height="190"/>
+        </mxCell>
+        <mxCell id="bg5lbl" value="Layer 1 — Execution Runtime" style="text;html=1;fillColor=none;strokeColor=none;fontColor=#6C3483;fontSize=11;fontStyle=1;verticalAlign=top;align=left;spacingLeft=8;" parent="1" vertex="1">
+          <mxGeometry x="40" y="570" width="600" height="20"/>
+        </mxCell>
+
+        <!-- Layer 5 components -->
+        <mxCell id="l5-1" value="AdapterIdentity&lt;br&gt;(value object)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAEEF3;strokeColor=#5B9BD5;" parent="1" vertex="1">
+          <mxGeometry x="60" y="70" width="120" height="40"/>
+        </mxCell>
+        <mxCell id="l5-2" value="AdapterRegistration&lt;br&gt;(frozen model)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAEEF3;strokeColor=#5B9BD5;" parent="1" vertex="1">
+          <mxGeometry x="200" y="70" width="120" height="40"/>
+        </mxCell>
+        <mxCell id="l5-3" value="AdapterFactory&lt;br&gt;(no caching)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAEEF3;strokeColor=#5B9BD5;" parent="1" vertex="1">
+          <mxGeometry x="340" y="70" width="120" height="40"/>
+        </mxCell>
+        <mxCell id="l5-4" value="AdapterRegistry&lt;br&gt;(unified registry)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAEEF3;strokeColor=#5B9BD5;" parent="1" vertex="1">
+          <mxGeometry x="480" y="70" width="140" height="40"/>
+        </mxCell>
+        <mxCell id="l5-note" value="select_provider():&lt;br&gt;priority &gt; version &gt; order" style="text;html=1;fillColor=none;strokeColor=none;fontSize=9;fontStyle=3;fontColor=#2E75B6;" parent="1" vertex="1">
+          <mxGeometry x="480" y="115" width="140" height="30"/>
+        </mxCell>
+
+        <!-- Layer 4 components -->
+        <mxCell id="l4-1" value="CredentialDescriptor&lt;br&gt;(field metadata)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF6D5;strokeColor=#D6B656;" parent="1" vertex="1">
+          <mxGeometry x="60" y="215" width="130" height="40"/>
+        </mxCell>
+        <mxCell id="l4-2" value="CredentialReference&lt;br&gt;(lightweight ID)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF6D5;strokeColor=#D6B656;" parent="1" vertex="1">
+          <mxGeometry x="210" y="215" width="130" height="40"/>
+        </mxCell>
+        <mxCell id="l4-3" value="CredentialInstance&lt;br&gt;(values + masking)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF6D5;strokeColor=#D6B656;" parent="1" vertex="1">
+          <mxGeometry x="360" y="215" width="130" height="40"/>
+        </mxCell>
+        <mxCell id="l4-4" value="CredentialResolver&lt;br&gt;(abstract)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF6D5;strokeColor=#D6B656;" parent="1" vertex="1">
+          <mxGeometry x="140" y="265" width="150" height="30"/>
+        </mxCell>
+        <mxCell id="l4-5" value="CredentialRegistry&lt;br&gt;(descriptors only)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF6D5;strokeColor=#D6B656;" parent="1" vertex="1">
+          <mxGeometry x="320" y="265" width="150" height="30"/>
+        </mxCell>
+
+        <!-- Layer 3 components -->
+        <mxCell id="l3-1" value="CapabilityDescriptor&lt;br&gt;(frozen model)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D9ECD0;strokeColor=#70AD47;" parent="1" vertex="1">
+          <mxGeometry x="60" y="335" width="130" height="40"/>
+        </mxCell>
+        <mxCell id="l3-2" value="ParameterSpec&lt;br&gt;ReturnSpec" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D9ECD0;strokeColor=#70AD47;" parent="1" vertex="1">
+          <mxGeometry x="210" y="335" width="130" height="40"/>
+        </mxCell>
+        <mxCell id="l3-3" value="CapabilityProvider&lt;br&gt;(bridge)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D9ECD0;strokeColor=#70AD47;" parent="1" vertex="1">
+          <mxGeometry x="360" y="335" width="130" height="40"/>
+        </mxCell>
+        <mxCell id="l3-4" value="CapabilityRegistry&lt;br&gt;(query + provider mgmt)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D9ECD0;strokeColor=#70AD47;" parent="1" vertex="1">
+          <mxGeometry x="100" y="385" width="200" height="30"/>
+        </mxCell>
+        <mxCell id="l3-5" value="CapabilityCategory&lt;br&gt;(extensible)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D9ECD0;strokeColor=#70AD47;" parent="1" vertex="1">
+          <mxGeometry x="330" y="385" width="130" height="30"/>
+        </mxCell>
+
+        <!-- Layer 2 components -->
+        <mxCell id="l2-1" value="ExecutionAdapter&lt;br&gt;(ABC)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FADBD8;strokeColor=#C0392B;" parent="1" vertex="1">
+          <mxGeometry x="60" y="460" width="130" height="40"/>
+        </mxCell>
+        <mxCell id="l2-2" value="AdapterMetadata&lt;br&gt;AdapterResult&lt;br&gt;UsageInfo" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FADBD8;strokeColor=#C0392B;" parent="1" vertex="1">
+          <mxGeometry x="210" y="455" width="130" height="50"/>
+        </mxCell>
+        <mxCell id="l2-3" value="AdapterContext&lt;br&gt;(frozen, injection)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FADBD8;strokeColor=#C0392B;" parent="1" vertex="1">
+          <mxGeometry x="360" y="455" width="130" height="40"/>
+        </mxCell>
+        <mxCell id="l2-4" value="Protocols:&lt;br&gt;Validator, HealthCheckable,&lt;br&gt;CapabilityReporter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FADBD8;strokeColor=#C0392B;" parent="1" vertex="1">
+          <mxGeometry x="60" y="515" width="160" height="40"/>
+        </mxCell>
+        <mxCell id="l2-5" value="Exception Hierarchy&lt;br&gt;(10 classes)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FADBD8;strokeColor=#C0392B;" parent="1" vertex="1">
+          <mxGeometry x="250" y="515" width="150" height="40"/>
+        </mxCell>
+        <mxCell id="l2-note" value="Zero runtime/planner imports" style="text;html=1;fillColor=none;strokeColor=none;fontSize=9;fontStyle=3;fontColor=#A93226;" parent="1" vertex="1">
+          <mxGeometry x="420" y="520" width="200" height="20"/>
+        </mxCell>
+
+        <!-- Layer 1 components -->
+        <mxCell id="l1-1" value="ExecutionEngine&lt;br&gt;(pipeline orchestration)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8DAEF;strokeColor=#8E44AD;" parent="1" vertex="1">
+          <mxGeometry x="60" y="600" width="140" height="40"/>
+        </mxCell>
+        <mxCell id="l1-2" value="StateMachine&lt;br&gt;(state transitions)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8DAEF;strokeColor=#8E44AD;" parent="1" vertex="1">
+          <mxGeometry x="220" y="600" width="120" height="40"/>
+        </mxCell>
+        <mxCell id="l1-3" value="Scheduler&lt;br&gt;(DAG ready queue)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8DAEF;strokeColor=#8E44AD;" parent="1" vertex="1">
+          <mxGeometry x="360" y="600" width="120" height="40"/>
+        </mxCell>
+        <mxCell id="l1-4" value="Dispatcher&lt;br&gt;(adapter resolver)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8DAEF;strokeColor=#8E44AD;" parent="1" vertex="1">
+          <mxGeometry x="500" y="600" width="120" height="40"/>
+        </mxCell>
+
+        <mxCell id="l1-5" value="EventBus&lt;br&gt;(pub/sub)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8DAEF;strokeColor=#8E44AD;" parent="1" vertex="1">
+          <mxGeometry x="60" y="655" width="110" height="40"/>
+        </mxCell>
+        <mxCell id="l1-6" value="MetricsCollector&lt;br&gt;(passive)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8DAEF;strokeColor=#8E44AD;" parent="1" vertex="1">
+          <mxGeometry x="190" y="655" width="110" height="40"/>
+        </mxCell>
+        <mxCell id="l1-7" value="RecoveryManager&lt;br&gt;(stateless)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8DAEF;strokeColor=#8E44AD;" parent="1" vertex="1">
+          <mxGeometry x="320" y="655" width="110" height="40"/>
+        </mxCell>
+        <mxCell id="l1-8" value="Models&lt;br&gt;(Session, Task, Result)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8DAEF;strokeColor=#8E44AD;" parent="1" vertex="1">
+          <mxGeometry x="450" y="655" width="120" height="40"/>
+        </mxCell>
+
+        <mxCell id="l1-note" value="Single-threaded asyncio · In-memory sessions · No thread safety" style="text;html=1;fillColor=none;strokeColor=none;fontSize=9;fontStyle=3;fontColor=#6C3483;" parent="1" vertex="1">
+          <mxGeometry x="60" y="700" width="500" height="20"/>
+        </mxCell>
+
+        <!-- External components -->
+        <mxCell id="ext-planner" value="Planner&lt;br&gt;(capability queries)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5D8DC;strokeColor=#7F8C8D;fontStyle=1;" parent="1" vertex="1">
+          <mxGeometry x="700" y="40" width="120" height="50"/>
+        </mxCell>
+        <mxCell id="ext-concrete" value="Concrete Adapters&lt;br&gt;(Gmail, Slack, HTTP, …)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5D8DC;strokeColor=#7F8C8D;fontStyle=2;" parent="1" vertex="1">
+          <mxGeometry x="700" y="120" width="120" height="50"/>
+        </mxCell>
+        <mxCell id="ext-storage" value="Credential Storage&lt;br&gt;(Supabase, Vault, …)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5D8DC;strokeColor=#7F8C8D;fontStyle=2;" parent="1" vertex="1">
+          <mxGeometry x="700" y="200" width="120" height="50"/>
+        </mxCell>
+        <mxCell id="ext-external" value="External APIs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5D8DC;strokeColor=#7F8C8D;fontStyle=2;" parent="1" vertex="1">
+          <mxGeometry x="700" y="600" width="120" height="50"/>
+        </mxCell>
+
+        <!-- Dependencies (edges) -->
+        <mxCell id="e-l5-l4" value="optional credential refs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.3;entryY=1;entryDx=0;entryDy=0;strokeColor=#7F8C8D;strokeWidth=1;fontSize=9;fontColor=#7F8C8D;" parent="1" edge="1" source="l5-4" target="l4-5">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-l5-l3" value="optional capability refs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;strokeColor=#7F8C8D;strokeWidth=1;fontSize=9;fontColor=#7F8C8D;" parent="1" edge="1" source="l5-4" target="l3-4">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-l5-l2" value="uses ExecutionAdapter" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;strokeColor=#7F8C8D;strokeWidth=1;fontSize=9;fontColor=#7F8C8D;" parent="1" edge="1" source="l5-3" target="l2-1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-l4-l3" value="includes descriptors" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;strokeColor=#7F8C8D;strokeWidth=1;fontSize=9;fontColor=#7F8C8D;" parent="1" edge="1" source="l4-5" target="l3-4">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-l3-l2" value="uses exceptions + models" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;strokeColor=#7F8C8D;strokeWidth=1;fontSize=9;fontColor=#7F8C8D;" parent="1" edge="1" source="l3-4" target="l2-5">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-l2-l1" value="depends on SDK abstractions" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;strokeColor=#7F8C8D;strokeWidth=1;fontSize=9;fontColor=#7F8C8D;" parent="1" edge="1" source="l2-1" target="l1-4">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-planner-l3" value="planner queries" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#7F8C8D;strokeWidth=1;fontSize=9;fontColor=#7F8C8D;dashed=1;" parent="1" edge="1" source="ext-planner" target="l3-4">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-planner-l5" value="resolves adapter" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#7F8C8D;strokeWidth=1;fontSize=9;fontColor=#7F8C8D;dashed=1;" parent="1" edge="1" source="ext-planner" target="l5-4">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-runtime-external" value="executes via" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#7F8C8D;strokeWidth=1;fontSize=9;fontColor=#7F8C8D;" parent="1" edge="1" source="l1-4" target="ext-external">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-l5-concrete" value="instantiates" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#7F8C8D;strokeWidth=1;fontSize=9;fontColor=#7F8C8D;dashed=1;" parent="1" edge="1" source="l5-3" target="ext-concrete">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Legend -->
+        <mxCell id="legend-title" value="Legend" style="text;html=1;fillColor=none;strokeColor=none;fontSize=12;fontStyle=1;" parent="1" vertex="1">
+          <mxGeometry x="700" y="290" width="120" height="20"/>
+        </mxCell>
+        <mxCell id="legend-frozen" value="🟦 Frozen layer" style="text;html=1;fillColor=none;strokeColor=none;fontSize=10;" parent="1" vertex="1">
+          <mxGeometry x="700" y="310" width="200" height="16"/>
+        </mxCell>
+        <mxCell id="legend-future" value="⬜ Future / concrete" style="text;html=1;fillColor=none;strokeColor=none;fontSize=10;" parent="1" vertex="1">
+          <mxGeometry x="700" y="326" width="200" height="16"/>
+        </mxCell>
+        <mxCell id="legend-solid" value="━━ Solid dependency" style="text;html=1;fillColor=none;strokeColor=none;fontSize=10;" parent="1" vertex="1">
+          <mxGeometry x="700" y="342" width="200" height="16"/>
+        </mxCell>
+        <mxCell id="legend-dashed" value="┅┅ Query / indirect" style="text;html=1;fillColor=none;strokeColor=none;fontSize=10;" parent="1" vertex="1">
+          <mxGeometry x="700" y="358" width="200" height="16"/>
+        </mxCell>
+
+        <!-- Title -->
+        <mxCell id="title" value="Loqi Backend Architecture — Five-Layer Platform (Frozen v1.0)" style="text;html=1;fillColor=none;strokeColor=none;fontSize=16;fontStyle=1;horizontalAlign=center;" parent="1" vertex="1">
+          <mxGeometry x="40" y="10" width="600" height="26"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

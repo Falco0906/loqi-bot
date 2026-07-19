@@ -1,0 +1,78 @@
+from services.adapters.google.errors import (
+    GoogleApiError,
+    GoogleApiErrorInfo,
+    GoogleAuthenticationError,
+    GoogleConflictError,
+    GooglePermissionError,
+    GoogleQuotaExceededError,
+    GoogleRateLimitError,
+    GoogleResourceNotFoundError,
+    GoogleValidationError,
+    classify_google_status_code,
+    parse_google_error_body,
+)
+from services.adapters.google.google_api_adapter import (
+    CAPABILITY_DESCRIPTORS,
+    CREDENTIAL_DESCRIPTORS,
+    GOOGLE_API_METADATA,
+    GoogleApiAdapter,
+)
+from services.adapters.google.models import GoogleApiRequest, GoogleApiResponse
+from services.adapters.google.pagination import (
+    has_more_pages,
+    max_results_param,
+    next_page_token,
+    page_token_param,
+)
+from services.adapters.google.services import (
+    DEFAULT_GOOGLE_SERVICES,
+    GoogleServiceDescriptor,
+    GoogleServiceRegistry,
+)
+from services.adapters.google.urls import (
+    build_google_url,
+    calendar,
+    docs,
+    drive,
+    gmail,
+    people,
+    register_google_service,
+    sheets,
+    tasks,
+)
+
+__all__ = [
+    "CAPABILITY_DESCRIPTORS",
+    "CREDENTIAL_DESCRIPTORS",
+    "DEFAULT_GOOGLE_SERVICES",
+    "GOOGLE_API_METADATA",
+    "GoogleApiAdapter",
+    "GoogleApiError",
+    "GoogleApiErrorInfo",
+    "GoogleApiRequest",
+    "GoogleApiResponse",
+    "GoogleAuthenticationError",
+    "GoogleConflictError",
+    "GooglePermissionError",
+    "GoogleQuotaExceededError",
+    "GoogleRateLimitError",
+    "GoogleResourceNotFoundError",
+    "GoogleServiceDescriptor",
+    "GoogleServiceRegistry",
+    "GoogleValidationError",
+    "build_google_url",
+    "calendar",
+    "classify_google_status_code",
+    "docs",
+    "drive",
+    "gmail",
+    "has_more_pages",
+    "max_results_param",
+    "next_page_token",
+    "page_token_param",
+    "people",
+    "register_google_service",
+    "sheets",
+    "tasks",
+    "parse_google_error_body",
+]

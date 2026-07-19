@@ -17,6 +17,7 @@ class CampaignPriority:
             "campaign_id": self.campaign_id,
             "name": self.name,
             "status": self.status,
+            "score": self.score,
             "rank": self.rank,
             "reasons": self.reasons[:2],
             "label": self._label(),

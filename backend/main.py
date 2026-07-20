@@ -22,6 +22,19 @@ from services.organizations.api import router as organizations_router, register_
 from services.organizations.repositories import InMemoryOrganizationRepository, InMemoryMembershipRepository, InMemoryInvitationRepository
 from services.organizations.services import OrganizationService, MembershipService, InvitationService
 from services.organizations.resolver import CurrentOrganizationResolver
+from services.billing.api import router as billing_router, register_deps as register_billing_deps, BillingDeps
+from services.billing.config import BillingConfig
+from services.billing.services import PlanService, CustomerService, CheckoutService, SubscriptionService, WebhookService
+from services.billing.repositories import (
+    InMemoryCustomerRepository,
+    InMemoryPlanRepository,
+    InMemorySubscriptionRepository,
+    InMemoryCheckoutRepository,
+    InMemoryInvoiceRepository,
+    InMemoryBillingEventRepository,
+)
+from services.billing.stripe_provider import StripeBillingProvider
+from services.billing.api import register_provider_and_config as _register_billing_provider_config
 from services.identity.exceptions import (
     AuthenticationException,
     EmailAlreadyExistsException,
@@ -166,6 +179,7 @@ app = FastAPI(lifespan=lifespan)
 app.include_router(auth_router)
 app.include_router(onboarding_router)
 app.include_router(organizations_router, prefix="/api/v1")
+app.include_router(billing_router)
 
 # ── Wire Organization Platform services ──
 _org_repo = InMemoryOrganizationRepository()
@@ -197,6 +211,39 @@ _onboarding_svc = OnboardingServiceCls(
     org_service=_org_service,
 )
 set_onboarding_service(_onboarding_svc)
+
+# ── Wire Billing Platform services ──
+_billing_config = BillingConfig()
+_billing_provider = StripeBillingProvider(_billing_config)
+_billing_customer_repo = InMemoryCustomerRepository()
+_billing_plan_repo = InMemoryPlanRepository()
+_billing_sub_repo = InMemorySubscriptionRepository()
+_billing_checkout_repo = InMemoryCheckoutRepository()
+_billing_invoice_repo = InMemoryInvoiceRepository()
+_billing_event_repo = InMemoryBillingEventRepository()
+
+_billing_plan_svc = PlanService(_billing_plan_repo, _billing_config)
+_billing_customer_svc = CustomerService(_billing_customer_repo, _billing_provider)
+_billing_checkout_svc = CheckoutService(
+    _billing_checkout_repo, _billing_plan_svc, _billing_customer_svc,
+    _billing_provider, _billing_config,
+)
+_billing_sub_svc = SubscriptionService(
+    _billing_sub_repo, _billing_invoice_repo, _billing_provider,
+)
+_billing_webhook_svc = WebhookService(
+    _billing_customer_repo, _billing_sub_repo, _billing_checkout_repo,
+    _billing_invoice_repo, _billing_event_repo, _billing_provider, _billing_config,
+)
+
+register_billing_deps(BillingDeps(
+    plan_service=_billing_plan_svc,
+    customer_service=_billing_customer_svc,
+    checkout_service=_billing_checkout_svc,
+    subscription_service=_billing_sub_svc,
+    webhook_service=_billing_webhook_svc,
+))
+_register_billing_provider_config(_billing_provider, _billing_config)
 
 # ── Identity exception handler ──
 _IDENTITY_STATUS: dict[type, int] = {

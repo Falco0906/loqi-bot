@@ -35,6 +35,15 @@ from services.billing.repositories import (
 )
 from services.billing.stripe_provider import StripeBillingProvider
 from services.billing.api import register_provider_and_config as _register_billing_provider_config
+from services.capabilities.api import router as capabilities_router, register_deps as register_capability_deps, CapabilityDeps
+from services.capabilities.config import CapabilityConfig
+from services.capabilities.services import CapabilityService
+from services.capabilities.repositories import (
+    InMemoryCapabilityDefinitionRepository,
+    InMemoryOrganizationCapabilityRepository,
+    InMemoryCapabilityUsageRepository,
+    InMemoryCapabilityLimitsRepository,
+)
 from services.identity.exceptions import (
     AuthenticationException,
     EmailAlreadyExistsException,
@@ -180,6 +189,7 @@ app.include_router(auth_router)
 app.include_router(onboarding_router)
 app.include_router(organizations_router, prefix="/api/v1")
 app.include_router(billing_router)
+app.include_router(capabilities_router)
 
 # ── Wire Organization Platform services ──
 _org_repo = InMemoryOrganizationRepository()
@@ -244,6 +254,25 @@ register_billing_deps(BillingDeps(
     webhook_service=_billing_webhook_svc,
 ))
 _register_billing_provider_config(_billing_provider, _billing_config)
+
+# ── Wire Capability Platform services ──
+_capability_config = CapabilityConfig()
+_capability_definition_repo = InMemoryCapabilityDefinitionRepository()
+_capability_org_repo = InMemoryOrganizationCapabilityRepository()
+_capability_usage_repo = InMemoryCapabilityUsageRepository()
+_capability_limits_repo = InMemoryCapabilityLimitsRepository()
+
+_capability_service = CapabilityService(
+    definition_repo=_capability_definition_repo,
+    org_capability_repo=_capability_org_repo,
+    usage_repo=_capability_usage_repo,
+    limits_repo=_capability_limits_repo,
+    config=_capability_config,
+)
+
+register_capability_deps(CapabilityDeps(
+    capability_service=_capability_service,
+))
 
 # ── Identity exception handler ──
 _IDENTITY_STATUS: dict[type, int] = {

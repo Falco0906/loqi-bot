@@ -1,0 +1,187 @@
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException, Path
+
+from services.capabilities.exceptions import (
+    CapabilityAlreadyDisabled,
+    CapabilityAlreadyEnabled,
+    CapabilityException,
+    CapabilityNotRegistered,
+    DuplicateCapabilityRegistration,
+)
+from services.capabilities.schemas import (
+    CapabilitiesListResponse,
+    CapabilityDefinitionResponse,
+    CapabilityUsageResponse,
+    DisableCapabilityResponse,
+    EnableCapabilityResponse,
+    OrganizationCapabilitiesListResponse,
+    OrganizationCapabilityResponse,
+)
+from services.capabilities.services import CapabilityService
+
+router = APIRouter(prefix="/api/v1", tags=["Capabilities"])
+
+
+HTTP_ERROR_MAP: dict[type[Exception], int] = {
+    CapabilityNotRegistered: 404,
+    CapabilityAlreadyEnabled: 409,
+    CapabilityAlreadyDisabled: 409,
+    DuplicateCapabilityRegistration: 409,
+}
+
+
+# ─── Dependency Resolution ───────────────────────────────────────────
+
+
+class CapabilityDeps:
+    def __init__(
+        self,
+        capability_service: CapabilityService,
+    ) -> None:
+        self.capability_service = capability_service
+
+
+_deps_registry: CapabilityDeps | None = None
+
+
+def register_deps(deps: CapabilityDeps) -> None:
+    global _deps_registry
+    _deps_registry = deps
+
+
+async def _get_capability_service() -> CapabilityService:
+    if _deps_registry is None:
+        raise HTTPException(status_code=500, detail="Capability services not initialized")
+    return _deps_registry.capability_service
+
+
+# ─── Helpers ─────────────────────────────────────────────────────────
+
+
+def _capability_to_response(c) -> CapabilityDefinitionResponse:
+    return CapabilityDefinitionResponse(
+        slug=c.slug,
+        name=c.name,
+        category=c.category,
+        description=c.description,
+        default_enabled=c.default_enabled,
+        beta=c.beta,
+        created_at=c.created_at,
+    )
+
+
+def _org_capability_to_response(oc) -> OrganizationCapabilityResponse:
+    return OrganizationCapabilityResponse(
+        organization_id=oc.organization_id,
+        capability_slug=oc.capability_slug,
+        enabled=oc.enabled,
+        activated_at=oc.activated_at,
+        activated_by=oc.activated_by,
+    )
+
+
+def _usage_to_response(u) -> CapabilityUsageResponse:
+    return CapabilityUsageResponse(
+        organization_id=u.organization_id,
+        capability_slug=u.capability_slug,
+        requests=u.requests,
+        executions=u.executions,
+        storage_bytes=u.storage_bytes,
+        api_calls=u.api_calls,
+        last_reset=u.last_reset,
+        updated_at=u.updated_at,
+    )
+
+
+# ─── Endpoints ───────────────────────────────────────────────────────
+
+
+@router.get("/capabilities", response_model=CapabilitiesListResponse)
+async def list_capabilities(
+    capability_service: CapabilityService = Depends(_get_capability_service),
+):
+    capabilities = await capability_service.list_capabilities()
+    return CapabilitiesListResponse(
+        capabilities=[_capability_to_response(c) for c in capabilities]
+    )
+
+
+@router.get(
+    "/organizations/{organization_id}/capabilities",
+    response_model=OrganizationCapabilitiesListResponse,
+)
+async def list_organization_capabilities(
+    organization_id: str = Path(...),
+    capability_service: CapabilityService = Depends(_get_capability_service),
+):
+    org_caps = await capability_service.get_organization_capabilities(organization_id)
+    return OrganizationCapabilitiesListResponse(
+        capabilities=[_org_capability_to_response(oc) for oc in org_caps]
+    )
+
+
+@router.post(
+    "/organizations/{organization_id}/capabilities/{slug}/enable",
+    response_model=EnableCapabilityResponse,
+)
+async def enable_organization_capability(
+    organization_id: str = Path(...),
+    slug: str = Path(...),
+    capability_service: CapabilityService = Depends(_get_capability_service),
+):
+    try:
+        org_cap = await capability_service.enable_capability(organization_id, slug)
+    except CapabilityException as exc:
+        raise HTTPException(
+            status_code=HTTP_ERROR_MAP.get(type(exc), 500),
+            detail=exc.message,
+        ) from exc
+    return EnableCapabilityResponse(
+        organization_id=org_cap.organization_id,
+        capability_slug=org_cap.capability_slug,
+        enabled=org_cap.enabled,
+        activated_at=org_cap.activated_at,
+    )
+
+
+@router.post(
+    "/organizations/{organization_id}/capabilities/{slug}/disable",
+    response_model=DisableCapabilityResponse,
+)
+async def disable_organization_capability(
+    organization_id: str = Path(...),
+    slug: str = Path(...),
+    capability_service: CapabilityService = Depends(_get_capability_service),
+):
+    try:
+        org_cap = await capability_service.disable_capability(organization_id, slug)
+    except CapabilityException as exc:
+        raise HTTPException(
+            status_code=HTTP_ERROR_MAP.get(type(exc), 500),
+            detail=exc.message,
+        ) from exc
+    return DisableCapabilityResponse(
+        organization_id=org_cap.organization_id,
+        capability_slug=org_cap.capability_slug,
+        enabled=org_cap.enabled,
+    )
+
+
+@router.get(
+    "/organizations/{organization_id}/capabilities/{slug}/usage",
+    response_model=CapabilityUsageResponse,
+)
+async def get_capability_usage(
+    organization_id: str = Path(...),
+    slug: str = Path(...),
+    capability_service: CapabilityService = Depends(_get_capability_service),
+):
+    try:
+        usage = await capability_service.get_usage(organization_id, slug)
+    except CapabilityException as exc:
+        raise HTTPException(
+            status_code=HTTP_ERROR_MAP.get(type(exc), 500),
+            detail=exc.message,
+        ) from exc
+    return _usage_to_response(usage)

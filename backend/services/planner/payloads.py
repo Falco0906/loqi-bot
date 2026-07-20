@@ -142,6 +142,358 @@ class JoinPayload(TaskPayload):
     condition: str = ""
 
 
+# --- Calendar payloads ---
+
+@dataclass
+class ListEventsPayload(TaskPayload):
+    """Payload for CALENDAR_LIST_EVENTS tasks."""
+
+    calendar_id: str = "primary"
+    time_min: str = ""
+    time_max: str = ""
+    max_results: int = 100
+    query: str = ""
+    show_deleted: bool = False
+
+    def validate(self) -> list[str]:
+        errors = []
+        if not self.calendar_id:
+            errors.append("calendar_id is required")
+        if self.max_results < 1 or self.max_results > 2500:
+            errors.append("max_results must be between 1 and 2500")
+        return errors
+
+
+@dataclass
+class GetEventPayload(TaskPayload):
+    """Payload for CALENDAR_GET_EVENT tasks."""
+
+    event_id: str = ""
+    calendar_id: str = "primary"
+
+    def validate(self) -> list[str]:
+        errors = []
+        if not self.event_id:
+            errors.append("event_id is required")
+        return errors
+
+
+@dataclass
+class CreateEventPayload(TaskPayload):
+    """Payload for CALENDAR_CREATE_EVENT tasks."""
+
+    summary: str = ""
+    start_time: str = ""
+    end_time: str = ""
+    calendar_id: str = "primary"
+    description: str = ""
+    location: str = ""
+    timezone: str = "UTC"
+    attendees: tuple[str, ...] = ()
+
+    def validate(self) -> list[str]:
+        errors = []
+        if not self.summary:
+            errors.append("summary is required")
+        if not self.start_time:
+            errors.append("start_time is required")
+        if not self.end_time:
+            errors.append("end_time is required")
+        return errors
+
+
+@dataclass
+class UpdateEventPayload(TaskPayload):
+    """Payload for CALENDAR_UPDATE_EVENT tasks."""
+
+    event_id: str = ""
+    summary: str = ""
+    start_time: str = ""
+    end_time: str = ""
+    calendar_id: str = "primary"
+    description: str = ""
+    location: str = ""
+    timezone: str = "UTC"
+    attendees: tuple[str, ...] = ()
+
+    def validate(self) -> list[str]:
+        errors = []
+        if not self.event_id:
+            errors.append("event_id is required")
+        return errors
+
+
+@dataclass
+class DeleteEventPayload(TaskPayload):
+    """Payload for CALENDAR_DELETE_EVENT tasks."""
+
+    event_id: str = ""
+    calendar_id: str = "primary"
+
+    def validate(self) -> list[str]:
+        errors = []
+        if not self.event_id:
+            errors.append("event_id is required")
+        return errors
+
+
+# --- CRM payloads ---
+
+@dataclass
+class FindContactPayload(TaskPayload):
+    """Payload for FIND_CONTACT tasks."""
+
+    email: str = ""
+    company_domain: str = ""
+    name: str = ""
+
+    def validate(self) -> list[str]:
+        errors = []
+        if not any([self.email, self.company_domain, self.name]):
+            errors.append("email, company_domain, or name is required")
+        return errors
+
+
+@dataclass
+class CreateContactPayload(TaskPayload):
+    """Payload for CREATE_CONTACT tasks."""
+
+    email: str = ""
+    first_name: str = ""
+    last_name: str = ""
+    phone: str = ""
+    title: str = ""
+    company_id: str = ""
+    lifecycle_stage: str = "lead"
+
+    def validate(self) -> list[str]:
+        errors = []
+        if not self.email:
+            errors.append("email is required")
+        return errors
+
+
+@dataclass
+class UpdateContactPayload(TaskPayload):
+    """Payload for UPDATE_CONTACT tasks."""
+
+    contact_id: str = ""
+    fields: dict[str, str] = field(default_factory=dict)
+
+    def validate(self) -> list[str]:
+        errors = []
+        if not self.contact_id:
+            errors.append("contact_id is required")
+        return errors
+
+
+@dataclass
+class FindCompanyPayload(TaskPayload):
+    """Payload for FIND_COMPANY tasks."""
+
+    domain: str = ""
+    name: str = ""
+
+    def validate(self) -> list[str]:
+        errors = []
+        if not any([self.domain, self.name]):
+            errors.append("domain or name is required")
+        return errors
+
+
+@dataclass
+class CreateCompanyPayload(TaskPayload):
+    """Payload for CREATE_COMPANY tasks."""
+
+    name: str = ""
+    domain: str = ""
+    industry: str = ""
+    size: str = ""
+    website: str = ""
+    phone: str = ""
+
+    def validate(self) -> list[str]:
+        errors = []
+        if not self.name:
+            errors.append("name is required")
+        return errors
+
+
+@dataclass
+class CreateOpportunityPayload(TaskPayload):
+    """Payload for CREATE_OPPORTUNITY tasks."""
+
+    name: str = ""
+    company_id: str = ""
+    contact_id: str = ""
+    amount: float = 0.0
+    stage: str = "discovery"
+    pipeline: str = "default"
+
+    def validate(self) -> list[str]:
+        errors = []
+        if not self.name:
+            errors.append("name is required")
+        return errors
+
+
+@dataclass
+class UpdateOpportunityPayload(TaskPayload):
+    """Payload for UPDATE_OPPORTUNITY tasks."""
+
+    opportunity_id: str = ""
+    stage: str = ""
+    amount: float = 0.0
+    close_date: str = ""
+
+    def validate(self) -> list[str]:
+        errors = []
+        if not self.opportunity_id:
+            errors.append("opportunity_id is required")
+        return errors
+
+
+@dataclass
+class CreateActivityPayload(TaskPayload):
+    """Payload for CREATE_ACTIVITY tasks."""
+
+    type: str = "email"
+    subject: str = ""
+    body: str = ""
+    contact_id: str = ""
+    company_id: str = ""
+    opportunity_id: str = ""
+    due_date: str = ""
+
+    def validate(self) -> list[str]:
+        errors = []
+        if not self.subject:
+            errors.append("subject is required")
+        return errors
+
+
+@dataclass
+class CreateNotePayload(TaskPayload):
+    """Payload for CREATE_NOTE tasks."""
+
+    body: str = ""
+    contact_id: str = ""
+    company_id: str = ""
+    opportunity_id: str = ""
+
+    def validate(self) -> list[str]:
+        errors = []
+        if not self.body:
+            errors.append("body is required")
+        if not any([self.contact_id, self.company_id, self.opportunity_id]):
+            errors.append("contact_id, company_id, or opportunity_id is required")
+        return errors
+
+
+@dataclass
+class AssignOwnerPayload(TaskPayload):
+    """Payload for ASSIGN_OWNER tasks."""
+
+    owner_email: str = ""
+    contact_id: str = ""
+    company_id: str = ""
+    opportunity_id: str = ""
+
+    def validate(self) -> list[str]:
+        errors = []
+        if not self.owner_email:
+            errors.append("owner_email is required")
+        if not any([self.contact_id, self.company_id, self.opportunity_id]):
+            errors.append("contact_id, company_id, or opportunity_id is required")
+        return errors
+
+
+# --- Memory payloads ---
+
+@dataclass
+class StoreMemoryPayload(TaskPayload):
+    """Payload for STORE_MEMORY tasks."""
+
+    memory_type: str = "contact"
+    source: str = ""
+    tags: list[str] = field(default_factory=list)
+    metadata: dict[str, str] = field(default_factory=dict)
+
+    def validate(self) -> list[str]:
+        errors = []
+        if not self.memory_type:
+            errors.append("memory_type is required")
+        return errors
+
+
+@dataclass
+class RetrieveMemoryPayload(TaskPayload):
+    """Payload for RETRIEVE_MEMORY tasks."""
+
+    memory_id: str = ""
+
+    def validate(self) -> list[str]:
+        errors = []
+        if not self.memory_id:
+            errors.append("memory_id is required")
+        return errors
+
+
+@dataclass
+class SearchMemoryPayload(TaskPayload):
+    """Payload for SEARCH_MEMORY tasks."""
+
+    query: str = ""
+    memory_type: str = ""
+    entity_id: str = ""
+    tags: list[str] = field(default_factory=list)
+    limit: int = 10
+    offset: int = 0
+
+
+@dataclass
+class UpdateMemoryPayload(TaskPayload):
+    """Payload for UPDATE_MEMORY tasks."""
+
+    memory_id: str = ""
+    updates: dict[str, str] = field(default_factory=dict)
+
+    def validate(self) -> list[str]:
+        errors = []
+        if not self.memory_id:
+            errors.append("memory_id is required")
+        return errors
+
+
+@dataclass
+class DeleteMemoryPayload(TaskPayload):
+    """Payload for DELETE_MEMORY tasks."""
+
+    memory_id: str = ""
+
+    def validate(self) -> list[str]:
+        errors = []
+        if not self.memory_id:
+            errors.append("memory_id is required")
+        return errors
+
+
+@dataclass
+class SummarizeMemoryPayload(TaskPayload):
+    """Payload for SUMMARIZE_MEMORY tasks."""
+
+    entity_type: str = ""
+    entity_id: str = ""
+
+    def validate(self) -> list[str]:
+        errors = []
+        if not self.entity_type:
+            errors.append("entity_type is required")
+        if not self.entity_id:
+            errors.append("entity_id is required")
+        return errors
+
+
 # Registry used for deserialization if/when execution layer needs it.
 PAYLOAD_REGISTRY: dict[str, type[TaskPayload]] = {
     MessagePayload.__name__: MessagePayload,
@@ -154,6 +506,27 @@ PAYLOAD_REGISTRY: dict[str, type[TaskPayload]] = {
     ScheduleMeetingPayload.__name__: ScheduleMeetingPayload,
     BranchPayload.__name__: BranchPayload,
     JoinPayload.__name__: JoinPayload,
+    ListEventsPayload.__name__: ListEventsPayload,
+    GetEventPayload.__name__: GetEventPayload,
+    CreateEventPayload.__name__: CreateEventPayload,
+    UpdateEventPayload.__name__: UpdateEventPayload,
+    DeleteEventPayload.__name__: DeleteEventPayload,
+    FindContactPayload.__name__: FindContactPayload,
+    CreateContactPayload.__name__: CreateContactPayload,
+    UpdateContactPayload.__name__: UpdateContactPayload,
+    FindCompanyPayload.__name__: FindCompanyPayload,
+    CreateCompanyPayload.__name__: CreateCompanyPayload,
+    CreateOpportunityPayload.__name__: CreateOpportunityPayload,
+    UpdateOpportunityPayload.__name__: UpdateOpportunityPayload,
+    CreateActivityPayload.__name__: CreateActivityPayload,
+    CreateNotePayload.__name__: CreateNotePayload,
+    AssignOwnerPayload.__name__: AssignOwnerPayload,
+    StoreMemoryPayload.__name__: StoreMemoryPayload,
+    RetrieveMemoryPayload.__name__: RetrieveMemoryPayload,
+    SearchMemoryPayload.__name__: SearchMemoryPayload,
+    UpdateMemoryPayload.__name__: UpdateMemoryPayload,
+    DeleteMemoryPayload.__name__: DeleteMemoryPayload,
+    SummarizeMemoryPayload.__name__: SummarizeMemoryPayload,
 }
 
 

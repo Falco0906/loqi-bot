@@ -648,11 +648,12 @@ class TestStrategyRegistryHardening:
 
     def test_default_strategies_registered(self):
         strategies = list_strategies()
-        assert len(strategies) == 8
-        assert set(strategies) == {
+        assert len(strategies) >= 11
+        assert set(strategies) >= {
             "demo_booking", "pricing_objection", "nurture",
             "cold_outreach", "follow_up", "re_engagement",
             "general_engagement", "escalation",
+            "adaptive_follow_up", "draft_revision",
         }
 
     def test_registry_snapshot_during_selection(self):

@@ -5,6 +5,7 @@ python-dotenv
 supabase
 serpapi
 psycopg2-binary
+argon2-cffi
 
 # test
 pytest

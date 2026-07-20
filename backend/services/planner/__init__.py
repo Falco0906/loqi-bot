@@ -13,6 +13,8 @@ from .payloads import (
     AnalyzeReplyPayload, EscalatePayload, UpdateCRMPayload,
     RequestApprovalPayload, ScheduleMeetingPayload,
     BranchPayload, JoinPayload,
+    ListEventsPayload, GetEventPayload, CreateEventPayload,
+    UpdateEventPayload, DeleteEventPayload,
     get_payload_class, register_payload_class,
 )
 from .planning_models import (
@@ -42,6 +44,8 @@ __all__ = [
     "AnalyzeReplyPayload", "EscalatePayload", "UpdateCRMPayload",
     "RequestApprovalPayload", "ScheduleMeetingPayload",
     "BranchPayload", "JoinPayload",
+    "ListEventsPayload", "GetEventPayload", "CreateEventPayload",
+    "UpdateEventPayload", "DeleteEventPayload",
     "get_payload_class", "register_payload_class",
     # Models
     "Plan", "PlanGoal", "Task", "Trigger", "Branch", "Dependency",

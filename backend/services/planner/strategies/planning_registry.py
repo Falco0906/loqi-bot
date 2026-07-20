@@ -100,16 +100,34 @@ def ensure_default_strategies_registered() -> None:
         from services.planner.strategies.re_engagement import re_engagement_strategy
         from services.planner.strategies.general_engagement import general_engagement_strategy
         from services.planner.strategies.escalation import escalation_strategy
+        from services.planner.strategies.booking import booking_strategy
+        from services.planner.strategies.follow_up_v2 import follow_up_v2_strategy
+        from services.planner.strategies.draft_revision import draft_revision_strategy
+        from services.planner.strategies.pipeline_outreach import pipeline_outreach_strategy
+        from services.planner.strategies.opportunity_development import opportunity_development_strategy
+        from services.planner.strategies.next_best_action import next_best_action_strategy
+        from services.planner.strategies.memory_outreach import memory_outreach_strategy
+        from services.planner.strategies.memory_nba import memory_nba_strategy
+        from services.coordinator.strategy import coordinator_strategy
 
         default_strategies = [
             ("general_engagement", general_engagement_strategy),
             ("demo_booking", demo_booking_strategy),
+            ("booking", booking_strategy),
             ("pricing_objection", pricing_objection_strategy),
             ("nurture", nurture_strategy),
             ("cold_outreach", cold_outreach_strategy),
             ("follow_up", follow_up_strategy),
             ("re_engagement", re_engagement_strategy),
             ("escalation", escalation_strategy),
+            ("adaptive_follow_up", follow_up_v2_strategy),
+            ("draft_revision", draft_revision_strategy),
+            ("pipeline_outreach", pipeline_outreach_strategy),
+            ("opportunity_development", opportunity_development_strategy),
+            ("next_best_action", next_best_action_strategy),
+            ("memory_outreach", memory_outreach_strategy),
+            ("memory_nba", memory_nba_strategy),
+            ("coordinator", coordinator_strategy),
         ]
 
         for name, strategy in default_strategies:

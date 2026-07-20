@@ -74,6 +74,32 @@ Client-specific adapters:
 
 ---
 
+# Backlog
+
+## Async-native workflow execution path
+
+`handle_message()` and the entire workflow dispatch chain
+(→ `run_workflow()` → `send_outreach()`) are still synchronous.
+This forces a temporary `_run_async()` bridge in `workflows.py`
+that offloads GmailAdapter calls to a worker thread via
+`ThreadPoolExecutor`.
+
+**Goal:** Make `handle_message()` and all workflow functions
+async-native so that adapter calls like
+``await gmail_adapter.execute(ctx)`` work directly, eliminating
+the bridge entirely.
+
+**Scope:** `services/conversation_engine.py`, `workflows.py`, and
+all callers of `engine.handle_message()` in `main.py` and
+`services/agent.py`.
+
+**Risk:** Low — the change is mechanical (sync→async propagation)
+but touches a hot path.  Supabase and OpenAI calls will need
+`asyncio.to_thread()` wrappers until those SDKs provide native
+async interfaces.
+
+---
+
 # Important Project Rule — Server Management
 
 OpenCode must NEVER start or stop development servers (backend or frontend).

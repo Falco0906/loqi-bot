@@ -29,10 +29,11 @@ class OutboundScheduler:
 
     async def run(self) -> None:
         self._running = True
+        loop = asyncio.get_running_loop()
         logger.info("[OutboundScheduler] started (poll every %ds)", POLL_INTERVAL)
         while self._running:
             try:
-                self._tick()
+                await loop.run_in_executor(None, self._tick)
             except Exception as e:
                 logger.error("[OutboundScheduler] tick error: %s", e, exc_info=True)
             await asyncio.sleep(POLL_INTERVAL)

@@ -16,6 +16,26 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 from services.agent import process_message
+from services.identity.api import router as auth_router
+from services.onboarding.api import router as onboarding_router
+from services.organizations.api import router as organizations_router, register_deps as register_org_deps, OrgDeps
+from services.organizations.repositories import InMemoryOrganizationRepository, InMemoryMembershipRepository, InMemoryInvitationRepository
+from services.organizations.services import OrganizationService, MembershipService, InvitationService
+from services.organizations.resolver import CurrentOrganizationResolver
+from services.identity.exceptions import (
+    AuthenticationException,
+    EmailAlreadyExistsException,
+    IdentityException,
+    RefreshTokenExpiredException,
+    RefreshTokenRevokedException,
+    RegistrationSessionExpiredException,
+    RegistrationSessionNotFoundException,
+    RegistrationSessionWrongStatusException,
+    SessionRevokedException,
+)
+from services.identity.metrics import get_metrics
+from services.identity.schemas import ErrorResponse
+from starlette.responses import JSONResponse
 from services.conversation_engine import ConversationEngine, _message
 from services.google_auth import exchange_code_for_tokens
 from services.supabase import save_google_tokens, test_supabase_connection
@@ -80,6 +100,11 @@ from services.buying_signal import detect_signals
 from services.planner.planning_pipeline import get_pipeline as get_planning_pipeline, PlanningPipeline
 from services.planner.plan_validator import ValidationResult
 from services.planner.exceptions import PlanningValidationError
+from services.adapters.credential_registry import CredentialRegistry
+from services.adapters.credentials import CredentialDescriptor, CredentialInstance
+from services.execution import AdapterRegistry as ExecutionAdapterRegistry
+from services.execution import BridgeAdapter
+from services.planner.planning_models import TaskType
 
 load_dotenv()
 
@@ -108,12 +133,149 @@ async def lifespan(app: FastAPI):
         log.warning("Migration check failed: %s", e)
     log.info("Job engine initialized")
     _register_outbound_providers()
+    _register_execution_adapters()
+
+    # Wire the global adapter registry to the PlannerRouter
+    from services.execution.adapter_registry_resolver import init_planner_registry
+    init_planner_registry(_execution_adapter_registry)
+
+    # Subscribe execution engine event bus for production observability
+    from services.execution.execution_pipeline import get_pipeline
+    from services.execution.logging_subscriber import LoggingSubscriber
+    from services.execution.metrics_collector import MetricsCollector
+    get_pipeline().event_bus.subscribe(LoggingSubscriber())
+    get_pipeline().event_bus.subscribe(MetricsCollector())
+    log.info("Execution engine logging + metrics subscribers registered")
+
+    from services.memory.subscriber import MemorySubscriber
+    get_pipeline().event_bus.subscribe(MemorySubscriber())
+    log.info("Memory subscriber registered")
+
+    try:
+        from services.memory.consolidation import consolidate_memories
+        from services.memory.memory_store import get_memory_provider
+        result = asyncio.create_task(consolidate_memories(get_memory_provider()))
+        log.info("Memory consolidation startup task created")
+    except Exception as e:
+        log.warning("Memory consolidation startup failed: %s", e)
+
     _start_outbound_scheduler()
     yield
 
 app = FastAPI(lifespan=lifespan)
+app.include_router(auth_router)
+app.include_router(onboarding_router)
+app.include_router(organizations_router, prefix="/api/v1")
+
+# ── Wire Organization Platform services ──
+_org_repo = InMemoryOrganizationRepository()
+_membership_repo = InMemoryMembershipRepository()
+_invitation_repo = InMemoryInvitationRepository()
+
+_org_service = OrganizationService(_org_repo, _membership_repo)
+_membership_service = MembershipService(_membership_repo, _org_repo)
+_invitation_service = InvitationService(_invitation_repo, _membership_repo, _membership_service)
+_org_resolver = CurrentOrganizationResolver(_org_repo, _membership_repo)
+
+register_org_deps(OrgDeps(
+    org_service=_org_service,
+    membership_service=_membership_service,
+    invitation_service=_invitation_service,
+    resolver=_org_resolver,
+))
+
+# ── Wire Organization Service into Onboarding ──
+from services.onboarding.api import set_onboarding_service
+from services.onboarding.services import LifecycleService, OnboardingService as OnboardingServiceCls
+from services.onboarding.repositories import InMemoryLifecycleRepository, InMemoryOnboardingSessionRepository
+_onboarding_lifecycle_repo = InMemoryLifecycleRepository()
+_onboarding_session_repo = InMemoryOnboardingSessionRepository()
+_onboarding_lifecycle_svc = LifecycleService(_onboarding_lifecycle_repo)
+_onboarding_svc = OnboardingServiceCls(
+    lifecycle_service=_onboarding_lifecycle_svc,
+    session_repo=_onboarding_session_repo,
+    org_service=_org_service,
+)
+set_onboarding_service(_onboarding_svc)
+
+# ── Identity exception handler ──
+_IDENTITY_STATUS: dict[type, int] = {
+    AuthenticationException: 401,
+    EmailAlreadyExistsException: 409,
+    RefreshTokenExpiredException: 401,
+    RefreshTokenRevokedException: 401,
+    RegistrationSessionNotFoundException: 404,
+    RegistrationSessionExpiredException: 410,
+    RegistrationSessionWrongStatusException: 400,
+    SessionRevokedException: 401,
+    IdentityException: 400,
+}
+
+
+def _identity_status(exc: IdentityException) -> int:
+    for cls in type(exc).__mro__:
+        if cls in _IDENTITY_STATUS:
+            return _IDENTITY_STATUS[cls]
+    return 400
+
+
+_FAIL_LABELS: dict[str, str] = {
+    "RefreshTokenRevokedException": "replay",
+    "RefreshTokenExpiredException": "fail",
+    "InvalidCredentialsException": "fail",
+    "EmailAlreadyExistsException": "duplicate",
+    "SessionRevokedException": "fail",
+}
+
+
+def _record_auth_metric(request: Request, exc: IdentityException) -> None:
+    m = get_metrics()
+    exc_name = type(exc).__name__
+    label = _FAIL_LABELS.get(exc_name, "fail")
+    path = request.url.path
+
+    if "/signup/email" in path and "/status" not in path:
+        if isinstance(exc, EmailAlreadyExistsException):
+            m.signup_total["duplicate"] += 1
+        else:
+            m.signup_total[label] += 1
+    elif "/signup/email/verify" in path:
+        m.verify_total[label] += 1
+    elif "/login" in path:
+        m.login_total[label] += 1
+    elif "/refresh" in path:
+        m.refresh_total[label] += 1
+    elif "/logout" in path:
+        m.logout_total[label] += 1
+    elif "/sessions" in path:
+        m.session_revoked_total[label] += 1
+
+
+@app.exception_handler(IdentityException)
+async def identity_exception_handler(request: Request, exc: IdentityException):
+    req_id = request_id_var.get("")
+    log.warning(
+        "%s %s identity error: %s %s",
+        req_id, request.method, type(exc).__name__, exc,
+    )
+
+    _record_auth_metric(request, exc)
+
+    return JSONResponse(
+        status_code=_identity_status(exc),
+        content=ErrorResponse(
+            code=type(exc).__name__,
+            message=str(exc),
+            request_id=req_id,
+        ).model_dump(),
+    )
+
+
 engine = ConversationEngine()
 _start_time = time.time()
+
+_credential_registry = CredentialRegistry()
+_execution_adapter_registry = ExecutionAdapterRegistry()
 
 # ── In-memory batch / draft / campaign stores ──
 batch_jobs: dict[str, dict[str, Any]] = {}
@@ -647,6 +809,7 @@ async def log_requests(request: Request, call_next):
         req_id, request.method, request.url.path, duration, response.status_code,
     )
     response.headers["X-Request-ID"] = req_id
+    response.headers["X-API-Version"] = "1"
     return response
 
 
@@ -690,6 +853,134 @@ def _register_outbound_providers() -> None:
         log.warning("Failed to register GmailOutboundProvider: %s", e)
 
 
+def _register_execution_adapters() -> None:
+    from services.execution.credential_factory import resolve_google_credentials
+
+    from services.adapters.google.gmail import GmailAdapter
+    gmail = GmailAdapter()
+    gmail_bridge = BridgeAdapter(
+        sdk_adapter=gmail,
+        action_mapping={
+            TaskType.SEND_EMAIL: "gmail_send_email",
+        },
+        credentials_factory=resolve_google_credentials,
+    )
+    _execution_adapter_registry.register(gmail_bridge, priority=100, version="1.0.0")
+    log.info(
+        "Execution adapter registered: %s (types=%s, factory=%s)",
+        gmail_bridge.adapter_type,
+        [t.value for t in gmail_bridge.supported_task_types],
+        "resolve_google_credentials",
+    )
+
+    from services.adapters.google.calendar import CalendarAdapter
+    calendar = CalendarAdapter()
+    calendar_bridge = BridgeAdapter(
+        sdk_adapter=calendar,
+        action_mapping={
+            TaskType.CALENDAR_LIST_EVENTS: "calendar_list_events",
+            TaskType.CALENDAR_GET_EVENT: "calendar_get_event",
+            TaskType.CALENDAR_CREATE_EVENT: "calendar_create_event",
+            TaskType.CALENDAR_UPDATE_EVENT: "calendar_update_event",
+            TaskType.CALENDAR_DELETE_EVENT: "calendar_delete_event",
+        },
+        credentials_factory=resolve_google_credentials,
+    )
+    _execution_adapter_registry.register(calendar_bridge, priority=100, version="1.0.0")
+    log.info(
+        "Execution adapter registered: %s (types=%s, factory=%s)",
+        calendar_bridge.adapter_type,
+        [t.value for t in calendar_bridge.supported_task_types],
+        "resolve_google_credentials",
+    )
+
+    from services.adapters.analysis import ReplyAnalysisAdapter
+    analysis = ReplyAnalysisAdapter()
+    analysis_bridge = BridgeAdapter(
+        sdk_adapter=analysis,
+        action_mapping={
+            TaskType.ANALYZE_REPLY: "analyze_reply",
+        },
+    )
+    _execution_adapter_registry.register(analysis_bridge, priority=100, version="1.0.0")
+    log.info(
+        "Execution adapter registered: %s (types=%s)",
+        analysis_bridge.adapter_type,
+        [t.value for t in analysis_bridge.supported_task_types],
+    )
+
+    from services.adapters.crm import CrmAdapter
+    crm = CrmAdapter()
+    crm_bridge = BridgeAdapter(
+        sdk_adapter=crm,
+        action_mapping={
+            TaskType.FIND_CONTACT: "find_contact",
+            TaskType.CREATE_CONTACT: "create_contact",
+            TaskType.UPDATE_CONTACT: "update_contact",
+            TaskType.FIND_COMPANY: "find_company",
+            TaskType.CREATE_COMPANY: "create_company",
+            TaskType.CREATE_OPPORTUNITY: "create_opportunity",
+            TaskType.UPDATE_OPPORTUNITY: "update_opportunity",
+            TaskType.CREATE_ACTIVITY: "create_activity",
+            TaskType.CREATE_NOTE: "create_note",
+            TaskType.ASSIGN_OWNER: "assign_owner",
+        },
+    )
+    _execution_adapter_registry.register(crm_bridge, priority=100, version="1.0.0")
+    log.info(
+        "Execution adapter registered: %s (types=%s)",
+        crm_bridge.adapter_type,
+        [t.value for t in crm_bridge.supported_task_types],
+    )
+
+    from services.adapters.memory import MemoryAdapter
+    memory_adapter = MemoryAdapter()
+    memory_bridge = BridgeAdapter(
+        sdk_adapter=memory_adapter,
+        action_mapping={
+            TaskType.STORE_MEMORY: "store_memory",
+            TaskType.RETRIEVE_MEMORY: "retrieve_memory",
+            TaskType.SEARCH_MEMORY: "search_memory",
+            TaskType.UPDATE_MEMORY: "update_memory",
+            TaskType.DELETE_MEMORY: "delete_memory",
+            TaskType.SUMMARIZE_MEMORY: "summarize_memory",
+        },
+    )
+    _execution_adapter_registry.register(memory_bridge, priority=100, version="1.0.0")
+    log.info(
+        "Execution adapter registered: %s (types=%s)",
+        memory_bridge.adapter_type,
+        [t.value for t in memory_bridge.supported_task_types],
+    )
+
+
+def _register_credential_descriptors() -> None:
+    from services.adapters.google.gmail.gmail_adapter import CREDENTIAL_DESCRIPTORS
+    for desc in CREDENTIAL_DESCRIPTORS:
+        descriptor = CredentialDescriptor(
+            name=desc["name"],
+            display_name=desc.get("display_name", desc["name"]),
+            description=desc.get("description", ""),
+            auth_type=desc["auth_type"],
+        )
+        if not _credential_registry.exists(descriptor.name):
+            _credential_registry.register(descriptor)
+            log.info("Credential descriptor registered: %s", descriptor.name)
+
+
+def _register_credential_instance(access_token: str, refresh_token: str, email: str) -> None:
+    instance = CredentialInstance(
+        credential_id=f"google_oauth2::{email}",
+        descriptor_name="google_oauth2",
+        values={
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "email": email,
+        },
+    )
+    log.info("Credential instance registered: %s", instance.credential_id)
+
+
 _scheduler_task: asyncio.Task | None = None
 
 
@@ -712,6 +1003,10 @@ def _start_outbound_scheduler() -> None:
         log.info("Gmail provider registered")
     except Exception as e:
         log.warning("Gmail provider registration failed: %s", e)
+    try:
+        _register_credential_descriptors()
+    except Exception as e:
+        log.warning("Credential descriptor registration failed: %s", e)
     try:
         _restore_providers_on_startup()
     except Exception as e:
@@ -781,6 +1076,7 @@ def gmail_auth_callback(code: str = "", state: str = "", error: str = ""):
         register_instance(provider_record.id, provider)
         _register_outbound_gmail_instance(provider_record.id)
         _save_provider_credentials(provider_record.id, _user_id)
+        _register_credential_instance(access_token, refresh_token, email_val)
         ok = True
         provider_id = provider_record.id
     except Exception as e:
@@ -823,7 +1119,9 @@ async def telegram_webhook(request: Request):
             telegram_id = str(data["message"].get("from", {}).get("id", chat_id))
             username = data["message"].get("from", {}).get("username")
             text = data["message"]["text"]
-            process_message(chat_id, telegram_id, text, username=username)
+            await asyncio.to_thread(
+                process_message, chat_id, telegram_id, text, username=username,
+            )
 
         return {"status": "ok"}
     except Exception as error:
@@ -868,7 +1166,8 @@ async def post_web_session_message(session_token: str, payload: SendWebMessageRe
         summary = engine.get_web_session_summary(created["session_token"])
         if summary is None:
             raise HTTPException(status_code=500, detail="Session creation failed")
-        return engine.handle_message(
+        return await asyncio.to_thread(
+            engine.handle_message,
             channel="web",
             external_user_id=created["session_token"],
             text=payload.text,
@@ -918,7 +1217,8 @@ async def post_web_session_message(session_token: str, payload: SendWebMessageRe
         msg = _message(role="assistant", message_type="text", text=response_text)
         return {"ok": True, "messages": [msg], "events": []}
 
-    _result = engine.handle_message(
+    _result = await asyncio.to_thread(
+        engine.handle_message,
         channel="web",
         external_user_id=session_token,
         text=payload.text,

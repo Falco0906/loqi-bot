@@ -44,6 +44,33 @@ class TaskType(str, Enum):
     BRANCH = "branch"
     JOIN = "join"
 
+    # Calendar operations
+    CALENDAR_LIST_EVENTS = "calendar_list_events"
+    CALENDAR_GET_EVENT = "calendar_get_event"
+    CALENDAR_CREATE_EVENT = "calendar_create_event"
+    CALENDAR_UPDATE_EVENT = "calendar_update_event"
+    CALENDAR_DELETE_EVENT = "calendar_delete_event"
+
+    # CRM operations
+    FIND_CONTACT = "find_contact"
+    CREATE_CONTACT = "create_contact"
+    UPDATE_CONTACT = "update_contact"
+    FIND_COMPANY = "find_company"
+    CREATE_COMPANY = "create_company"
+    CREATE_OPPORTUNITY = "create_opportunity"
+    UPDATE_OPPORTUNITY = "update_opportunity"
+    CREATE_ACTIVITY = "create_activity"
+    CREATE_NOTE = "create_note"
+    ASSIGN_OWNER = "assign_owner"
+
+    # Memory operations
+    STORE_MEMORY = "store_memory"
+    RETRIEVE_MEMORY = "retrieve_memory"
+    SEARCH_MEMORY = "search_memory"
+    UPDATE_MEMORY = "update_memory"
+    DELETE_MEMORY = "delete_memory"
+    SUMMARIZE_MEMORY = "summarize_memory"
+
 
 class TriggerType(str, Enum):
     IMMEDIATELY = "immediately"

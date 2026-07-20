@@ -1,4 +1,32 @@
-from services.gmail import send_email
+import asyncio
+import concurrent.futures
+
+# TEMPORARY: shared executor for bridging sync→async.
+# Remove once handle_message() and the workflow execution path
+# become async-native and can directly await GmailAdapter.
+# See backlog in AGENTS.md.
+_ASYNC_BRIDGE_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4,
+    thread_name_prefix="async_bridge",
+)
+
+
+def _run_async(coro):
+    """TEMPORARY — run a coroutine from a synchronous context.
+
+    Python 3.12+ blocks all forms of nested loop execution within the
+    same thread (even ``asyncio.run``, ``Runner.run``, or raw
+    ``loop.run_until_complete`` on a fresh loop).  The only
+    cross-version way to call async code from a sync function that may
+    execute on the event-loop thread is to offload to a worker thread.
+
+    This bridge exists only because handle_message() and the workflow
+    dispatch path are still synchronous.  Once they become async-native
+    (see backlog), callers should ``await adapter.execute(ctx)``
+    directly and this function should be removed.
+    """
+    return _ASYNC_BRIDGE_EXECUTOR.submit(asyncio.run, coro).result()
+
 from services.google_auth import refresh_access_token
 from services.lead_provider import format_leads_message
 from services.ai import generate_outreach_email, rewrite_message, analyze_draft, answer_draft_question, OpenAIError
@@ -7,6 +35,7 @@ from services.supabase import get_user, is_token_expired, store_leads, update_go
 from services.conversation_store import record_workflow_event
 from services.enrichment.enrichment_factory import get_enricher
 from services.intelligence.lead_intelligence import generate_lead_intelligence
+from services.adapters.google.gmail import GmailAdapter
 
 
 VALID_TONES = {"casual", "formal", "aggressive", "friendly"}
@@ -267,6 +296,24 @@ def draft_question_workflow(input: dict) -> dict:
         return {"ok": False, "type": "draft_question", "answer": str(e)}
 
 
+def _resolve_gmail_credentials(user: dict, user_id: str) -> dict | None:
+    access_token = user.get("google_access_token") or ""
+    if is_token_expired(user.get("token_expiry")):
+        try:
+            refreshed = refresh_access_token(user["google_refresh_token"])
+            access_token = refreshed.get("access_token", "")
+            updated_user = update_google_access_token(
+                user_id,
+                access_token=access_token,
+                token_expiry=refreshed.get("token_expiry"),
+            )
+            if updated_user:
+                user = updated_user
+        except Exception:
+            return None
+    return {"access_token": access_token, "_user": user}
+
+
 def send_outreach(input: dict) -> dict:
     lead = input.get("lead") or {}
     user_id = input.get("user_id")
@@ -288,25 +335,15 @@ def send_outreach(input: dict) -> dict:
             "error": "missing_google_tokens",
         }
 
-    access_token = user.get("google_access_token") or ""
-    if is_token_expired(user.get("token_expiry")):
-        try:
-            refreshed = refresh_access_token(user["google_refresh_token"])
-            access_token = refreshed.get("access_token", "")
-            updated_user = update_google_access_token(
-                user_id,
-                access_token=access_token,
-                token_expiry=refreshed.get("token_expiry"),
-            )
-            if updated_user:
-                user = updated_user
-        except Exception:
-            return {
-                "ok": False,
-                "type": "send_outreach",
-                "message": "Your Gmail connection expired. Connect it again with /connect and I'll be ready to send.",
-                "error": "token_refresh_failed",
-            }
+    creds = _resolve_gmail_credentials(user, user_id)
+    if creds is None:
+        return {
+            "ok": False,
+            "type": "send_outreach",
+            "message": "Your Gmail connection expired. Connect it again with /connect and I'll be ready to send.",
+            "error": "token_refresh_failed",
+        }
+    user = creds.get("_user", user)
 
     company_intelligence = None
     lead_intelligence = None
@@ -324,12 +361,43 @@ def send_outreach(input: dict) -> dict:
 
     try:
         draft = generate_outreach_email(lead, company_intelligence, lead_intelligence)
-        send_email(
-            access_token or user.get("google_access_token", ""),
-            lead.get("email") or "",
-            draft.get("subject", "Sent"),
-            draft.get("body", ""),
+
+        # Route through Execution Engine via single-task Plan.
+        # The globally registered Gmail BridgeAdapter (with its
+        # credentials_factory) resolves per-user credentials from
+        # credential_user_id — no per-request adapter construction.
+        from services.execution.execution_pipeline import get_pipeline
+        from services.execution.adapter_registry_resolver import get_planner_resolver
+        from services.planner.planning_models import Plan, PlanStatus, Task, TaskType
+
+        send_task = Task(
+            type=TaskType.SEND_EMAIL,
+            label="Send outreach email",
+            instructions=f"Send outreach email to {lead.get('name', 'Unknown')}",
+            params={
+                "payload_type": "MessagePayload",
+                "channel": "email",
+                "template": "",
+                "to": [lead.get("email", "")],
+                "subject": draft.get("subject", "Sent"),
+                "body_plain": draft.get("body", ""),
+                "credential_user_id": user_id,
+            },
         )
+        plan = Plan(tasks=[send_task], status=PlanStatus.VALIDATED, strategy="direct_outreach")
+        send_task.plan_id = plan.id
+
+        resolver = get_planner_resolver()
+        if resolver is None:
+            raise Exception("Planner resolver not available — global registry not initialised")
+
+        session = _run_async(get_pipeline().execute(plan, resolver=resolver))
+
+        etask = session.tasks.get(send_task.id)
+        if not etask or not etask.result or not etask.result.success:
+            raise Exception(
+                (etask and etask.result and etask.result.error) or "Send failed"
+            )
     except OpenAIError as e:
         return {
             "ok": False,

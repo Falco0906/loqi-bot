@@ -9,7 +9,9 @@ Phase 3.6.4G — Event Bus.
 """
 
 from services.execution.adapter_registry import AdapterDescriptor, AdapterRegistry
+from services.execution.adapter_registry_resolver import AdapterRegistryResolver
 from services.execution.base_adapter import ExecutionAdapter
+from services.execution.bridge_adapter import BridgeAdapter
 from services.execution.dispatcher import AdapterResolver, Dispatcher
 from services.execution.enums import (
     ExecutionEventType,
@@ -52,6 +54,7 @@ __all__ = [
     # Adapter Registry
     "AdapterDescriptor",
     "AdapterRegistry",
+    "AdapterRegistryResolver",
     # Base Adapter
     "ExecutionAdapter",
     # Dispatcher

@@ -44,6 +44,8 @@ from services.conversational_response_generator import (
     _get_after_send_variation,
     _get_refine_options_variation,
 )
+from services.planner.planner_router import PlannerRouter, is_schedule_intent
+from services.planner.planning_models import PlanGoal
 
 
 def _utc_now() -> str:
@@ -535,6 +537,30 @@ class ConversationEngine:
                 )
             )
             return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+        # Planner fast-path — scheduling intent routes through BookingStrategy
+        if is_schedule_intent(normalized_text):
+            print(f"[PLANNER] Scheduling intent detected: '{normalized_text}'")
+            goal = PlanGoal(
+                outcome="Schedule an event",
+                target_action="schedule_event",
+            )
+            ctx: dict = {
+                "conversation_id": workflow_session_id,
+                "summary": normalized_text,
+                "user_id": user["id"],
+            }
+            router = PlannerRouter()
+            planner_result = router.route(goal, ctx)
+            if planner_result is not None:
+                outputs.extend(
+                    self._render_workflow_result(
+                        workflow_session_id=workflow_session_id,
+                        workflow_result=planner_result,
+                    )
+                )
+                return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+            print(f"[PLANNER] Router returned None — falling back to legacy path")
 
         context = get_session_context(user["id"])
         user_messages = context["user_messages"]
@@ -1145,6 +1171,17 @@ class ConversationEngine:
                     workflow_session_id=workflow_session_id,
                     text=message_text,
                     message_type="send_result",
+                    data=workflow_result.get("result") or {},
+                )
+            )
+            return output
+
+        if workflow_type == "planner_result":
+            output.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=message_text,
+                    message_type="planner_result",
                     data=workflow_result.get("result") or {},
                 )
             )

@@ -53,6 +53,12 @@ from services.execution.validation import (
 )
 
 
+# Default timeout (seconds) for adapter execution.
+# When exceeded, the task is failed with a transient error so the
+# retry engine can re-attempt.
+_ADAPTER_EXECUTION_TIMEOUT = 30.0
+
+
 class ExecutionEngine:
     """Main orchestrator for plan execution.
 
@@ -309,7 +315,17 @@ class ExecutionEngine:
         )
 
         context = ExecutionContext(session_id=session.id)
+
+        started_at = datetime.now(timezone.utc)
         result = await self._dispatch_safe(task, context, resolver)
+        completed_at = datetime.now(timezone.utc)
+
+        result.started_at = started_at
+        result.completed_at = completed_at
+        result.duration_ms = int(
+            (completed_at - started_at).total_seconds() * 1000
+        )
+
         await self._handle_result(task, session, scheduler, result)
 
     @staticmethod
@@ -320,12 +336,23 @@ class ExecutionEngine:
     ) -> TaskResult:
         """Dispatch a task, converting failures to TaskResult.
 
-        Catches ExecutionDispatchError (unsupported task) and unexpected
-        adapter exceptions, converting both into permanent failure
+        Catches ExecutionDispatchError (unsupported task),
+        asyncio.TimeoutError (adapter hung), and unexpected adapter
+        exceptions, converting all into appropriately classified
         TaskResults.
+
+        Timeout errors are classified as ``transient`` so the retry
+        engine can re-attempt.  All other errors are ``permanent``.
+
+        The adapter execution timeout is controlled by the module-level
+        ``_ADAPTER_EXECUTION_TIMEOUT`` constant (default 30 seconds).
         """
+        timeout = _ADAPTER_EXECUTION_TIMEOUT
         try:
-            return await Dispatcher.dispatch(task, context, resolver)
+            return await asyncio.wait_for(
+                Dispatcher.dispatch(task, context, resolver),
+                timeout=timeout,
+            )
         except ExecutionDispatchError as e:
             return TaskResult(
                 task_id=task.id,
@@ -334,6 +361,17 @@ class ExecutionEngine:
                 error=str(e),
                 error_type="permanent",
                 metadata={"unsupported_task": True},
+            )
+        except asyncio.TimeoutError:
+            return TaskResult(
+                task_id=task.id,
+                attempt=task.attempts,
+                success=False,
+                error=(
+                    f"Adapter execution timed out after {timeout}s"
+                ),
+                error_type="transient",
+                metadata={"adapter_timeout": True},
             )
         except asyncio.CancelledError:
             raise

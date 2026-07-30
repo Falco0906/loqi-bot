@@ -1105,10 +1105,10 @@ function ExecutiveBriefing({
             {(companySummary || objective) && (
               <div className="md:col-span-2 onb-ambient-shadow bg-[#ffffff] p-8 rounded-lg">
                 <span className="font-['Geist'] text-[11px] leading-[1.2] tracking-[0.05em] font-semibold text-[#444748] uppercase tracking-widest mb-4 block">
-                  Strategic Focus
+                  Strategic Alignment
                 </span>
                 <div className="font-['Libre_Caslon_Text'] text-[32px] leading-[1.3] text-[#1c1b1b] mb-6 font-normal">
-                  <ProfileValue value={companySummary || "Strategic Objective"} />
+                  <ProfileValue value={companySummary || "Immediate Priorities"} />
                 </div>
                 <div className="space-y-6">
                   {objective && (

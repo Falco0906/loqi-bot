@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Icon from "../shared/Icon";
+import { useAuth } from "../../hooks/useAuth";
 
 const navigation = [
   { label: "Mission Control", href: "/mission-control", icon: "dashboard" },
@@ -11,12 +12,11 @@ const navigation = [
   { label: "Inbox", href: "/inbox", icon: "inbox" },
   { label: "Knowledge", href: "/knowledge", icon: "psychology" },
   { label: "Strategic Update", href: "/strategic-update", icon: "auto_awesome" },
-  { label: "Contacts", href: "/contacts", icon: "contacts" },
 ];
 
-const workspacePages = [
-  { label: "Workspace", href: "/workspace", icon: "hub" },
+const utilityPages = [
   { label: "Settings", href: "/settings", icon: "settings" },
+  { label: "Support", href: "/support", icon: "help_outline" },
 ];
 
 function NavIcon({ icon, active }: { icon: string; active: boolean }) {
@@ -30,6 +30,7 @@ function NavIcon({ icon, active }: { icon: string; active: boolean }) {
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const { user } = useAuth();
 
   function renderNavItem(item: { label: string; href: string; icon: string }) {
     const active = pathname === item.href || (item.href !== "/mission-control" && pathname.startsWith(item.href));
@@ -55,33 +56,49 @@ export default function Sidebar() {
   return (
     <aside className="fixed left-0 top-0 z-30 flex h-full w-64 flex-col border-r border-outline-variant/10 bg-charcoal/95 backdrop-blur-xl">
       {/* Logo */}
-      <div className="flex items-center gap-3 border-b border-outline-variant/10 px-5 py-5">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-container/20">
-          <Icon name="rocket_launch" className="text-lg text-primary" />
-        </div>
-        <div>
-          <div className="text-sm font-semibold text-on-surface tracking-tight">Loqi</div>
-          <div className="text-[10px] font-medium uppercase tracking-[0.2em] text-on-surface-variant/40">
-            Outbound OS
+      <div className="flex items-center gap-3 px-6 py-8">
+        <div className="flex items-center gap-3">
+          <Icon name="rocket_launch" className="text-xl text-primary" />
+          <div>
+            <div className="text-lg font-serif font-normal text-primary tracking-tight">Loqi AI</div>
+            <div className="text-[10px] font-medium uppercase tracking-[0.15em] text-on-surface-variant/40">
+              Chief of Staff
+            </div>
           </div>
         </div>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 space-y-0.5 px-3 py-4">
+      <nav className="flex-1 space-y-0.5 px-4">
         {navigation.map(renderNavItem)}
 
         <div className="my-2 border-t border-outline-variant/10" />
 
-        {workspacePages.map(renderNavItem)}
+        <div className="space-y-0.5">
+          <div className="px-3 py-1">
+            <span className="text-[10px] font-medium uppercase tracking-[0.15em] text-on-surface-variant/30">Utilities</span>
+          </div>
+          {utilityPages.map(renderNavItem)}
+        </div>
       </nav>
 
       {/* Bottom */}
-      <div className="border-t border-outline-variant/10 px-4 py-4">
-        <div className="flex items-center gap-2 rounded-lg px-2 py-2 text-xs text-on-surface-variant/50">
-          <span className="relative flex h-2 w-2">
+      <div className="border-t border-outline-variant/10 px-6 py-4">
+        {user && (
+          <div className="flex items-center gap-3 rounded-lg px-2 py-2">
+            <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-xs font-bold text-on-surface">
+              {"email" in user && user.email ? user.email[0].toUpperCase() : "L"}
+            </div>
+            <div className="overflow-hidden">
+              <p className="text-xs font-medium text-on-surface truncate">{"email" in user && user.email ? user.email.split("@")[0] : "User"}</p>
+              <p className="text-[10px] text-on-surface-variant/50 truncate">Strategic Lead</p>
+            </div>
+          </div>
+        )}
+        <div className="mt-3 flex items-center gap-2 text-[10px] text-on-surface-variant/40">
+          <span className="relative flex h-1.5 w-1.5">
             <span className="absolute inline-flex h-full w-full animate-ping-slow rounded-full bg-secondary opacity-75" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-secondary" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-secondary" />
           </span>
           All Systems Online
         </div>

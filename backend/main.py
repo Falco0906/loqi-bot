@@ -68,6 +68,7 @@ from services.workspace_snapshot import build_snapshot
 from services.recommendation_engine import generate_recommendations
 from services.executive_brief import generate_brief
 from services.draft_intelligence import analyze_draft as analyze_draft_intelligence
+from services.strategic_intelligence_api import router as strategic_intelligence_router
 from services.rewrite_engine import execute_rewrite
 from services.rewrite_history import push as push_rewrite_history, undo as undo_rewrite_history, get_history as get_rewrite_history, get_current_version as get_draft_version
 from services.draft_comparison import compare_versions
@@ -189,6 +190,7 @@ app.include_router(onboarding_router)
 app.include_router(organizations_router, prefix="/api/v1")
 app.include_router(billing_router)
 app.include_router(capabilities_router)
+app.include_router(strategic_intelligence_router)
 
 # ── Wire Organization Platform services ──
 _org_deps = _build_org_deps()

@@ -5,9 +5,15 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "../../hooks/useAuth";
 import {
   createWorkspace,
+  getOnboardingProgress,
   saveWizardData,
 } from "../../lib/onboarding-api";
-import { getGoogleOAuthUrl } from "../../lib/auth-api";
+import { getGmailAuthUrl } from "../../lib/api";
+import { generateStrategicProfile } from "../../lib/strategic-intelligence-api";
+import type { StrategicProfile } from "../../lib/strategic-intelligence-api";
+
+const ACTIVE_SESSION_KEY = "loqi_active_session_token";
+const ONBOARDING_MESSAGES_KEY = "loqi_onboarding_messages";
 
 type OnboardingState =
   | "conversational-discovery"
@@ -17,43 +23,136 @@ type OnboardingState =
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const { user, refreshUser } = useAuth();
+  const { user, isLoading: authLoading, refreshUser } = useAuth();
   const [state, setState] = useState<OnboardingState>("conversational-discovery");
   const [profile, setProfile] = useState<OnboardingProfile | null>(null);
+  const [strategicProfile, setStrategicProfile] = useState<StrategicProfile | null>(null);
+  const [isGeneratingProfile, setIsGeneratingProfile] = useState(false);
+  const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState<string | null>(null);
+  const [loadingInitial, setLoadingInitial] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const userId = user && "id" in user ? user.id : "";
 
+  // Restore onboarding state from backend on load
   useEffect(() => {
+    if (authLoading) return;
+    if (!user || ("onboarding_complete" in user && user.onboarding_complete)) {
+      setLoadingInitial(false);
+      return;
+    }
+    const restoredStep = sessionStorage.getItem("loqi_onboarding_step");
+    if (restoredStep) {
+      sessionStorage.removeItem("loqi_onboarding_step");
+      setState(restoredStep as OnboardingState);
+      setLoadingInitial(false);
+      return;
+    }
+    (async () => {
+      try {
+        const progress = await getOnboardingProgress(userId);
+        if (progress.onboarding_complete) {
+          router.push("/mission-control");
+          return;
+        }
+        const data = progress.wizard_data || {};
+        if (data.strategicProfile) {
+          setStrategicProfile(data.strategicProfile as StrategicProfile);
+        }
+        const restoredProfile: Partial<OnboardingProfile> = {};
+        if (data.companyDescription) restoredProfile.companyDescription = data.companyDescription as string;
+        if (data.idealCustomer) restoredProfile.idealCustomer = data.idealCustomer as string;
+        if (data.differentiation) restoredProfile.differentiation = data.differentiation as string;
+        if (data.annualGoal) restoredProfile.annualGoal = data.annualGoal as string;
+        if (data.biggestObstacle) restoredProfile.biggestObstacle = data.biggestObstacle as string;
+        if (data.website) restoredProfile.website = data.website as string;
+        if (Object.keys(restoredProfile).length > 0) {
+          setProfile(restoredProfile as OnboardingProfile);
+        }
+
+        const savedStep = data.onboarding_step as string | undefined;
+        if (savedStep === "knowledge-validation") {
+          setState("knowledge-validation");
+        } else if (savedStep === "workspace-connection") {
+          setState("workspace-connection");
+        } else if (savedStep === "executive-briefing") {
+          setState("executive-briefing");
+        }
+      } catch {
+        // Proceed with defaults
+      }
+      setLoadingInitial(false);
+    })();
+  }, [user, authLoading, userId, router]);
+
+  useEffect(() => {
+    if (authLoading) return;
     if (!user || ("onboarding_complete" in user && user.onboarding_complete)) {
       router.push("/mission-control");
     }
-  }, [user, router]);
+  }, [user, authLoading, router]);
+
+  useEffect(() => {
+    const token = (() => {
+      try { return localStorage.getItem(ACTIVE_SESSION_KEY); }
+      catch { return null; }
+    })();
+    setSessionToken(token);
+  }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [state]);
 
-  // Listen for OAuth callback from popup
+  // Listen for Gmail OAuth callback from popup
   useEffect(() => {
-    const handleOAuthMessage = (event: MessageEvent) => {
-      if (event.data?.type === "oauth-callback") {
+    const handler = (event: MessageEvent) => {
+      if (event.data?.type === "gmail-oauth") {
         setConnecting(false);
-        if (event.data?.success) {
+        const payload = event.data?.payload;
+        if (payload?.ok) {
           setConnectError(null);
           setState("executive-briefing");
+          // Persist step for restoration
+          if (userId) {
+            saveWizardData(userId, { onboarding_step: "executive-briefing" }, false).catch(() => {});
+          }
         } else {
-          setConnectError(event.data?.error || "Connection failed. Please try again.");
+          setConnectError(payload?.error || "Connection failed. Please try again.");
         }
       }
     };
-    window.addEventListener("message", handleOAuthMessage);
-    return () => window.removeEventListener("message", handleOAuthMessage);
-  }, []);
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [userId]);
+
+  // Generate strategic profile from conversation data
+  const generateProfile = async (p: OnboardingProfile) => {
+    if (!userId) return null;
+    setIsGeneratingProfile(true);
+    try {
+      const response = await generateStrategicProfile({
+        company_description: p.companyDescription,
+        ideal_customer: p.idealCustomer,
+        differentiation: p.differentiation,
+        annual_goal: p.annualGoal,
+        biggest_obstacle: p.biggestObstacle,
+        website: p.website,
+        user_id: userId,
+      });
+      setStrategicProfile(response.profile);
+      return response.profile;
+    } catch (err) {
+      console.error("Failed to generate strategic profile:", err);
+      return null;
+    } finally {
+      setIsGeneratingProfile(false);
+    }
+  };
 
   // Persist profile to backend after knowledge validation
   const persistProfile = async (p: OnboardingProfile) => {
@@ -76,7 +175,21 @@ export default function OnboardingPage() {
 
   const handleDiscoveryComplete = async (p: OnboardingProfile) => {
     setProfile(p);
-    // Persist profile before advancing
+    try { localStorage.removeItem(ONBOARDING_MESSAGES_KEY); } catch { /* ignore */ }
+    // Generate strategic profile before advancing
+    const generated = await generateProfile(p);
+    // Persist strategic profile to backend wizard data
+    if (generated && userId) {
+      try {
+        await saveWizardData(userId, {
+          strategicProfile: generated,
+          onboarding_step: "knowledge-validation",
+        }, false);
+      } catch (err) {
+        console.error("Failed to persist strategic profile:", err);
+      }
+    }
+    // Persist raw profile before advancing
     await persistProfile(p);
     setState("knowledge-validation");
   };
@@ -85,6 +198,12 @@ export default function OnboardingPage() {
     setProfile(updated);
     // Persist updated profile before advancing
     await persistProfile(updated);
+    // Persist step for restoration
+    if (userId) {
+      try {
+        await saveWizardData(userId, { onboarding_step: "workspace-connection" }, false);
+      } catch { /* step save is best-effort */ }
+    }
     setState("workspace-connection");
   };
 
@@ -92,14 +211,12 @@ export default function OnboardingPage() {
     setConnecting(true);
     setConnectError(null);
     try {
-      const res = await getGoogleOAuthUrl();
-      if (res.authorize_url) {
-        const popup = window.open(res.authorize_url, "google-oauth", "width=600,height=700");
+      const res = await getGmailAuthUrl(sessionToken || undefined);
+      if (res.ok && res.url) {
+        const popup = window.open(res.url, "gmail-oauth", "width=600,height=700");
         if (!popup) {
-          // Fallback: redirect in same window if popup blocked
-          window.location.href = res.authorize_url;
+          window.location.href = res.url;
         }
-        // Popup is open - wait for message event
       } else {
         setConnecting(false);
         setConnectError("Failed to initiate OAuth flow.");
@@ -116,42 +233,36 @@ export default function OnboardingPage() {
     setFinishError(null);
     
     try {
-      // 1. Validate we have a profile to save
       if (!profile) {
         throw new Error("No profile data available");
       }
       
-      // 2. Save wizard data with actual profile
-      const wizardRes = await saveWizardData(userId, {
+      const finalData: Record<string, unknown> = {
         companyDescription: profile.companyDescription,
         idealCustomer: profile.idealCustomer,
         differentiation: profile.differentiation,
         annualGoal: profile.annualGoal,
         biggestObstacle: profile.biggestObstacle,
         website: profile.website,
-      }, false);
+        onboarding_step: "completed",
+      };
+      if (strategicProfile) {
+        finalData.strategicProfile = strategicProfile;
+      }
       
+      // Mark wizard complete (saves + advances lifecycle)
+      const wizardRes = await saveWizardData(userId, finalData, true);
       if (!wizardRes) {
         throw new Error("Failed to save onboarding data");
       }
       
-      // 3. Mark wizard complete
-      await saveWizardData(userId, {
-        companyDescription: profile.companyDescription,
-        idealCustomer: profile.idealCustomer,
-        differentiation: profile.differentiation,
-        annualGoal: profile.annualGoal,
-        biggestObstacle: profile.biggestObstacle,
-        website: profile.website,
-      }, true);
-      
-      // 4. Create workspace
+      // Create workspace
       await createWorkspace(userId, "My Workspace", "my-workspace");
       
-      // 5. Refresh user
+      // Refresh user
       await refreshUser();
       
-      // 6. Only then redirect
+      // Redirect
       router.push("/mission-control");
     } catch (err) {
       setFinishError(err instanceof Error ? err.message : "Failed to complete onboarding");
@@ -159,14 +270,29 @@ export default function OnboardingPage() {
     }
   };
 
+  if (authLoading || loadingInitial) {
+    return (
+      <main className="relative z-10 w-full min-h-screen onb-surface flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-[#000000] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="font-['Inter'] text-[16px] leading-[1.5] text-[#444748]">Loading...</p>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="relative z-10 w-full min-h-screen onb-surface">
       {state === "conversational-discovery" && (
-        <ConversationalDiscovery onComplete={handleDiscoveryComplete} />
+        <ConversationalDiscovery
+          onComplete={handleDiscoveryComplete}
+        />
       )}
       {state === "knowledge-validation" && profile && (
         <KnowledgeValidation
           profile={profile}
+          strategicProfile={strategicProfile}
+          isLoading={isGeneratingProfile}
           onProceed={handleValidationProceed}
         />
       )}
@@ -180,6 +306,7 @@ export default function OnboardingPage() {
       {state === "executive-briefing" && profile && (
         <ExecutiveBriefing
           profile={profile}
+          strategicProfile={strategicProfile}
           finishing={finishing}
           finishError={finishError}
           onEnterMissionControl={handleEnterMissionControl}
@@ -223,6 +350,7 @@ function ConversationalDiscovery({
   const [inputValue, setInputValue] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisComplete, setAnalysisComplete] = useState(false);
+  const [hasWebsite, setHasWebsite] = useState(false);
   const [profile, setProfile] = useState<OnboardingProfile>({
     companyDescription: "",
     idealCustomer: "",
@@ -233,12 +361,44 @@ function ConversationalDiscovery({
   });
   const inputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const restoredRef = useRef(false);
 
   useEffect(() => {
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+    try {
+      const raw = localStorage.getItem(ONBOARDING_MESSAGES_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        if (saved.messages && saved.messages.length > 0) {
+          setMessages(saved.messages);
+          setCurrentQ(saved.currentQ ?? 0);
+          if (saved.profile) setProfile(saved.profile);
+          if (saved.hasWebsite) setHasWebsite(true);
+          if (saved.isAnalyzing) setIsAnalyzing(true);
+          if (saved.analysisComplete) setAnalysisComplete(true);
+          return;
+        }
+      }
+    } catch { /* ignore corrupted data */ }
     if (messages.length === 0) {
       setMessages([{ role: "loqi", text: QUESTIONS[0] }]);
     }
   }, []);
+
+  useEffect(() => {
+    if (messages.length === 0) return;
+    try {
+      localStorage.setItem(ONBOARDING_MESSAGES_KEY, JSON.stringify({
+        messages,
+        currentQ,
+        profile,
+        hasWebsite,
+        isAnalyzing,
+        analysisComplete,
+      }));
+    } catch { /* storage full or unavailable */ }
+  }, [messages, currentQ, profile, hasWebsite, isAnalyzing, analysisComplete]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -287,6 +447,7 @@ function ConversationalDiscovery({
     const site = extractWebsite(text);
     if (site) {
       updatedProfile.website = site;
+      setHasWebsite(true);
     }
     setProfile(updatedProfile);
 
@@ -379,7 +540,7 @@ function ConversationalDiscovery({
                   <div className="flex-1">
                     <div className="mb-8">
                       <p className="font-['Libre_Caslon_Text'] text-[24px] leading-[1.4] italic text-[#444748] mb-6 font-normal">
-                        &ldquo;Reading website&hellip;&rdquo;
+                        {hasWebsite ? "Reading website&hellip;" : "Analyzing conversation&hellip;"}
                       </p>
                     </div>
 
@@ -398,21 +559,23 @@ function ConversationalDiscovery({
                       <div className="space-y-6 relative">
                         <div className="absolute left-[7px] top-2 bottom-2 w-[1px] bg-[#c4c7c7]/30" />
 
-                        <div className="flex gap-6 items-start onb-fade-in-fast">
-                          <div className="relative z-10 w-4 h-4 rounded-full bg-[#53625c] flex items-center justify-center">
-                            <span className="material-symbols-outlined text-[10px] text-white">
-                              check
-                            </span>
+                        {hasWebsite && (
+                          <div className="flex gap-6 items-start onb-fade-in-fast">
+                            <div className="relative z-10 w-4 h-4 rounded-full bg-[#53625c] flex items-center justify-center">
+                              <span className="material-symbols-outlined text-[10px] text-white">
+                                check
+                              </span>
+                            </div>
+                            <div className="flex-1">
+                              <p className="font-['Inter'] text-[16px] leading-[1.5] font-medium text-[#1c1b1b]">
+                                Reading website...
+                              </p>
+                              <p className="font-['Geist'] text-[11px] leading-[1.2] tracking-[0.05em] font-semibold text-[#444748] mt-1">
+                                Analyzing landing page content and positioning signals.
+                              </p>
+                            </div>
                           </div>
-                          <div className="flex-1">
-                            <p className="font-['Inter'] text-[16px] leading-[1.5] font-medium text-[#1c1b1b]">
-                              Reading website...
-                            </p>
-                            <p className="font-['Geist'] text-[11px] leading-[1.2] tracking-[0.05em] font-semibold text-[#444748] mt-1">
-                              Analyzing landing page content and positioning signals.
-                            </p>
-                          </div>
-                        </div>
+                        )}
 
                         <div className="flex gap-6 items-start onb-fade-in-fast onb-stagger-1">
                           <div className="relative z-10 w-4 h-4 rounded-full bg-[#53625c] flex items-center justify-center">
@@ -522,42 +685,16 @@ function ConversationalDiscovery({
 }
 
 /* ─── State 2: Knowledge Validation ─── */
-function inferBelief(field: keyof OnboardingProfile, text: string): string {
-  const s = text.trim();
-  const strip = (t: string) =>
-    t
-      .replace(/^(we|our|i)\s+(are|build|create|develop|make|offer|provide|specialize in|want|aim|need|plan|focus on|target|cater to|serve|work with|struggle with|face|deal with|battle)\s+/i, "")
-      .replace(/^to |^a |^an /, "")
-      .trim();
-
-  const cleaned = strip(s);
-  if (!cleaned) return s;
-
-  const lower = cleaned.toLowerCase();
-
-  switch (field) {
-    case "companyDescription":
-      if (/ai|machine learning|llm|gpt|neural/.test(lower))
-        return `You're an AI-powered platform focused on ${cleaned.replace(/ai|artificial intelligence/gi, "").trim()}.`;
-      return `Your organization operates as a ${cleaned} provider.`;
-    case "idealCustomer":
-      return `Your core audience consists of ${cleaned}.`;
-    case "annualGoal":
-      return `Your 12-month priority is ${cleaned}.`;
-    case "differentiation":
-      return `Your competitive edge is ${cleaned}.`;
-    case "biggestObstacle":
-      return `Your primary obstacle is ${cleaned}.`;
-    default:
-      return cleaned;
-  }
-}
 
 function KnowledgeValidation({
   profile,
+  strategicProfile,
+  isLoading,
   onProceed,
 }: {
   profile: OnboardingProfile;
+  strategicProfile: StrategicProfile | null;
+  isLoading: boolean;
   onProceed: (updated: OnboardingProfile) => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -570,21 +707,21 @@ function KnowledgeValidation({
       key: "companyDescription" as keyof OnboardingProfile,
       label: "Market Position",
       icon: "explore",
-      belief: inferBelief("companyDescription", local.companyDescription),
+      belief: strategicProfile?.COMPANY_SUMMARY || "",
       raw: local.companyDescription,
     },
     {
       key: "idealCustomer" as keyof OnboardingProfile,
       label: "Ideal Customer Profile",
       icon: "group",
-      belief: inferBelief("idealCustomer", local.idealCustomer),
+      belief: strategicProfile?.ICP || "",
       raw: local.idealCustomer,
     },
     {
       key: "annualGoal" as keyof OnboardingProfile,
       label: "Primary Objective",
       icon: "flag",
-      belief: inferBelief("annualGoal", local.annualGoal),
+      belief: strategicProfile?.PRIMARY_OBJECTIVE || "",
       raw: local.annualGoal,
       span: true,
     },
@@ -592,14 +729,14 @@ function KnowledgeValidation({
       key: "differentiation" as keyof OnboardingProfile,
       label: "Competitive Edge",
       icon: "trending_up",
-      belief: inferBelief("differentiation", local.differentiation),
+      belief: strategicProfile?.DIFFERENTIATION || "",
       raw: local.differentiation,
     },
     {
       key: "biggestObstacle" as keyof OnboardingProfile,
       label: "Critical Challenge",
       icon: "warning",
-      belief: inferBelief("biggestObstacle", local.biggestObstacle),
+      belief: strategicProfile?.CURRENT_CONSTRAINTS || "",
       raw: local.biggestObstacle,
     },
   ];
@@ -607,6 +744,44 @@ function KnowledgeValidation({
   const updateField = (key: keyof OnboardingProfile, val: string) => {
     setLocal((prev) => ({ ...prev, [key]: val }));
   };
+
+  if (isLoading) {
+    return (
+      <div className="relative z-10 w-full min-h-screen px-6 pt-24 pb-16 overflow-x-hidden">
+        <div className="max-w-[720px] mx-auto text-center">
+          <div className="animate-pulse space-y-8">
+            <div className="h-8 w-8 rounded-full bg-[#000000] mx-auto" />
+            <p className="font-['Libre_Caslon_Text'] text-[24px] text-[#444748]">
+              Analyzing your strategic position...
+            </p>
+            <div className="h-32 bg-[#ffffff] rounded-lg" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!strategicProfile) {
+    return (
+      <div className="relative z-10 w-full min-h-screen px-6 pt-24 pb-16 overflow-x-hidden">
+        <div className="max-w-[720px] mx-auto">
+          <div className="onb-ambient-shadow bg-[#ffffff] p-8 rounded-lg border border-[#c4c7c7]/20 space-y-4">
+            <p className="font-['Inter'] text-[18px] leading-[1.6] text-[#444748]">
+              Strategic profile could not be generated. You can continue with
+              your conversation answers, or go back and try again after
+              reconnecting.
+            </p>
+            <button
+              onClick={() => onProceed(local)}
+              className="px-8 py-4 bg-[#000000] text-[#ffffff] rounded-lg font-['Inter'] text-[16px] leading-[1.5] transition-all duration-300 hover:bg-[#444748] active:scale-95"
+            >
+              Continue with conversation data
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative z-10 w-full min-h-screen px-6 pt-24 pb-16 overflow-x-hidden">
@@ -655,9 +830,6 @@ function KnowledgeValidation({
                   <p className="font-['Geist'] text-[11px] leading-[1.2] tracking-[0.05em] font-semibold text-[#444748] uppercase mb-1">
                     {card.label}
                   </p>
-                  <h3 className="font-['Libre_Caslon_Text'] text-[24px] leading-[1.4] text-[#1c1b1b] mb-4 font-normal">
-                    I currently believe...
-                  </h3>
                   {editing ? (
                     <textarea
                       value={card.raw}
@@ -667,7 +839,7 @@ function KnowledgeValidation({
                     />
                   ) : (
                     <p className="font-['Inter'] text-[16px] leading-[1.5] text-[#444748]">
-                      {card.belief}
+                      {card.belief || card.raw}
                     </p>
                   )}
                   <div className="mt-8 pt-4 border-t border-[#c4c7c7]/20">
@@ -813,51 +985,27 @@ function WorkspaceConnection({
 }
 
 /* ─── State 4: Executive Briefing ─── */
-function deriveStrategicFocus(description: string): string {
-  if (!description) return "";
-  // Frame as strategic positioning, not verbatim repeat
-  const clean = description.replace(/^(we|our|i)\s+(are|build|create|develop|make|offer|provide|specialize in)\s+/i, "").trim();
-  return `Your immediate priority is establishing ${clean} as a core market capability.`;
-}
-
-function deriveCriticalConstraint(obstacle: string): string {
-  if (!obstacle) return "";
-  // Frame obstacle as strategic dependency
-  const clean = obstacle.replace(/^(we|our|i)\s+(face|struggle with|battle|deal with|are challenged by)\s+/i, "").trim();
-  return `Your stated objective depends on solving ${clean} before operational scaling becomes viable.`;
-}
-
-function deriveTargetMarket(customer: string): string {
-  if (!customer) return "";
-  // Frame ideal customer as market focus
-  const clean = customer.replace(/^(we|our)\s+(target|focus on|serve|cater to)\s+/i, "").trim();
-  return `You're targeting ${clean} as your primary market segment.`;
-}
-
-function deriveCompetitiveEdge(diff: string): string {
-  if (!diff) return "";
-  // Frame differentiation as advantage
-  const clean = diff.replace(/^(we|our)\s+(are better|differentiate|stand out|excel)\s+(by|because|through|on)\s+/i, "").trim();
-  return `Your competitive positioning centers on ${clean}.`;
-}
 
 function ExecutiveBriefing({
   profile,
+  strategicProfile,
   finishing,
   finishError,
   onEnterMissionControl,
 }: {
   profile: OnboardingProfile;
+  strategicProfile: StrategicProfile | null;
   finishing: boolean;
   finishError: string | null;
   onEnterMissionControl: () => void;
 }) {
-  const hasData = profile.companyDescription || profile.annualGoal || profile.biggestObstacle;
-  
-  const strategicFocus = deriveStrategicFocus(profile.companyDescription);
-  const criticalConstraint = deriveCriticalConstraint(profile.biggestObstacle);
-  const targetMarket = deriveTargetMarket(profile.idealCustomer);
-  const competitiveEdge = deriveCompetitiveEdge(profile.differentiation);
+  const sp = strategicProfile;
+  const companySummary = sp?.COMPANY_SUMMARY || profile.companyDescription;
+  const objective = sp?.PRIMARY_OBJECTIVE || profile.annualGoal;
+  const constraints = sp?.CURRENT_CONSTRAINTS || profile.biggestObstacle;
+  const icp = sp?.ICP || profile.idealCustomer;
+  const differentiation = sp?.DIFFERENTIATION || profile.differentiation;
+  const hasData = !!(companySummary || objective || constraints);
   const source = profile.website ? "Conversation + Website" : "Conversation";
 
   return (
@@ -891,30 +1039,31 @@ function ExecutiveBriefing({
 
         {hasData ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 onb-fade-in onb-stagger-1">
-            {/* Strategic Focus */}
-            {strategicFocus && (
+            {(companySummary || objective) && (
               <div className="md:col-span-2 onb-ambient-shadow bg-[#ffffff] p-8 rounded-lg">
                 <span className="font-['Geist'] text-[11px] leading-[1.2] tracking-[0.05em] font-semibold text-[#444748] uppercase tracking-widest mb-4 block">
                   Strategic Focus
                 </span>
                 <h4 className="font-['Libre_Caslon_Text'] text-[32px] leading-[1.3] text-[#1c1b1b] mb-6 font-normal">
-                  {profile.annualGoal || "Strategic Objective"}
+                  {companySummary || "Strategic Objective"}
                 </h4>
                 <div className="space-y-6">
-                  <div className="flex items-start gap-4">
-                    <span className="material-symbols-outlined text-[#000000] mt-1">
-                      flag
-                    </span>
-                    <div>
-                      <h5 className="font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] font-medium font-bold mb-1 text-[#1c1b1b]">
-                        Objective
-                      </h5>
-                      <p className="font-['Inter'] text-[16px] leading-[1.5] text-[#444748]">
-                        {strategicFocus}
-                      </p>
+                  {objective && (
+                    <div className="flex items-start gap-4">
+                      <span className="material-symbols-outlined text-[#000000] mt-1">
+                        flag
+                      </span>
+                      <div>
+                        <h5 className="font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] font-medium font-bold mb-1 text-[#1c1b1b]">
+                          Objective
+                        </h5>
+                        <p className="font-['Inter'] text-[16px] leading-[1.5] text-[#444748]">
+                          {objective}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                  {criticalConstraint && (
+                  )}
+                  {constraints && (
                     <div className="flex items-start gap-4">
                       <span className="material-symbols-outlined text-[#000000] mt-1">
                         warning
@@ -924,7 +1073,7 @@ function ExecutiveBriefing({
                           Critical Constraint
                         </h5>
                         <p className="font-['Inter'] text-[16px] leading-[1.5] text-[#444748]">
-                          {criticalConstraint}
+                          {constraints}
                         </p>
                       </div>
                     </div>
@@ -933,8 +1082,7 @@ function ExecutiveBriefing({
               </div>
             )}
 
-            {/* Target Market */}
-            {targetMarket && (
+            {icp && (
               <div className="onb-ambient-shadow bg-[#ffffff] p-8 rounded-lg border-t-2 border-[#d3e3dc]">
                 <span className="font-['Geist'] text-[11px] leading-[1.2] tracking-[0.05em] font-semibold text-[#444748] uppercase tracking-widest mb-2 block">
                   Market
@@ -943,7 +1091,7 @@ function ExecutiveBriefing({
                   Target Profile
                 </h4>
                 <p className="font-['Inter'] text-[16px] leading-[1.5] text-[#444748] mb-6">
-                  {targetMarket}
+                  {icp}
                 </p>
                 <div className="pt-4 border-t border-[#c4c7c7]/20">
                   <span className="font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] text-[#747878] italic font-medium">
@@ -953,8 +1101,7 @@ function ExecutiveBriefing({
               </div>
             )}
 
-            {/* Competitive Edge */}
-            {competitiveEdge && (
+            {differentiation && (
               <div className="onb-ambient-shadow bg-[#ffffff] p-8 rounded-lg border-t-2 border-[#000000]">
                 <span className="font-['Geist'] text-[11px] leading-[1.2] tracking-[0.05em] font-semibold text-[#444748] uppercase tracking-widest mb-2 block">
                   Positioning
@@ -963,11 +1110,11 @@ function ExecutiveBriefing({
                   Competitive Edge
                 </h4>
                 <p className="font-['Inter'] text-[16px] leading-[1.5] text-[#444748] mb-6">
-                  {competitiveEdge}
+                  {differentiation}
                 </p>
                 <div className="pt-4 border-t border-[#c4c7c7]/20">
                   <span className="font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] text-[#747878] italic font-medium">
-                    Confidence: Medium
+                    Confidence: {sp?.CONFIDENCE_LEVELS?.overall || "Medium"}
                   </span>
                 </div>
               </div>
@@ -996,7 +1143,7 @@ function ExecutiveBriefing({
           <p className="font-['Libre_Caslon_Text'] text-[24px] leading-[1.4] italic text-[#444748] mb-12 font-normal">
             &ldquo;The meeting has ended. Now work begins.&rdquo;
           </p>
-          
+
           {finishError && (
             <div className="mb-8 bg-[#fef2f2] border border-[#fecaca] rounded-lg px-6 py-4">
               <div className="flex items-center gap-3 justify-center">
@@ -1007,7 +1154,7 @@ function ExecutiveBriefing({
               </div>
             </div>
           )}
-          
+
           <button
             onClick={onEnterMissionControl}
             disabled={finishing}

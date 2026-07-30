@@ -44,7 +44,7 @@ class GoogleIdentityProvider(IdentityProvider):
     def provider_type(self) -> ProviderType:
         return ProviderType.GOOGLE
 
-    async def initiate_auth(self, redirect_uri: str) -> AuthRequest:
+    async def initiate_auth(self, redirect_uri: str = "") -> AuthRequest:
         cfg = IDENTITY_CONFIG.google_oauth
         verifier = _generate_code_verifier()
         challenge = _generate_code_challenge(verifier)
@@ -53,7 +53,7 @@ class GoogleIdentityProvider(IdentityProvider):
 
         params = {
             "client_id": cfg.client_id,
-            "redirect_uri": redirect_uri or cfg.redirect_uri,
+            "redirect_uri": cfg.redirect_uri,
             "response_type": "code",
             "scope": cfg.scopes,
             "state": state,

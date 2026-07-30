@@ -266,8 +266,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       clearStoredTokens();
       await handleTokenResponse(res);
       
-      // After registration, always go to onboarding
-      router.push("/onboarding");
+      // After registration, go to first meeting
+      router.push("/first-meeting");
     },
     [handleTokenResponse, router],
   );

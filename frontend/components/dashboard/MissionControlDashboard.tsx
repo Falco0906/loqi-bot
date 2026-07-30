@@ -6,7 +6,10 @@ import AppPage from "../primitives/AppPage";
 import WorkspaceContainer from "../layout/WorkspaceContainer";
 import { useData } from "../../lib/hooks/use-data";
 import { fetchMissionControl } from "../../lib/repositories";
+import { useAuth } from "../../hooks/useAuth";
+import { getStrategicProfile } from "../../lib/strategic-intelligence-api";
 import type { MCTask } from "../../lib/domain";
+import type { StrategicProfile } from "../../lib/strategic-intelligence-api";
 
 function TasksCard({ tasks }: { tasks: MCTask[] }) {
   const [localTasks, setLocalTasks] = useState(tasks);
@@ -70,8 +73,22 @@ function LoadingSkeleton() {
 
 export default function MissionControlDashboard() {
   const { data, loading, error, retry } = useData(fetchMissionControl);
+  const { user } = useAuth();
+  const [storedProfile, setStoredProfile] = useState<StrategicProfile | null | undefined>(undefined);
 
-  if (loading) {
+  const profileLoaded = storedProfile !== undefined;
+
+  useEffect(() => {
+    if (!user || !("id" in user)) {
+      setStoredProfile(null);
+      return;
+    }
+    getStrategicProfile(user.id)
+      .then((res) => setStoredProfile(res.profile))
+      .catch(() => setStoredProfile(null));
+  }, [user]);
+
+  if (loading || !profileLoaded) {
     return (
       <WorkspaceContainer>
         <AppPage>
@@ -99,17 +116,6 @@ export default function MissionControlDashboard() {
     );
   }
 
-  const [storedProfile, setStoredProfile] = useState<Record<string, string> | null | undefined>(undefined);
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem("onboarding-profile");
-      setStoredProfile(raw ? JSON.parse(raw) : null);
-    } catch {
-      setStoredProfile(null);
-    }
-  }, []);
-
   if (!data) {
     return (
       <WorkspaceContainer>
@@ -132,20 +138,17 @@ export default function MissionControlDashboard() {
 
   const briefingLines = storedProfile
     ? [
-        storedProfile.companyDescription
-          ? `You\u2019re building: ${storedProfile.companyDescription}`
+        storedProfile.COMPANY_SUMMARY
+          ? `Market position: ${storedProfile.COMPANY_SUMMARY}`
           : null,
-        storedProfile.annualGoal
-          ? `Current strategic objective: ${storedProfile.annualGoal}`
+        storedProfile.PRIMARY_OBJECTIVE
+          ? `Strategic objective: ${storedProfile.PRIMARY_OBJECTIVE}`
           : null,
-        storedProfile.biggestObstacle
-          ? `Current constraint: ${storedProfile.biggestObstacle}`
+        storedProfile.CURRENT_CONSTRAINTS
+          ? `Current constraint: ${storedProfile.CURRENT_CONSTRAINTS}`
           : null,
-        storedProfile.idealCustomer
-          ? `Ideal customer: ${storedProfile.idealCustomer}`
-          : null,
-        storedProfile.website
-          ? `Website: ${storedProfile.website}`
+        storedProfile.ICP
+          ? `Ideal customer: ${storedProfile.ICP}`
           : null,
       ].filter(Boolean) as string[]
     : data.brief.lines;

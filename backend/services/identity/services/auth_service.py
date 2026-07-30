@@ -422,7 +422,7 @@ class AuthService:
 
         return MeResponse(
             id=user.id,
-            email=email_identity.email if email_identity else "",
+            email=str(email_identity.email) if email_identity else "",
             display_name=user.display_name,
             avatar_url=user.avatar_url or "",
             onboarding_complete=user.is_onboarding_complete,

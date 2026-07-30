@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
+
+from dotenv import load_dotenv
 
 
 @dataclass
@@ -73,3 +76,8 @@ class IdentityConfig:
 
 
 IDENTITY_CONFIG = IdentityConfig()
+
+load_dotenv()
+IDENTITY_CONFIG.google_oauth.client_id = os.getenv("GOOGLE_CLIENT_ID", "")
+IDENTITY_CONFIG.google_oauth.client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
+IDENTITY_CONFIG.google_oauth.redirect_uri = f"{os.getenv('FRONTEND_URL', 'http://localhost:3000')}/auth/google/callback"

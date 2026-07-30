@@ -11,6 +11,7 @@ import {
 import { getGmailAuthUrl } from "../../lib/api";
 import { generateStrategicProfile } from "../../lib/strategic-intelligence-api";
 import type { StrategicProfile } from "../../lib/strategic-intelligence-api";
+import { ProfileValue } from "../../components/shared/ProfileValue";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 const ONBOARDING_MESSAGES_KEY = "loqi_onboarding_messages";
@@ -340,6 +341,27 @@ const QUESTIONS = [
   "What is the biggest obstacle preventing that?",
 ];
 
+const STRATEGIC_RESPONSES = [
+  (answer: string) => {
+    const topic = answer.length > 60 ? answer.slice(0, answer.lastIndexOf(" ", 60)) + "\u2026" : answer;
+    return `Understood. You\u2019re building ${topic}. Who usually buys your product?`;
+  },
+  (answer: string) => {
+    return `So your buyers are ${answer.toLowerCase()}. What problem do you solve better than anyone else?`;
+  },
+  (answer: string) => {
+    const edge = answer.length > 60 ? answer.slice(0, answer.lastIndexOf(" ", 60)) + "\u2026" : answer;
+    return `${edge}. That\u2019s your differentiator. What is your biggest goal over the next 12 months?`;
+  },
+  (answer: string) => {
+    const goal = answer.length > 60 ? answer.slice(0, answer.lastIndexOf(" ", 60)) + "\u2026" : answer;
+    return `So your north star is ${goal.toLowerCase()}. What is the biggest obstacle preventing that?`;
+  },
+  (answer: string) => {
+    return `Understood. Thank you\u2014I have enough context to begin building your strategic profile. I\u2019ll process what you\u2019ve shared.`;
+  },
+];
+
 function ConversationalDiscovery({
   onComplete,
 }: {
@@ -350,6 +372,7 @@ function ConversationalDiscovery({
   const [inputValue, setInputValue] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisComplete, setAnalysisComplete] = useState(false);
+  const [loqiIsResponding, setLoqiIsResponding] = useState(false);
   const [hasWebsite, setHasWebsite] = useState(false);
   const [profile, setProfile] = useState<OnboardingProfile>({
     companyDescription: "",
@@ -396,43 +419,41 @@ function ConversationalDiscovery({
         hasWebsite,
         isAnalyzing,
         analysisComplete,
+        loqiIsResponding,
       }));
     } catch { /* storage full or unavailable */ }
   }, [messages, currentQ, profile, hasWebsite, isAnalyzing, analysisComplete]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isAnalyzing, analysisComplete]);
+  }, [messages, isAnalyzing, analysisComplete, loqiIsResponding]);
 
   useEffect(() => {
-    if (!isAnalyzing && !analysisComplete) {
+    if (!isAnalyzing && !analysisComplete && !loqiIsResponding) {
       inputRef.current?.focus();
     }
-  }, [messages, isAnalyzing, analysisComplete]);
+  }, [messages, isAnalyzing, analysisComplete, loqiIsResponding]);
 
   const extractWebsite = (text: string): string | null => {
     const match = text.match(/https?:\/\/[^\s,;)]+/);
     return match ? match[0] : null;
   };
 
-  const buildAcknowledgement = (qIndex: number, answer: string): string => {
-    const preamble = [
-      "Understood. You\u2019re ",
-      "So your buyers are ",
-      "So your edge is ",
-      "So your north star is ",
-      "Understood. ",
-    ];
-    const mirror = answer.length > 120
-      ? answer.slice(0, answer.lastIndexOf(" ", 100)) + "\u2026"
-      : answer;
-    const nextQ = qIndex < QUESTIONS.length - 1 ? `\n\n${QUESTIONS[qIndex + 1]}` : "";
-    return `${preamble[qIndex]}${mirror}.${nextQ}`;
+  const deliverResponse = (responseText: string, callback?: () => void) => {
+    setLoqiIsResponding(true);
+    const typingDelay = Math.min(600 + responseText.length * 8, 2000);
+    setTimeout(() => {
+      setLoqiIsResponding(false);
+      const updated = [...messages];
+      updated[updated.length - 1] = { role: "loqi", text: responseText };
+      setMessages(updated);
+      if (callback) callback();
+    }, typingDelay);
   };
 
   const handleSend = () => {
     const text = inputValue.trim();
-    if (!text) return;
+    if (!text || loqiIsResponding) return;
 
     const updatedProfile = { ...profile };
     const keys: (keyof OnboardingProfile)[] = [
@@ -458,14 +479,15 @@ function ConversationalDiscovery({
 
     if (currentQ < QUESTIONS.length - 1) {
       const next = currentQ + 1;
-      const ack = buildAcknowledgement(currentQ, text);
-      setMessages([...updated, { role: "loqi", text: ack }]);
+      setMessages([...updated, { role: "loqi", text: "" }]);
       setCurrentQ(next);
+      deliverResponse(STRATEGIC_RESPONSES[currentQ](text));
     } else {
-      const ack = buildAcknowledgement(currentQ, text);
-      setMessages([...updated, { role: "loqi", text: ack }]);
-      setIsAnalyzing(true);
-      setTimeout(() => setAnalysisComplete(true), 3200);
+      setMessages([...updated, { role: "loqi", text: "" }]);
+      deliverResponse(STRATEGIC_RESPONSES[currentQ](text), () => {
+        setIsAnalyzing(true);
+        setTimeout(() => setAnalysisComplete(true), 3200);
+      });
     }
   };
 
@@ -507,11 +529,35 @@ function ConversationalDiscovery({
           </div>
 
           <div className="space-y-0">
-            {messages.map((msg, i) => (
-              <article
-                key={i}
-                className={`py-8 border-b border-[#747878]/15 ${i < 4 && "onb-fade-in"} onb-stagger-${(i % 5) + 1}`}
-              >
+            {messages.map((msg, i) => {
+              if (msg.text === "" && msg.role === "loqi") {
+                return (
+                  <article key={i} className="py-8">
+                    <div className="flex items-baseline gap-8">
+                      <div className="w-24 shrink-0 font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] text-[#444748] uppercase tracking-widest text-right font-medium">
+                        Loqi
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-['Libre_Caslon_Text'] text-[24px] leading-[1.4] italic text-[#444748] font-normal">
+                            Thinking
+                          </span>
+                          <span className="flex gap-1">
+                            <span className="w-1.5 h-1.5 bg-[#444748] rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                            <span className="w-1.5 h-1.5 bg-[#444748] rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                            <span className="w-1.5 h-1.5 bg-[#444748] rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </article>
+                );
+              }
+              return (
+                <article
+                  key={i}
+                  className={`py-8 border-b border-[#747878]/15 ${i < 4 && "onb-fade-in"} onb-stagger-${(i % 5) + 1}`}
+                >
                 <div className="flex items-baseline gap-8">
                   <div className="w-24 shrink-0 font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] text-[#444748] uppercase tracking-widest text-right font-medium">
                     {msg.role === "loqi" ? "Loqi" : "User"}
@@ -529,7 +575,8 @@ function ConversationalDiscovery({
                   </div>
                 </div>
               </article>
-            ))}
+              );
+            })}
 
             {isAnalyzing && (
               <div className="mt-16 onb-fade-in">
@@ -652,14 +699,15 @@ function ConversationalDiscovery({
       {!isAnalyzing && !analysisComplete && (
         <footer className="fixed bottom-0 left-0 w-full px-6 z-50">
           <div className="max-w-[720px] mx-auto">
-            <div className="bg-[#ffffff]/80 backdrop-blur-xl rounded-full onb-ambient-shadow border border-[#c4c7c7]/20 p-2 flex items-center gap-4 transition-all">
+            <div className={`bg-[#ffffff]/80 backdrop-blur-xl rounded-full onb-ambient-shadow border ${loqiIsResponding ? "border-[#c4c7c7]/10 opacity-60" : "border-[#c4c7c7]/20"} p-2 flex items-center gap-4 transition-all`}>
               <div className="pl-6 flex-1">
-                <input
+                  <input
                   ref={inputRef}
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  className="w-full bg-transparent border-none focus:ring-0 font-['Inter'] text-[16px] leading-[1.5] text-[#1c1b1b] placeholder:text-[#444748]/40 py-3 outline-none"
+                  disabled={loqiIsResponding}
+                  className="w-full bg-transparent border-none focus:ring-0 font-['Inter'] text-[16px] leading-[1.5] text-[#1c1b1b] placeholder:text-[#444748]/40 py-3 outline-none disabled:cursor-not-allowed"
                   placeholder="Respond to Loqi..."
                   type="text"
                 />
@@ -838,9 +886,9 @@ function KnowledgeValidation({
                       rows={3}
                     />
                   ) : (
-                    <p className="font-['Inter'] text-[16px] leading-[1.5] text-[#444748]">
-                      {card.belief || card.raw}
-                    </p>
+                    <div className="font-['Inter'] text-[16px] leading-[1.5] text-[#444748]">
+                      <ProfileValue value={card.belief || card.raw} />
+                    </div>
                   )}
                   <div className="mt-8 pt-4 border-t border-[#c4c7c7]/20">
                     <span className="font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] text-[#747878] italic font-medium">
@@ -1044,9 +1092,9 @@ function ExecutiveBriefing({
                 <span className="font-['Geist'] text-[11px] leading-[1.2] tracking-[0.05em] font-semibold text-[#444748] uppercase tracking-widest mb-4 block">
                   Strategic Focus
                 </span>
-                <h4 className="font-['Libre_Caslon_Text'] text-[32px] leading-[1.3] text-[#1c1b1b] mb-6 font-normal">
-                  {companySummary || "Strategic Objective"}
-                </h4>
+                <div className="font-['Libre_Caslon_Text'] text-[32px] leading-[1.3] text-[#1c1b1b] mb-6 font-normal">
+                  <ProfileValue value={companySummary || "Strategic Objective"} />
+                </div>
                 <div className="space-y-6">
                   {objective && (
                     <div className="flex items-start gap-4">
@@ -1057,9 +1105,9 @@ function ExecutiveBriefing({
                         <h5 className="font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] font-medium font-bold mb-1 text-[#1c1b1b]">
                           Objective
                         </h5>
-                        <p className="font-['Inter'] text-[16px] leading-[1.5] text-[#444748]">
-                          {objective}
-                        </p>
+                        <div className="font-['Inter'] text-[16px] leading-[1.5] text-[#444748]">
+                          <ProfileValue value={objective} />
+                        </div>
                       </div>
                     </div>
                   )}
@@ -1072,9 +1120,9 @@ function ExecutiveBriefing({
                         <h5 className="font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] font-medium font-bold mb-1 text-[#1c1b1b]">
                           Critical Constraint
                         </h5>
-                        <p className="font-['Inter'] text-[16px] leading-[1.5] text-[#444748]">
-                          {constraints}
-                        </p>
+                        <div className="font-['Inter'] text-[16px] leading-[1.5] text-[#444748]">
+                          <ProfileValue value={constraints} />
+                        </div>
                       </div>
                     </div>
                   )}
@@ -1090,9 +1138,9 @@ function ExecutiveBriefing({
                 <h4 className="font-['Libre_Caslon_Text'] text-[24px] leading-[1.4] text-[#1c1b1b] mb-4 font-normal">
                   Target Profile
                 </h4>
-                <p className="font-['Inter'] text-[16px] leading-[1.5] text-[#444748] mb-6">
-                  {icp}
-                </p>
+                <div className="font-['Inter'] text-[16px] leading-[1.5] text-[#444748] mb-6">
+                  <ProfileValue value={icp} />
+                </div>
                 <div className="pt-4 border-t border-[#c4c7c7]/20">
                   <span className="font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] text-[#747878] italic font-medium">
                     Source: {source}
@@ -1109,9 +1157,9 @@ function ExecutiveBriefing({
                 <h4 className="font-['Libre_Caslon_Text'] text-[24px] leading-[1.4] text-[#1c1b1b] mb-4 font-normal">
                   Competitive Edge
                 </h4>
-                <p className="font-['Inter'] text-[16px] leading-[1.5] text-[#444748] mb-6">
-                  {differentiation}
-                </p>
+                <div className="font-['Inter'] text-[16px] leading-[1.5] text-[#444748] mb-6">
+                  <ProfileValue value={differentiation} />
+                </div>
                 <div className="pt-4 border-t border-[#c4c7c7]/20">
                   <span className="font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] text-[#747878] italic font-medium">
                     Confidence: {sp?.CONFIDENCE_LEVELS?.overall || "Medium"}

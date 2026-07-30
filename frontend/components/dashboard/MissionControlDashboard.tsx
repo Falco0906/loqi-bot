@@ -8,6 +8,7 @@ import { useData } from "../../lib/hooks/use-data";
 import { fetchMissionControl } from "../../lib/repositories";
 import { useAuth } from "../../hooks/useAuth";
 import { getStrategicProfile } from "../../lib/strategic-intelligence-api";
+import { useTellLoqi } from "../../hooks/useTellLoqi";
 import type { MCTask } from "../../lib/domain";
 import type { StrategicProfile } from "../../lib/strategic-intelligence-api";
 
@@ -75,6 +76,10 @@ export default function MissionControlDashboard() {
   const { data, loading, error, retry } = useData(fetchMissionControl);
   const { user } = useAuth();
   const [storedProfile, setStoredProfile] = useState<StrategicProfile | null | undefined>(undefined);
+  const tellLoqi = useTellLoqi("Mission Control", {
+    hasProfile: !!storedProfile,
+    recommendationCount: data?.recommendations.length ?? 0,
+  });
 
   const profileLoaded = storedProfile !== undefined;
 
@@ -297,20 +302,45 @@ export default function MissionControlDashboard() {
                   className="w-full border-none p-0 focus:ring-0 text-lg placeholder:text-on-surface-variant/30 resize-none bg-transparent outline-none"
                   placeholder="What would you like me to work on next?"
                   rows={1}
+                  value={tellLoqi.text}
+                  onChange={(e) => tellLoqi.setText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void tellLoqi.submit();
+                    }
+                  }}
                 />
-                <button className="bg-primary text-on-primary w-10 h-10 rounded-full flex items-center justify-center hover:opacity-80 transition-opacity shrink-0">
+                <button
+                  type="button"
+                  disabled={tellLoqi.sending || !tellLoqi.text.trim()}
+                  onClick={() => void tellLoqi.submit()}
+                  className="bg-primary text-on-primary w-10 h-10 rounded-full flex items-center justify-center hover:opacity-80 transition-opacity shrink-0 disabled:opacity-40"
+                >
                   <span className="material-symbols-outlined text-sm">arrow_upward</span>
                 </button>
               </div>
             </div>
             <div className="mt-4 flex justify-center gap-3 overflow-x-auto no-scrollbar">
-              <button className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold">
+              <button
+                type="button"
+                onClick={() => void tellLoqi.submit("Reprioritize my list based on what matters most right now.")}
+                className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+              >
                 REPRIORITIZE LIST
               </button>
-              <button className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold">
+              <button
+                type="button"
+                onClick={() => void tellLoqi.submit("Draft a weekly summary of workspace progress and priorities.")}
+                className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+              >
                 DRAFT WEEKLY SUMMARY
               </button>
-              <button className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold">
+              <button
+                type="button"
+                onClick={() => void tellLoqi.submit("Find new venture leads that match my ICP.")}
+                className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+              >
                 FIND NEW VENTURE LEADS
               </button>
             </div>

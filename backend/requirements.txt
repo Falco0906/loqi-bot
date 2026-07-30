@@ -7,6 +7,9 @@ serpapi
 psycopg2-binary
 argon2-cffi
 
+stripe
+resend
+
 # test
 pytest
 httpx

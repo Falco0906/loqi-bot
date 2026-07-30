@@ -275,13 +275,7 @@ class MetricsCollector:
         self._task_durations[task_id] = duration
 
     def _record_adapter_metric(self, event: ExecutionEvent, success: bool) -> None:
-        """Update per-adapter metrics from a task completion/failure event.
-
-        TODO: Use ``adapter_name`` from event data when the pipeline
-        includes it in TASK_COMPLETED / TASK_FAILED payloads. Currently
-        falls back to ``task_type`` because the event data does not
-        carry the resolved adapter identity.
-        """
+        """Update per-adapter metrics from a task completion/failure event."""
         task_type = event.data.get("task_type", "unknown")
         if task_type not in self._adapter_metrics:
             self._adapter_metrics[task_type] = {

@@ -4,16 +4,18 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Icon from "../shared/Icon";
 
-const coreWorkflow = [
+const navigation = [
   { label: "Mission Control", href: "/mission-control", icon: "dashboard" },
   { label: "Discovery", href: "/discovery", icon: "explore" },
   { label: "Campaigns", href: "/campaigns", icon: "campaign" },
-  { label: "Draft Review", href: "/draft", icon: "edit_note" },
+  { label: "Inbox", href: "/inbox", icon: "inbox" },
+  { label: "Knowledge", href: "/knowledge", icon: "psychology" },
+  { label: "Strategic Update", href: "/strategic-update", icon: "auto_awesome" },
+  { label: "Contacts", href: "/contacts", icon: "contacts" },
 ];
 
-const utilityPages = [
-  { label: "Conversations", href: "/conversations", icon: "forum" },
-  { label: "Campaign Intelligence", href: "/campaign-intelligence", icon: "insights" },
+const workspacePages = [
+  { label: "Workspace", href: "/workspace", icon: "hub" },
   { label: "Settings", href: "/settings", icon: "settings" },
 ];
 
@@ -67,17 +69,11 @@ export default function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 space-y-0.5 px-3 py-4">
-        <div className="mb-1 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-on-surface-variant/30">
-          Workspace
-        </div>
-        {coreWorkflow.map(renderNavItem)}
+        {navigation.map(renderNavItem)}
 
         <div className="my-2 border-t border-outline-variant/10" />
 
-        <div className="mb-1 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-on-surface-variant/30">
-          Utilities
-        </div>
-        {utilityPages.map(renderNavItem)}
+        {workspacePages.map(renderNavItem)}
       </nav>
 
       {/* Bottom */}

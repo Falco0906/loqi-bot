@@ -1,4 +1,4 @@
-from services.onboarding.config import ONBOARDING_CONFIG, OnboardingConfig
+from services.onboarding.config import ONBOARDING_CONFIG, OnboardingConfig, WIZARD_STEP_DEFINITIONS, WizardStepDefinition
 from services.onboarding.events import OnboardingEvent, OnboardingEventType
 from services.onboarding.exceptions import (
     InvalidTransitionException,
@@ -32,11 +32,27 @@ from services.onboarding.repositories import (
     LifecycleRepository,
     OnboardingSessionRepository,
 )
-from services.onboarding.services import LifecycleService, OnboardingService
+from services.onboarding.schemas import ValidationError
+from services.onboarding.services import (
+    AI_GOALS,
+    COMMUNICATION_TONES,
+    INDUSTRIES,
+    LifecycleService,
+    OnboardingService,
+    PRICING_MODELS,
+    PRIMARY_MARKETS,
+    ROLES,
+    TARGET_COMPANY_SIZES,
+    TARGET_INDUSTRIES,
+    TARGET_TITLES,
+    VALID_GOALS,
+)
 
 __all__ = [
     "OnboardingConfig",
     "ONBOARDING_CONFIG",
+    "WizardStepDefinition",
+    "WIZARD_STEP_DEFINITIONS",
     "OnboardingEvent",
     "OnboardingEventType",
     "OnboardingException",
@@ -67,4 +83,15 @@ __all__ = [
     "InMemoryOnboardingSessionRepository",
     "LifecycleService",
     "OnboardingService",
+    "ValidationError",
+    "INDUSTRIES",
+    "ROLES",
+    "VALID_GOALS",
+    "PRICING_MODELS",
+    "TARGET_INDUSTRIES",
+    "TARGET_COMPANY_SIZES",
+    "TARGET_TITLES",
+    "PRIMARY_MARKETS",
+    "COMMUNICATION_TONES",
+    "AI_GOALS",
 ]

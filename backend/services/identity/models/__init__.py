@@ -49,6 +49,8 @@ class User:
     display_name: str = ""
     avatar_url: str = ""
     locale: str = "en"
+    onboarding_data: str | None = None
+    onboarding_completed_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     deleted_at: datetime | None = None
@@ -56,6 +58,24 @@ class User:
     @property
     def is_deleted(self) -> bool:
         return self.deleted_at is not None
+
+    @property
+    def is_onboarding_complete(self) -> bool:
+        return self.onboarding_completed_at is not None
+
+    @property
+    def onboarding_data_dict(self) -> dict[str, Any]:
+        import json
+        if self.onboarding_data:
+            try:
+                return json.loads(self.onboarding_data)
+            except (json.JSONDecodeError, TypeError):
+                return {}
+        return {}
+
+    def set_onboarding_data(self, data: dict[str, Any]) -> None:
+        import json
+        self.onboarding_data = json.dumps(data) if data else None
 
     def soft_delete(self) -> None:
         self.deleted_at = datetime.now(timezone.utc)

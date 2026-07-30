@@ -213,6 +213,8 @@ export function LoqiApp() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [selectingLead, setSelectingLead] = useState(false);
+  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+  const [previewData, setPreviewData] = useState<Map<number, LeadIntelligence | null>>(new Map());
   const [gmailConnected, setGmailConnected] = useState(false);
   const [gmailUrl, setGmailUrl] = useState("");
   const [error, setError] = useState<string | null>(null);

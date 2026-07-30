@@ -147,59 +147,18 @@ def search_with_expansion(service: str, target: str) -> dict:
         expansion = None
 
     try:
-        from services.free_leads import search_free_leads, SerpAPIError
+        result = provider.search_leads(icp=icp, search_expansion=expansion, limit=30)
 
-        all_leads = []
-        seen_urls = set()
-        search_attempts = []
+        if not result.get("ok"):
+            return {
+                "ok": False,
+                "source": result.get("provider", type(provider).__name__),
+                "leads": [],
+                "error": result.get("error", "Provider search failed"),
+                "icp": icp,
+            }
 
-        primary_queries = []
-        if expansion and expansion.get("search_queries"):
-            primary_queries = expansion["search_queries"]
-
-        for query in primary_queries:
-            query_text = query.replace('site:linkedin.com/in "', '').replace('"', '')
-            _log(f"Searching (buyer-focused): {query_text}")
-            search_attempts.append(query_text)
-
-            try:
-                leads = search_free_leads(query_text)
-
-                for lead in leads:
-                    if lead.get("linkedin_url") and lead["linkedin_url"] not in seen_urls:
-                        seen_urls.add(lead["linkedin_url"])
-                        all_leads.append(lead)
-
-                _log(f"Found {len(leads)} leads for query, total unique: {len(all_leads)}")
-
-            except SerpAPIError as e:
-                _log(f"Query failed: {e}")
-                continue
-
-        if not all_leads:
-            _log("Primary search returned no leads — attempting fallback widening...")
-            fallback_queries = _build_fallback_queries(service, target, icp)
-            _log(f"Fallback queries: {fallback_queries}")
-
-            for query_text in fallback_queries:
-                if not query_text or query_text in search_attempts:
-                    continue
-                _log(f"Searching (fallback): {query_text}")
-                search_attempts.append(query_text)
-
-                try:
-                    leads = search_free_leads(query_text)
-
-                    for lead in leads:
-                        if lead.get("linkedin_url") and lead["linkedin_url"] not in seen_urls:
-                            seen_urls.add(lead["linkedin_url"])
-                            all_leads.append(lead)
-
-                    _log(f"Fallback found {len(leads)} leads, total: {len(all_leads)}")
-
-                except SerpAPIError as e:
-                    _log(f"Fallback query failed: {e}")
-                    continue
+        all_leads = result.get("leads", [])
 
         if not all_leads:
             return {

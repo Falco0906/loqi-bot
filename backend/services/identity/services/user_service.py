@@ -63,6 +63,10 @@ class UserService:
         user.updated_at = datetime.now(timezone.utc)
         return await self._user_repo.save(user)
 
+    async def save_user(self, user: User) -> User:
+        user.updated_at = datetime.now(timezone.utc)
+        return await self._user_repo.save(user)
+
     async def soft_delete_user(self, user_id: str) -> None:
         user = await self.get_user(user_id)
         user.soft_delete()

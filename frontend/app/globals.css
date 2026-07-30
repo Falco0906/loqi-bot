@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+.material-symbols-outlined {
+  font-variation-settings: "FILL" 0, "wght" 300, "GRAD" 0, "opsz" 24;
+}
+
 @layer base {
   :root {
     color-scheme: dark;
@@ -11,7 +15,6 @@
     height: 100%;
     background-color: #09090B;
     color: #e4e1ee;
-    overflow: hidden;
   }
 
   body {
@@ -93,11 +96,91 @@
   .stagger-7 { animation-delay: 0.35s; }
   .stagger-8 { animation-delay: 0.4s; }
 
+  .ambient-shadow {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+  }
+
+  .reading-column {
+    width: 100%;
+    max-width: 720px;
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+
+  .onb-surface {
+    background-color: #fdf8f8;
+    color: #1c1b1b;
+  }
+
+  .onb-divider {
+    height: 0.5px;
+    background-color: #000000;
+    opacity: 0.15;
+  }
+
+  .onb-ambient-shadow {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+  }
+
+  .onb-fade-in {
+    animation: onbFadeIn 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    opacity: 0;
+  }
+
+  @keyframes onbFadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .onb-fade-in-fast {
+    animation: onbFadeInFast 0.8s ease-out forwards;
+    opacity: 0;
+  }
+
+  @keyframes onbFadeInFast {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .onb-stagger-1 { animation-delay: 0.2s; }
+  .onb-stagger-2 { animation-delay: 0.4s; }
+  .onb-stagger-3 { animation-delay: 0.6s; }
+  .onb-stagger-4 { animation-delay: 0.8s; }
+  .onb-stagger-5 { animation-delay: 1.0s; }
+
+  .onb-pulse-dot {
+    animation: onbPulse 2s infinite;
+  }
+
+  @keyframes onbPulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.4; }
+    100% { opacity: 1; }
+  }
+
   @keyframes highlight-fade {
     0% { background-color: rgba(196, 192, 255, 0.12); border-radius: 8px; }
     100% { background-color: transparent; }
   }
   .animate-highlight-fade {
     animation: highlight-fade 1.2s ease-out;
+  }
+
+  @keyframes conversation-fade-in {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .animate-conversation-fade {
+    animation: conversation-fade-in 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .animate-conversation-fade-delay-1 {
+    animation: conversation-fade-in 1.2s cubic-bezier(0.16, 1, 0.3, 1) 0.2s forwards;
+    opacity: 0;
+  }
+  .animate-conversation-fade-delay-2 {
+    animation: conversation-fade-in 1.2s cubic-bezier(0.16, 1, 0.3, 1) 0.4s forwards;
+    opacity: 0;
   }
 }

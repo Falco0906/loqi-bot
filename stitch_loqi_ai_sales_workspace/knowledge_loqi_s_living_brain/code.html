@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Loqi | Knowledge Workspace</title>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Fonts -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Libre+Caslon+Text:wght@400;700&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&family=Libre+Caslon+Text:wght@100..900&display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-error-container": "#93000a",
+                        "surface-bright": "#fdf8f8",
+                        "on-secondary-fixed": "#111e1a",
+                        "on-primary-container": "#858383",
+                        "surface-container-highest": "#e5e2e1",
+                        "inverse-on-surface": "#f4f0ef",
+                        "surface": "#fdf8f8",
+                        "on-surface-variant": "#444748",
+                        "inverse-surface": "#313030",
+                        "primary-fixed-dim": "#c8c6c5",
+                        "on-primary-fixed-variant": "#474746",
+                        "secondary-container": "#d3e3dc",
+                        "tertiary-fixed": "#e6e2df",
+                        "on-secondary-fixed-variant": "#3c4a44",
+                        "error": "#ba1a1a",
+                        "tertiary-container": "#1c1b1a",
+                        "on-tertiary": "#ffffff",
+                        "tertiary-fixed-dim": "#cac6c4",
+                        "secondary-fixed-dim": "#bacac3",
+                        "on-error": "#ffffff",
+                        "inverse-primary": "#c8c6c5",
+                        "error-container": "#ffdad6",
+                        "on-primary": "#ffffff",
+                        "secondary-fixed": "#d6e6df",
+                        "on-secondary-container": "#576660",
+                        "surface-container-lowest": "#ffffff",
+                        "surface-dim": "#ddd9d8",
+                        "background": "#fdf8f8",
+                        "surface-container-high": "#ebe7e6",
+                        "on-tertiary-container": "#868382",
+                        "on-background": "#1c1b1b",
+                        "primary": "#000000",
+                        "on-primary-fixed": "#1c1b1b",
+                        "outline": "#747878",
+                        "surface-variant": "#e5e2e1",
+                        "on-secondary": "#ffffff",
+                        "on-tertiary-fixed": "#1c1b1a",
+                        "secondary": "#53625c",
+                        "on-tertiary-fixed-variant": "#484645",
+                        "on-surface": "#1c1b1b",
+                        "tertiary": "#000000",
+                        "surface-container": "#f1edec",
+                        "primary-container": "#1c1b1b",
+                        "outline-variant": "#c4c7c7",
+                        "surface-tint": "#5f5e5e",
+                        "surface-container-low": "#f7f3f2",
+                        "primary-fixed": "#e5e2e1"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "gutter": "24px",
+                        "reading-width": "720px",
+                        "element-gap": "16px",
+                        "section-gap": "64px",
+                        "container-max": "1200px",
+                        "base": "8px"
+                    },
+                    "fontFamily": {
+                        "display-xl-mobile": ["Libre Caslon Text"],
+                        "headline-lg": ["Libre Caslon Text"],
+                        "body-md": ["Inter"],
+                        "label-sm": ["Geist", "sans-serif"],
+                        "display-xl": ["Libre Caslon Text"],
+                        "headline-md": ["Libre Caslon Text"],
+                        "body-lg": ["Inter"],
+                        "label-xs": ["Geist", "sans-serif"]
+                    },
+                    "fontSize": {
+                        "display-xl-mobile": ["36px", {"lineHeight": "1.2", "fontWeight": "400"}],
+                        "headline-lg": ["32px", {"lineHeight": "1.3", "fontWeight": "400"}],
+                        "body-md": ["16px", {"lineHeight": "1.5", "fontWeight": "400"}],
+                        "label-sm": ["13px", {"lineHeight": "1.2", "letterSpacing": "0.02em", "fontWeight": "500"}],
+                        "display-xl": ["48px", {"lineHeight": "1.1", "letterSpacing": "-0.02em", "fontWeight": "400"}],
+                        "headline-md": ["24px", {"lineHeight": "1.4", "fontWeight": "400"}],
+                        "body-lg": ["18px", {"lineHeight": "1.6", "fontWeight": "400"}],
+                        "label-xs": ["11px", {"lineHeight": "1.2", "letterSpacing": "0.05em", "fontWeight": "600"}]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+        .briefing-item {
+            border-bottom: 0.5px solid rgba(116, 120, 120, 0.2);
+        }
+        .ambient-shadow {
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+        }
+        .reading-column {
+            max-width: 720px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        ::selection {
+            background: #e5e2e1;
+            color: #000000;
+        }
+    </style>
+</head>
+<body class="bg-surface text-on-surface font-body-md selection:bg-secondary-container">
+<!-- Side Navigation Shell -->
+<aside class="fixed left-0 top-0 h-screen w-64 bg-surface-container-low border-r border-outline-variant/30 flex flex-col py-gutter px-4 z-50">
+<div class="mb-12 px-2">
+<h1 class="font-display-xl text-display-xl tracking-tight text-primary">Loqi</h1>
+<p class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest mt-1">Chief of Staff</p>
+</div>
+<nav class="flex-1 space-y-1">
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-all group" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="font-label-sm">Mission Control</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-all" href="#">
+<span class="material-symbols-outlined">search</span>
+<span class="font-label-sm">Discovery</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-all" href="#">
+<span class="material-symbols-outlined">campaign</span>
+<span class="font-label-sm">Campaigns</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-all" href="#">
+<span class="material-symbols-outlined">inbox</span>
+<span class="font-label-sm">Inbox</span>
+</a>
+<!-- Active Tab -->
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-primary font-bold border-r-2 border-primary bg-surface-container-high" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">psychology</span>
+<span class="font-label-sm">Knowledge</span>
+</a>
+</nav>
+<div class="mt-auto pt-6 space-y-1 border-t border-outline-variant/20">
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:text-primary transition-colors" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="font-label-sm">Settings</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:text-primary transition-colors" href="#">
+<span class="material-symbols-outlined">help</span>
+<span class="font-label-sm">Support</span>
+</a>
+<div class="mt-4 p-3 bg-surface border border-outline-variant/30 rounded-xl flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-secondary-container flex items-center justify-center text-on-secondary-container font-bold text-xs">JD</div>
+<div class="overflow-hidden">
+<p class="font-label-sm truncate">John Doe</p>
+<p class="text-[10px] text-on-surface-variant truncate">Series A Fintech</p>
+</div>
+</div>
+</div>
+</aside>
+<!-- Main Content Canvas -->
+<main class="ml-64 min-h-screen">
+<!-- Header Sticky -->
+<header class="sticky top-0 w-full z-40 backdrop-blur-md bg-surface/80 px-gutter h-16 flex justify-between items-center max-w-container-max mx-auto">
+<div class="flex items-center gap-2">
+<span class="font-label-xs text-label-xs text-on-primary-container tracking-widest uppercase">Workspace</span>
+<span class="text-outline-variant">/</span>
+<span class="font-label-xs text-label-xs text-primary font-bold">Knowledge Base</span>
+</div>
+<div class="flex items-center gap-6">
+<div class="flex gap-4 text-on-surface-variant">
+<a class="font-label-xs hover:text-primary transition-opacity" href="#">Drafts</a>
+<a class="font-label-xs hover:text-primary transition-opacity" href="#">Archive</a>
+<a class="font-label-xs hover:text-primary transition-opacity" href="#">Analytics</a>
+</div>
+<div class="flex items-center gap-3">
+<button class="material-symbols-outlined p-2 hover:bg-surface-container transition-colors rounded-full">notifications</button>
+<button class="material-symbols-outlined p-2 hover:bg-surface-container transition-colors rounded-full">account_circle</button>
+</div>
+</div>
+</header>
+<div class="max-w-container-max mx-auto px-gutter py-section-gap">
+<div class="reading-column">
+<!-- Headline Section -->
+<section class="mb-12">
+<h2 class="font-display-xl text-display-xl text-primary mb-4">Current Understanding</h2>
+<p class="font-body-lg text-body-lg text-on-surface-variant leading-relaxed">
+                        This is my current understanding of your business. Update anything that no longer reflects reality.
+                    </p>
+</section>
+<!-- Conflict Detection (Warning) -->
+<div class="mb-12 p-6 bg-error-container/20 border-l-4 border-error rounded-r-xl ambient-shadow">
+<div class="flex items-start gap-4">
+<span class="material-symbols-outlined text-error mt-1">warning</span>
+<div class="space-y-4">
+<p class="font-body-md text-on-background">
+<span class="font-bold">Strategy Conflict:</span> You recently instructed me to prioritize Healthcare. However, our market intelligence shows that most successful campaigns currently come from Fintech.
+                            </p>
+<div class="flex gap-4">
+<button class="px-4 py-2 bg-primary text-on-primary font-label-sm rounded hover:opacity-90 transition-opacity">Follow New Strategy</button>
+<button class="px-4 py-2 border border-outline-variant text-on-surface-variant font-label-sm rounded hover:bg-surface-container transition-colors">Review My Recommendation</button>
+</div>
+</div>
+</div>
+</div>
+<!-- Knowledge Cards (Bento-ish Grid within column) -->
+<section class="space-y-element-gap mb-section-gap">
+<!-- Your Business -->
+<details class="group bg-surface-container-lowest ambient-shadow rounded-xl overflow-hidden cursor-pointer border border-transparent hover:border-outline-variant/20 transition-all" open="">
+<summary class="flex justify-between items-center p-6 list-none">
+<div class="flex flex-col">
+<span class="font-label-xs text-on-primary-container uppercase tracking-tighter mb-1">Entity</span>
+<h3 class="font-headline-md text-headline-md">Your Business</h3>
+</div>
+<div class="flex items-center gap-4">
+<span class="px-3 py-1 bg-secondary-container text-on-secondary-container rounded-full font-label-xs">Well Established</span>
+<span class="material-symbols-outlined transition-transform group-open:rotate-180">expand_more</span>
+</div>
+</summary>
+<div class="px-6 pb-8 border-t border-outline-variant/10 pt-6">
+<div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+<div>
+<h4 class="font-label-sm font-bold mb-2">Core Focus</h4>
+<p class="font-headline-md text-primary">Series A Fintech Infrastructure</p>
+</div>
+<div class="bg-surface-container p-4 rounded-lg">
+<h4 class="font-label-xs uppercase text-on-surface-variant mb-2">Internal Context</h4>
+<p class="font-body-md text-on-surface-variant italic leading-snug">"Positioning centers around high-volume payment routing stability."</p>
+</div>
+</div>
+</div>
+</details>
+<!-- Customers -->
+<details class="group bg-surface-container-lowest ambient-shadow rounded-xl overflow-hidden cursor-pointer border border-transparent hover:border-outline-variant/20 transition-all">
+<summary class="flex justify-between items-center p-6 list-none">
+<div class="flex flex-col">
+<span class="font-label-xs text-on-primary-container uppercase tracking-tighter mb-1">Targeting</span>
+<h3 class="font-headline-md text-headline-md">Customers</h3>
+</div>
+<div class="flex items-center gap-4">
+<span class="px-3 py-1 bg-surface-container-high text-on-surface-variant rounded-full font-label-xs">Recently Learned</span>
+<span class="material-symbols-outlined transition-transform group-open:rotate-180">expand_more</span>
+</div>
+</summary>
+<div class="px-6 pb-8 border-t border-outline-variant/10 pt-6">
+<h4 class="font-label-sm font-bold mb-2">Primary Decision Makers</h4>
+<p class="font-headline-md text-primary mb-4">CTOs & VPs of Engineering</p>
+<div class="flex flex-wrap gap-2">
+<span class="px-4 py-1.5 bg-surface-container rounded-full text-on-surface text-label-sm">Technical Savvy</span>
+<span class="px-4 py-1.5 bg-surface-container rounded-full text-on-surface text-label-sm">Growth Focused</span>
+</div>
+</div>
+</details>
+<!-- Product -->
+<details class="group bg-surface-container-lowest ambient-shadow rounded-xl overflow-hidden cursor-pointer border border-transparent hover:border-outline-variant/20 transition-all">
+<summary class="flex justify-between items-center p-6 list-none">
+<div class="flex flex-col">
+<span class="font-label-xs text-on-primary-container uppercase tracking-tighter mb-1">Solution</span>
+<h3 class="font-headline-md text-headline-md">Product</h3>
+</div>
+<div class="flex items-center gap-4">
+<span class="px-3 py-1 bg-error-container text-on-error-container rounded-full font-label-xs">Needs Confirmation</span>
+<span class="material-symbols-outlined transition-transform group-open:rotate-180">expand_more</span>
+</div>
+</summary>
+<div class="px-6 pb-8 border-t border-outline-variant/10 pt-6">
+<h4 class="font-label-sm font-bold mb-2">Most Requested Capability</h4>
+<p class="font-headline-md text-primary">Custom API Bridges</p>
+</div>
+</details>
+<!-- Sales Playbook -->
+<details class="group bg-surface-container-lowest ambient-shadow rounded-xl overflow-hidden cursor-pointer border border-transparent hover:border-outline-variant/20 transition-all">
+<summary class="flex justify-between items-center p-6 list-none">
+<div class="flex flex-col">
+<span class="font-label-xs text-on-primary-container uppercase tracking-tighter mb-1">Voice & Tone</span>
+<h3 class="font-headline-md text-headline-md">Sales Playbook</h3>
+</div>
+<div class="flex items-center gap-4">
+<span class="px-3 py-1 bg-surface-container-high text-on-surface-variant rounded-full font-label-xs">Still Learning</span>
+<span class="material-symbols-outlined transition-transform group-open:rotate-180">expand_more</span>
+</div>
+</summary>
+<div class="px-6 pb-8 border-t border-outline-variant/10 pt-6">
+<h4 class="font-label-sm font-bold mb-2">Narrative Style</h4>
+<p class="font-headline-md text-primary">Technical, implementation-heavy tone</p>
+</div>
+</details>
+</section>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-section-gap mb-section-gap">
+<!-- Recent Learnings (Timeline) -->
+<section>
+<h3 class="font-label-sm font-bold uppercase tracking-widest text-on-surface-variant mb-6 flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px]">history</span>
+                            Recent Learnings
+                        </h3>
+<div class="relative pl-6 space-y-8 before:content-[''] before:absolute before:left-0 before:top-0 before:bottom-0 before:w-[1px] before:bg-outline-variant/30">
+<div class="relative">
+<div class="absolute -left-[27px] top-1.5 w-2 h-2 rounded-full bg-primary ring-4 ring-surface"></div>
+<span class="font-label-xs text-on-primary-container block mb-1">Yesterday</span>
+<p class="font-body-md text-on-surface leading-snug">Healthcare founders increasingly request compliance documentation.</p>
+</div>
+<div class="relative">
+<div class="absolute -left-[27px] top-1.5 w-2 h-2 rounded-full bg-outline-variant ring-4 ring-surface"></div>
+<span class="font-label-xs text-on-primary-container block mb-1">2 days ago</span>
+<p class="font-body-md text-on-surface leading-snug">Updated ICP to prioritize Series A companies.</p>
+</div>
+<div class="relative">
+<div class="absolute -left-[27px] top-1.5 w-2 h-2 rounded-full bg-outline-variant ring-4 ring-surface"></div>
+<span class="font-label-xs text-on-primary-container block mb-1">Last week</span>
+<p class="font-body-md text-on-surface leading-snug">Learned that CTOs engage more with technical messaging.</p>
+</div>
+</div>
+</section>
+<!-- Knowledge Evolution (Small List) -->
+<section>
+<h3 class="font-label-sm font-bold uppercase tracking-widest text-on-surface-variant mb-6 flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px]">trending_up</span>
+                            Evolution
+                        </h3>
+<div class="space-y-4">
+<div class="flex items-center justify-between py-2 border-b border-outline-variant/10">
+<span class="font-body-md">Expanded ICP</span>
+<span class="material-symbols-outlined text-secondary text-[18px]">check_circle</span>
+</div>
+<div class="flex items-center justify-between py-2 border-b border-outline-variant/10">
+<span class="font-body-md">Added new competitor: Alpha Tech</span>
+<span class="material-symbols-outlined text-secondary text-[18px]">check_circle</span>
+</div>
+<div class="flex items-center justify-between py-2 border-b border-outline-variant/10">
+<span class="font-body-md">Updated pricing guidance</span>
+<span class="material-symbols-outlined text-secondary text-[18px]">check_circle</span>
+</div>
+</div>
+</section>
+</div>
+<!-- Bottom Instruction Area -->
+<section class="mt-section-gap pt-12 border-t border-outline-variant/30">
+<div class="bg-surface-container-low rounded-2xl p-8 border border-outline-variant/20 shadow-inner">
+<h3 class="font-display-xl text-headline-md mb-2">Teach Loqi...</h3>
+<p class="font-body-md text-on-surface-variant mb-6">What should I understand differently about your business today?</p>
+<div class="relative mb-6">
+<textarea class="w-full bg-surface-container-lowest border-0 border-b border-outline focus:border-primary focus:ring-0 font-body-md p-4 min-h-[120px] transition-all resize-none placeholder:text-on-primary-container/40" placeholder="What should I understand differently?"></textarea>
+<button class="absolute bottom-4 right-4 bg-primary text-on-primary px-6 py-2 rounded-lg font-label-sm flex items-center gap-2 hover:opacity-90 transition-opacity">
+                                Update Brain <span class="material-symbols-outlined text-[18px]">send</span>
+</button>
+</div>
+<div class="flex flex-wrap items-center gap-3">
+<span class="font-label-xs text-on-primary-container uppercase">Try saying:</span>
+<button class="px-4 py-1.5 border border-outline-variant rounded-full text-label-sm text-on-surface-variant hover:bg-surface-container transition-colors">"Our pricing has changed"</button>
+<button class="px-4 py-1.5 border border-outline-variant rounded-full text-label-sm text-on-surface-variant hover:bg-surface-container transition-colors">"Ignore agencies"</button>
+<button class="px-4 py-1.5 border border-outline-variant rounded-full text-label-sm text-on-surface-variant hover:bg-surface-container transition-colors">"Prioritize CTOs"</button>
+</div>
+</div>
+</section>
+<footer class="mt-section-gap pb-12 text-center">
+<p class="font-label-xs text-on-primary-container">Loqi AI Brain v2.4.0 • Synchronized 4m ago</p>
+</footer>
+</div>
+</div>
+</main>
+<!-- Contextual FAB (Hidden on Detail Screens, shown for context) -->
+<!-- Suppressed based on "The UX Goal" rule for sub-pages -->
+<script>
+        // Micro-interactions for details elements
+        document.querySelectorAll('details').forEach((el) => {
+            el.addEventListener('toggle', (e) => {
+                if (el.open) {
+                    el.classList.add('ring-1', 'ring-primary/20');
+                } else {
+                    el.classList.remove('ring-1', 'ring-primary/20');
+                }
+            });
+        });
+
+        // Simple input focus animation
+        const textarea = document.querySelector('textarea');
+        textarea.addEventListener('focus', () => {
+            textarea.closest('div').classList.add('ring-2', 'ring-primary/5', 'rounded-lg');
+        });
+        textarea.addEventListener('blur', () => {
+            textarea.closest('div').classList.remove('ring-2', 'ring-primary/5', 'rounded-lg');
+        });
+    </script>
+</body></html>

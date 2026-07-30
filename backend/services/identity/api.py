@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+import os
+
 from fastapi import APIRouter, HTTPException
 
 from services.identity.metrics import get_metrics
@@ -7,9 +10,11 @@ from services.identity.models import RegistrationSessionStatus
 from services.identity.models.oauth_session import OAuthSession
 from services.identity.providers import (
     ConsoleEmailProvider,
+    EmailProvider,
     GoogleIdentityProvider,
     get_provider_registry,
 )
+from services.email.config import EmailConfig
 from services.identity.repositories import (
     InMemoryEmailIdentityRepository,
     InMemoryExternalIdentityRepository,
@@ -17,11 +22,23 @@ from services.identity.repositories import (
     InMemoryOAuthSessionRepository,
     InMemoryOrganizationRepository,
     InMemoryPasswordCredentialRepository,
+    InMemoryPasswordResetRepository,
     InMemoryRefreshTokenRepository,
     InMemoryRegistrationSessionRepository,
     InMemorySessionRepository,
     InMemoryUserRepository,
     InMemoryVerificationTokenRepository,
+)
+from services.persistence import (
+    REPOSITORY_PROVIDER,
+    RepositoryProvider,
+)
+from services.persistence.repositories import (
+    SupabaseUserRepository,
+    SupabaseSessionRepository,
+    SupabaseRefreshTokenRepository,
+    SupabaseVerificationTokenRepository,
+    SupabasePasswordResetRepository,
 )
 from services.identity.services import (
     AuthService,
@@ -43,6 +60,8 @@ from services.identity.schemas import (
     LoginResponse,
     LogoutRequest,
     LogoutResponse,
+    MeOrganizationResponse,
+    MeResponse,
     OAuthCallbackResponse,
     OAuthRedirectResponse,
     RefreshRequest,
@@ -57,29 +76,59 @@ from services.identity.schemas import (
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Auth"])
 
+log = logging.getLogger("loqi.auth")
+
 
 # ─── Service wiring ────────────────────────────────────────────────────
 
+def _make_identity_repositories():
+    if REPOSITORY_PROVIDER == RepositoryProvider.SUPABASE:
+        vt_repo = SupabaseVerificationTokenRepository()
+        user_repo = SupabaseUserRepository()
+        session_repo = SupabaseSessionRepository()
+        rt_repo = SupabaseRefreshTokenRepository()
+        pr_repo = SupabasePasswordResetRepository()
+    else:
+        vt_repo = InMemoryVerificationTokenRepository()
+        user_repo = InMemoryUserRepository()
+        session_repo = InMemorySessionRepository()
+        rt_repo = InMemoryRefreshTokenRepository()
+        pr_repo = InMemoryPasswordResetRepository()
+    return {
+        "reg_session_repo": InMemoryRegistrationSessionRepository(),
+        "vt_repo": vt_repo,
+        "ei_repo": InMemoryEmailIdentityRepository(),
+        "user_repo": user_repo,
+        "pc_repo": InMemoryPasswordCredentialRepository(),
+        "org_repo": InMemoryOrganizationRepository(),
+        "mem_repo": InMemoryMembershipRepository(),
+        "session_repo": session_repo,
+        "rt_repo": rt_repo,
+        "pr_repo": pr_repo,
+        "ext_id_repo": InMemoryExternalIdentityRepository(),
+    }
+
+
+def _create_email_provider(config: EmailConfig | None = None) -> EmailProvider:
+    if config is None:
+        config = EmailConfig()
+    if config.provider == "resend":
+        from services.email.resend_provider import ResendEmailProvider
+        return ResendEmailProvider(config)
+    return ConsoleEmailProvider()
+
+
 def _build_auth_service() -> AuthService:
     crypto = get_crypto_service()
-    reg_session_repo = InMemoryRegistrationSessionRepository()
-    vt_repo = InMemoryVerificationTokenRepository()
-    ei_repo = InMemoryEmailIdentityRepository()
-    user_repo = InMemoryUserRepository()
-    pc_repo = InMemoryPasswordCredentialRepository()
-    org_repo = InMemoryOrganizationRepository()
-    mem_repo = InMemoryMembershipRepository()
-    session_repo = InMemorySessionRepository()
-    rt_repo = InMemoryRefreshTokenRepository()
-    ext_id_repo = InMemoryExternalIdentityRepository()
+    r = _make_identity_repositories()
 
-    user_svc = UserService(user_repo, ei_repo)
-    org_svc = OrganizationService(org_repo, mem_repo)
-    mem_svc = MembershipService(mem_repo, user_repo, org_repo)
-    ver_svc = VerificationService(vt_repo, ei_repo, crypto)
-    pwd_svc = PasswordService(pc_repo, user_repo, crypto)
-    ses_svc = SessionService(session_repo, rt_repo)
-    tok_svc = TokenService(rt_repo, session_repo, crypto)
+    user_svc = UserService(r["user_repo"], r["ei_repo"])
+    org_svc = OrganizationService(r["org_repo"], r["mem_repo"])
+    mem_svc = MembershipService(r["mem_repo"], r["user_repo"], r["org_repo"])
+    ver_svc = VerificationService(r["vt_repo"], r["ei_repo"], crypto)
+    pwd_svc = PasswordService(r["pc_repo"], r["user_repo"], crypto)
+    ses_svc = SessionService(r["session_repo"], r["rt_repo"])
+    tok_svc = TokenService(r["rt_repo"], r["session_repo"], crypto)
 
     registry = get_provider_registry()
     try:
@@ -87,13 +136,32 @@ def _build_auth_service() -> AuthService:
     except Exception:
         registry.register(GoogleIdentityProvider())
 
+    provider = os.getenv("EMAIL_PROVIDER", "console")
+    api_key = os.getenv("RESEND_API_KEY", "")
+    app_env = os.getenv("APP_ENV", "development")
+
+    if provider == "resend" and not api_key:
+        if app_env == "production":
+            raise RuntimeError("EMAIL_PROVIDER is set to 'resend' but RESEND_API_KEY is missing.")
+        log.warning("EMAIL_PROVIDER is set to 'resend' but RESEND_API_KEY is missing. Falling back to console.")
+        provider = "console"
+
+    email_config = EmailConfig(
+        provider=provider,
+        api_key=api_key,
+        from_email=os.getenv("RESEND_FROM_EMAIL", "noreply@loqi.ai"),
+        from_name="Loqi",
+        reply_to="",
+        app_url=os.getenv("FRONTEND_URL", "http://localhost:3000"),
+        company_name="Loqi",
+    )
     return AuthService(
-        email_provider=ConsoleEmailProvider(),
+        email_provider=_create_email_provider(email_config),
         crypto=crypto,
-        registration_session_repo=reg_session_repo,
-        verification_token_repo=vt_repo,
-        email_identity_repo=ei_repo,
-        refresh_token_repo=rt_repo,
+        registration_session_repo=r["reg_session_repo"],
+        verification_token_repo=r["vt_repo"],
+        email_identity_repo=r["ei_repo"],
+        refresh_token_repo=r["rt_repo"],
         user_svc=user_svc,
         org_svc=org_svc,
         membership_svc=mem_svc,
@@ -101,7 +169,8 @@ def _build_auth_service() -> AuthService:
         password_svc=pwd_svc,
         session_svc=ses_svc,
         token_svc=tok_svc,
-        external_identity_repo=ext_id_repo,
+        app_url=email_config.app_url,
+        external_identity_repo=r["ext_id_repo"],
     )
 
 
@@ -113,6 +182,11 @@ def _get_service() -> AuthService:
     if _auth_service is None:
         _auth_service = _build_auth_service()
     return _auth_service
+
+
+def get_auth_user_service() -> UserService | None:
+    svc = _get_service()
+    return svc._user if hasattr(svc, "_user") else None
 
 
 def set_auth_service(svc: AuthService | None) -> None:
@@ -357,6 +431,19 @@ async def logout(payload: LogoutRequest):
     await svc.logout(payload.refresh_token)
     get_metrics().logout_total["ok"] += 1
     return LogoutResponse()
+
+
+@router.get(
+    "/me",
+    response_model=MeResponse,
+    summary="Get current user info",
+    description="Returns the current user's profile and organization membership information.",
+)
+async def get_me(user_id: str = ""):
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id query parameter required")
+    svc = _get_service()
+    return await svc.get_current_user_info(user_id)
 
 
 @router.get(

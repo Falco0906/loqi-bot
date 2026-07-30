@@ -44,12 +44,10 @@ async function fetchWithRetry<T>(
   const retries = options.retries ?? 2;
   let lastError: Error | null = null;
   const _start = Date.now();
-  console.log(`[FETCH_TRACE] fetchWithRetry | url=${url.split('/').pop()} | timeout=${timeout}ms | retries=${retries} | started`);
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) {
       const delay = attempt === 1 ? 500 : 1000;
-      console.log(`[FETCH_TRACE] fetchWithRetry | attempt=${attempt} | backing off ${delay}ms`);
       await new Promise((r) => setTimeout(r, delay));
     }
 
@@ -57,7 +55,6 @@ async function fetchWithRetry<T>(
     const timeoutId = setTimeout(() => controller.abort(), timeout);
 
     try {
-      console.log(`[FETCH_TRACE] fetchWithRetry | attempt=${attempt} | fetch started`);
       const response = await fetch(url, {
         method: options.method || "GET",
         headers: options.headers,
@@ -67,7 +64,6 @@ async function fetchWithRetry<T>(
       });
 
       clearTimeout(timeoutId);
-      console.log(`[FETCH_TRACE] fetchWithRetry | attempt=${attempt} | fetch DONE | status=${response.status} | duration=${Date.now()-_start}ms`);
 
       if (!response.ok) {
         const text = await response.text();
@@ -81,7 +77,6 @@ async function fetchWithRetry<T>(
     } catch (err) {
       clearTimeout(timeoutId);
       lastError = err as Error;
-      console.log(`[FETCH_TRACE] fetchWithRetry | attempt=${attempt} | CATCH | err=${err instanceof Error ? err.name : 'unknown'} | duration=${Date.now()-_start}ms`);
 
       if (err instanceof ApiError) throw err;
 
@@ -95,7 +90,6 @@ async function fetchWithRetry<T>(
     }
   }
 
-  console.log(`[FETCH_TRACE] fetchWithRetry | EXHAUSTED | throwing ${lastError instanceof Error ? lastError.name : 'unknown'} | duration=${Date.now()-_start}ms`);
   throw lastError || new NetworkError("Failed to fetch");
 }
 

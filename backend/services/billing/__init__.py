@@ -74,7 +74,7 @@ from services.billing.services import (
     SubscriptionService,
     WebhookService,
 )
-from services.billing.stripe_provider import StripeBillingProvider
+from services.billing.stripe_provider import MockStripeBillingProvider, StripeBillingProvider
 
 __all__ = (
     # --- config ---
@@ -113,6 +113,7 @@ __all__ = (
     "ProviderCustomerResult",
     "ProviderSubscriptionResult",
     "WebhookPayload",
+    "MockStripeBillingProvider",
     "StripeBillingProvider",
     # --- repositories ---
     "CustomerRepository",

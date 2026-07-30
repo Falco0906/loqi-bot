@@ -111,3 +111,21 @@ class ErrorResponse(BaseModel):
     message: str
     detail: str | None = None
     request_id: str = ""
+
+
+# ─── /me response ──────────────────────────────────────────────────────
+
+class MeOrganizationResponse(BaseModel):
+    id: str
+    name: str
+    slug: str
+    role: str
+
+
+class MeResponse(BaseModel):
+    id: str
+    email: str
+    display_name: str
+    avatar_url: str
+    onboarding_complete: bool = False
+    organization: MeOrganizationResponse | None = None

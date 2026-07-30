@@ -146,7 +146,6 @@ export function CopilotProvider({
       setMessages((prev) => [...prev, userMsg]);
       setSending(true);
       const _start = Date.now();
-      console.log(`[COPILOT_TRACE] send() | text="${text.trim().slice(0,40)}" | started`);
 
       try {
         let token = initialToken;
@@ -158,7 +157,6 @@ export function CopilotProvider({
 
         const ctx = pageContext;
         const history = messages.map((m) => ({ role: m.role, text: m.text }));
-        console.log(`[COPILOT_TRACE] send() | calling copilotMessage() with timeout=20000 retries=1`);
         const res = await copilotMessage(token, {
           text: text.trim(),
           currentPage: ctx?.page || "unknown",
@@ -166,7 +164,6 @@ export function CopilotProvider({
           availableActions: buildAvailableActions(),
           messageHistory: history,
         });
-        console.log(`[COPILOT_TRACE] send() | copilotMessage() DONE | duration=${Date.now()-_start}ms | ok=${res.ok}`);
 
         const assistantText =
           res.messages?.[res.messages.length - 1]?.text || "No response";
@@ -182,7 +179,6 @@ export function CopilotProvider({
 
         setMessages((prev) => [...prev, assistantMsg]);
       } catch (err) {
-        console.log(`[COPILOT_TRACE] send() | ERROR | err=${err instanceof Error ? err.name : 'unknown'} | duration=${Date.now()-_start}ms`);
         setMessages((prev) => [
           ...prev,
           {

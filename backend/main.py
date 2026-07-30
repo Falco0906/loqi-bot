@@ -18,22 +18,9 @@ from pydantic import BaseModel
 from services.agent import process_message
 from services.identity.api import router as auth_router
 from services.onboarding.api import router as onboarding_router
-from services.organizations.api import router as organizations_router, register_deps as register_org_deps, OrgDeps
-from services.organizations.repositories import InMemoryOrganizationRepository, InMemoryMembershipRepository, InMemoryInvitationRepository
-from services.organizations.services import OrganizationService, MembershipService, InvitationService
-from services.organizations.resolver import CurrentOrganizationResolver
-from services.billing.api import router as billing_router, register_deps as register_billing_deps, BillingDeps
+from services.organizations.api import router as organizations_router, _build_org_deps, register_deps as register_org_deps
+from services.billing.api import router as billing_router, _build_billing_deps, register_deps as register_billing_deps, create_billing_provider
 from services.billing.config import BillingConfig
-from services.billing.services import PlanService, CustomerService, CheckoutService, SubscriptionService, WebhookService
-from services.billing.repositories import (
-    InMemoryCustomerRepository,
-    InMemoryPlanRepository,
-    InMemorySubscriptionRepository,
-    InMemoryCheckoutRepository,
-    InMemoryInvoiceRepository,
-    InMemoryBillingEventRepository,
-)
-from services.billing.stripe_provider import StripeBillingProvider
 from services.billing.api import register_provider_and_config as _register_billing_provider_config
 from services.capabilities.api import router as capabilities_router, register_deps as register_capability_deps, CapabilityDeps
 from services.capabilities.config import CapabilityConfig
@@ -127,26 +114,29 @@ from services.adapters.credentials import CredentialDescriptor, CredentialInstan
 from services.execution import AdapterRegistry as ExecutionAdapterRegistry
 from services.execution import BridgeAdapter
 from services.planner.planning_models import TaskType
+from services.operations import (
+    RequestLoggingMiddleware,
+    log_config_warnings,
+    operations_router,
+    set_startup_time,
+    startup_diagnostics,
+)
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s %(message)s",
+)
 log = logging.getLogger("loqi")
 
 request_id_var: ContextVar[str] = ContextVar("request_id")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    required_vars = ["OPENAI_API_KEY"]
-    missing = [v for v in required_vars if not os.getenv(v)]
-    if missing:
-        log.warning("Missing required environment variables: %s", ", ".join(missing))
-    log.info("SUPABASE_URL=%s", "set" if os.getenv("SUPABASE_URL") else "not set")
-    log.info("SUPABASE_KEY=%s", "set" if os.getenv("SUPABASE_KEY") else "not set")
-    try:
-        test_supabase_connection()
-    except Exception as e:
-        log.warning("Supabase connection test failed: %s", e)
+    set_startup_time()
+    log_config_warnings()
+    startup_diagnostics(app)
     register_workflows()
     try:
         from services.migration import apply_migrations
@@ -185,6 +175,15 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.include_router(operations_router)
 app.include_router(auth_router)
 app.include_router(onboarding_router)
 app.include_router(organizations_router, prefix="/api/v1")
@@ -192,23 +191,11 @@ app.include_router(billing_router)
 app.include_router(capabilities_router)
 
 # ── Wire Organization Platform services ──
-_org_repo = InMemoryOrganizationRepository()
-_membership_repo = InMemoryMembershipRepository()
-_invitation_repo = InMemoryInvitationRepository()
-
-_org_service = OrganizationService(_org_repo, _membership_repo)
-_membership_service = MembershipService(_membership_repo, _org_repo)
-_invitation_service = InvitationService(_invitation_repo, _membership_repo, _membership_service)
-_org_resolver = CurrentOrganizationResolver(_org_repo, _membership_repo)
-
-register_org_deps(OrgDeps(
-    org_service=_org_service,
-    membership_service=_membership_service,
-    invitation_service=_invitation_service,
-    resolver=_org_resolver,
-))
+_org_deps = _build_org_deps()
+register_org_deps(_org_deps)
 
 # ── Wire Organization Service into Onboarding ──
+from services.identity.api import get_auth_user_service
 from services.onboarding.api import set_onboarding_service
 from services.onboarding.services import LifecycleService, OnboardingService as OnboardingServiceCls
 from services.onboarding.repositories import InMemoryLifecycleRepository, InMemoryOnboardingSessionRepository
@@ -218,41 +205,21 @@ _onboarding_lifecycle_svc = LifecycleService(_onboarding_lifecycle_repo)
 _onboarding_svc = OnboardingServiceCls(
     lifecycle_service=_onboarding_lifecycle_svc,
     session_repo=_onboarding_session_repo,
-    org_service=_org_service,
+    org_service=_org_deps.org_service,
+    user_service=get_auth_user_service(),
 )
 set_onboarding_service(_onboarding_svc)
 
 # ── Wire Billing Platform services ──
-_billing_config = BillingConfig()
-_billing_provider = StripeBillingProvider(_billing_config)
-_billing_customer_repo = InMemoryCustomerRepository()
-_billing_plan_repo = InMemoryPlanRepository()
-_billing_sub_repo = InMemorySubscriptionRepository()
-_billing_checkout_repo = InMemoryCheckoutRepository()
-_billing_invoice_repo = InMemoryInvoiceRepository()
-_billing_event_repo = InMemoryBillingEventRepository()
-
-_billing_plan_svc = PlanService(_billing_plan_repo, _billing_config)
-_billing_customer_svc = CustomerService(_billing_customer_repo, _billing_provider)
-_billing_checkout_svc = CheckoutService(
-    _billing_checkout_repo, _billing_plan_svc, _billing_customer_svc,
-    _billing_provider, _billing_config,
+_billing_config = BillingConfig(
+    provider_mode=os.getenv("BILLING_PROVIDER_MODE", "mock"),
+    stripe_secret_key=os.getenv("STRIPE_SECRET_KEY", ""),
+    stripe_publishable_key=os.getenv("STRIPE_PUBLISHABLE_KEY", ""),
+    stripe_webhook_secret=os.getenv("STRIPE_WEBHOOK_SECRET", ""),
 )
-_billing_sub_svc = SubscriptionService(
-    _billing_sub_repo, _billing_invoice_repo, _billing_provider,
-)
-_billing_webhook_svc = WebhookService(
-    _billing_customer_repo, _billing_sub_repo, _billing_checkout_repo,
-    _billing_invoice_repo, _billing_event_repo, _billing_provider, _billing_config,
-)
-
-register_billing_deps(BillingDeps(
-    plan_service=_billing_plan_svc,
-    customer_service=_billing_customer_svc,
-    checkout_service=_billing_checkout_svc,
-    subscription_service=_billing_sub_svc,
-    webhook_service=_billing_webhook_svc,
-))
+_billing_provider = create_billing_provider(_billing_config)
+_billing_deps = _build_billing_deps(_billing_provider, _billing_config)
+register_billing_deps(_billing_deps)
 _register_billing_provider_config(_billing_provider, _billing_config)
 
 # ── Wire Capability Platform services ──

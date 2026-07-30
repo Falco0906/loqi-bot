@@ -20,16 +20,18 @@ class LifecycleState(str, Enum):
 
 
 # Ordered by progression. Index is used for transition validation.
+# M2.8.4: Onboarding Wizard completes before billing steps.
+# Billing steps (PLAN_SELECTION, CHECKOUT) are future — not required for activation.
 LIFECYCLE_ORDER: list[LifecycleState] = [
     LifecycleState.VISITOR,
     LifecycleState.AUTHENTICATED,
     LifecycleState.PROFILE_SETUP,
     LifecycleState.WORKSPACE_SETUP,
+    LifecycleState.ONBOARDING_COMPLETE,
+    LifecycleState.ACTIVE,
     LifecycleState.PLAN_SELECTION,
     LifecycleState.CHECKOUT_PENDING,
     LifecycleState.SUBSCRIPTION_ACTIVE,
-    LifecycleState.ONBOARDING_COMPLETE,
-    LifecycleState.ACTIVE,
 ]
 
 
@@ -54,18 +56,18 @@ class StepId(str, Enum):
 STEP_ORDER: list[StepId] = [
     StepId.PROFILE_SETUP,
     StepId.WORKSPACE_SETUP,
+    StepId.ONBOARDING_WIZARD,
     StepId.PLAN_SELECTION,
     StepId.CHECKOUT,
-    StepId.ONBOARDING_WIZARD,
 ]
 
 
 STEP_TO_LIFECYCLE: dict[StepId, LifecycleState] = {
     StepId.PROFILE_SETUP: LifecycleState.WORKSPACE_SETUP,
-    StepId.WORKSPACE_SETUP: LifecycleState.PLAN_SELECTION,
+    StepId.WORKSPACE_SETUP: LifecycleState.ONBOARDING_COMPLETE,
+    StepId.ONBOARDING_WIZARD: LifecycleState.ACTIVE,
     StepId.PLAN_SELECTION: LifecycleState.CHECKOUT_PENDING,
     StepId.CHECKOUT: LifecycleState.SUBSCRIPTION_ACTIVE,
-    StepId.ONBOARDING_WIZARD: LifecycleState.ACTIVE,
 }
 
 
@@ -73,11 +75,11 @@ LIFECYCLE_TO_STEP: dict[LifecycleState, StepId | None] = {
     LifecycleState.AUTHENTICATED: StepId.PROFILE_SETUP,
     LifecycleState.PROFILE_SETUP: StepId.PROFILE_SETUP,
     LifecycleState.WORKSPACE_SETUP: StepId.WORKSPACE_SETUP,
+    LifecycleState.ONBOARDING_COMPLETE: StepId.ONBOARDING_WIZARD,
+    LifecycleState.ACTIVE: None,
     LifecycleState.PLAN_SELECTION: StepId.PLAN_SELECTION,
     LifecycleState.CHECKOUT_PENDING: StepId.CHECKOUT,
-    LifecycleState.SUBSCRIPTION_ACTIVE: StepId.ONBOARDING_WIZARD,
-    LifecycleState.ONBOARDING_COMPLETE: None,
-    LifecycleState.ACTIVE: None,
+    LifecycleState.SUBSCRIPTION_ACTIVE: None,
 }
 
 

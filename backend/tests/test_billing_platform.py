@@ -23,6 +23,7 @@ from services.billing.exceptions import (
     NoActiveSubscription,
     OrganizationNotConfigured,
     PlanNotFound,
+    ProviderError,
     SubscriptionNotFound,
     WebhookSignatureInvalid,
 )
@@ -61,7 +62,7 @@ from services.billing.services import (
     SubscriptionService,
     WebhookService,
 )
-from services.billing.stripe_provider import StripeBillingProvider
+from services.billing.stripe_provider import MockStripeBillingProvider, StripeBillingProvider
 
 
 # ─── Fixtures ────────────────────────────────────────────────────────
@@ -77,8 +78,8 @@ def billing_config() -> BillingConfig:
 
 
 @pytest.fixture
-def provider(billing_config) -> StripeBillingProvider:
-    return StripeBillingProvider(billing_config)
+def provider(billing_config) -> MockStripeBillingProvider:
+    return MockStripeBillingProvider(billing_config)
 
 
 @pytest.fixture
@@ -198,7 +199,7 @@ class TestModels:
 # ─── Provider Tests ─────────────────────────────────────────────────
 
 
-class TestStripeBillingProvider:
+class TestMockStripeBillingProvider:
 
     def test_create_customer(self, provider):
         result = provider.create_customer(
@@ -292,6 +293,254 @@ class TestStripeBillingProvider:
         payload = b'{"test": "data"}'
         with pytest.raises(WebhookSignatureInvalid):
             provider._verify_signature(payload, "invalid_signature")
+
+
+# ─── Live Stripe Provider Tests (mocked SDK) ──────────────────────────
+
+
+class MockStripeResource:
+    def __init__(self, **kwargs):
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+
+def _make_mock_stripe():
+    import types
+    mock = types.ModuleType("stripe")
+    mock.api_key = ""
+
+    class StripeError(Exception):
+        def __init__(self, message, http_body=None):
+            super().__init__(message)
+            self.http_body = http_body
+
+    class SignatureVerificationError(StripeError):
+        pass
+
+    mock.error = types.ModuleType("stripe.error")
+    mock.error.StripeError = StripeError
+    mock.error.SignatureVerificationError = SignatureVerificationError
+
+    mock.Customer = types.ModuleType("stripe.Customer")
+    mock.Customer.create = MagicMock()
+
+    mock.checkout = types.ModuleType("stripe.checkout")
+    mock.checkout.Session = types.ModuleType("stripe.checkout.Session")
+    mock.checkout.Session.create = MagicMock()
+
+    mock.billing_portal = types.ModuleType("stripe.billing_portal")
+    mock.billing_portal.Session = types.ModuleType("stripe.billing_portal.Session")
+    mock.billing_portal.Session.create = MagicMock()
+
+    mock.Subscription = types.ModuleType("stripe.Subscription")
+    mock.Subscription.retrieve = MagicMock()
+    mock.Subscription.modify = MagicMock()
+    mock.Subscription.delete = MagicMock()
+
+    mock.Webhook = types.ModuleType("stripe.Webhook")
+    mock.Webhook.construct_event = MagicMock()
+
+    return mock
+
+
+class TestStripeBillingProvider:
+
+    @pytest.fixture
+    def live_config(self) -> BillingConfig:
+        return BillingConfig(
+            provider_mode="live",
+            stripe_secret_key="sk_test_live",
+            stripe_webhook_secret="whsec_live",
+            stripe_publishable_key="pk_test_live",
+            trial_duration_days=14,
+        )
+
+    @pytest.fixture
+    def patch_stripe(self):
+        mock_stripe = _make_mock_stripe()
+        with patch.dict("sys.modules", {"stripe": mock_stripe}):
+            from services.billing.stripe_provider import StripeBillingProvider as SBP
+            yield SBP, mock_stripe
+
+    def test_create_customer(self, live_config, patch_stripe):
+        SBP, mock_stripe = patch_stripe
+        mock_stripe.Customer.create.return_value = MockStripeResource(id="cus_live_123")
+        provider = SBP(live_config)
+        result = provider.create_customer(
+            email="live@example.com",
+            organization_id="org-live-1",
+        )
+        assert result.provider_customer_id == "cus_live_123"
+
+    def test_create_customer_error(self, live_config, patch_stripe):
+        SBP, mock_stripe = patch_stripe
+        mock_stripe.Customer.create.side_effect = Exception("API error")
+        provider = SBP(live_config)
+        with pytest.raises(ProviderError, match="Stripe API error"):
+            provider.create_customer(email="fail@example.com", organization_id="org-1")
+
+    def test_create_checkout_session(self, live_config, patch_stripe):
+        SBP, mock_stripe = patch_stripe
+        mock_stripe.checkout.Session.create.return_value = MockStripeResource(
+            id="cs_live_123", url="https://checkout.stripe.com/c/live_123", metadata={},
+        )
+        provider = SBP(live_config)
+        result = provider.create_checkout_session(
+            customer_id="cus_live_123",
+            plan_id="price_live_123",
+            success_url="http://example.com/success",
+            cancel_url="http://example.com/cancel",
+            trial_days=14,
+        )
+        assert result.url == "https://checkout.stripe.com/c/live_123"
+        assert result.provider_checkout_id == "cs_live_123"
+
+    def test_create_checkout_session_no_trial(self, live_config, patch_stripe):
+        SBP, mock_stripe = patch_stripe
+        mock_stripe.checkout.Session.create.return_value = MockStripeResource(
+            id="cs_live_124", url="https://checkout.stripe.com/c/live_124", metadata={},
+        )
+        provider = SBP(live_config)
+        result = provider.create_checkout_session(
+            customer_id="cus_live_123",
+            plan_id="price_live_123",
+            success_url="http://example.com/success",
+            cancel_url="http://example.com/cancel",
+            trial_days=0,
+        )
+        assert result.provider_checkout_id == "cs_live_124"
+
+    def test_create_customer_portal(self, live_config, patch_stripe):
+        SBP, mock_stripe = patch_stripe
+        mock_stripe.billing_portal.Session.create.return_value = MockStripeResource(
+            url="https://billing.stripe.com/session/live_123",
+        )
+        provider = SBP(live_config)
+        result = provider.create_customer_portal(
+            customer_id="cus_live_123",
+            return_url="http://example.com/return",
+        )
+        assert result.url == "https://billing.stripe.com/session/live_123"
+
+    def test_get_subscription(self, live_config, patch_stripe):
+        SBP, mock_stripe = patch_stripe
+        mock_stripe.Subscription.retrieve.return_value = MockStripeResource(
+            id="sub_live_123", status="active",
+            current_period_start=1000, current_period_end=2000,
+            cancel_at_period_end=False, trial_end=None,
+        )
+        provider = SBP(live_config)
+        result = provider.get_subscription("sub_live_123")
+        assert result.provider_subscription_id == "sub_live_123"
+        assert result.status == "active"
+        assert result.current_period_start == 1000
+
+    def test_cancel_subscription_at_period_end(self, live_config, patch_stripe):
+        SBP, mock_stripe = patch_stripe
+        mock_stripe.Subscription.modify.return_value = MockStripeResource(
+            id="sub_live_123", status="active",
+            current_period_start=1000, current_period_end=2000,
+            cancel_at_period_end=True,
+        )
+        provider = SBP(live_config)
+        result = provider.cancel_subscription("sub_live_123", at_period_end=True)
+        assert result.cancel_at_period_end
+
+    def test_cancel_subscription_immediate(self, live_config, patch_stripe):
+        SBP, mock_stripe = patch_stripe
+        mock_stripe.Subscription.delete.return_value = MockStripeResource(
+            id="sub_live_123", status="canceled",
+            current_period_start=1000, current_period_end=2000,
+            cancel_at_period_end=False,
+        )
+        provider = SBP(live_config)
+        result = provider.cancel_subscription("sub_live_123", at_period_end=False)
+        assert result.status == "canceled"
+
+    def test_resume_subscription(self, live_config, patch_stripe):
+        SBP, mock_stripe = patch_stripe
+        mock_stripe.Subscription.modify.return_value = MockStripeResource(
+            id="sub_live_123", status="active",
+            current_period_start=1000, current_period_end=2000,
+            cancel_at_period_end=False,
+        )
+        provider = SBP(live_config)
+        result = provider.resume_subscription("sub_live_123")
+        assert not result.cancel_at_period_end
+
+    def test_webhook_known_event(self, live_config, patch_stripe):
+        SBP, mock_stripe = patch_stripe
+        mock_stripe.Webhook.construct_event.return_value = MockStripeResource(
+            id="evt_live_123",
+            type="checkout.session.completed",
+            data=MockStripeResource(object={"id": "cs_live_123", "status": "complete"}),
+        )
+        provider = SBP(live_config)
+        results = provider.handle_webhook(WebhookPayload(
+            raw_body=b'{"type":"checkout.session.completed"}',
+            signature="test_sig",
+        ))
+        assert len(results) == 1
+        assert results[0]["event_id"] == "evt_live_123"
+        assert results[0]["event_type"] == "checkout.session.completed"
+
+    def test_webhook_unknown_event_ignored(self, live_config, patch_stripe):
+        SBP, mock_stripe = patch_stripe
+        mock_stripe.Webhook.construct_event.return_value = MockStripeResource(
+            id="evt_unknown", type="unknown.event",
+            data=MockStripeResource(object={}),
+        )
+        provider = SBP(live_config)
+        results = provider.handle_webhook(WebhookPayload(
+            raw_body=b'{"type":"unknown.event"}',
+            signature="test_sig",
+        ))
+        assert len(results) == 0
+
+    def test_webhook_invalid_signature(self, live_config, patch_stripe):
+        SBP, mock_stripe = patch_stripe
+        mock_stripe.Webhook.construct_event.side_effect = (
+            mock_stripe.error.SignatureVerificationError("Invalid signature", None)
+        )
+        provider = SBP(live_config)
+        with pytest.raises(WebhookSignatureInvalid):
+            provider.handle_webhook(WebhookPayload(
+                raw_body=b'{"type":"checkout.session.completed"}',
+                signature="bad_sig",
+            ))
+
+    def test_webhook_invalid_payload(self, live_config, patch_stripe):
+        SBP, mock_stripe = patch_stripe
+        mock_stripe.Webhook.construct_event.side_effect = ValueError("Invalid payload")
+        provider = SBP(live_config)
+        with pytest.raises(ProviderError, match="Invalid webhook payload"):
+            provider.handle_webhook(WebhookPayload(
+                raw_body=b"not-json",
+                signature="test",
+            ))
+
+    def test_provider_error_on_stripe_unavailable(self, live_config, patch_stripe):
+        SBP, mock_stripe = patch_stripe
+        mock_stripe.Customer.create.side_effect = Exception("Connection refused")
+        provider = SBP(live_config)
+        with pytest.raises(ProviderError, match="Stripe API error"):
+            provider.create_customer(email="test@example.com", organization_id="org-1")
+
+    def test_create_billing_provider_mock(self):
+        from services.billing.api import create_billing_provider
+        config = BillingConfig(provider_mode="mock", stripe_secret_key="")
+        p = create_billing_provider(config)
+        from services.billing.stripe_provider import MockStripeBillingProvider
+        assert isinstance(p, MockStripeBillingProvider)
+
+    def test_create_billing_provider_live(self):
+        mock_stripe = _make_mock_stripe()
+        with patch.dict("sys.modules", {"stripe": mock_stripe, "stripe.error": mock_stripe.error}):
+            from services.billing.api import create_billing_provider
+            config = BillingConfig(provider_mode="live", stripe_secret_key="sk_test_abc")
+            p = create_billing_provider(config)
+            from services.billing.stripe_provider import StripeBillingProvider
+            assert isinstance(p, StripeBillingProvider)
 
 
 # ─── Repository Tests ───────────────────────────────────────────────
@@ -843,7 +1092,7 @@ def billing_api_client() -> TestClient:
         stripe_secret_key="sk_test_mock",
         stripe_webhook_secret="whsec_mock",
     )
-    _provider = StripeBillingProvider(_config)
+    _provider = MockStripeBillingProvider(_config)
     _cust_repo = InMemoryCustomerRepository()
     _plan_repo = InMemoryPlanRepository()
     _sub_repo = InMemorySubscriptionRepository()

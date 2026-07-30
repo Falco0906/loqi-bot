@@ -36,6 +36,49 @@ from services.billing.services import (
     WebhookService,
 )
 
+
+def create_billing_provider(config: BillingConfig) -> object:
+    mode = config.provider_mode
+    if mode == "live":
+        from services.billing.stripe_provider import StripeBillingProvider as LiveProvider
+        return LiveProvider(config)
+    from services.billing.stripe_provider import MockStripeBillingProvider
+    return MockStripeBillingProvider(config)
+
+
+def _build_billing_deps(
+    provider: object,
+    config: BillingConfig,
+) -> BillingDeps:
+    from services.billing.services import (
+        CheckoutService,
+        CustomerService,
+        PlanService,
+        SubscriptionService,
+        WebhookService,
+    )
+    repos = _make_billing_repositories()
+    plan_svc = PlanService(repos["plan_repo"], config)
+    customer_svc = CustomerService(repos["customer_repo"], provider)
+    checkout_svc = CheckoutService(
+        repos["checkout_repo"], plan_svc, customer_svc, provider, config,
+    )
+    sub_svc = SubscriptionService(
+        repos["sub_repo"], repos["invoice_repo"], provider,
+    )
+    webhook_svc = WebhookService(
+        repos["customer_repo"], repos["sub_repo"], repos["checkout_repo"],
+        repos["invoice_repo"], repos["event_repo"], provider, config,
+    )
+    return BillingDeps(
+        plan_service=plan_svc,
+        customer_service=customer_svc,
+        checkout_service=checkout_svc,
+        subscription_service=sub_svc,
+        webhook_service=webhook_svc,
+    )
+
+
 router = APIRouter(prefix="/api/v1/billing", tags=["Billing"])
 
 
@@ -214,6 +257,48 @@ async def customer_portal(
         return_url=return_url,
     )
     return CustomerPortalResponse(url=portal_result.url)
+
+
+def _make_billing_repositories():
+    from services.persistence import REPOSITORY_PROVIDER, RepositoryProvider
+    if REPOSITORY_PROVIDER == RepositoryProvider.SUPABASE:
+        from services.persistence.repositories import (
+            SupabaseBillingEventRepository,
+            SupabaseCheckoutRepository,
+            SupabaseCustomerRepository,
+            SupabaseInvoiceRepository,
+            SupabasePlanRepository,
+            SupabaseSubscriptionRepository,
+        )
+        plan_repo = SupabasePlanRepository()
+        customer_repo = SupabaseCustomerRepository()
+        sub_repo = SupabaseSubscriptionRepository()
+        checkout_repo = SupabaseCheckoutRepository()
+        invoice_repo = SupabaseInvoiceRepository()
+        event_repo = SupabaseBillingEventRepository()
+    else:
+        from services.billing.repositories import (
+            InMemoryBillingEventRepository,
+            InMemoryCheckoutRepository,
+            InMemoryCustomerRepository,
+            InMemoryInvoiceRepository,
+            InMemoryPlanRepository,
+            InMemorySubscriptionRepository,
+        )
+        plan_repo = InMemoryPlanRepository()
+        customer_repo = InMemoryCustomerRepository()
+        sub_repo = InMemorySubscriptionRepository()
+        checkout_repo = InMemoryCheckoutRepository()
+        invoice_repo = InMemoryInvoiceRepository()
+        event_repo = InMemoryBillingEventRepository()
+    return {
+        "plan_repo": plan_repo,
+        "customer_repo": customer_repo,
+        "sub_repo": sub_repo,
+        "checkout_repo": checkout_repo,
+        "invoice_repo": invoice_repo,
+        "event_repo": event_repo,
+    }
 
 
 # ─── Cancel / Resume ────────────────────────────────────────────────

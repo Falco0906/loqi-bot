@@ -1,0 +1,280 @@
+<!DOCTYPE html><html class="light" lang="en"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Loqi | Knowledge Validation</title>
+<!-- Google Fonts & Material Symbols -->
+<link href="https://fonts.googleapis.com" rel="preconnect">
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Libre+Caslon+Text:wght@400;700&amp;family=Geist:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Configuration -->
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "on-tertiary-fixed": "#1c1b1a",
+                    "primary-fixed": "#e5e2e1",
+                    "on-tertiary": "#ffffff",
+                    "secondary-fixed": "#d6e6df",
+                    "surface-container-low": "#f7f3f2",
+                    "surface-container-highest": "#e5e2e1",
+                    "surface-bright": "#fdf8f8",
+                    "surface-container-high": "#ebe7e6",
+                    "inverse-on-surface": "#f4f0ef",
+                    "outline-variant": "#c4c7c7",
+                    "inverse-primary": "#c8c6c5",
+                    "secondary-container": "#d3e3dc",
+                    "tertiary-fixed-dim": "#cac6c4",
+                    "background": "#fdf8f8",
+                    "on-tertiary-container": "#868382",
+                    "surface": "#fdf8f8",
+                    "outline": "#747878",
+                    "secondary-fixed-dim": "#bacac3",
+                    "tertiary-container": "#1c1b1a",
+                    "on-tertiary-fixed-variant": "#484645",
+                    "tertiary": "#000000",
+                    "on-primary-fixed": "#1c1b1b",
+                    "primary-container": "#1c1b1b",
+                    "surface-tint": "#5f5e5e",
+                    "on-secondary": "#ffffff",
+                    "on-primary-fixed-variant": "#474746",
+                    "primary": "#000000",
+                    "on-secondary-container": "#576660",
+                    "primary-fixed-dim": "#c8c6c5",
+                    "tertiary-fixed": "#e6e2df",
+                    "error": "#ba1a1a",
+                    "surface-container-lowest": "#ffffff",
+                    "on-error": "#ffffff",
+                    "surface-dim": "#ddd9d8",
+                    "on-error-container": "#93000a",
+                    "on-secondary-fixed-variant": "#3c4a44",
+                    "on-secondary-fixed": "#111e1a",
+                    "inverse-surface": "#313030",
+                    "on-surface": "#1c1b1b",
+                    "on-primary-container": "#858383",
+                    "on-surface-variant": "#444748",
+                    "on-background": "#1c1b1b",
+                    "on-primary": "#ffffff",
+                    "error-container": "#ffdad6",
+                    "surface-variant": "#e5e2e1",
+                    "surface-container": "#f1edec",
+                    "secondary": "#53625c"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.25rem",
+                    "lg": "0.5rem",
+                    "xl": "0.75rem",
+                    "full": "9999px"
+            },
+            "spacing": {
+                    "container-max": "1200px",
+                    "base": "8px",
+                    "reading-width": "720px",
+                    "section-gap": "64px",
+                    "gutter": "24px",
+                    "element-gap": "16px"
+            },
+            "fontFamily": {
+                    "body-md": ["Inter"],
+                    "headline-lg": ["Libre Caslon Text"],
+                    "display-xl": ["Libre Caslon Text"],
+                    "display-xl-mobile": ["Libre Caslon Text"],
+                    "body-lg": ["Inter"],
+                    "label-xs": ["Geist"],
+                    "label-sm": ["Geist"],
+                    "headline-md": ["Libre Caslon Text"]
+            },
+            "fontSize": {
+                    "body-md": ["16px", {"lineHeight": "1.5", "fontWeight": "400"}],
+                    "headline-lg": ["32px", {"lineHeight": "1.3", "fontWeight": "400"}],
+                    "display-xl": ["48px", {"lineHeight": "1.1", "letterSpacing": "-0.02em", "fontWeight": "400"}],
+                    "display-xl-mobile": ["36px", {"lineHeight": "1.2", "fontWeight": "400"}],
+                    "body-lg": ["18px", {"lineHeight": "1.6", "fontWeight": "400"}],
+                    "label-xs": ["11px", {"lineHeight": "1.2", "letterSpacing": "0.05em", "fontWeight": "600"}],
+                    "label-sm": ["13px", {"lineHeight": "1.2", "letterSpacing": "0.02em", "fontWeight": "500"}],
+                    "headline-md": ["24px", {"lineHeight": "1.4", "fontWeight": "400"}]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        body {
+            background-color: #F9F9F8;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
+            font-size: 20px;
+        }
+        .ambient-shadow {
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+        }
+        .briefing-divider {
+            border-bottom-width: 0.5px;
+            border-color: #E2E2E0;
+        }
+        .fade-in-up {
+            animation: fadeInUp 0.8s ease-out forwards;
+        }
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .delay-1 { animation-delay: 0.2s; }
+        .delay-2 { animation-delay: 0.4s; }
+        .delay-3 { animation-delay: 0.6s; }
+        .delay-4 { animation-delay: 0.8s; }
+    </style>
+</head>
+<body class="font-body-md text-on-surface">
+<!-- Background Atmospheric Effect -->
+<div class="fixed inset-0 pointer-events-none z-0">
+
+</div>
+<!-- Main Scrolling Transcript Canvas -->
+<main class="relative z-10 w-full min-h-screen px-gutter pt-24 pb-section-gap overflow-x-hidden">
+<div class="max-w-reading-width mx-auto">
+<!-- Previous Dialogue (Faded for context) -->
+<div class="space-y-element-gap mb-section-gap opacity-40 select-none">
+<div class="flex gap-4">
+<div class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-on-surface-variant">person</span>
+</div>
+<p class="font-body-md text-body-md pt-1">I've uploaded the Q3 strategic roadmap and our competitor analysis deck.</p>
+</div>
+</div>
+<!-- Current AI Intervention -->
+<section class="space-y-section-gap">
+<!-- Loqi Entry Message -->
+<div class="flex gap-4 fade-in-up">
+<div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-on-primary">radar</span>
+</div>
+<div class="max-w-[85%]">
+<p class="font-label-xs text-label-xs text-on-surface-variant mb-2 uppercase tracking-widest">Loqi · Intelligence Agency</p>
+<p class="font-headline-md text-headline-md text-primary leading-relaxed">
+                            "I think I understand enough to investigate further... I've processed the foundational data from your domain. Here is what I currently believe about your strategic position."
+                        </p>
+</div>
+</div>
+<!-- Belief Cards: Bento-ish Grid -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-element-gap fade-in-up delay-1">
+<!-- Market Position Card -->
+<div class="bg-surface-container-lowest p-gutter rounded-lg ambient-shadow border border-outline-variant/10 flex flex-col justify-between group transition-all duration-500 hover:scale-[1.01]">
+<div>
+<span class="material-symbols-outlined text-secondary mb-4">explore</span>
+<p class="font-label-xs text-label-xs text-on-surface-variant uppercase tracking-widest mb-1">Market Position</p>
+<h3 class="font-headline-md text-headline-md mb-4">I currently believe...</h3>
+<p class="font-body-md text-body-md text-on-surface-variant leading-relaxed">
+                                You are operating as a <span class="text-on-surface font-semibold">Premium Disruptor</span> in a saturated legacy market, prioritizing design-led utility over feature volume.
+                            </p>
+</div>
+<div class="mt-8 pt-4 briefing-divider">
+<span class="font-label-sm text-label-sm text-outline italic">Based on: Competitor Analysis Deck</span>
+</div>
+</div>
+<!-- Ideal Customer Card -->
+<div class="bg-surface-container-lowest p-gutter rounded-lg ambient-shadow border border-outline-variant/10 flex flex-col justify-between group transition-all duration-500 hover:scale-[1.01]">
+<div>
+<span class="material-symbols-outlined text-secondary mb-4">group</span>
+<p class="font-label-xs text-label-xs text-on-surface-variant uppercase tracking-widest mb-1">Ideal Customer</p>
+<h3 class="font-headline-md text-headline-md mb-4">I currently believe...</h3>
+<p class="font-body-md text-body-md text-on-surface-variant leading-relaxed">
+                                Your core audience consists of <span class="text-on-surface font-semibold">"Autonomous Architects"</span>—tech-literate professionals who value high-agency tools that get out of their way.
+                            </p>
+</div>
+<div class="mt-8 pt-4 briefing-divider">
+<span class="font-label-sm text-label-sm text-outline italic">Inferred from: Value Proposition Sync</span>
+</div>
+</div>
+<!-- Primary Goal Card (Double Width/Feature) -->
+<div class="md:col-span-2 bg-surface-container-lowest p-gutter rounded-lg ambient-shadow border border-outline-variant/10 flex flex-col md:flex-row gap-8 transition-all duration-500 hover:scale-[1.01]">
+<div class="md:w-1/3 shrink-0">
+<div class="w-full h-48 rounded-lg overflow-hidden relative">
+<div class="absolute inset-0 bg-primary/5 z-10"></div>
+<img class="w-full h-full object-cover" data-alt="A minimalist architectural shot of a spiraling white staircase leading toward a bright circular light source at the top. The image is high-key, extremely clean, and emphasizes verticality and progress. The lighting is soft and diffused, matching a premium editorial aesthetic in shades of cream and bone white." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDjH7vNC9fNizWjw6CPvNdwDieV7MfWvl6CNH4c33xD6AAJoz0iVmT7CQRzElS4M0Tn5wB5zyx8O7JW35z29TiE9J9sOp-h-sWLzNF5hMHNTqXT6Ac1PeWhd5KsRAhzNMv1-s3N-noO6VKTIL6l5e2-Oe6JsSl_Wb8AkPLuYQ5yHpn6rRGbEsFKcL7Cpw-tFFJnOzofgJwLFMprbrd0do2xDKzbzU7BnrdcBM0UKD44-Ee7rEPR1AOy">
+</div>
+</div>
+<div class="flex flex-col justify-center">
+<span class="material-symbols-outlined text-secondary mb-4">flag</span>
+<p class="font-label-xs text-label-xs text-on-surface-variant uppercase tracking-widest mb-1">Primary Goal</p>
+<h3 class="font-headline-md text-headline-md mb-2">I currently believe...</h3>
+<p class="font-body-lg text-body-lg text-on-surface-variant leading-relaxed">
+                                Your 12-month priority is <span class="text-on-surface font-semibold underline decoration-outline-variant underline-offset-4">Vertical Integration</span>—moving from a service layer to owning the entire data relationship for mid-market clients.
+                            </p>
+<div class="mt-6 flex gap-2">
+<span class="bg-surface-container-high px-3 py-1 rounded-full font-label-sm text-label-sm text-on-secondary-container">High Confidence</span>
+<span class="bg-surface-container-high px-3 py-1 rounded-full font-label-sm text-label-sm text-on-secondary-container">Strategic Core</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Call to Action Section -->
+<div class="fade-in-up delay-2 max-w-reading-width mx-auto border-t border-outline-variant/20 pt-section-gap text-center">
+<p class="font-headline-md text-headline-md mb-8">Does this alignment feel right to you?</p>
+<div class="flex flex-col md:flex-row gap-element-gap justify-center items-center">
+<button class="group relative px-8 py-4 bg-primary text-on-primary rounded-lg font-body-md transition-all duration-300 hover:bg-on-surface-variant active:scale-95 flex items-center gap-2 overflow-hidden">
+<span>Yes, proceed with investigation</span>
+<span class="material-symbols-outlined text-sm group-hover:translate-x-1 transition-transform">arrow_forward</span>
+</button>
+<button class="px-8 py-4 bg-transparent border border-outline-variant text-on-surface-variant rounded-lg font-body-md transition-all duration-300 hover:border-primary hover:text-primary active:scale-95">
+                            Let's refine a few things
+                        </button>
+</div>
+<!-- Micro-Interaction Hint -->
+<div class="mt-section-gap opacity-30 flex flex-col items-center gap-2">
+<p class="font-label-xs text-label-xs uppercase tracking-[0.2em]">Scrolling for deeper context</p>
+<div class="w-px h-12 bg-gradient-to-b from-primary to-transparent"></div>
+</div>
+</div>
+</section>
+</div>
+</main>
+<!-- Lightweight Scroll Logic -->
+<script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const beliefCards = document.querySelectorAll('.ambient-shadow');
+            
+            const observerOptions = {
+                threshold: 0.1
+            };
+
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        entry.target.classList.add('fade-in-up');
+                    }
+                });
+            }, observerOptions);
+
+            beliefCards.forEach(card => observer.observe(card));
+        });
+
+        // Hover Parallax Effect for Belief Cards
+        document.querySelectorAll('.ambient-shadow').forEach(card => {
+            card.addEventListener('mousemove', (e) => {
+                const rect = card.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                
+                const centerX = rect.width / 2;
+                const centerY = rect.height / 2;
+                
+                const rotateX = (y - centerY) / 20;
+                const rotateY = (centerX - x) / 20;
+                
+                card.style.transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale(1.02)`;
+            });
+            
+            card.addEventListener('mouseleave', () => {
+                card.style.transform = `perspective(1000px) rotateX(0deg) rotateY(0deg) scale(1)`;
+            });
+        });
+    </script>
+</body></html>

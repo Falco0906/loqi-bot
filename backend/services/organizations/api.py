@@ -79,6 +79,45 @@ def _error_response(exc: Exception) -> JSONResponse:
 # ─── Dependency functions ────────────────────────────────────────────
 
 
+def _make_org_repositories():
+    from services.persistence import REPOSITORY_PROVIDER, RepositoryProvider
+    if REPOSITORY_PROVIDER == RepositoryProvider.SUPABASE:
+        from services.persistence.repositories import (
+            SupabaseInvitationRepository,
+            SupabaseMembershipRepository,
+            SupabaseOrganizationRepository,
+        )
+        org_repo = SupabaseOrganizationRepository()
+        membership_repo = SupabaseMembershipRepository()
+        invitation_repo = SupabaseInvitationRepository()
+    else:
+        from services.organizations.repositories import (
+            InMemoryInvitationRepository,
+            InMemoryMembershipRepository,
+            InMemoryOrganizationRepository,
+        )
+        org_repo = InMemoryOrganizationRepository()
+        membership_repo = InMemoryMembershipRepository()
+        invitation_repo = InMemoryInvitationRepository()
+    return org_repo, membership_repo, invitation_repo
+
+
+def _build_org_deps() -> OrgDeps:
+    from services.organizations.resolver import CurrentOrganizationResolver
+    from services.organizations.services import InvitationService, MembershipService, OrganizationService
+    org_repo, membership_repo, invitation_repo = _make_org_repositories()
+    org_service = OrganizationService(org_repo, membership_repo)
+    membership_service = MembershipService(membership_repo, org_repo)
+    invitation_service = InvitationService(invitation_repo, membership_repo, membership_service)
+    resolver = CurrentOrganizationResolver(org_repo, membership_repo)
+    return OrgDeps(
+        org_service=org_service,
+        membership_service=membership_service,
+        invitation_service=invitation_service,
+        resolver=resolver,
+    )
+
+
 class OrgDeps:
     def __init__(
         self,

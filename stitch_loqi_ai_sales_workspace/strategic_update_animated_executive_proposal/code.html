@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Loqi | Strategic Update</title>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Fonts -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&amp;family=Geist:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "inverse-on-surface": "#f4f0ef",
+                        "on-primary-fixed": "#1c1b1b",
+                        "primary-container": "#1c1b1b",
+                        "outline": "#747878",
+                        "on-secondary-container": "#576660",
+                        "tertiary-fixed-dim": "#cac6c4",
+                        "surface-container": "#f1edec",
+                        "surface-dim": "#ddd9d8",
+                        "on-surface": "#1c1b1b",
+                        "on-secondary": "#ffffff",
+                        "on-primary-container": "#858383",
+                        "tertiary": "#000000",
+                        "on-secondary-fixed": "#111e1a",
+                        "on-tertiary-fixed-variant": "#484645",
+                        "on-error-container": "#93000a",
+                        "on-error": "#ffffff",
+                        "surface-tint": "#5f5e5e",
+                        "surface-container-lowest": "#ffffff",
+                        "surface": "#fdf8f8",
+                        "primary-fixed": "#e5e2e1",
+                        "on-tertiary-container": "#868382",
+                        "outline-variant": "#c4c7c7",
+                        "surface-container-highest": "#e5e2e1",
+                        "primary-fixed-dim": "#c8c6c5",
+                        "primary": "#000000",
+                        "secondary": "#53625c",
+                        "secondary-fixed": "#d6e6df",
+                        "secondary-fixed-dim": "#bacac3",
+                        "secondary-container": "#d3e3dc",
+                        "on-secondary-fixed-variant": "#3c4a44",
+                        "background": "#fdf8f8",
+                        "surface-bright": "#fdf8f8",
+                        "tertiary-container": "#1c1b1a",
+                        "tertiary-fixed": "#e6e2df",
+                        "on-background": "#1c1b1b",
+                        "inverse-surface": "#313030",
+                        "on-tertiary": "#ffffff",
+                        "on-primary": "#ffffff",
+                        "on-primary-fixed-variant": "#474746",
+                        "surface-variant": "#e5e2e1",
+                        "surface-container-low": "#f7f3f2",
+                        "inverse-primary": "#c8c6c5",
+                        "on-tertiary-fixed": "#1c1b1a",
+                        "on-surface-variant": "#444748",
+                        "error-container": "#ffdad6",
+                        "error": "#ba1a1a",
+                        "surface-container-high": "#ebe7e6"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "section-gap": "64px",
+                        "reading-width": "720px",
+                        "container-max": "1200px",
+                        "element-gap": "16px",
+                        "base": "8px",
+                        "gutter": "24px"
+                    },
+                    "fontFamily": {
+                        "display-xl-mobile": ["Libre Caslon Text"],
+                        "body-lg": ["Inter"],
+                        "headline-md": ["Libre Caslon Text"],
+                        "body-md": ["Inter"],
+                        "headline-lg": ["Libre Caslon Text"],
+                        "label-sm": ["Geist"],
+                        "display-xl": ["Libre Caslon Text"],
+                        "label-xs": ["Geist"]
+                    },
+                    "fontSize": {
+                        "display-xl-mobile": ["36px", {"lineHeight": "1.2", "fontWeight": "400"}],
+                        "body-lg": ["18px", {"lineHeight": "1.6", "fontWeight": "400"}],
+                        "headline-md": ["24px", {"lineHeight": "1.4", "fontWeight": "400"}],
+                        "body-md": ["16px", {"lineHeight": "1.5", "fontWeight": "400"}],
+                        "headline-lg": ["32px", {"lineHeight": "1.3", "fontWeight": "400"}],
+                        "label-sm": ["13px", {"lineHeight": "1.2", "letterSpacing": "0.02em", "fontWeight": "500"}],
+                        "display-xl": ["48px", {"lineHeight": "1.1", "letterSpacing": "-0.02em", "fontWeight": "400"}],
+                        "label-xs": ["11px", {"lineHeight": "1.2", "letterSpacing": "0.05em", "fontWeight": "600"}]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+        
+        .ambient-shadow {
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+        }
+
+        .reading-container {
+            max-width: 720px;
+            margin: 0 auto;
+        }
+
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes pulseLoqi {
+            0% { transform: scale(1); opacity: 0.1; }
+            50% { transform: scale(1.1); opacity: 0.2; }
+            100% { transform: scale(1); opacity: 0.1; }
+        }
+
+        @keyframes grain {
+            0%, 100% { transform: translate(0, 0); }
+            10% { transform: translate(-5%, -10%); }
+            20% { transform: translate(-15%, 5%); }
+            30% { transform: translate(7%, -25%); }
+            40% { transform: translate(-5%, 25%); }
+            50% { transform: translate(-15%, 10%); }
+            60% { transform: translate(15%, 0%); }
+            70% { transform: translate(0%, 15%); }
+            80% { transform: translate(3%, 35%); }
+            90% { transform: translate(-10%, 10%); }
+        }
+
+        .noise-overlay {
+            position: fixed;
+            top: -150%;
+            left: -150%;
+            right: -150%;
+            bottom: -150%;
+            width: 300%;
+            height: 300%;
+            background-image: url("https://www.transparenttextures.com/patterns/p6.png");
+            opacity: 0.04;
+            z-index: 100;
+            pointer-events: none;
+            animation: grain 8s steps(10) infinite;
+        }
+
+        .animate-reveal {
+            opacity: 0;
+            animation: fadeInUp 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        .delay-1 { animation-delay: 0.2s; }
+        .delay-2 { animation-delay: 0.4s; }
+        .delay-3 { animation-delay: 0.6s; }
+        .delay-4 { animation-delay: 0.8s; }
+        .delay-5 { animation-delay: 1.0s; }
+
+        .hover-card {
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .hover-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.08);
+        }
+
+        .pulse-star {
+            animation: pulseLoqi 3s ease-in-out infinite;
+        }
+
+        .apply-btn {
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .apply-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.15);
+        }
+
+        .line-divider {
+            height: 0.5px;
+            background-color: #E2E2E0;
+            width: 100%;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-surface font-body-md selection:bg-primary-fixed relative overflow-x-hidden">
+<div class="noise-overlay"></div>
+<!-- Sidebar Navigation Shell -->
+<aside class="fixed left-0 top-0 h-screen w-64 bg-surface py-8 px-6 z-40 flex flex-col border-r border-outline-variant/10">
+<div class="mb-12">
+<h1 class="font-display-xl text-primary tracking-tighter">Loqi</h1>
+<p class="font-label-xs text-on-tertiary-fixed-variant mt-1">Chief of Staff</p>
+</div>
+<nav class="flex-1 space-y-4">
+<div class="space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 text-primary font-bold border-r-2 border-primary transition-all opacity-80" href="#">
+<span class="material-symbols-outlined" data-icon="dashboard">dashboard</span>
+<span class="font-body-md">Mission Control</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:text-primary transition-colors" href="#">
+<span class="material-symbols-outlined" data-icon="explore">explore</span>
+<span class="font-body-md">Discovery</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:text-primary transition-colors" href="#">
+<span class="material-symbols-outlined" data-icon="campaign">campaign</span>
+<span class="font-body-md">Campaigns</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:text-primary transition-colors" href="#">
+<span class="material-symbols-outlined" data-icon="menu_book">menu_book</span>
+<span class="font-body-md">Knowledge</span>
+</a>
+</div>
+</nav>
+<div class="mt-auto space-y-4 pt-8 border-t border-outline-variant/20">
+<div class="flex items-center gap-3 px-3 py-2">
+<div class="w-8 h-8 rounded-full bg-secondary-fixed flex items-center justify-center text-xs font-bold text-on-secondary-fixed-variant overflow-hidden">
+<img class="w-full h-full object-cover" data-alt="A professional studio portrait of a sophisticated executive, warm ambient lighting, high-end editorial photography style, muted tones of charcoal and soft white." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDrygdpvoikpXnLGXzXRhcKQcrPEO1HVVdV_I_y2Gg8m7Ka23o-o_e6S9llV4ewYmpIYojNDQVIrVT3Dd0GCOHp5V9aR2-RcG0sUhUVTlqmqnpN8PgRP2ksKWzvPR-1iK_djrcwMasiKR4rVoP_wZyPbLB_FaJUgITk8kBIjp5phnODGvT_4Y9-hqzvWsqST0P7JYHPTAG5fR8QgY3TXKmM5LLdaWiuD_fRzz1OKMvNNBFYgBbUhESE"/>
+</div>
+<div>
+<p class="font-label-xs font-bold">Executive Profile</p>
+<p class="text-[10px] text-on-surface-variant">Strategic Plan Active</p>
+</div>
+</div>
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:text-primary transition-colors" href="#">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+<span class="font-label-sm">Settings</span>
+</a>
+</div>
+</aside>
+<!-- Top Navigation Shell -->
+<header class="fixed top-0 right-0 w-[calc(100%-16rem)] h-20 bg-surface/50 backdrop-blur-md flex justify-between items-center px-12 z-30">
+<div class="flex items-center gap-8">
+<nav class="flex items-center gap-6">
+<a class="font-label-sm text-primary font-semibold border-b border-primary py-1" href="#">Directives</a>
+<a class="font-label-sm text-on-surface-variant hover:text-primary transition-all" href="#">Summaries</a>
+<a class="font-label-sm text-on-surface-variant hover:text-primary transition-all" href="#">Archive</a>
+</nav>
+</div>
+<div class="flex items-center gap-6">
+<div class="relative flex items-center bg-surface-container-low px-4 py-2 rounded-full w-64 border border-outline-variant/20">
+<span class="material-symbols-outlined text-on-surface-variant text-sm mr-2" data-icon="search">search</span>
+<input class="bg-transparent border-none focus:ring-0 text-sm w-full p-0" placeholder="Search strategy..." type="text"/>
+</div>
+<button class="text-on-surface-variant hover:text-primary"><span class="material-symbols-outlined" data-icon="notifications">notifications</span></button>
+<button class="text-on-surface-variant hover:text-primary"><span class="material-symbols-outlined" data-icon="account_circle">account_circle</span></button>
+</div>
+</header>
+<!-- Main Content Area -->
+<main class="ml-64 pt-32 pb-40 px-12 min-h-screen">
+<div class="reading-container">
+<!-- Header Section -->
+<section class="animate-reveal mb-section-gap">
+<span class="font-label-xs text-primary-fixed-variant uppercase tracking-[0.2em] mb-4 block">Executive Briefing</span>
+<h1 class="font-headline-lg text-on-surface mb-4">Strategic Update</h1>
+<p class="font-body-lg text-on-surface-variant max-w-xl">
+                    I've analyzed how this decision affects your business. Here's the plan I recommend for the shift upmarket.
+                </p>
+</section>
+<!-- Understanding Section -->
+<section class="animate-reveal delay-1 mb-section-gap">
+<div class="bg-surface-container-lowest p-element-gap rounded-xl ambient-shadow border border-outline-variant/10">
+<div class="flex items-start gap-4">
+<span class="material-symbols-outlined text-primary mt-1" data-icon="lightbulb">lightbulb</span>
+<div>
+<h2 class="font-label-sm text-on-surface mb-2 uppercase tracking-wider">The Understanding</h2>
+<p class="font-headline-md italic leading-relaxed text-on-surface">
+                                "I understand that your company is shifting its focus toward larger enterprise customers rather than smaller businesses."
+                            </p>
+</div>
+</div>
+</div>
+</section>
+<!-- What Will Change Section (Bento Cards) -->
+<section class="animate-reveal delay-2 mb-section-gap">
+<h3 class="font-label-sm text-on-surface-variant uppercase tracking-widest mb-6">Structural Adjustments</h3>
+<div class="grid grid-cols-2 gap-4">
+<div class="bg-white p-6 rounded-xl ambient-shadow border border-outline-variant/10 hover-card group">
+<div class="flex justify-between items-start mb-4">
+<span class="material-symbols-outlined text-primary" data-icon="explore">explore</span>
+<span class="text-[10px] font-bold text-on-surface-variant">DISCOVERY</span>
+</div>
+<h4 class="font-headline-md mb-2">Targeted Research</h4>
+<p class="font-body-md text-on-surface-variant text-sm leading-relaxed">Future research will prioritize companies with 200+ employees and specific technographic stacks.</p>
+</div>
+<div class="bg-white p-6 rounded-xl ambient-shadow border border-outline-variant/10 hover-card group">
+<div class="flex justify-between items-start mb-4">
+<span class="material-symbols-outlined text-primary" data-icon="campaign">campaign</span>
+<span class="text-[10px] font-bold text-on-surface-variant">CAMPAIGNS</span>
+</div>
+<h4 class="font-headline-md mb-2">High-Value Outreach</h4>
+<p class="font-body-md text-on-surface-variant text-sm leading-relaxed">Automation triggers will shift from volume-based to account-based engagement patterns.</p>
+</div>
+<div class="bg-white p-6 rounded-xl ambient-shadow border border-outline-variant/10 hover-card group col-span-2">
+<div class="flex items-center gap-4">
+<div class="flex-1">
+<div class="flex justify-between items-start mb-2">
+<span class="material-symbols-outlined text-primary" data-icon="menu_book">menu_book</span>
+<span class="text-[10px] font-bold text-on-surface-variant">KNOWLEDGE</span>
+</div>
+<h4 class="font-headline-md mb-2">Enterprise Intelligence</h4>
+<p class="font-body-md text-on-surface-variant text-sm leading-relaxed">Updating competitive battlecards to focus on enterprise-grade security and compliance requirements.</p>
+</div>
+<div class="w-1/3 bg-surface-container-low h-24 rounded-lg flex items-center justify-center border border-dashed border-outline-variant overflow-hidden">
+<img class="w-full h-full object-cover grayscale opacity-50" data-alt="A clean, minimalist 3D rendering of architectural layers stacked neatly, symbolizing knowledge structures and deep hierarchy. Professional lighting with soft ambient occlusion and a monochrome gray palette." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDSoT6urfim_Dslc35MHxxG8pMTo7ygspDFcXogWxmua-VWr9VGV9FYzGgxBUZUyNcnCKo6zkApUO4Ir11FmTFfcIczebRUv3ynsRdp_1C2jVlL-Y7J_AdIMo0nc3c-pEuUFozl-TSZ6R0qJDgxh15P4fo_m6umQkJozaaQKh4R0hk83Z-dXttvUhDNfrOJ0PsEv07_ZjB04dZ3iM3L3EdiWSDJTjkCllwqJvJgTZ4MAegu6OhAxvv_"/>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Potential Impact Section -->
+<section class="animate-reveal delay-3 mb-section-gap">
+<h3 class="font-label-sm text-on-surface-variant uppercase tracking-widest mb-6">Strategic Impact</h3>
+<div class="space-y-4">
+<div class="flex items-center justify-between py-4 border-b border-outline-variant/20">
+<div class="flex items-center gap-4">
+<div class="w-2 h-2 rounded-full bg-error"></div>
+<span class="font-body-md">Prospect Realignment</span>
+</div>
+<span class="font-label-sm text-on-surface-variant italic">31 SMB prospects may no longer match</span>
+</div>
+<div class="flex items-center justify-between py-4 border-b border-outline-variant/20">
+<div class="flex items-center gap-4">
+<div class="w-2 h-2 rounded-full bg-secondary"></div>
+<span class="font-body-md">Sales Velocity</span>
+</div>
+<span class="font-label-sm text-on-surface-variant italic">Sales cycles may lengthen by ~45%</span>
+</div>
+<div class="flex items-center justify-between py-4 border-b border-outline-variant/20">
+<div class="flex items-center gap-4">
+<div class="w-2 h-2 rounded-full bg-secondary"></div>
+<span class="font-body-md">Initial Engagement</span>
+</div>
+<span class="font-label-sm text-on-surface-variant italic">Reply rates might temporarily dip during transition</span>
+</div>
+</div>
+</section>
+<!-- Recommendation Section -->
+<section class="animate-reveal delay-4 mb-section-gap">
+<div class="bg-primary text-on-primary p-8 rounded-2xl relative overflow-hidden group">
+<div class="relative z-10">
+<span class="font-label-xs text-on-primary/60 uppercase tracking-widest mb-2 block">The Loqi Recommendation</span>
+<h4 class="font-headline-lg mb-6">"I advise that we apply this transition gradually over the next seven days to prevent sudden operational friction."</h4>
+<div class="flex gap-4">
+<div class="h-1 flex-1 bg-on-primary/20 rounded-full overflow-hidden">
+<div class="h-full bg-on-primary w-1/3"></div>
+</div>
+<span class="font-label-xs">Phase 1: Knowledge Re-indexing</span>
+</div>
+</div>
+<div class="absolute -right-16 -bottom-16 pulse-star pointer-events-none">
+<span class="material-symbols-outlined text-[240px] text-on-primary" data-icon="auto_awesome">auto_awesome</span>
+</div>
+</div>
+</section>
+<!-- What Will Not Change -->
+<section class="animate-reveal delay-5 grid grid-cols-2 gap-element-gap">
+<div>
+<h3 class="font-label-sm text-on-surface-variant uppercase tracking-widest mb-4">Stable Continuity</h3>
+<ul class="space-y-3">
+<li class="flex items-center gap-3 font-body-md text-on-surface">
+<span class="material-symbols-outlined text-on-tertiary-container text-lg" data-icon="check_circle">check_circle</span>
+                            Scheduled Meetings
+                        </li>
+<li class="flex items-center gap-3 font-body-md text-on-surface">
+<span class="material-symbols-outlined text-on-tertiary-container text-lg" data-icon="check_circle">check_circle</span>
+                            Approved active campaigns
+                        </li>
+<li class="flex items-center gap-3 font-body-md text-on-surface">
+<span class="material-symbols-outlined text-on-tertiary-container text-lg" data-icon="check_circle">check_circle</span>
+                            Historical performance data
+                        </li>
+</ul>
+</div>
+<div>
+<h3 class="font-label-sm text-on-surface-variant uppercase tracking-widest mb-4">Affected Areas</h3>
+<div class="flex flex-wrap gap-2">
+<span class="px-3 py-1 bg-surface-container-high rounded-full font-label-sm">Mission Control</span>
+<span class="px-3 py-1 bg-surface-container-high rounded-full font-label-sm">Discovery</span>
+<span class="px-3 py-1 bg-surface-container-high rounded-full font-label-sm">Campaigns</span>
+<span class="px-3 py-1 bg-surface-container-high rounded-full font-label-sm">Knowledge</span>
+<span class="px-3 py-1 bg-surface-container-high rounded-full font-label-sm">Inbox</span>
+</div>
+</div>
+</section>
+</div>
+</main>
+<!-- Calm Footer Actions -->
+<footer class="fixed bottom-0 right-0 w-[calc(100%-16rem)] p-8 flex justify-center z-50 bg-gradient-to-t from-background via-background/90 to-transparent">
+<div class="flex items-center gap-4 bg-surface rounded-full px-4 py-3 ambient-shadow border border-outline-variant/10">
+<button class="apply-btn px-8 py-3 bg-primary text-on-primary rounded-full font-label-sm">
+                Apply Strategy
+            </button>
+<button class="px-8 py-3 bg-surface text-on-surface border border-outline-variant/30 rounded-full font-label-sm hover:bg-surface-container-low transition-colors">
+                Modify Plan
+            </button>
+<button class="px-6 py-3 text-on-surface-variant hover:text-error transition-colors font-label-sm">
+                Cancel
+            </button>
+</div>
+</footer>
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const sections = document.querySelectorAll('.animate-reveal');
+        
+        // Simple Intersection Observer to ensure animations fire if user scrolls fast
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    // Animation is handled via CSS and delays, but we can force it here if needed
+                    entry.target.style.opacity = "1";
+                }
+            });
+        }, { threshold: 0.05 });
+
+        sections.forEach(section => {
+            observer.observe(section);
+        });
+    });
+</script>
+</body></html>

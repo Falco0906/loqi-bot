@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 @dataclass
 class BillingConfig:
     provider: str = "stripe"
+    provider_mode: str = "mock"
     stripe_secret_key: str = ""
     stripe_publishable_key: str = ""
     stripe_webhook_secret: str = ""

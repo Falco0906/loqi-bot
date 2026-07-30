@@ -12,6 +12,7 @@ from services.identity.exceptions import (
     RegistrationSessionExpiredException,
     RegistrationSessionNotFoundException,
     RegistrationSessionWrongStatusException,
+    UserNotFoundException,
 )
 from services.identity.contracts import ExternalIdentity as ExternalIdentityDTO
 from services.identity.models import (
@@ -40,6 +41,7 @@ from services.identity.services.session_service import SessionService
 from services.identity.services.token_service import TokenService
 from services.identity.services.user_service import UserService
 from services.identity.services.verification_service import VerificationService
+from services.identity.schemas import MeOrganizationResponse, MeResponse
 from services.security.crypto import CryptoService
 
 
@@ -96,10 +98,12 @@ class AuthService:
         password_svc: PasswordService,
         session_svc: SessionService,
         token_svc: TokenService,
+        app_url: str = "http://localhost:3000",
         external_identity_repo: ExternalIdentityRepository | None = None,
         provider_registry: IdentityProviderRegistry | None = None,
     ) -> None:
         self._email = email_provider
+        self._app_url = app_url.rstrip("/")
         self._crypto = crypto
         self._reg_session_repo = registration_session_repo
         self._verification_token_repo = verification_token_repo
@@ -142,12 +146,13 @@ class AuthService:
             verification_token_id=token.id,
             expires_at=now + timedelta(seconds=ttl),
         )
-        saved = await self._reg_session_repo.save(reg_session)
+        saved =         await self._reg_session_repo.save(reg_session)
 
-        verification_url = f"/verify?token={raw}"
+        verification_url = f"{self._app_url}/verify-email?token={raw}"
         await self._email.send_verification_email(email, verification_url)
 
         result = RegistrationResult()
+
         result.registration_session = saved
         result.raw_token = raw
         return result
@@ -394,6 +399,35 @@ class AuthService:
 
         await self._link_external(saved_user.id, external_dto)
         return saved_user
+
+    async def get_current_user_info(self, user_id: str) -> MeResponse:
+        user = await self._user.get_user(user_id)
+        if user is None:
+            raise UserNotFoundException(user_id)
+
+        email_identity = await self._email_identity_repo.find_primary_by_user_id(user_id)
+
+        memberships = await self._membership.list_user_memberships(user_id)
+        org_info = None
+        if memberships:
+            m = memberships[0]
+            org = await self._org.get_organization(m.organization_id)
+            if org:
+                org_info = MeOrganizationResponse(
+                    id=org.id,
+                    name=org.name,
+                    slug=org.slug,
+                    role=m.role,
+                )
+
+        return MeResponse(
+            id=user.id,
+            email=email_identity.email if email_identity else "",
+            display_name=user.display_name,
+            avatar_url=user.avatar_url or "",
+            onboarding_complete=user.is_onboarding_complete,
+            organization=org_info,
+        )
 
     async def refresh(self, raw_refresh_token: str) -> RefreshResult:
         new_token, new_raw = await self._token.rotate_refresh_token(raw_refresh_token)

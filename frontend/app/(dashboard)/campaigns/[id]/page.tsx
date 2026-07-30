@@ -1,586 +1,260 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
-import { getCampaign, updateCampaign, generateCampaignDrafts, getCampaignGenerationStatus, getCampaignLaunchProgress } from "../../../../lib/api";
-import DraftReviewWorkspace from "../../../../components/draft/DraftReviewWorkspace";
-import CampaignStatusBadge from "../../../../components/campaigns/CampaignStatusBadge";
-import CampaignDraftList from "../../../../components/campaigns/CampaignDraftList";
-import Icon from "../../../../components/shared/Icon";
-import { toast } from "../../../../components/shared/Toast";
-import { usePageContext } from "../../../../hooks/usePageContext";
-import { useActionHandlers } from "../../../../hooks/useActionHandlers";
+import { useParams } from "next/navigation";
+import WorkspaceContainer from "../../../../components/layout/WorkspaceContainer";
+import AppPage from "../../../../components/primitives/AppPage";
+import { useData } from "../../../../lib/hooks/use-data";
+import { fetchCampaign } from "../../../../lib/repositories";
 
-const ACTIVE_SESSION_KEY = "loqi_active_session_token";
-
-const TABS = ["Overview", "Strategy", "Leads", "Drafts", "Replies", "Analytics", "Settings"] as const;
-type Tab = typeof TABS[number];
+function LoadingSkeleton() {
+  return (
+    <div className="reading-column py-16 flex flex-col gap-16">
+      {[1, 2, 3, 4, 5].map((i) => (
+        <div key={i} className="space-y-4 animate-skeleton-pulse" style={{ animationDelay: `${i * 0.1}s` }}>
+          <div className="h-5 w-3/4 bg-surface-high/50 rounded-lg" />
+          <div className="h-3 w-1/2 bg-surface-high/50 rounded-lg" />
+          <div className="h-3 w-2/3 bg-surface-high/50 rounded-lg" />
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function CampaignDetailPage() {
   const params = useParams();
-  const router = useRouter();
   const campaignId = params.id as string;
-  const [sessionToken, setSessionToken] = useState<string | null>(null);
-  const [campaign, setCampaign] = useState<Record<string, unknown> | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<Tab>("Overview");
-  const [generating, setGenerating] = useState(false);
-  const [genProgress, setGenProgress] = useState<{ total: number; completed: number } | null>(null);
-  const [launching, setLaunching] = useState(false);
-  const [launchProgress, setLaunchProgress] = useState<{ sent: number; total: number } | null>(null);
-  const [campaignError, setCampaignError] = useState<string | null>(null);
-  const [nameEdit, setNameEdit] = useState("");
-
-  usePageContext("Campaign", {
-    campaign_id: campaignId,
-    campaign_name: campaign?.name ?? null,
-    status: campaign?.status ?? null,
-    lead_count: campaign?.lead_count ?? 0,
-    pending_drafts: campaign?.pending_drafts ?? 0,
-    approved_drafts: campaign?.approved_drafts ?? 0,
-    total_drafts: (campaign?.pending_drafts as number ?? 0) + (campaign?.approved_drafts as number ?? 0),
-    tab,
-    generating,
-    messaging_strategy: campaign?.messaging_strategy ?? null,
-  });
-
-  useActionHandlers({
-    generate_drafts: handleGenerateDrafts,
-  });
-
-  useEffect(() => {
-    const token = (() => {
-      try { return localStorage.getItem(ACTIVE_SESSION_KEY); }
-      catch { return null; }
-    })();
-    if (token) setSessionToken(token);
-  }, []);
-
-  useEffect(() => { setNameEdit(campaign?.name as string || ""); }, [campaign?.name]);
-
-  async function refreshCampaign() {
-    if (!sessionToken) return;
-    try {
-      const res = await getCampaign(sessionToken, campaignId);
-      if (res.ok) setCampaign(res.campaign);
-    } catch { /* silent */ }
-  }
-
-  useEffect(() => {
-    if (!sessionToken) return;
-    (async () => {
-      setLoading(true);
-      try {
-        await refreshCampaign();
-      } catch { /* silent */ } finally {
-        setLoading(false);
-      }
-    })();
-  }, [sessionToken, campaignId]);
-
-  async function handleGenerateDrafts() {
-    if (!sessionToken) return;
-    setGenerating(true);
-    setGenProgress(null);
-    setCampaignError(null);
-    try {
-      const res = await generateCampaignDrafts(sessionToken, campaignId);
-      if (res.ok) {
-        await updateCampaign(sessionToken, campaignId, { status: "generating" });
-        await refreshCampaign();
-        const poll = setInterval(async () => {
-          try {
-            const status = await getCampaignGenerationStatus(sessionToken, campaignId);
-            if (status.ok) {
-              if (status.active === false) {
-                clearInterval(poll);
-                setGenerating(false);
-                setGenProgress(null);
-                await updateCampaign(sessionToken, campaignId, { status: "draft_review" });
-                await refreshCampaign();
-              } else {
-                setGenProgress({ total: status.total || 0, completed: status.completed || 0 });
-              }
-            }
-          } catch { /* silent */ }
-        }, 800);
-      }
-    } catch (err) {
-      setGenerating(false);
-      setCampaignError(err instanceof Error ? err.message : "Generation failed");
-    }
-  }
+  const { data, loading, error, retry } = useData(() => fetchCampaign(campaignId));
 
   if (loading) {
     return (
-      <div className="h-full flex flex-col overflow-hidden animate-fade-in">
-        <div className="shrink-0 border-b border-outline-variant/10 px-6 py-5">
-          <div className="max-w-6xl mx-auto flex items-center gap-4">
-            <div className="h-8 w-8 animate-skeleton-pulse bg-surface-high/50 rounded-lg" />
-            <div className="space-y-2">
-              <div className="h-6 w-64 animate-skeleton-pulse bg-surface-high/50 rounded-lg" />
-              <div className="h-4 w-40 animate-skeleton-pulse bg-surface-high/50 rounded-lg" />
-            </div>
-          </div>
-        </div>
-        <div className="shrink-0 border-b border-outline-variant/10 px-6">
-          <div className="max-w-6xl mx-auto flex gap-1 py-3">
-            {[1, 2, 3, 4, 5, 6, 7].map((i) => (
-              <div key={i} className="h-8 w-20 animate-skeleton-pulse bg-surface-high/50 rounded-lg" />
-            ))}
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto px-6 py-6">
-          <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-5">
-            <div className="lg:col-span-2 space-y-5">
-              <div className="h-48 rounded-2xl bg-surface-lowest border border-outline-variant/10 animate-skeleton-pulse" />
-              <div className="h-32 rounded-2xl bg-surface-lowest border border-outline-variant/10 animate-skeleton-pulse" />
-            </div>
-            <div className="space-y-5">
-              <div className="h-64 rounded-2xl bg-surface-lowest border border-outline-variant/10 animate-skeleton-pulse" />
-            </div>
-          </div>
-        </div>
-      </div>
+      <WorkspaceContainer>
+        <AppPage>
+          <LoadingSkeleton />
+        </AppPage>
+      </WorkspaceContainer>
     );
   }
 
-  if (!campaign) {
+  if (error) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-center px-6 animate-fade-in">
-        <div className="w-16 h-16 rounded-2xl bg-surface-high/30 flex items-center justify-center text-on-surface-variant/40 mb-4">
-          <Icon name="search_off" className="text-3xl" />
-        </div>
-        <p className="text-body-lg text-on-surface-variant/80 font-medium">Campaign not found</p>
-        <p className="mt-1.5 text-body-md text-on-surface-variant/50 max-w-sm">
-          This campaign may have been deleted or the link may be incorrect.
-        </p>
-        <button
-          onClick={() => router.push("/campaigns")}
-          className="mt-6 inline-flex items-center justify-center rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-on-primary hover:brightness-110 active:scale-[0.97] transition-all"
-        >
-          Back to Campaigns
-        </button>
-      </div>
+      <WorkspaceContainer>
+        <AppPage>
+          <div className="reading-column py-16 text-center">
+            <p className="text-lg text-error mb-4">{error}</p>
+            <button
+              onClick={retry}
+              className="bg-primary text-on-primary px-6 py-2 rounded-full text-sm font-medium hover:opacity-90 transition-opacity"
+            >
+              Retry
+            </button>
+          </div>
+        </AppPage>
+      </WorkspaceContainer>
     );
   }
 
-  const name = campaign.name as string;
-
-  const status = campaign.status as string;
-  const leadCount = campaign.lead_count as number;
-  const pendingDrafts = campaign.pending_drafts as number;
-  const approvedDrafts = campaign.approved_drafts as number;
-  const strategy = campaign.strategy as Record<string, unknown> | undefined;
-  const searchQuery = campaign.search_query as string;
-  const createdAt = campaign.created_at as string;
+  if (!data) {
+    return (
+      <WorkspaceContainer>
+        <AppPage>
+          <div className="reading-column py-16 text-center">
+            <p className="text-lg text-on-surface-variant/60">Campaign not found</p>
+          </div>
+        </AppPage>
+      </WorkspaceContainer>
+    );
+  }
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
-      {/* Header */}
-      <div className="shrink-0 border-b border-outline-variant/10 px-6 py-4">
-        <div className="flex items-center justify-between max-w-6xl mx-auto">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => router.push("/campaigns")}
-              className="p-1.5 rounded-lg hover:bg-surface-high text-on-surface-variant/60 hover:text-on-surface transition-all"
-            >
-              <Icon name="chevron_right" className="rotate-180 text-lg" />
-            </button>
-            <div>
-              <div className="flex items-center gap-3">
-                <h1 className="text-headline-md text-on-surface font-bold">{name}</h1>
-                <CampaignStatusBadge status={status} />
-              </div>
-              <p className="text-label-sm text-on-surface-variant/60 mt-0.5">
-                {leadCount} {leadCount === 1 ? "lead" : "leads"} &middot;
-                Created {createdAt ? new Date(createdAt).toLocaleDateString() : ""}
+    <WorkspaceContainer>
+      <AppPage>
+        <div className="reading-column py-16 flex flex-col gap-16">
+
+          {/* 1. Narrative Briefing */}
+          {data.objective && (
+            <section className="animate-conversation-fade">
+              <p className="text-[28px] font-serif text-on-surface leading-relaxed italic opacity-90">
+                &ldquo;{data.objective}&rdquo;
               </p>
-            </div>
-          </div>
-        </div>
-      </div>
+            </section>
+          )}
 
-      {/* Tabs */}
-      <div className="shrink-0 border-b border-outline-variant/10 px-6">
-        <div className="max-w-6xl mx-auto flex gap-1 -mb-px">
-          {TABS.map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`relative px-4 py-3 text-sm font-medium transition-all duration-150 focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2 ${
-                tab === t
-                  ? "text-primary"
-                  : "text-on-surface-variant/60 hover:text-on-surface"
-              }`}
-            >
-              {t}
-              {tab === t && (
-                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full" />
-              )}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto px-6 py-6">
-        <div className="max-w-6xl mx-auto">
-          {tab === "Overview" && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-              <div className="lg:col-span-2 space-y-5">
-                <div className="card-base p-6">
-                  <h2 className="text-body-lg text-on-surface font-bold mb-4">Campaign Summary</h2>
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="bg-surface/50 rounded-xl p-4 transition-all duration-150 hover:bg-surface-high/30">
-                      <p className="text-label-sm text-on-surface-variant/60 mb-1">Status</p>
-                      <CampaignStatusBadge status={status} />
-                    </div>
-                    <div className="bg-surface/50 rounded-xl p-4 transition-all duration-150 hover:bg-surface-high/30">
-                      <p className="text-label-sm text-on-surface-variant/60 mb-1">Leads</p>
-                      <p className="text-headline-sm text-on-surface font-bold">{leadCount}</p>
-                    </div>
-                    <div className="bg-surface/50 rounded-xl p-4 transition-all duration-150 hover:bg-surface-high/30">
-                      <p className="text-label-sm text-on-surface-variant/60 mb-1">Drafts</p>
-                      <p className="text-headline-sm text-on-surface font-bold">
-                        {pendingDrafts + approvedDrafts}
-                      </p>
-                      <p className="text-label-sm text-on-surface-variant/40 mt-1">
-                        {pendingDrafts} pending &middot; {approvedDrafts} approved
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {generating && genProgress ? (
-                  <div className="card-base border-primary/20 bg-primary-container/5 p-6">
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="w-3 h-3 rounded-full bg-primary animate-pulse" />
-                      <p className="text-body-md text-on-surface font-bold">Generating drafts...</p>
-                    </div>
-                    <div className="w-full bg-outline-variant/10 rounded-full h-2 overflow-hidden">
-                      <div
-                        className="h-full bg-primary rounded-full transition-all duration-500"
-                        style={{ width: `${genProgress.total > 0 ? Math.round((genProgress.completed / genProgress.total) * 100) : 0}%` }}
-                      />
-                    </div>
-                    <p className="text-label-sm text-on-surface-variant/60 mt-2">
-                      {genProgress.completed} of {genProgress.total} drafts
-                    </p>
-                  </div>
-                ) : null}
-
-                {campaignError ? (
-                  <div className="rounded-xl border border-error/20 bg-error/10 px-5 py-4">
-                    <div className="flex items-start gap-3">
-                      <Icon name="warning" className="text-error text-lg mt-0.5 shrink-0" />
-                      <div>
-                        <p className="text-body-md text-on-surface font-bold mb-1">Something went wrong</p>
-                        <p className="text-label-sm text-on-surface-variant/80">{campaignError}</p>
-                        <p className="text-label-sm text-on-surface-variant/40 mt-1">
-                          Try generating drafts again. If the problem persists, check that your campaign has leads assigned.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
+          {/* 2. Campaign Identity */}
+          <section className="animate-conversation-fade">
+            <div className="flex justify-between items-end border-b border-outline-variant/20 pb-4">
+              <div>
+                <span className="text-[11px] uppercase tracking-widest text-on-surface-variant/50 font-medium">
+                  Active Campaign
+                </span>
+                <h3 className="text-2xl font-serif text-on-surface mt-1 font-normal">{data.name}</h3>
               </div>
-
-              <div className="space-y-5">
-                <div className="card-base p-5">
-                  <h2 className="text-body-md text-on-surface font-bold mb-3">Quick Actions</h2>
-                  <div className="space-y-2">
-                    {status === "planning" || status === "ready" ? (
-                      <button
-                        onClick={handleGenerateDrafts}
-                        disabled={generating}
-                        className="w-full inline-flex items-center justify-center px-4 py-2.5 rounded-lg bg-primary text-on-primary text-sm font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
-                      >
-                        {generating && (
-                          <svg className="-ml-1 mr-2 h-4 w-4 animate-spin text-on-primary/80" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                          </svg>
-                        )}
-                        {generating ? "Generating Drafts..." : "Generate Drafts"}
-                      </button>
-                    ) : null}
-                    {status === "draft_review" && pendingDrafts > 0 ? (
-                      <Link
-                        href={`/draft?campaign=${campaignId}`}
-                        className="w-full inline-flex items-center justify-center px-4 py-2.5 rounded-lg bg-secondary text-on-primary text-sm font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
-                      >
-                        Continue Draft Review ({pendingDrafts})
-                      </Link>
-                    ) : null}
-                    {status === "generating" ? (
-                      <button
-                        disabled
-                        className="w-full inline-flex items-center justify-center px-4 py-2.5 rounded-lg bg-outline-variant/20 text-on-surface-variant/60 text-sm font-medium cursor-not-allowed"
-                      >
-                        <svg className="mr-2 h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                        </svg>
-                        Generating Drafts...
-                      </button>
-                    ) : null}
-                    {status === "ready_to_send" ? (
-                      launching ? (
-                        <div className="card-base border-primary/20 bg-primary-container/5 p-4">
-                          <div className="flex items-center gap-3 mb-3">
-                            <div className="w-3 h-3 rounded-full bg-primary animate-pulse" />
-                            <p className="text-body-md text-on-surface font-bold">Launching campaign...</p>
-                          </div>
-                          {launchProgress ? (
-                            <>
-                              <div className="w-full bg-outline-variant/10 rounded-full h-2 overflow-hidden">
-                                <div
-                                  className="h-full bg-primary rounded-full transition-all duration-500"
-                                  style={{ width: `${launchProgress.total > 0 ? Math.round((launchProgress.sent / launchProgress.total) * 100) : 0}%` }}
-                                />
-                              </div>
-                              <p className="text-label-sm text-on-surface-variant/60 mt-2">
-                                {launchProgress.sent} of {launchProgress.total} sent
-                              </p>
-                            </>
-                          ) : null}
-                        </div>
-                      ) : (
-                        <button
-                          onClick={async () => {
-                            if (sessionToken) {
-                              setLaunching(true);
-                              setLaunchProgress(null);
-                              try {
-                                await updateCampaign(sessionToken, campaignId, { status: "completed" });
-                                const poll = setInterval(async () => {
-                                  try {
-                                  const res = await getCampaignLaunchProgress(sessionToken, campaignId);
-                                    if (res.ok) {
-                                      setLaunchProgress({ sent: res.launch_sent, total: res.launch_total });
-                                      if (res.launch_complete) {
-                                        clearInterval(poll);
-                                        setLaunching(false);
-                                        toast("success", `Campaign launched — ${res.launch_sent} emails sent`);
-                                        await refreshCampaign();
-                                      }
-                                    }
-                                  } catch { /* silent */ }
-                                }, 1000);
-                              } catch {
-                                setLaunching(false);
-                                toast("error", "Failed to launch campaign");
-                              }
-                            }
-                          }}
-                          className="w-full inline-flex items-center justify-center px-4 py-2.5 rounded-lg bg-primary text-on-primary text-sm font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
-                        >
-                          <Icon name="rocket_launch" className="text-sm mr-2" />
-                          Launch Campaign
-                        </button>
-                      )
-                    ) : null}
-                    <button
-                      onClick={() => router.push("/discovery")}
-                      className="w-full inline-flex items-center justify-center px-4 py-2.5 rounded-lg border border-outline-variant/20 text-on-surface text-sm font-medium transition-all duration-150 hover:border-primary/40 hover:text-primary active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
-                    >
-                      Add More Leads
-                    </button>
-                    {status !== "archived" ? (
-                      <button
-                        onClick={async () => {
-                          if (sessionToken) {
-                            await updateCampaign(sessionToken, campaignId, { status: "archived" });
-                            toast("info", "Campaign paused");
-                            router.push("/campaigns");
-                          }
-                        }}
-                        className="w-full inline-flex items-center justify-center px-4 py-2.5 rounded-lg border border-error/20 text-error text-sm font-medium transition-all duration-150 hover:bg-error/5 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
-                      >
-                        Pause Campaign
-                      </button>
-                    ) : null}
-                  </div>
+              <div className="flex gap-8 text-right">
+                <div>
+                  <p className="text-[11px] uppercase tracking-widest text-on-surface-variant/50 font-medium">Status</p>
+                  <p className="text-sm font-medium capitalize">{data.status.replace(/_/g, " ")}</p>
                 </div>
-              </div>
-            </div>
-          )}
-
-          {tab === "Strategy" && (
-            <div className="max-w-3xl">
-              {strategy && strategy.campaigns ? (
-                <div className="space-y-5">
-                  <div className="card-base border-primary/15 bg-primary-container/5 px-6 py-5">
-                    <div className="flex items-start gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
-                        <Icon name="lightbulb" className="text-primary text-base" />
-                      </div>
-                      <div>
-                        <p className="text-label-sm text-primary/70 uppercase tracking-wider font-medium mb-1">
-                          Strategy Overview
-                        </p>
-                        <p className="text-body-md text-on-surface leading-relaxed whitespace-pre-line">
-                          {(strategy.overall_recommendation as string) || ""}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-4">
-                    {(strategy.campaigns as Array<Record<string, unknown>>).map((sc: Record<string, unknown>, i: number) => (
-                      <div
-                        key={sc.id as string}
-                        className="card-base overflow-hidden"
-                      >
-                        <div className="px-5 py-4 border-b border-outline-variant/10">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                              <Icon name="campaign" className="text-primary text-sm" />
-                            </div>
-                            <div>
-                              <p className="text-body-md text-on-surface font-bold">
-                                Campaign {String.fromCharCode(65 + i)}
-                              </p>
-                              <p className="text-label-sm text-on-surface-variant/60">{sc.name as string}</p>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="px-5 py-4 space-y-3">
-                          <div className="bg-surface/50 rounded-xl px-4 py-3">
-                            <p className="text-label-sm text-on-surface-variant/60 mb-1">Reason</p>
-                            <p className="text-body-sm text-on-surface">{sc.reason as string}</p>
-                          </div>
-                          <div className="bg-primary-container/5 rounded-xl px-4 py-3 border border-primary/10">
-                            <p className="text-label-sm text-primary/70 mb-1">Messaging</p>
-                            <p className="text-body-sm text-on-surface">{sc.messaging_angle as string}</p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-16 text-center">
-                  <div className="w-12 h-12 rounded-xl bg-surface-high/30 flex items-center justify-center text-on-surface-variant/40 mb-3">
-                    <Icon name="insights" className="text-2xl" />
-                  </div>
-                  <p className="text-body-md text-on-surface-variant/60">No strategy data</p>
-                  <p className="text-label-sm text-on-surface-variant/40 mt-1">
-                    Run campaign analysis from Discovery to generate a strategy.
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {tab === "Leads" && (
-            <div className="max-w-4xl">
-              {leadCount > 0 ? (
-                <div className="space-y-3">
-                  {(campaign.leads as Array<Record<string, unknown>> | undefined)?.map((ld, i) => {
-                    const name = (ld.name as string) || `${ld.first_name || ""} ${ld.last_name || ""}`.trim() || "Unknown";
-                    const company = ld.company as string;
-                    const title = ld.title as string;
-                    return (
-                      <div
-                        key={ld.lead_id as string || ld.id as string || i}
-                        className="card-base p-4 flex items-center justify-between hover:border-outline-variant/20 transition-all"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <p className="text-body-md text-on-surface font-bold truncate">{name}</p>
-                          <p className="text-label-sm text-on-surface-variant/60 truncate">
-                            {[title, company].filter(Boolean).join(" \u2022 ") || "\u2014"}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0 ml-3">
-                          {(ld.buying_signals as string[] | undefined)?.slice(0, 2).map((s) => (
-                            <span
-                              key={s}
-                              className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-medium"
-                            >
-                              {s}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-16 text-center">
-                  <div className="w-12 h-12 rounded-xl bg-surface-high/30 flex items-center justify-center text-on-surface-variant/40 mb-3">
-                    <Icon name="groups" className="text-2xl" />
-                  </div>
-                  <p className="text-body-md text-on-surface-variant/60">No leads in this campaign</p>
-                  <p className="text-label-sm text-on-surface-variant/40 mt-1">Leads will appear once you generate a campaign from Discovery.</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {tab === "Drafts" && sessionToken && (
-            <CampaignDraftList sessionToken={sessionToken} campaignId={campaignId} />
-          )}
-
-          {(tab === "Replies" || tab === "Analytics") && (
-            <div className="flex flex-col items-center justify-center py-16 text-center">
-              <div className="w-12 h-12 rounded-xl bg-surface-high/30 flex items-center justify-center text-on-surface-variant/40 mb-3">
-                <Icon name="insights" className="text-2xl" />
-              </div>
-              <p className="text-body-md text-on-surface-variant/60">Coming soon</p>
-              <p className="text-label-sm text-on-surface-variant/40 mt-1">This feature is in development.</p>
-            </div>
-          )}
-
-          {tab === "Settings" && (
-            <div className="max-w-xl space-y-5">
-              <div className="card-base p-6">
-                <h2 className="text-body-lg text-on-surface font-bold mb-4">Campaign Settings</h2>
-                <div className="space-y-4">
+                {data.createdAt && (
                   <div>
-                    <label className="text-label-sm text-on-surface-variant/60 block mb-1">Campaign Name</label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={nameEdit}
-                        onChange={(e) => setNameEdit(e.target.value)}
-                        className="flex-1 rounded-xl border border-outline-variant/20 bg-surface-low px-4 py-2.5 text-body-md text-on-surface outline-none focus:border-primary/50"
-                      />
-                      <button
-                        onClick={async () => {
-                          if (!sessionToken || !nameEdit.trim()) return;
-                          try {
-                            await updateCampaign(sessionToken, campaignId, { name: nameEdit.trim() });
-                            setCampaign((prev) => prev ? { ...prev, name: nameEdit.trim() } : prev);
-                            toast("success", "Name updated");
-                          } catch { toast("error", "Failed to rename"); }
-                        }}
-                        disabled={!nameEdit.trim() || nameEdit.trim() === name}
-                        className="px-4 py-2 rounded-xl bg-primary text-on-primary text-sm font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.97] disabled:opacity-40"
-                      >
-                        Save
-                      </button>
+                    <p className="text-[11px] uppercase tracking-widest text-on-surface-variant/50 font-medium">Created</p>
+                    <p className="text-sm font-medium">{data.createdAt}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+
+          {/* 3. Narrative Journey */}
+          {data.milestones.length > 0 && (
+            <section className="animate-conversation-fade">
+              <h4 className="text-[11px] uppercase tracking-widest text-on-surface-variant/50 font-medium mb-8">
+                Narrative Journey
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-y-12 gap-x-8">
+                {data.milestones.map((m, i) => (
+                  <div key={i} className={`flex flex-col gap-2 ${m.status === "pending" ? "opacity-40" : ""}`}>
+                    {m.status === "completed" ? (
+                      <span className="material-symbols-outlined text-primary mb-2" style={{ fontVariationSettings: "'FILL' 1" }}>
+                        check_circle
+                      </span>
+                    ) : m.status === "in_progress" ? (
+                      <div className="w-6 h-6 rounded-full border-2 border-primary flex items-center justify-center mb-2">
+                        <div className="w-2 h-2 bg-primary rounded-full animate-pulse" />
+                      </div>
+                    ) : (
+                      <span className="material-symbols-outlined text-on-surface-variant mb-2">radio_button_unchecked</span>
+                    )}
+                    <p className="text-sm font-bold">{m.label}</p>
+                    <p className="text-[11px] text-on-surface-variant/60">{m.description}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* 4. Autonomous Improvements */}
+          {data.improvements.length > 0 && (
+            <section className="space-y-8 animate-conversation-fade">
+              <h4 className="text-[11px] uppercase tracking-widest text-on-surface-variant/50 font-medium">
+                Autonomous Improvements
+              </h4>
+              <div className="space-y-4">
+                {data.improvements.map((imp, i) => (
+                  <div
+                    key={i}
+                    className={`p-6 bg-surface-lowest border-l-2 ${i === 0 ? "border-primary" : "border-primary/20"} ambient-shadow rounded-lg`}
+                  >
+                    <p className="text-base text-on-surface">{imp.description}</p>
+                    <div className="mt-4 flex gap-4">
+                      <span className="text-[11px] text-on-surface-variant/60 uppercase italic font-medium">Reasoning:</span>
+                      <span className="text-[11px] font-medium">{imp.reasoning}</span>
                     </div>
                   </div>
-                  <button
-                    onClick={async () => {
-                      if (sessionToken) {
-                        await updateCampaign(sessionToken, campaignId, { status: "archived" });
-                        router.push("/campaigns");
-                      }
-                    }}
-                    className="px-5 py-2.5 rounded-lg border border-error/20 text-error text-sm font-medium hover:bg-error/5 transition-all"
-                  >
-                    Archive Campaign
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* 5. Timeline */}
+          {data.timeline.length > 0 && (
+            <section className="animate-conversation-fade">
+              <h4 className="text-[11px] uppercase tracking-widest text-on-surface-variant/50 font-medium mb-8">
+                Timeline
+              </h4>
+              <div className="space-y-8 relative">
+                <div className="absolute left-[7px] top-2 bottom-0 w-px bg-outline-variant/30" />
+                {data.timeline.map((entry, i) => (
+                  <div key={i} className="relative pl-8">
+                    <div className={`absolute left-0 top-[6px] w-4 h-4 rounded-full ${i === 0 ? "bg-primary" : "bg-outline-variant"} ring-4 ring-surface`} />
+                    <p className="text-sm font-bold mb-1">{entry.date}</p>
+                    <ul className="space-y-1">
+                      {entry.events.map((evt, j) => (
+                        <li key={j} className="text-base text-on-surface-variant flex items-center gap-2">
+                          <span className="w-1 h-1 bg-outline rounded-full shrink-0" />
+                          {evt}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* 6. Performance Insights */}
+          {data.insights.length > 0 && (
+            <section className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-conversation-fade">
+              {data.insights.map((insight, i) => (
+                <div key={i} className="p-8 border border-outline-variant/10 rounded-xl bg-surface-lowest flex flex-col justify-center">
+                  <span className="material-symbols-outlined text-primary mb-4">{insight.icon}</span>
+                  <p className="text-2xl font-serif text-on-surface mb-2 font-normal">{insight.text}</p>
+                  <p className="text-sm text-on-surface-variant/60 italic">{insight.footnote}</p>
+                </div>
+              ))}
+            </section>
+          )}
+
+          {/* 7. Recommendation */}
+          {data.recommendation.title && (
+            <section className="animate-conversation-fade">
+              <div className="p-10 bg-surface-lowest rounded-2xl border border-outline-variant/20 ambient-shadow space-y-6">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <span className="text-[11px] uppercase tracking-widest text-on-surface-variant/50 font-medium bg-secondary-container/30 px-2 py-1 rounded">
+                      Recommendation
+                    </span>
+                    <h5 className="text-2xl font-serif text-on-surface mt-4 font-normal">
+                      {data.recommendation.title}
+                    </h5>
+                  </div>
+                  <span className="material-symbols-outlined text-primary text-3xl">auto_awesome</span>
+                </div>
+                <p className="text-lg text-on-surface-variant max-w-lg leading-relaxed">
+                  {data.recommendation.body}
+                </p>
+                <div className="flex gap-4 pt-4">
+                  <button className="bg-primary text-on-primary px-8 py-3 rounded-full text-sm font-medium hover:opacity-90 transition-all flex items-center gap-2">
+                    Review &amp; Approve
+                  </button>
+                  <button className="border border-outline-variant text-on-surface px-8 py-3 rounded-full text-sm font-medium hover:bg-surface-container-low transition-all">
+                    View Draft
                   </button>
                 </div>
               </div>
-            </div>
+            </section>
           )}
+
+          {/* 8. Tell Loqi */}
+          <section className="pt-6 border-t border-outline-variant/20 animate-conversation-fade">
+            <div className="bg-surface-lowest border border-outline-variant/20 rounded-xl p-4 ambient-shadow">
+              <label className="text-[11px] uppercase tracking-widest text-on-surface-variant/50 font-medium block mb-2 px-2">
+                Tell Loqi...
+              </label>
+              <div className="flex items-end gap-3 px-2 pb-1">
+                <textarea
+                  className="w-full border-none p-0 focus:ring-0 text-lg placeholder:text-on-surface-variant/30 resize-none bg-transparent outline-none"
+                  placeholder="What would you like me to adjust in this campaign?"
+                  rows={1}
+                />
+                <button className="bg-primary text-on-primary w-10 h-10 rounded-full flex items-center justify-center hover:opacity-80 transition-opacity shrink-0">
+                  <span className="material-symbols-outlined text-sm">arrow_upward</span>
+                </button>
+              </div>
+            </div>
+            <div className="mt-4 flex justify-center gap-3 overflow-x-auto no-scrollbar">
+              <button className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold">
+                PAUSE CAMPAIGN
+              </button>
+              <button className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold">
+                DUPLICATE TO NEW
+              </button>
+              <button className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold">
+                EXPORT REPORT
+              </button>
+            </div>
+          </section>
+
         </div>
-      </div>
-    </div>
+      </AppPage>
+    </WorkspaceContainer>
   );
 }

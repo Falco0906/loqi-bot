@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+
+<html class="scroll-smooth" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Loqi | Executive Onboarding</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&amp;family=Inter:wght@300;400;500;600&amp;family=Geist:wght@400;600&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "primary": "#000000",
+                        "on-tertiary-fixed": "#1c1b1a",
+                        "on-secondary-fixed-variant": "#3c4a44",
+                        "background": "#fdf8f8",
+                        "surface-tint": "#5f5e5e",
+                        "outline-variant": "#c4c7c7",
+                        "on-background": "#1c1b1b",
+                        "on-surface-variant": "#444748",
+                        "primary-container": "#1c1b1b",
+                        "on-secondary-container": "#576660",
+                        "surface-container": "#f1edec",
+                        "surface-container-high": "#ebe7e6",
+                        "error": "#ba1a1a",
+                        "tertiary-container": "#1c1b1a",
+                        "on-primary-container": "#858383",
+                        "tertiary": "#000000",
+                        "secondary": "#53625c",
+                        "on-primary": "#ffffff",
+                        "surface-bright": "#fdf8f8",
+                        "on-error-container": "#93000a",
+                        "inverse-on-surface": "#f4f0ef",
+                        "surface": "#fdf8f8",
+                        "surface-container-highest": "#e5e2e1",
+                        "on-tertiary-container": "#868382",
+                        "on-tertiary": "#ffffff",
+                        "on-secondary-fixed": "#111e1a",
+                        "on-error": "#ffffff",
+                        "secondary-fixed": "#d6e6df",
+                        "surface-variant": "#e5e2e1",
+                        "on-primary-fixed-variant": "#474746",
+                        "surface-container-low": "#f7f3f2",
+                        "secondary-fixed-dim": "#bacac3",
+                        "on-primary-fixed": "#1c1b1b",
+                        "tertiary-fixed-dim": "#cac6c4",
+                        "tertiary-fixed": "#e6e2df",
+                        "on-secondary": "#ffffff",
+                        "error-container": "#ffdad6",
+                        "surface-container-lowest": "#ffffff",
+                        "inverse-surface": "#313030",
+                        "primary-fixed-dim": "#c8c6c5",
+                        "secondary-container": "#d3e3dc",
+                        "on-tertiary-fixed-variant": "#484645",
+                        "primary-fixed": "#e5e2e1",
+                        "surface-dim": "#ddd9d8",
+                        "outline": "#747878",
+                        "on-surface": "#1c1b1b",
+                        "inverse-primary": "#c8c6c5"
+                    },
+                    "spacing": {
+                        "gutter": "24px",
+                        "section-gap": "80px",
+                        "reading-width": "720px",
+                        "container-max": "1200px",
+                        "element-gap": "24px",
+                        "base": "8px"
+                    },
+                    "fontFamily": {
+                        "label-xs": ["Geist"],
+                        "body-lg": ["Inter"],
+                        "headline-md": ["Libre Caslon Text"],
+                        "display-xl": ["Libre Caslon Text"],
+                        "label-sm": ["Geist"],
+                        "headline-lg": ["Libre Caslon Text"],
+                        "body-md": ["Inter"]
+                    },
+                    "fontSize": {
+                        "display-xl": ["48px", {"lineHeight": "1.1", "letterSpacing": "-0.02em", "fontWeight": "400"}],
+                        "headline-lg": ["32px", {"lineHeight": "1.3", "fontWeight": "400"}],
+                        "headline-md": ["24px", {"lineHeight": "1.4", "fontWeight": "400"}],
+                        "body-lg": ["18px", {"lineHeight": "1.6", "fontWeight": "400"}],
+                        "body-md": ["16px", {"lineHeight": "1.5", "fontWeight": "400"}],
+                        "label-sm": ["13px", {"lineHeight": "1.2", "letterSpacing": "0.02em", "fontWeight": "500"}],
+                        "label-xs": ["11px", {"lineHeight": "1.2", "letterSpacing": "0.05em", "fontWeight": "600"}]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+        body {
+            background-color: #fdf8f8;
+            color: #1c1b1b;
+            -webkit-font-smoothing: antialiased;
+        }
+        .reading-column {
+            width: 100%;
+            max-width: 720px;
+            margin-left: auto;
+            margin-right: auto;
+            padding-left: 24px;
+            padding-right: 24px;
+        }
+        .fade-in {
+            animation: fadeIn 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            opacity: 0;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .stagger-1 { animation-delay: 0.2s; }
+        .stagger-2 { animation-delay: 0.4s; }
+        .stagger-3 { animation-delay: 0.6s; }
+        
+        .line-divider {
+            height: 0.5px;
+            background-color: #000000;
+            opacity: 0.15;
+        }
+        
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #e5e2e1; border-radius: 10px; }
+    </style>
+</head>
+<body class="font-body-md text-body-md">
+<main class="relative min-h-screen pt-40 pb-64">
+<!-- Session Opening -->
+<section class="reading-column mb-section-gap fade-in">
+<header class="mb-12">
+<span class="font-label-xs text-label-xs uppercase tracking-widest text-on-surface-variant opacity-60">Session Start / 09:00 AM</span>
+</header>
+<h1 class="font-display-xl text-display-xl mb-12 italic">I am Loqi.</h1>
+<div class="space-y-8 font-body-lg text-body-lg text-on-surface leading-relaxed">
+<p>Think of this not as an application, but as a transcript of our first strategic session. My role is to serve as your Chief of Staff—internalizing your vision, navigating your context, and executing with your specific precision.</p>
+<p>I am beginning to map your context. Before we begin the first day of operations, I have synthesized my initial observations for your review.</p>
+</div>
+</section>
+<!-- Context Mapping (Refined Narrative) -->
+<section class="reading-column mb-section-gap fade-in stagger-1">
+<div class="space-y-12">
+<div class="group">
+<div class="flex items-baseline justify-between mb-4">
+<span class="font-label-xs text-label-xs uppercase tracking-widest text-on-surface-variant">Observations</span>
+<span class="font-label-xs text-label-xs text-on-surface-variant opacity-40 italic">Synthesizing...</span>
+</div>
+<div class="line-divider mb-8"></div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-12">
+<div class="space-y-4">
+<h3 class="font-headline-md text-headline-md italic">Market Positioning</h3>
+<p class="font-body-md text-body-md text-on-surface-variant leading-relaxed">I've identified your primary positioning as <span class="text-on-surface font-medium">Architectural Innovation</span>. You consistently emphasize reliability over speed, and craftsmanship over scale.</p>
+</div>
+<div class="space-y-4">
+<h3 class="font-headline-md text-headline-md italic">Core Ethos</h3>
+<p class="font-body-md text-body-md text-on-surface-variant leading-relaxed">Analyzing syntax patterns... You favor the term <span class="italic">"stewardship"</span> over "management." I am calibrating my communication style to match this gravitas.</p>
+</div>
+</div>
+</div>
+<div class="pt-12">
+<p class="font-body-lg text-body-lg mb-12 italic">"Based on our initial exchange, here is what I currently believe to be true about your objectives."</p>
+<div class="space-y-12">
+<div class="flex flex-col md:flex-row md:items-start gap-8">
+<div class="md:w-1/3">
+<span class="font-label-xs text-label-xs uppercase tracking-widest text-on-surface-variant">Ideal Client</span>
+</div>
+<div class="md:w-2/3">
+<h4 class="font-headline-md text-headline-md mb-3">High-conviction founders in stealth-phase deep tech.</h4>
+<p class="font-body-md text-body-md text-on-surface-variant">Your project history suggests a preference for high-risk, high-reward engineering challenges where narrative control is paramount.</p>
+</div>
+</div>
+<div class="line-divider opacity-5"></div>
+<div class="flex flex-col md:flex-row md:items-start gap-8">
+<div class="md:w-1/3">
+<span class="font-label-xs text-label-xs uppercase tracking-widest text-on-surface-variant">Immediate Friction</span>
+</div>
+<div class="md:w-2/3">
+<h4 class="font-headline-md text-headline-md mb-3">Fragmented communication across technical and board layers.</h4>
+<p class="font-body-md text-body-md text-on-surface-variant">You mentioned "misalignment on technical debt" twice. This is the first vector I will address once I have visibility.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Seamless Workspace Integration -->
+<section class="reading-column mb-section-gap fade-in stagger-2">
+<div class="py-16 border-y border-outline-variant/20">
+<div class="max-w-xl">
+<p class="font-body-lg text-body-lg mb-10 leading-relaxed">
+                    To move from investigation to execution, I require visibility into your command center. I will only index metadata for briefing purposes; no external models are trained on your data.
+                </p>
+<button class="bg-primary text-on-primary px-10 py-4 rounded-full font-label-sm text-label-sm flex items-center gap-4 hover:opacity-90 transition-all active:scale-95 shadow-lg shadow-primary/5">
+                    CONNECT GOOGLE WORKSPACE
+                    <span class="material-symbols-outlined text-sm">arrow_forward</span>
+</button>
+</div>
+</div>
+</section>
+<!-- The Report (Editorial Layout) -->
+<section class="reading-column pt-12 fade-in stagger-3" id="executive-briefing">
+<header class="mb-20">
+<span class="font-label-xs text-label-xs uppercase tracking-widest text-primary mb-4 block">Day Zero / Morning Protocol</span>
+<h2 class="font-display-xl text-display-xl italic">The First Executive Briefing</h2>
+</header>
+<div class="space-y-24">
+<!-- Synthesis Section -->
+<article class="group">
+<div class="flex items-baseline justify-between mb-4">
+<h4 class="font-headline-md text-headline-md">Section 01: The Synthesis</h4>
+<span class="font-label-xs text-label-xs text-on-surface-variant">Urgency: Primary</span>
+</div>
+<div class="line-divider mb-10"></div>
+<div class="grid grid-cols-1 md:grid-cols-12 gap-10">
+<div class="md:col-span-8">
+<p class="font-body-lg text-body-lg leading-relaxed text-on-surface">
+                            Our objective for today is clarity. I have mapped three critical discrepancies in the Q3 roadmap. While the team reports 80% completion, the repository commits suggest a bottleneck in the integration layer. I will initiate a quiet audit of the staging environment this afternoon.
+                        </p>
+</div>
+<div class="md:col-span-4 border-l border-primary/5 pl-8 italic text-on-surface-variant font-body-md py-2">
+                        "You are most effective in the first 90 minutes. I have cleared all non-essential pings until 10:30 AM."
+                    </div>
+</div>
+</article>
+<!-- Visual Context -->
+<div class="relative overflow-hidden rounded-sm group">
+<div class="w-full aspect-[21/9] bg-cover bg-center transition-transform duration-1000 group-hover:scale-105" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuB2bwVZNOgmboSMOdBnYUOKx7Q_xEtrj5QzYnqFgIdPta-x_iW4qWss_gP7LwJ8zpVg2wlHNv5porh5L75pZMVS_qWMVLUMFymF8TMQ4cadIASFhHxdAkTpViQPzwjHLxXpaJPF9ttSwI4-ycPc8PoxGGEs18QhyqO8rwCmslZTcGVQOfBwD6oHPYlN4bT4Di5wvoTbbLlGtZlshGok05fMeG_e6YdFg8HJ8MRe5m2JH9f1JZexnTrN')"></div>
+<div class="absolute bottom-6 left-6">
+<span class="text-white font-label-xs text-label-xs uppercase tracking-widest bg-black/40 px-3 py-1.5 backdrop-blur-md">Environment Calibrated</span>
+</div>
+</div>
+<!-- Intelligence Feeds -->
+<article>
+<div class="flex items-baseline justify-between mb-4">
+<h4 class="font-headline-md text-headline-md">Section 02: Intelligence Feeds</h4>
+<span class="font-label-xs text-label-xs text-on-surface-variant uppercase tracking-tighter">Market Scanning</span>
+</div>
+<div class="line-divider mb-12"></div>
+<div class="space-y-12">
+<div class="flex gap-12">
+<span class="font-label-sm text-label-sm text-on-surface-variant opacity-40 font-mono mt-1">01</span>
+<div>
+<h5 class="font-body-lg text-body-lg font-semibold mb-2">Competitor "Apex" Pivot</h5>
+<p class="font-body-md text-body-md text-on-surface-variant leading-relaxed">They are moving toward your territory with a revised focus on durability. I am preparing a counter-briefing for your board meeting.</p>
+</div>
+</div>
+<div class="flex gap-12">
+<span class="font-label-sm text-label-sm text-on-surface-variant opacity-40 font-mono mt-1">02</span>
+<div>
+<h5 class="font-body-lg text-body-lg font-semibold mb-2">Technical Debt Alert</h5>
+<p class="font-body-md text-body-md text-on-surface-variant leading-relaxed">The 'Legacy-Refactor' branch is diverging significantly from the main trunk. Action may be required by Thursday to avoid merge paralysis.</p>
+</div>
+</div>
+</div>
+</article>
+</div>
+<!-- Understated Transition -->
+<div class="mt-48 pt-24 border-t border-primary/5 flex flex-col items-center">
+<p class="font-body-lg text-body-lg text-on-surface-variant mb-12 italic text-center max-w-sm">
+                I am active in the background. Full mission controls are now synchronized.
+            </p>
+<div class="flex gap-8 items-center">
+<button class="font-label-sm text-label-sm uppercase tracking-widest border border-primary/20 px-10 py-4 rounded-sm hover:bg-primary hover:text-white hover:border-primary transition-all duration-300">
+                    Enter Mission Control
+                </button>
+</div>
+</div>
+</section>
+</main>
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const observerOptions = {
+            threshold: 0.1,
+            rootMargin: '0px 0px -100px 0px'
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('fade-in');
+                    observer.unobserve(entry.target);
+                }
+            });
+        }, observerOptions);
+
+        document.querySelectorAll('section').forEach(section => {
+            section.style.opacity = '0';
+            observer.observe(section);
+        });
+
+        // Minimal scroll indicator
+        const progress = document.createElement('div');
+        progress.style.cssText = 'position:fixed; top:0; left:0; height:1px; background:#000; z-index:100; transition:width 0.2s ease-out;';
+        document.body.appendChild(progress);
+
+        window.addEventListener('scroll', () => {
+            const winScroll = document.body.scrollTop || document.documentElement.scrollTop;
+            const height = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+            const scrolled = (winScroll / height) * 100;
+            progress.style.width = scrolled + "%";
+            progress.style.opacity = scrolled > 1 ? "1" : "0";
+        });
+    });
+</script>
+</body></html>

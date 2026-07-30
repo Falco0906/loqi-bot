@@ -73,22 +73,22 @@ class TestLifecycleStateMachine:
     def test_lifecycle_order_has_all_states(self):
         assert len(LIFECYCLE_ORDER) == 9
         assert LIFECYCLE_ORDER[0] == LifecycleState.VISITOR
-        assert LIFECYCLE_ORDER[-1] == LifecycleState.ACTIVE
+        assert LIFECYCLE_ORDER[-1] == LifecycleState.SUBSCRIPTION_ACTIVE
 
     def test_valid_transitions(self):
         assert is_valid_transition(LifecycleState.VISITOR, LifecycleState.AUTHENTICATED)
         assert is_valid_transition(LifecycleState.AUTHENTICATED, LifecycleState.PROFILE_SETUP)
         assert is_valid_transition(LifecycleState.PROFILE_SETUP, LifecycleState.WORKSPACE_SETUP)
-        assert is_valid_transition(LifecycleState.WORKSPACE_SETUP, LifecycleState.PLAN_SELECTION)
+        assert is_valid_transition(LifecycleState.WORKSPACE_SETUP, LifecycleState.ONBOARDING_COMPLETE)
+        assert is_valid_transition(LifecycleState.ONBOARDING_COMPLETE, LifecycleState.ACTIVE)
+        assert is_valid_transition(LifecycleState.ACTIVE, LifecycleState.PLAN_SELECTION)
         assert is_valid_transition(LifecycleState.PLAN_SELECTION, LifecycleState.CHECKOUT_PENDING)
         assert is_valid_transition(LifecycleState.CHECKOUT_PENDING, LifecycleState.SUBSCRIPTION_ACTIVE)
-        assert is_valid_transition(LifecycleState.SUBSCRIPTION_ACTIVE, LifecycleState.ONBOARDING_COMPLETE)
-        assert is_valid_transition(LifecycleState.ONBOARDING_COMPLETE, LifecycleState.ACTIVE)
 
     def test_invalid_transition_skip_state(self):
         assert not is_valid_transition(LifecycleState.VISITOR, LifecycleState.PROFILE_SETUP)
         assert not is_valid_transition(LifecycleState.AUTHENTICATED, LifecycleState.WORKSPACE_SETUP)
-        assert not is_valid_transition(LifecycleState.PROFILE_SETUP, LifecycleState.PLAN_SELECTION)
+        assert not is_valid_transition(LifecycleState.PROFILE_SETUP, LifecycleState.ONBOARDING_COMPLETE)
 
     def test_invalid_transition_reverse(self):
         assert not is_valid_transition(LifecycleState.ACTIVE, LifecycleState.AUTHENTICATED)
@@ -182,11 +182,11 @@ class TestLifecycleService:
         transitions = [
             LifecycleState.PROFILE_SETUP,
             LifecycleState.WORKSPACE_SETUP,
+            LifecycleState.ONBOARDING_COMPLETE,
+            LifecycleState.ACTIVE,
             LifecycleState.PLAN_SELECTION,
             LifecycleState.CHECKOUT_PENDING,
             LifecycleState.SUBSCRIPTION_ACTIVE,
-            LifecycleState.ONBOARDING_COMPLETE,
-            LifecycleState.ACTIVE,
         ]
         for target in transitions:
             result, _ = await lc.transition("user_full", target)
@@ -239,7 +239,7 @@ class TestOnboardingStepCompletion:
         await svc.complete_profile("user_1", display_name="Alice")
         session, events = await svc.complete_workspace("user_1", workspace_name="Alice Corp")
         assert session.is_step_completed(StepId.WORKSPACE_SETUP.value)
-        assert session.lifecycle_state == LifecycleState.PLAN_SELECTION
+        assert session.lifecycle_state == LifecycleState.ONBOARDING_COMPLETE
 
         event_types = [e.event_type.value for e in events]
         assert "workspace.completed" in event_types
@@ -299,10 +299,10 @@ class TestOnboardingStepCompletion:
         await svc.start_or_resume("user_full")
         await svc.complete_profile("user_full", display_name="Diana")
         await svc.complete_workspace("user_full", workspace_name="D Corp")
+        await svc.complete_step("user_full", StepId.ONBOARDING_WIZARD.value, {})
         await svc.complete_step("user_full", StepId.PLAN_SELECTION.value, {"plan": "free"})
-        await svc.complete_step("user_full", StepId.CHECKOUT.value, {"checkout": "done"})
         session, events = await svc.complete_step(
-            "user_full", StepId.ONBOARDING_WIZARD.value, {},
+            "user_full", StepId.CHECKOUT.value, {"checkout": "done"},
         )
         assert session.is_active is False
         event_types = [e.event_type.value for e in events]
@@ -345,8 +345,8 @@ class TestOnboardingProgress:
         await svc.complete_profile("user_1", display_name="Alice")
         await svc.complete_workspace("user_1", workspace_name="Alice Corp")
         progress = await svc.get_progress("user_1")
-        assert progress["lifecycle_state"] == "PLAN_SELECTION"
-        assert progress["current_step"] == "PLAN_SELECTION"
+        assert progress["lifecycle_state"] == "ONBOARDING_COMPLETE"
+        assert progress["current_step"] == "ONBOARDING_WIZARD"
         assert progress["progress_percentage"] == 40
         assert len(progress["completed_steps"]) == 2
 
@@ -357,11 +357,11 @@ class TestOnboardingProgress:
         await svc.start_or_resume("user_full")
         await svc.complete_profile("user_full", display_name="Diana")
         await svc.complete_workspace("user_full", workspace_name="D Corp")
+        await svc.complete_step("user_full", StepId.ONBOARDING_WIZARD.value, {})
         await svc.complete_step("user_full", StepId.PLAN_SELECTION.value, {"plan": "free"})
         await svc.complete_step("user_full", StepId.CHECKOUT.value, {"checkout": "done"})
-        await svc.complete_step("user_full", StepId.ONBOARDING_WIZARD.value, {})
         progress = await svc.get_progress("user_full")
-        assert progress["lifecycle_state"] == "ACTIVE"
+        assert progress["lifecycle_state"] == "SUBSCRIPTION_ACTIVE"
         assert progress["current_step"] is None
         assert progress["next_route"] == "/dashboard"
         assert progress["progress_percentage"] == 100
@@ -432,7 +432,7 @@ class TestOnboardingAPI:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["lifecycle_state"] == "PLAN_SELECTION"
+        assert data["lifecycle_state"] == "ONBOARDING_COMPLETE"
         assert data["completed_steps"] == ["PROFILE_SETUP", "WORKSPACE_SETUP"]
 
     def test_complete_step_generic(self, client):
@@ -515,9 +515,18 @@ class TestOnboardingAPI:
             json={"workspace_name": "Full Corp"},
         )
         assert resp.status_code == 200
-        assert resp.json()["lifecycle_state"] == "PLAN_SELECTION"
+        assert resp.json()["lifecycle_state"] == "ONBOARDING_COMPLETE"
 
-        # Step 3: Plan selection
+        # Step 3: Onboarding wizard
+        resp = client.post(
+            "/api/v1/onboarding/complete-step",
+            params={"user_id": uid},
+            json={"step_id": "ONBOARDING_WIZARD", "data": {}},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["lifecycle_state"] == "ACTIVE"
+
+        # Step 4: Plan selection
         resp = client.post(
             "/api/v1/onboarding/complete-step",
             params={"user_id": uid},
@@ -526,24 +535,15 @@ class TestOnboardingAPI:
         assert resp.status_code == 200
         assert resp.json()["lifecycle_state"] == "CHECKOUT_PENDING"
 
-        # Step 4: Checkout
+        # Step 5: Checkout
         resp = client.post(
             "/api/v1/onboarding/complete-step",
             params={"user_id": uid},
             json={"step_id": "CHECKOUT", "data": {"checkout": "done"}},
         )
         assert resp.status_code == 200
-        assert resp.json()["lifecycle_state"] == "SUBSCRIPTION_ACTIVE"
-
-        # Step 5: Onboarding wizard
-        resp = client.post(
-            "/api/v1/onboarding/complete-step",
-            params={"user_id": uid},
-            json={"step_id": "ONBOARDING_WIZARD", "data": {}},
-        )
-        assert resp.status_code == 200
         data = resp.json()
-        assert data["lifecycle_state"] == "ACTIVE"
+        assert data["lifecycle_state"] == "SUBSCRIPTION_ACTIVE"
         assert data["current_step"] is None
         assert data["next_route"] == "/dashboard"
         assert data["onboarding_complete"] is True

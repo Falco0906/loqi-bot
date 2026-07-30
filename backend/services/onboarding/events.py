@@ -15,6 +15,9 @@ class OnboardingEventType(str, Enum):
     STEP_COMPLETED = "step.completed"
     PROFILE_COMPLETED = "profile.completed"
     WORKSPACE_COMPLETED = "workspace.completed"
+    WIZARD_DATA_SAVED = "wizard.data_saved"
+    WIZARD_STEP_VIEWED = "wizard.step_viewed"
+    WIZARD_COMPLETED = "wizard.completed"
 
 
 @dataclass
@@ -85,4 +88,22 @@ class OnboardingEvent:
             entity_id=user_id,
             actor_id=user_id,
             data={"workspace_name": workspace_name},
+        )
+
+    @classmethod
+    def wizard_data_saved(cls, user_id: str, data: dict[str, Any]) -> OnboardingEvent:
+        return cls(
+            event_type=OnboardingEventType.WIZARD_DATA_SAVED,
+            entity_id=user_id,
+            actor_id=user_id,
+            data={"fields": list(data.keys())},
+        )
+
+    @classmethod
+    def wizard_completed(cls, user_id: str, data: dict[str, Any]) -> OnboardingEvent:
+        return cls(
+            event_type=OnboardingEventType.WIZARD_COMPLETED,
+            entity_id=user_id,
+            actor_id=user_id,
+            data={"industry": data.get("industry"), "role": data.get("role")},
         )

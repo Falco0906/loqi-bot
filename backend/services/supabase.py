@@ -666,12 +666,15 @@ def load_all_provider_credentials() -> list[dict]:
     try:
         result = (
             client.table("users")
-            .select("id, email, google_access_token, google_refresh_token, token_expiry, google_client_id, google_client_secret, google_provider_id, telegram_id")
+            .select("id, google_access_token, google_refresh_token, token_expiry, google_client_id, google_client_secret, google_provider_id, telegram_id, email_identities(email)")
             .neq("google_refresh_token", "")
             .neq("google_refresh_token", None)
             .execute()
         )
         rows = getattr(result, "data", None) or []
+        for r in rows:
+            identities = r.pop("email_identities", [])
+            r["email"] = identities[0]["email"] if identities else ""
         rows = [r for r in rows if r.get("telegram_id", "").startswith("provider:")]
         _log(f"load_all_provider_credentials: found {len(rows)} credential records")
         return rows

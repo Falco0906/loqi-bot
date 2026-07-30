@@ -58,6 +58,10 @@ class LifecycleRepository(Repository[UserLifecycle], ABC):
     async def find_by_user_id(self, user_id: str) -> UserLifecycle | None:
         ...
 
+    @abstractmethod
+    async def list_all(self) -> list[UserLifecycle]:
+        ...
+
 
 class InMemoryLifecycleRepository(InMemoryRepository[UserLifecycle], LifecycleRepository):
 
@@ -66,6 +70,9 @@ class InMemoryLifecycleRepository(InMemoryRepository[UserLifecycle], LifecycleRe
             if lc.user_id == user_id:
                 return lc
         return None
+
+    async def list_all(self) -> list[UserLifecycle]:
+        return self._all()
 
 
 # ─── OnboardingSessionRepository ─────────────────────────────────────

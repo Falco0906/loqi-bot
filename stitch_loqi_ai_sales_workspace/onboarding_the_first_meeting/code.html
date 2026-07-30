@@ -1,0 +1,181 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Loqi | Welcome</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&amp;family=Geist:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                "on-tertiary-fixed": "#1c1b1a",
+                "primary-fixed": "#e5e2e1",
+                "on-tertiary": "#ffffff",
+                "secondary-fixed": "#d6e6df",
+                "surface-container-low": "#f7f3f2",
+                "surface-container-highest": "#e5e2e1",
+                "surface-bright": "#fdf8f8",
+                "surface-container-high": "#ebe7e6",
+                "inverse-on-surface": "#f4f0ef",
+                "outline-variant": "#c4c7c7",
+                "inverse-primary": "#c8c6c5",
+                "secondary-container": "#d3e3dc",
+                "tertiary-fixed-dim": "#cac6c4",
+                "background": "#fdf8f8",
+                "on-tertiary-container": "#868382",
+                "surface": "#fdf8f8",
+                "outline": "#747878",
+                "secondary-fixed-dim": "#bacac3",
+                "tertiary-container": "#1c1b1a",
+                "on-tertiary-fixed-variant": "#484645",
+                "tertiary": "#000000",
+                "on-primary-fixed": "#1c1b1b",
+                "primary-container": "#1c1b1b",
+                "surface-tint": "#5f5e5e",
+                "on-secondary": "#ffffff",
+                "on-primary-fixed-variant": "#474746",
+                "primary": "#000000",
+                "on-secondary-container": "#576660",
+                "primary-fixed-dim": "#c8c6c5",
+                "tertiary-fixed": "#e6e2df",
+                "error": "#ba1a1a",
+                "surface-container-lowest": "#ffffff",
+                "on-error": "#ffffff",
+                "surface-dim": "#ddd9d8",
+                "on-error-container": "#93000a",
+                "on-secondary-fixed-variant": "#3c4a44",
+                "on-secondary-fixed": "#111e1a",
+                "inverse-surface": "#313030",
+                "on-surface": "#1c1b1b",
+                "on-primary-container": "#858383",
+                "on-surface-variant": "#444748",
+                "on-background": "#1c1b1b",
+                "on-primary": "#ffffff",
+                "error-container": "#ffdad6",
+                "surface-variant": "#e5e2e1",
+                "surface-container": "#f1edec",
+                "secondary": "#53625c"
+            },
+            "borderRadius": {
+                "DEFAULT": "0.25rem",
+                "lg": "0.5rem",
+                "xl": "0.75rem",
+                "full": "9999px"
+            },
+            "spacing": {
+                "container-max": "1200px",
+                "base": "8px",
+                "reading-width": "720px",
+                "section-gap": "64px",
+                "gutter": "24px",
+                "element-gap": "16px"
+            },
+            "fontFamily": {
+                "body-md": ["Inter"],
+                "headline-lg": ["Libre Caslon Text"],
+                "display-xl": ["Libre Caslon Text"],
+                "display-xl-mobile": ["Libre Caslon Text"],
+                "body-lg": ["Inter"],
+                "label-xs": ["Geist"],
+                "label-sm": ["Geist"],
+                "headline-md": ["Libre Caslon Text"]
+            },
+            "fontSize": {
+                "body-md": ["16px", {"lineHeight": "1.5", "fontWeight": "400"}],
+                "headline-lg": ["32px", {"lineHeight": "1.3", "fontWeight": "400"}],
+                "display-xl": ["48px", {"lineHeight": "1.1", "letterSpacing": "-0.02em", "fontWeight": "400"}],
+                "display-xl-mobile": ["36px", {"lineHeight": "1.2", "fontWeight": "400"}],
+                "body-lg": ["18px", {"lineHeight": "1.6", "fontWeight": "400"}],
+                "label-xs": ["11px", {"lineHeight": "1.2", "letterSpacing": "0.05em", "fontWeight": "600"}],
+                "label-sm": ["13px", {"lineHeight": "1.2", "letterSpacing": "0.02em", "fontWeight": "500"}],
+                "headline-md": ["24px", {"lineHeight": "1.4", "fontWeight": "400"}]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+      .fade-in {
+        animation: fadeIn 1.2s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+      }
+      .fade-in-delayed {
+        opacity: 0;
+        animation: fadeIn 1.2s cubic-bezier(0.4, 0, 0.2, 1) 0.6s forwards;
+      }
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .material-symbols-outlined {
+        font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
+      }
+      body {
+        background-color: #fdf8f8; /* surface */
+        -webkit-font-smoothing: antialiased;
+      }
+      .letter-texture {
+        background-image: url("https://www.transparenttextures.com/patterns/natural-paper.png");
+        opacity: 0.03;
+        pointer-events: none;
+      }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col font-body-md text-on-surface selection:bg-primary-fixed">
+<!-- Subtle texture overlay for premium paper feel -->
+<div class="fixed inset-0 letter-texture z-0"></div>
+<main class="flex-grow flex flex-col items-center relative z-10">
+<!-- Brand Header (Minimal) -->
+<header class="w-full pt-16 pb-section-gap flex justify-center fade-in">
+<h1 class="font-headline-lg text-headline-lg tracking-tight text-primary">Loqi</h1>
+</header>
+<!-- Main Content Canvas -->
+<div class="max-w-reading-width w-full px-gutter flex flex-col justify-center items-start flex-grow">
+<div class="space-y-element-gap fade-in-delayed">
+<!-- Loqi Message -->
+<div class="space-y-8 font-headline-md text-headline-md text-on-surface italic leading-relaxed">
+    <h2 class="font-headline-lg text-headline-lg not-italic mb-8">Loqi</h2>
+    <p class="fade-in">Good evening.</p>
+    <p class="fade-in-delayed">I'm Loqi.</p>
+    <p class="fade-in-delayed">I'll be your AI Sales Executive.</p>
+    <p class="fade-in-delayed">Before I make decisions on your behalf, I'd like to understand your business.</p>
+    <p class="fade-in-delayed">Think of this as our first strategy meeting.</p>
+</div>
+<!-- CTA Section -->
+<div class="pt-section-gap">
+<button class="group flex items-center gap-4 transition-all duration-500 ease-out active:scale-95">
+<span class="bg-primary text-on-primary px-10 py-5 rounded-full font-label-sm text-label-sm uppercase tracking-widest hover:bg-on-surface-variant transition-colors">Begin</span>
+<div class="w-12 h-px bg-outline-variant group-hover:w-20 transition-all duration-500"></div>
+<span class="material-symbols-outlined text-outline group-hover:translate-x-2 transition-transform duration-500" style="font-size: 20px;">arrow_forward</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Meta Information (Micro-copy) -->
+
+</main>
+<!-- Micro-interaction for the button hover -->
+<script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const btn = document.querySelector('button');
+            const mainContent = document.querySelector('.max-w-reading-width');
+            
+            btn.addEventListener('click', () => {
+                // Transition out effect
+                mainContent.style.transition = 'all 1s ease-in-out';
+                mainContent.style.opacity = '0';
+                mainContent.style.transform = 'translateY(-20px)';
+                
+                setTimeout(() => {
+                    // This would normally trigger a route change
+                    console.log('Transitioning to onboarding flow...');
+                }, 800);
+            });
+        });
+    </script>
+
+
+</body></html>

@@ -5,6 +5,14 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
+# ─── Validation types ──────────────────────────────────────────────────
+
+
+class ValidationError(BaseModel):
+    field: str
+    message: str
+
+
 # ─── Request models ────────────────────────────────────────────────────
 
 class CompleteStepRequest(BaseModel):
@@ -21,6 +29,17 @@ class ProfileRequest(BaseModel):
 class WorkspaceRequest(BaseModel):
     workspace_name: str
     slug: str = ""
+
+
+class WorkspaceCreateRequest(BaseModel):
+    workspace_name: str
+    slug: str = ""
+
+
+class WorkspaceCreateResponse(BaseModel):
+    organization_id: str
+    organization_name: str
+    organization_slug: str
 
 
 # ─── Response models ───────────────────────────────────────────────────
@@ -40,6 +59,7 @@ class OnboardingProgressResponse(BaseModel):
     remaining_steps: list[str]
     total_steps: int
     onboarding_complete: bool
+    wizard_data: dict | None = None
 
 
 class OnboardingStepResponse(BaseModel):
@@ -48,3 +68,22 @@ class OnboardingStepResponse(BaseModel):
     data: dict | None = None
     next_route: str
     onboarding_complete: bool
+
+
+# ─── Wizard models ─────────────────────────────────────────────────────
+
+class WizardSaveRequest(BaseModel):
+    data: dict
+    completed: bool = False
+
+
+class WizardDataResponse(BaseModel):
+    data: dict
+    onboarding_complete: bool
+    validation_errors: list[ValidationError] | None = None
+
+
+class WizardSaveResponse(BaseModel):
+    data: dict
+    onboarding_complete: bool
+    validation_errors: list[ValidationError] | None = None

@@ -13,6 +13,7 @@ from services.onboarding.exceptions import (
     StepNotAllowedException,
     StepNotFoundException,
 )
+from services.organizations.exceptions import OrganizationNameTaken, OrganizationSlugTaken
 from services.onboarding.repositories import (
     InMemoryLifecycleRepository,
     InMemoryOnboardingSessionRepository,
@@ -21,6 +22,11 @@ from services.onboarding.schemas import (
     CompleteStepRequest,
     OnboardingProgressResponse,
     ProfileRequest,
+    WizardDataResponse,
+    WizardSaveRequest,
+    WizardSaveResponse,
+    WorkspaceCreateRequest,
+    WorkspaceCreateResponse,
     WorkspaceRequest,
 )
 from services.onboarding.services import LifecycleService, OnboardingService
@@ -30,11 +36,13 @@ router = APIRouter(prefix="/api/v1/onboarding", tags=["Onboarding"])
 
 # ─── Service wiring ────────────────────────────────────────────────────
 
+_lifecycle_repo = InMemoryLifecycleRepository()
+_session_repo = InMemoryOnboardingSessionRepository()
+
+
 def _build_onboarding_service() -> OnboardingService:
-    lifecycle_repo = InMemoryLifecycleRepository()
-    session_repo = InMemoryOnboardingSessionRepository()
-    lifecycle_svc = LifecycleService(lifecycle_repo)
-    return OnboardingService(lifecycle_svc, session_repo)
+    lifecycle_svc = LifecycleService(_lifecycle_repo)
+    return OnboardingService(lifecycle_svc, _session_repo)
 
 
 _onboarding_service: OnboardingService | None = None
@@ -79,6 +87,23 @@ def _onboarding_status(exc: OnboardingException) -> int:
 
 
 @router.get(
+    "/context",
+    summary="Get AI personalization context",
+    description="Return structured AI Context object assembled from saved "
+    "personalization data. This is the canonical source for future AI systems "
+    "including Discovery, Mission Control, Campaign Generator, Lead Ranking, "
+    "and Memory.",
+    response_description="Structured AI Context object",
+)
+async def get_personalization_context(user_id: str = ""):
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id query parameter required")
+    svc = _get_service()
+    context = await svc.get_personalization_context(user_id)
+    return context
+
+
+@router.get(
     "",
     response_model=OnboardingProgressResponse,
     summary="Get current onboarding state",
@@ -91,7 +116,10 @@ async def get_onboarding(user_id: str = ""):
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id query parameter required")
     svc = _get_service()
-    return await svc.get_progress(user_id)
+    progress = await svc.get_progress(user_id)
+    wizard = await svc.get_wizard_data(user_id)
+    progress["wizard_data"] = wizard or None
+    return progress
 
 
 @router.post(
@@ -157,6 +185,34 @@ async def complete_workspace(user_id: str = "", payload: WorkspaceRequest | None
 
 
 @router.post(
+    "/workspace/create",
+    response_model=WorkspaceCreateResponse,
+    summary="Create workspace and finalize onboarding",
+    description="Creates an organization from workspace data and marks "
+    "onboarding as complete. This is the last step — after this the user "
+    "is redirected to the dashboard.",
+    response_description="Created organization details",
+)
+async def create_workspace(user_id: str = "", payload: WorkspaceCreateRequest | None = None):
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id query parameter required")
+    svc = _get_service()
+    try:
+        _data: dict[str, object] = {}
+        if payload is not None:
+            _data = payload.model_dump(exclude_none=True)
+        result = await svc.create_workspace_and_finalize(user_id, _data)
+    except OnboardingException as exc:
+        raise HTTPException(
+            status_code=_onboarding_status(exc),
+            detail=exc.message,
+        ) from exc
+    except (OrganizationSlugTaken, OrganizationNameTaken) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return result
+
+
+@router.post(
     "/complete-step",
     response_model=OnboardingProgressResponse,
     summary="Complete any onboarding step",
@@ -177,3 +233,64 @@ async def complete_step(payload: CompleteStepRequest, user_id: str = ""):
             detail=exc.message,
         ) from exc
     return await svc.get_progress(user_id)
+
+
+@router.get(
+    "/wizard",
+    response_model=WizardDataResponse,
+    summary="Get onboarding wizard data",
+    description="Return the user's saved onboarding wizard data. Used to "
+    "resume the wizard after refresh or browser close.",
+    response_description="Saved wizard data and completion status",
+)
+async def get_wizard(user_id: str = ""):
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id query parameter required")
+    svc = _get_service()
+    data = await svc.get_wizard_data(user_id)
+    progress = await svc.get_progress(user_id)
+    validation_errors = await svc.validate_wizard_data(data)
+    return WizardDataResponse(
+        data=data,
+        onboarding_complete=progress.get("onboarding_complete", False),
+        validation_errors=validation_errors or None,
+    )
+
+
+@router.post(
+    "/wizard",
+    response_model=WizardSaveResponse,
+    summary="Save onboarding wizard data",
+    description="Save onboarding wizard responses. Each call persists "
+    "immediately. If completed=True, the wizard step is marked done and "
+    "lifecycle advances. Returns saved data and completion status.",
+    response_description="Saved wizard data and completion status",
+)
+async def save_wizard(payload: WizardSaveRequest, user_id: str = ""):
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id query parameter required")
+    svc = _get_service()
+    validation_errors = await svc.validate_wizard_data(payload.data)
+    if payload.completed and validation_errors:
+        return WizardSaveResponse(
+            data=payload.data,
+            onboarding_complete=False,
+            validation_errors=validation_errors,
+        )
+    try:
+        if payload.completed:
+            _, events = await svc.complete_wizard(user_id, payload.data)
+        else:
+            await svc.save_wizard_data(user_id, payload.data)
+    except OnboardingException as exc:
+        raise HTTPException(
+            status_code=_onboarding_status(exc),
+            detail=exc.message,
+        ) from exc
+    progress = await svc.get_progress(user_id)
+    saved = await svc.get_wizard_data(user_id)
+    return WizardSaveResponse(
+        data=saved,
+        onboarding_complete=progress.get("onboarding_complete", False),
+        validation_errors=validation_errors or None,
+    )

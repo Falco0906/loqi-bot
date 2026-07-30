@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from services.onboarding.config import ONBOARDING_CONFIG
 from services.onboarding.events import OnboardingEvent
 from services.onboarding.exceptions import (
     InvalidTransitionException,
     LifecycleStateNotFound,
-    OnboardingNotActive,
     OnboardingSessionExpired,
     OnboardingSessionNotFound,
     StepAlreadyCompletedException,
@@ -29,14 +27,73 @@ from services.onboarding.models import (
     is_valid_transition,
 )
 from services.onboarding.repositories import (
-    InMemoryLifecycleRepository,
-    InMemoryOnboardingSessionRepository,
     LifecycleRepository,
     OnboardingSessionRepository,
 )
 
 if TYPE_CHECKING:
+    from services.identity.services.user_service import UserService
     from services.organizations.services import OrganizationService
+
+
+# ─── Wizard validation constants ───────────────────────────────────────
+
+INDUSTRIES: frozenset[str] = frozenset({
+    "technology", "healthcare", "finance", "education",
+    "real_estate", "ecommerce", "manufacturing", "media",
+    "consulting", "legal", "nonprofit", "other",
+})
+
+ROLES: frozenset[str] = frozenset({
+    "founder", "ceo", "cto", "cmo", "vp_sales",
+    "sales_rep", "marketing", "operations", "product",
+    "engineering", "data", "other",
+})
+
+VALID_GOALS: frozenset[str] = frozenset({
+    "lead_generation", "brand_awareness", "customer_engagement",
+    "market_research", "sales_outreach", "partner_discovery",
+    "event_promotion", "product_feedback", "content_distribution",
+    "competitive_intelligence", "other",
+})
+
+# ─── AI Personalization validation constants ──────────────────────────
+
+PRICING_MODELS: frozenset[str] = frozenset({
+    "saas", "agency", "consulting", "marketplace", "services", "other",
+})
+
+TARGET_INDUSTRIES: frozenset[str] = frozenset({
+    "technology", "healthcare", "finance", "education",
+    "real_estate", "ecommerce", "manufacturing", "media",
+    "consulting", "legal", "nonprofit", "other",
+})
+
+TARGET_COMPANY_SIZES: frozenset[str] = frozenset({
+    "startup", "small", "medium", "enterprise",
+})
+
+TARGET_TITLES: frozenset[str] = frozenset({
+    "founder", "ceo", "head_of_sales", "marketing_director",
+    "hr_manager", "cto", "vp_engineering", "product_manager",
+    "operations_head", "other",
+})
+
+PRIMARY_MARKETS: frozenset[str] = frozenset({
+    "united_states", "india", "europe", "global", "latin_america",
+    "asia_pacific", "middle_east", "africa", "other",
+})
+
+COMMUNICATION_TONES: frozenset[str] = frozenset({
+    "professional", "friendly", "technical", "executive",
+    "consultative", "founder_led",
+})
+
+AI_GOALS: frozenset[str] = frozenset({
+    "generate_qualified_leads", "book_meetings", "research_prospects",
+    "personalize_outreach", "automate_follow_up", "build_pipeline",
+    "competitive_analysis", "account_planning", "other",
+})
 
 
 # ─── LifecycleService ────────────────────────────────────────────────
@@ -119,7 +176,7 @@ class LifecycleService:
         return LIFECYCLE_ORDER[current_idx - 1]
 
     async def list_all(self) -> list[UserLifecycle]:
-        return await self._lifecycle_repo._all()
+        return await self._lifecycle_repo.list_all()
 
 
 # ─── OnboardingService ───────────────────────────────────────────────
@@ -132,10 +189,61 @@ class OnboardingService:
         lifecycle_service: LifecycleService,
         session_repo: OnboardingSessionRepository,
         org_service: OrganizationService | None = None,
+        user_service: UserService | None = None,
     ) -> None:
         self._lifecycle = lifecycle_service
         self._session_repo = session_repo
         self._org_service = org_service
+        self._user_service = user_service
+        self._events: list[OnboardingEvent] = []
+
+    @property
+    def events(self) -> list[OnboardingEvent]:
+        return list(self._events)
+
+    def clear_events(self) -> None:
+        self._events.clear()
+
+    def _track_event(self, event: OnboardingEvent) -> None:
+        self._events.append(event)
+
+    def _onboarding_started(self, user_id: str, session_id: str = "") -> None:
+        self._track_event(OnboardingEvent.onboarding_started(user_id, session_id))
+
+    def _step_completed(self, user_id: str, step_id: str, step_data: dict[str, Any] | None = None) -> None:
+        self._track_event(OnboardingEvent.step_completed(user_id, step_id, ""))
+        if step_id == StepId.ONBOARDING_WIZARD.value:
+            self._track_event(OnboardingEvent.wizard_completed(user_id, step_data or {}))
+
+    def _onboarding_completed(self, user_id: str) -> None:
+        self._track_event(OnboardingEvent.onboarding_completed(user_id, ""))
+
+    async def validate_wizard_data(self, data: dict[str, object]) -> list[dict[str, str]]:
+        errors: list[dict[str, str]] = []
+
+        industry = data.get("industry", "")
+        if not isinstance(industry, str) or not industry:
+            errors.append({"field": "industry", "message": "Industry is required"})
+        elif industry not in INDUSTRIES:
+            errors.append({"field": "industry", "message": f"Invalid industry: {industry}"})
+
+        role = data.get("role", "")
+        if not isinstance(role, str) or not role:
+            errors.append({"field": "role", "message": "Role is required"})
+        elif role not in ROLES:
+            errors.append({"field": "role", "message": f"Invalid role: {role}"})
+
+        goals = data.get("goals", [])
+        if not isinstance(goals, list) or len(goals) < 1:
+            errors.append({"field": "goals", "message": "At least one goal is required"})
+        elif len(goals) > 10:
+            errors.append({"field": "goals", "message": "Maximum 10 goals allowed"})
+        else:
+            invalid = [g for g in goals if not isinstance(g, str) or g not in VALID_GOALS]
+            if invalid:
+                errors.append({"field": "goals", "message": f"Invalid goals: {invalid}"})
+
+        return errors
 
     async def start_or_resume(self, user_id: str) -> tuple[OnboardingSession, list[OnboardingEvent]]:
         events: list[OnboardingEvent] = []
@@ -160,6 +268,7 @@ class OnboardingService:
         )
         await self._session_repo.save(session)
         events.append(OnboardingEvent.onboarding_started(user_id, session.id))
+        self._onboarding_started(user_id, session.id)
         return session, events
 
     async def get_current_step(self, user_id: str) -> OnboardingSession:
@@ -224,6 +333,7 @@ class OnboardingService:
         await self._session_repo.save(session)
 
         events.append(OnboardingEvent.step_completed(user_id, step_id, session.lifecycle_state.value))
+        self._step_completed(user_id, step_id, data)
 
         if step_id == StepId.PROFILE_SETUP.value:
             events.append(OnboardingEvent.profile_completed(
@@ -238,6 +348,7 @@ class OnboardingService:
             session.deactivate()
             await self._session_repo.save(session)
             events.append(OnboardingEvent.onboarding_completed(user_id, session.id))
+            self._onboarding_completed(user_id)
 
         return session, events
 
@@ -267,7 +378,7 @@ class OnboardingService:
         lc = await self._lifecycle.get_or_create(user_id)
         session = await self._session_repo.find_active_by_user_id(user_id)
         if session is None:
-            if lc.state in (LifecycleState.ACTIVE, LifecycleState.ONBOARDING_COMPLETE):
+            if lc.state in (LifecycleState.ACTIVE, LifecycleState.ONBOARDING_COMPLETE, LifecycleState.SUBSCRIPTION_ACTIVE):
                 completed_ids: set[str] = set()
                 all_steps = [s.value for s in STEP_ORDER]
                 return {
@@ -327,7 +438,182 @@ class OnboardingService:
         }
         return mapping.get(step, "/onboarding")
 
+    async def save_wizard_data(
+        self, user_id: str, data: dict[str, object],
+    ) -> dict[str, object]:
+        if self._user_service is None:
+            return data
+        user = await self._user_service.get_user(user_id)
+        merged = dict(user.onboarding_data_dict)
+        merged.update(data)
+        user.set_onboarding_data(merged)
+        await self._user_service.save_user(user)
+        return merged
+
+    async def get_wizard_data(self, user_id: str) -> dict[str, object]:
+        if self._user_service is None:
+            return {}
+        user = await self._user_service.get_user(user_id)
+        return dict(user.onboarding_data_dict)
+
+    async def complete_wizard(
+        self, user_id: str, data: dict[str, object],
+    ) -> tuple[OnboardingSession, list[OnboardingEvent]]:
+        merged = await self.save_wizard_data(user_id, data)
+
+        # Auto-complete PROFILE_SETUP and WORKSPACE_SETUP if needed
+        session = await self._session_repo.find_active_by_user_id(user_id)
+        if session is not None and not session.is_step_completed(StepId.PROFILE_SETUP.value):
+            display_name = ""
+            if self._user_service is not None:
+                user = await self._user_service.get_user(user_id)
+                display_name = user.display_name or ""
+            await self.complete_step(user_id, StepId.PROFILE_SETUP.value, {"display_name": display_name})
+
+        if session is not None and not session.is_step_completed(StepId.WORKSPACE_SETUP.value):
+            company_name = str(data.get("company_name", "") or "")
+            await self.complete_step(user_id, StepId.WORKSPACE_SETUP.value, {"workspace_name": company_name})
+
+        _, events = await self.complete_step(
+            user_id, StepId.ONBOARDING_WIZARD.value, merged,
+        )
+        session = await self._session_repo.find_active_by_user_id(user_id)
+        if session is None:
+            session, _ = await self.start_or_resume(user_id)
+        return session, events
+
+    async def create_workspace_and_finalize(
+        self, user_id: str, data: dict[str, object],
+    ) -> dict[str, object]:
+        workspace_name = str(data.get("workspace_name", "") or "My Workspace")
+        slug = str(data.get("slug", "") or "")
+
+        if self._org_service is None:
+            raise RuntimeError("OrganizationService not configured")
+
+        user = None
+        if self._user_service is not None:
+            user = await self._user_service.get_user(user_id)
+
+        org = await self._org_service.create_organization(
+            name=workspace_name,
+            created_by=user_id,
+            slug=slug or None,
+            display_name=workspace_name,
+        )
+
+        if user is not None and self._user_service is not None:
+            user.onboarding_completed_at = datetime.now(timezone.utc)
+            await self._user_service.save_user(user)
+
+        self._onboarding_completed(user_id)
+
+        return {
+            "organization_id": org.id,
+            "organization_name": org.name,
+            "organization_slug": org.slug,
+        }
+
     def _is_onboarding_complete(self, session: OnboardingSession) -> bool:
         all_steps = {s.value for s in STEP_ORDER}
         completed = {s.step_id for s in session.completed_steps}
         return all_steps.issubset(completed)
+
+    # ─── AI Personalization ───────────────────────────────────────────
+
+    async def validate_personalization_step(
+        self, step_id: str, data: dict[str, object],
+    ) -> list[dict[str, str]]:
+        errors: list[dict[str, str]] = []
+
+        if step_id == "about_business":
+            name = data.get("company_name", "")
+            if not isinstance(name, str) or not name.strip():
+                errors.append({"field": "company_name", "message": "Company name is required"})
+
+        elif step_id == "what_you_sell":
+            offering = data.get("offering", "")
+            if not isinstance(offering, str) or not offering.strip():
+                errors.append({"field": "offering", "message": "Product or service description is required"})
+            pricing = data.get("pricing_model", "")
+            if pricing and pricing not in PRICING_MODELS:
+                errors.append({"field": "pricing_model", "message": f"Invalid pricing model: {pricing}"})
+
+        elif step_id == "icp":
+            industries = data.get("target_industries", [])
+            if not isinstance(industries, list) or len(industries) < 1:
+                errors.append({"field": "target_industries", "message": "Select at least one target industry"})
+            else:
+                invalid = [i for i in industries if not isinstance(i, str) or i not in TARGET_INDUSTRIES]
+                if invalid:
+                    errors.append({"field": "target_industries", "message": f"Invalid industries: {invalid}"})
+            sizes = data.get("target_company_sizes", [])
+            if isinstance(sizes, list):
+                invalid = [s for s in sizes if s not in TARGET_COMPANY_SIZES]
+                if invalid:
+                    errors.append({"field": "target_company_sizes", "message": f"Invalid company sizes: {invalid}"})
+            titles = data.get("target_titles", [])
+            if isinstance(titles, list):
+                invalid = [t for t in titles if t not in TARGET_TITLES]
+                if invalid:
+                    errors.append({"field": "target_titles", "message": f"Invalid titles: {invalid}"})
+
+        elif step_id == "geography":
+            market = data.get("primary_market", "")
+            if not isinstance(market, str) or not market.strip():
+                errors.append({"field": "primary_market", "message": "Primary market is required"})
+            elif market not in PRIMARY_MARKETS:
+                errors.append({"field": "primary_market", "message": f"Invalid market: {market}"})
+
+        elif step_id == "goals":
+            goals = data.get("ai_goals", [])
+            if not isinstance(goals, list) or len(goals) < 1:
+                errors.append({"field": "ai_goals", "message": "Select at least one goal"})
+            else:
+                invalid = [g for g in goals if not isinstance(g, str) or g not in AI_GOALS]
+                if invalid:
+                    errors.append({"field": "ai_goals", "message": f"Invalid goals: {invalid}"})
+
+        elif step_id == "communication":
+            tone = data.get("tone", "")
+            if not isinstance(tone, str) or not tone.strip():
+                errors.append({"field": "tone", "message": "Communication tone is required"})
+            elif tone not in COMMUNICATION_TONES:
+                errors.append({"field": "tone", "message": f"Invalid tone: {tone}"})
+
+        return errors
+
+    async def get_personalization_context(self, user_id: str) -> dict[str, object]:
+        data = await self.get_wizard_data(user_id)
+        return {
+            "business": {
+                "company_name": data.get("company_name", ""),
+                "website": data.get("website", ""),
+                "description": data.get("description", ""),
+            },
+            "product": {
+                "offering": data.get("offering", ""),
+                "pricing_model": data.get("pricing_model", ""),
+                "deal_size": data.get("deal_size", ""),
+                "sales_cycle": data.get("sales_cycle", ""),
+            },
+            "icp": {
+                "target_industries": data.get("target_industries", []),
+                "target_company_sizes": data.get("target_company_sizes", []),
+                "target_titles": data.get("target_titles", []),
+                "competitors": data.get("competitors", ""),
+            },
+            "geography": {
+                "primary_market": data.get("primary_market", ""),
+                "language": data.get("language", ""),
+                "timezone": data.get("timezone", ""),
+            },
+            "goals": {
+                "ai_goals": data.get("ai_goals", []),
+                "custom_goal": data.get("custom_goal", ""),
+            },
+            "communication": {
+                "tone": data.get("tone", ""),
+                "brand_voice": data.get("brand_voice", ""),
+            },
+        }

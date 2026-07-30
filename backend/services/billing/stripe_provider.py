@@ -19,7 +19,7 @@ from services.billing.provider import (
 )
 
 
-class StripeBillingProvider(BillingProvider):
+class MockStripeBillingProvider(BillingProvider):
 
     WEBHOOK_EVENTS: set[str] = {
         "checkout.session.completed",
@@ -39,8 +39,6 @@ class StripeBillingProvider(BillingProvider):
         self._subscriptions: dict[str, dict[str, Any]] = {}
         self._next_number: int = 1
 
-    # ── Customer ──────────────────────────────────────────────────────
-
     def create_customer(
         self,
         email: str,
@@ -56,8 +54,6 @@ class StripeBillingProvider(BillingProvider):
             "created": int(time.time()),
         }
         return ProviderCustomerResult(provider_customer_id=cust_id)
-
-    # ── Checkout ──────────────────────────────────────────────────────
 
     def create_checkout_session(
         self,
@@ -91,8 +87,6 @@ class StripeBillingProvider(BillingProvider):
             metadata=self._checkout_sessions[checkout_id]["metadata"],
         )
 
-    # ── Portal ────────────────────────────────────────────────────────
-
     def create_customer_portal(
         self,
         customer_id: str,
@@ -103,8 +97,6 @@ class StripeBillingProvider(BillingProvider):
         return PortalResult(
             url=f"https://billing.stripe.com/mock/session/{customer_id[:8]}",
         )
-
-    # ── Subscription ──────────────────────────────────────────────────
 
     def get_subscription(self, subscription_id: str) -> ProviderSubscriptionResult:
         sub = self._subscriptions.get(subscription_id)
@@ -152,8 +144,6 @@ class StripeBillingProvider(BillingProvider):
             current_period_end=sub.get("current_period_end"),
             cancel_at_period_end=sub.get("cancel_at_period_end", False),
         )
-
-    # ── Webhook ───────────────────────────────────────────────────────
 
     def handle_webhook(self, payload: WebhookPayload) -> list[dict[str, Any]]:
         if payload.signature:
@@ -271,8 +261,6 @@ class StripeBillingProvider(BillingProvider):
     def _handle_invoice_failed(self, data: dict[str, Any]) -> None:
         pass
 
-    # ── Test Helpers ──────────────────────────────────────────────────
-
     def _add_subscription(self, sub_data: dict[str, Any]) -> None:
         sub_id = sub_data.get("id", f"sub_mock_{uuid4().hex[:12]}")
         self._subscriptions[sub_id] = {"id": sub_id, **sub_data}
@@ -280,3 +268,180 @@ class StripeBillingProvider(BillingProvider):
     def _add_checkout_session(self, cs_data: dict[str, Any]) -> None:
         cs_id = cs_data.get("id", f"cs_mock_{uuid4().hex[:12]}")
         self._checkout_sessions[cs_id] = {"id": cs_id, **cs_data}
+
+
+class StripeBillingProvider(BillingProvider):
+
+    WEBHOOK_EVENTS: set[str] = {
+        "checkout.session.completed",
+        "customer.subscription.created",
+        "customer.subscription.updated",
+        "customer.subscription.deleted",
+        "invoice.paid",
+        "invoice.payment_failed",
+    }
+
+    def __init__(self, config: BillingConfig | None = None) -> None:
+        self._config = config or BillingConfig()
+        self._stripe = self._get_stripe_module()
+
+    def _get_stripe_module(self):
+        try:
+            import stripe
+            stripe.api_key = self._config.stripe_secret_key
+            return stripe
+        except ImportError as exc:
+            raise ProviderError(
+                "Stripe SDK not installed. Add 'stripe' to requirements.txt"
+            ) from exc
+
+    def _map_stripe_error(self, exc: Exception) -> ProviderError:
+        return ProviderError(f"Stripe API error: {exc}")
+
+    def create_customer(
+        self,
+        email: str,
+        organization_id: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> ProviderCustomerResult:
+        try:
+            stripe_customer = self._stripe.Customer.create(
+                email=email,
+                metadata={
+                    "organization_id": organization_id,
+                    **(metadata or {}),
+                },
+            )
+            return ProviderCustomerResult(
+                provider_customer_id=stripe_customer.id,
+            )
+        except Exception as exc:
+            raise self._map_stripe_error(exc) from exc
+
+    def create_checkout_session(
+        self,
+        customer_id: str,
+        plan_id: str,
+        success_url: str,
+        cancel_url: str,
+        trial_days: int = 0,
+        metadata: dict[str, Any] | None = None,
+    ) -> CheckoutResult:
+        try:
+            session_data: dict[str, Any] = {
+                "customer": customer_id,
+                "mode": "subscription",
+                "line_items": [{"price": plan_id, "quantity": 1}],
+                "success_url": success_url,
+                "cancel_url": cancel_url,
+                "metadata": metadata or {},
+            }
+            if trial_days > 0:
+                session_data["subscription_data"] = {
+                    "trial_period_days": trial_days,
+                }
+
+            session = self._stripe.checkout.Session.create(**session_data)
+            return CheckoutResult(
+                url=session.url or "",
+                provider_checkout_id=session.id,
+                metadata=dict(session.metadata or {}),
+            )
+        except Exception as exc:
+            raise self._map_stripe_error(exc) from exc
+
+    def create_customer_portal(
+        self,
+        customer_id: str,
+        return_url: str,
+    ) -> PortalResult:
+        try:
+            portal = self._stripe.billing_portal.Session.create(
+                customer=customer_id,
+                return_url=return_url,
+            )
+            return PortalResult(url=portal.url)
+        except Exception as exc:
+            raise self._map_stripe_error(exc) from exc
+
+    def get_subscription(self, subscription_id: str) -> ProviderSubscriptionResult:
+        try:
+            sub = self._stripe.Subscription.retrieve(subscription_id)
+            return ProviderSubscriptionResult(
+                provider_subscription_id=sub.id,
+                status=sub.status,
+                current_period_start=sub.current_period_start,
+                current_period_end=sub.current_period_end,
+                cancel_at_period_end=sub.cancel_at_period_end,
+                trial_end=sub.trial_end,
+            )
+        except Exception as exc:
+            raise self._map_stripe_error(exc) from exc
+
+    def cancel_subscription(
+        self,
+        subscription_id: str,
+        at_period_end: bool = True,
+    ) -> ProviderSubscriptionResult:
+        try:
+            if at_period_end:
+                sub = self._stripe.Subscription.modify(
+                    subscription_id,
+                    cancel_at_period_end=True,
+                )
+            else:
+                sub = self._stripe.Subscription.delete(subscription_id)
+            return ProviderSubscriptionResult(
+                provider_subscription_id=sub.id,
+                status=sub.status,
+                current_period_start=getattr(sub, "current_period_start", None),
+                current_period_end=getattr(sub, "current_period_end", None),
+                cancel_at_period_end=getattr(sub, "cancel_at_period_end", False),
+            )
+        except Exception as exc:
+            raise self._map_stripe_error(exc) from exc
+
+    def resume_subscription(self, subscription_id: str) -> ProviderSubscriptionResult:
+        try:
+            sub = self._stripe.Subscription.modify(
+                subscription_id,
+                cancel_at_period_end=False,
+            )
+            return ProviderSubscriptionResult(
+                provider_subscription_id=sub.id,
+                status=sub.status,
+                current_period_start=sub.current_period_start,
+                current_period_end=sub.current_period_end,
+                cancel_at_period_end=sub.cancel_at_period_end,
+            )
+        except Exception as exc:
+            raise self._map_stripe_error(exc) from exc
+
+    def handle_webhook(self, payload: WebhookPayload) -> list[dict[str, Any]]:
+        try:
+            event = self._stripe.Webhook.construct_event(
+                payload=payload.raw_body,
+                sig_header=payload.signature,
+                secret=self._config.stripe_webhook_secret,
+            )
+        except ValueError as exc:
+            raise ProviderError(f"Invalid webhook payload: {exc}") from exc
+        except self._stripe.error.SignatureVerificationError as exc:
+            raise WebhookSignatureInvalid() from exc
+        except Exception as exc:
+            raise self._map_stripe_error(exc) from exc
+
+        event_type = event.type
+        if event_type not in self.WEBHOOK_EVENTS:
+            return []
+
+        data = event.data.object if hasattr(event, "data") else {}
+        data_dict = json.loads(json.dumps(data, default=str))
+
+        return [{
+            "event_id": event.id,
+            "event_type": event_type,
+            "provider_event_id": event.id,
+            "data": data_dict,
+            "processed": True,
+        }]

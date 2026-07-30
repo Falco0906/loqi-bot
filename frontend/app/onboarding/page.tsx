@@ -868,7 +868,7 @@ function KnowledgeValidation({
                     <div className="w-full h-48 rounded-lg overflow-hidden relative bg-gradient-to-br from-[#f5f0eb] via-[#fdf8f8] to-[#e8e0d8]" />
                   </div>
                 )}
-                <div className={card.span ? "flex flex-col justify-center flex-1" : ""}>
+                <div className="flex flex-col justify-center flex-1">
                   <span
                     className="material-symbols-outlined text-[#53625c] mb-4"
                     style={{ fontSize: 24 }}
@@ -886,9 +886,24 @@ function KnowledgeValidation({
                       rows={3}
                     />
                   ) : (
-                    <div className="font-['Inter'] text-[16px] leading-[1.5] text-[#444748]">
-                      <ProfileValue value={card.belief || card.raw} />
-                    </div>
+                    <>
+                      <h3 className="font-['Libre_Caslon_Text'] text-[24px] leading-[1.4] text-[#1c1b1b] mb-4 font-normal">
+                        I currently believe&hellip;
+                      </h3>
+                      <div className="font-['Inter'] text-[16px] leading-[1.5] text-[#444748]">
+                        <ProfileValue value={card.belief || card.raw} />
+                      </div>
+                      {card.span && strategicProfile?.CONFIDENCE_LEVELS?.overall && (
+                        <div className="mt-6 flex gap-2">
+                          <span className="px-3 py-1 bg-[#ebe7e6] rounded-full font-['Geist'] text-[11px] leading-[1.2] tracking-[0.05em] font-semibold text-[#576660]">
+                            {strategicProfile.CONFIDENCE_LEVELS.overall === "high" ? "High Confidence" : strategicProfile.CONFIDENCE_LEVELS.overall === "low" ? "Developing" : "Moderate Confidence"}
+                          </span>
+                          <span className="px-3 py-1 bg-[#ebe7e6] rounded-full font-['Geist'] text-[11px] leading-[1.2] tracking-[0.05em] font-semibold text-[#576660]">
+                            Strategic Core
+                          </span>
+                        </div>
+                      )}
+                    </>
                   )}
                   <div className="mt-8 pt-4 border-t border-[#c4c7c7]/20">
                     <span className="font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] text-[#747878] italic font-medium">
@@ -921,7 +936,7 @@ function KnowledgeValidation({
                     onClick={() => onProceed(local)}
                     className="group relative px-8 py-4 bg-[#000000] text-[#ffffff] rounded-lg font-['Inter'] text-[16px] leading-[1.5] transition-all duration-300 hover:bg-[#444748] active:scale-95 flex items-center gap-2 overflow-hidden"
                   >
-                    <span>Looks right</span>
+                    <span>Yes, proceed with investigation</span>
                     <span className="material-symbols-outlined text-sm group-hover:translate-x-1 transition-transform">
                       arrow_forward
                     </span>
@@ -930,7 +945,7 @@ function KnowledgeValidation({
                     onClick={() => setEditing(true)}
                     className="px-8 py-4 bg-transparent border border-[#c4c7c7] text-[#444748] rounded-lg font-['Inter'] text-[16px] leading-[1.5] transition-all duration-300 hover:border-[#000000] hover:text-[#000000] active:scale-95"
                   >
-                    Let&rsquo;s refine this
+                    Let&rsquo;s refine a few things
                   </button>
                 </>
               )}

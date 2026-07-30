@@ -5,7 +5,7 @@ import Link from "next/link";
 import AppPage from "../primitives/AppPage";
 import WorkspaceContainer from "../layout/WorkspaceContainer";
 import { useData } from "../../lib/hooks/use-data";
-import { fetchMissionControl } from "../../lib/repositories";
+import { fetchMissionControl, profileFieldToString } from "../../lib/repositories";
 import { useAuth } from "../../hooks/useAuth";
 import { getStrategicProfile } from "../../lib/strategic-intelligence-api";
 import { useTellLoqi } from "../../hooks/useTellLoqi";
@@ -144,16 +144,16 @@ export default function MissionControlDashboard() {
   const briefingLines = storedProfile
     ? [
         storedProfile.COMPANY_SUMMARY
-          ? `Market position: ${storedProfile.COMPANY_SUMMARY}`
+          ? `Market position: ${profileFieldToString(storedProfile.COMPANY_SUMMARY)}`
           : null,
         storedProfile.PRIMARY_OBJECTIVE
-          ? `Strategic objective: ${storedProfile.PRIMARY_OBJECTIVE}`
+          ? `Strategic objective: ${profileFieldToString(storedProfile.PRIMARY_OBJECTIVE)}`
           : null,
         storedProfile.CURRENT_CONSTRAINTS
-          ? `Current constraint: ${storedProfile.CURRENT_CONSTRAINTS}`
+          ? `Current constraint: ${profileFieldToString(storedProfile.CURRENT_CONSTRAINTS)}`
           : null,
         storedProfile.ICP
-          ? `Ideal customer: ${storedProfile.ICP}`
+          ? `Ideal customer: ${profileFieldToString(storedProfile.ICP)}`
           : null,
       ].filter(Boolean) as string[]
     : data.brief.lines;
@@ -161,7 +161,7 @@ export default function MissionControlDashboard() {
   return (
     <WorkspaceContainer>
       <AppPage>
-        <div className="reading-column py-16 flex flex-col gap-16">
+        <div className="reading-column py-16 flex flex-col gap-16 pb-48">
 
           {/* Section 1: Briefing Message */}
           <section className="space-y-6 animate-fade-in">
@@ -291,9 +291,13 @@ export default function MissionControlDashboard() {
             </section>
           )}
 
-          {/* Section 7: Tell Loqi */}
-          <section className="pt-6 border-t border-outline-variant/20">
-            <div className="bg-surface-lowest border border-outline-variant/20 rounded-xl p-4 ambient-shadow">
+        </div>
+        {/* ^ closes reading-column */}
+
+        {/* Section 7: Persistent Tell Loqi — sticky footer */}
+        <div className="fixed bottom-0 left-64 right-0 z-40 bg-gradient-to-t from-background via-background/95 to-transparent pt-20 pb-8">
+          <div className="reading-column px-6">
+            <div className="bg-surface-lowest border border-outline-variant/20 rounded-xl p-4 ambient-shadow focus-within:ring-2 focus-within:ring-primary/5 transition-all">
               <label className="text-xs uppercase tracking-widest text-on-surface-variant block mb-2 px-2 font-medium">
                 Tell Loqi...
               </label>
@@ -344,9 +348,9 @@ export default function MissionControlDashboard() {
                 FIND NEW VENTURE LEADS
               </button>
             </div>
-          </section>
-
+          </div>
         </div>
+
       </AppPage>
     </WorkspaceContainer>
   );

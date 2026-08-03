@@ -631,6 +631,7 @@ export type MCSummary = {
   live_activity: RecentOutcome[];
   campaign_count: number;
   active_jobs: unknown[];
+  initial_research?: Record<string, unknown> | null;
   recommendations: MCRecommendation[];
   kpis: {
     estimated_reply_rate: number;
@@ -650,9 +651,9 @@ export type MCSummary = {
   };
 };
 
-export async function getMissionControl(sessionToken: string) {
+export async function getMissionControl(sessionToken: string, onboardingUserId = "") {
   return fetchWithRetry<MCSummary>(
-    `${API_BASE}/api/web/session/${sessionToken}/mission-control`,
+    `${API_BASE}/api/web/session/${sessionToken}/mission-control?onboarding_user_id=${encodeURIComponent(onboardingUserId)}`,
   );
 }
 
@@ -1075,5 +1076,69 @@ export async function generateConversationReply(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     },
+  );
+}
+
+/* ─── Phase 11: Mission Control Briefing ─── */
+
+export type IntentionCard = {
+  id: string;
+  title: string;
+  summary: string;
+  priority: string;
+  confidence: number;
+  evidence: Array<{ reason_code: string; confidence: number; source: string; detail: string }>;
+  recommended_action: string;
+  related_campaign: string | null;
+  related_lead: string | null;
+  reason_code: string;
+};
+
+export type BriefingSection = {
+  greeting: string;
+  lines: string[];
+  suggestion: string;
+  overall_summary: string;
+  primary_focus: string;
+  top_recommendation: string;
+};
+
+export type HealthSummary = {
+  overall_health: string;
+  pipeline_velocity: string;
+  bottlenecks: string[];
+  provider_health: Array<Record<string, unknown>>;
+  confidence_score: number;
+  campaigns_ready: number;
+  campaigns_waiting: number;
+  draft_backlog: number;
+  details: Record<string, unknown>;
+};
+
+export type TimelineEvent = {
+  id: string;
+  timestamp: string;
+  type: string;
+  description: string;
+  category: string;
+  actor: string;
+  metadata: Record<string, unknown>;
+};
+
+export type BriefingResponse = {
+  ok: boolean;
+  briefing: BriefingSection;
+  top_priorities: IntentionCard[];
+  waiting_on_you: IntentionCard[];
+  loqi_handled: IntentionCard[];
+  upcoming: IntentionCard[];
+  workspace_health: HealthSummary;
+  timeline: TimelineEvent[];
+  all_intentions: IntentionCard[];
+};
+
+export async function getBriefing(sessionToken: string, onboardingUserId = "") {
+  return fetchWithRetry<BriefingResponse>(
+    `${API_BASE}/api/web/session/${sessionToken}/briefing?onboarding_user_id=${encodeURIComponent(onboardingUserId)}`,
   );
 }

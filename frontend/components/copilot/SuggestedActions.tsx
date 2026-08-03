@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import Icon from "../shared/Icon";
 import type { CopilotAction } from "../../lib/actionRegistry";
 
@@ -8,7 +9,7 @@ type Props = {
   onExecute: (action: CopilotAction) => void;
 };
 
-export default function SuggestedActions({ actions, onExecute }: Props) {
+function SuggestedActions({ actions, onExecute }: Props) {
   if (actions.length === 0) return null;
 
   return (
@@ -26,3 +27,5 @@ export default function SuggestedActions({ actions, onExecute }: Props) {
     </div>
   );
 }
+
+export default memo(SuggestedActions);

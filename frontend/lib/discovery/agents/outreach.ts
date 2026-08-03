@@ -16,6 +16,7 @@ export class OutreachAgent implements ResearchAgent {
     ctx.outreachContext = {
       strategy: {
         channel: "email",
+        type: "growth",
         angle: "Pain point focused",
         valueProposition: "Automated AI research",
         confidence: 0.9,

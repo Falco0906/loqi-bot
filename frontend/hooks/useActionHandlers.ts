@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useCopilot } from "../contexts/CopilotContext";
+import { useCopilotActions } from "../contexts/CopilotContext";
 import type { ActionType, ActionHandler } from "../lib/actionRegistry";
 
 export function useActionHandlers(
   handlers: Record<string, ActionHandler>,
 ) {
-  const { registerHandler, unregisterHandler } = useCopilot();
+  const { registerHandler, unregisterHandler } = useCopilotActions();
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
 

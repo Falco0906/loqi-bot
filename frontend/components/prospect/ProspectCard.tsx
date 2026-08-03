@@ -58,7 +58,7 @@ export default function ProspectCard({ prospect, selected, onToggle, action = "n
     >
       <div className="flex justify-between items-start mb-3">
         <div className="flex gap-3 items-start">
-          <div className="w-10 h-10 rounded-lg bg-[#1F1F23] flex items-center justify-center text-on-surface-variant/40 text-xs font-bold shrink-0">
+          <div className="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center text-on-surface-variant/60 text-xs font-bold shrink-0">
             {prospect.contact.charAt(0).toUpperCase()}
           </div>
           <div>

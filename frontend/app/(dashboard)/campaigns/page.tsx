@@ -6,6 +6,7 @@ import CampaignCard from "../../../components/campaigns/CampaignCard";
 import Icon from "../../../components/shared/Icon";
 import { toast } from "../../../components/shared/Toast";
 import WorkspaceContainer from "../../../components/layout/WorkspaceContainer";
+import { useTellLoqi } from "../../../hooks/useTellLoqi";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
@@ -90,6 +91,11 @@ export default function CampaignsPage() {
     completed: 5,
   };
 
+  const tellLoqi = useTellLoqi("Campaigns", {
+    active: activeCampaigns.length,
+    total: campaigns.length,
+  });
+
   function sortFn(a: Record<string, unknown>, b: Record<string, unknown>) {
     return (SORT_ORDER[a.status as string] ?? 99) - (SORT_ORDER[b.status as string] ?? 99);
   }
@@ -126,21 +132,70 @@ export default function CampaignsPage() {
             ))}
           </div>
         ) : campaigns.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center animate-fade-in">
-            <div className="w-16 h-16 rounded-2xl bg-surface-high/30 flex items-center justify-center text-on-surface-variant/40 mb-4">
-              <Icon name="campaign" className="text-3xl" />
+          <>
+            <div className="flex flex-col items-center justify-center py-20 text-center animate-fade-in">
+              <div className="w-16 h-16 rounded-2xl bg-surface-high/30 flex items-center justify-center text-on-surface-variant/40 mb-4">
+                <Icon name="campaign" className="text-3xl" />
+              </div>
+              <p className="text-body-lg text-on-surface-variant/80 font-medium">No campaigns yet</p>
+              <p className="mt-1.5 text-body-md text-on-surface-variant/50 max-w-sm leading-relaxed">
+                Find leads in Discovery and create a campaign from the batch actions bar.
+              </p>
+              <a
+                href="/discovery"
+                className="mt-6 inline-flex items-center justify-center rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-on-primary hover:brightness-110 active:scale-[0.97] transition-all"
+              >
+                Discover Leads
+              </a>
             </div>
-            <p className="text-body-lg text-on-surface-variant/80 font-medium">No campaigns yet</p>
-            <p className="mt-1.5 text-body-md text-on-surface-variant/50 max-w-sm leading-relaxed">
-              Find leads in Discovery and create a campaign from the batch actions bar.
-            </p>
-            <a
-              href="/discovery"
-              className="mt-6 inline-flex items-center justify-center rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-on-primary hover:brightness-110 active:scale-[0.97] transition-all"
-            >
-              Discover Leads
-            </a>
-          </div>
+            {/* Tell Loqi */}
+            <div className="mt-16 pt-8 border-t border-outline-variant/20">
+              <div className="bg-surface-lowest border border-outline-variant/20 rounded-xl p-4 ambient-shadow">
+                <label className="text-xs uppercase tracking-widest text-on-surface-variant block mb-2 px-2 font-medium">
+                  Tell Loqi...
+                </label>
+                <div className="flex items-end gap-3 px-2 pb-1">
+                  <textarea
+                    className="w-full border-none p-0 focus:ring-0 text-lg placeholder:text-on-surface-variant/30 resize-none bg-transparent outline-none"
+                    placeholder="How are my campaigns performing?"
+                    rows={1}
+                    value={tellLoqi.text}
+                    onChange={(e) => tellLoqi.setText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        void tellLoqi.submit();
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={tellLoqi.sending || !tellLoqi.text.trim()}
+                    onClick={() => void tellLoqi.submit()}
+                    className="bg-primary text-on-primary w-10 h-10 rounded-full flex items-center justify-center hover:opacity-80 transition-opacity shrink-0 disabled:opacity-40"
+                  >
+                    <span className="material-symbols-outlined text-sm">arrow_upward</span>
+                  </button>
+                </div>
+              </div>
+              <div className="mt-4 flex justify-center gap-3 overflow-x-auto no-scrollbar">
+                <button
+                  type="button"
+                  onClick={() => void tellLoqi.submit("Help me plan my first outbound campaign.")}
+                  className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+                >
+                  PLAN FIRST CAMPAIGN
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void tellLoqi.submit("Find leads in enterprise SaaS.")}
+                  className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+                >
+                  FIND LEADS
+                </button>
+              </div>
+            </div>
+          </>
         ) : (
           <>
             {activeCampaigns.length > 0 && (
@@ -189,6 +244,61 @@ export default function CampaignsPage() {
                 </div>
               </div>
             )}
+
+            {/* Tell Loqi */}
+            <div className="mt-16 pt-8 border-t border-outline-variant/20">
+              <div className="bg-surface-lowest border border-outline-variant/20 rounded-xl p-4 ambient-shadow">
+                <label className="text-xs uppercase tracking-widest text-on-surface-variant block mb-2 px-2 font-medium">
+                  Tell Loqi...
+                </label>
+                <div className="flex items-end gap-3 px-2 pb-1">
+                  <textarea
+                    className="w-full border-none p-0 focus:ring-0 text-lg placeholder:text-on-surface-variant/30 resize-none bg-transparent outline-none"
+                    placeholder="How are my campaigns performing?"
+                    rows={1}
+                    value={tellLoqi.text}
+                    onChange={(e) => tellLoqi.setText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        void tellLoqi.submit();
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={tellLoqi.sending || !tellLoqi.text.trim()}
+                    onClick={() => void tellLoqi.submit()}
+                    className="bg-primary text-on-primary w-10 h-10 rounded-full flex items-center justify-center hover:opacity-80 transition-opacity shrink-0 disabled:opacity-40"
+                  >
+                    <span className="material-symbols-outlined text-sm">arrow_upward</span>
+                  </button>
+                </div>
+              </div>
+              <div className="mt-4 flex justify-center gap-3 overflow-x-auto no-scrollbar">
+                <button
+                  type="button"
+                  onClick={() => void tellLoqi.submit("Give me a performance summary of all active campaigns.")}
+                  className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+                >
+                  SUMMARIZE PERFORMANCE
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void tellLoqi.submit("Compare my campaigns and recommend which needs attention.")}
+                  className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+                >
+                  COMPARE CAMPAIGNS
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void tellLoqi.submit("Suggest optimizations for my underperforming campaigns.")}
+                  className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+                >
+                  SUGGEST OPTIMIZATIONS
+                </button>
+              </div>
+            </div>
           </>
         )}
       </div>

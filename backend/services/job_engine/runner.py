@@ -15,11 +15,15 @@ class BackgroundRunner:
         self._storage = storage
         self._tasks: dict[str, asyncio.Task] = {}
 
-    def start_job(self, job: Job, runner_fn) -> None:
-        task = asyncio.create_task(self._run_wrapper(job, runner_fn))
+    def start_job(self, job: Job, runner_fn, on_update=None) -> None:
+        task = asyncio.create_task(self._run_wrapper(job, runner_fn, on_update))
         self._tasks[job.id] = task
 
-    async def _run_wrapper(self, job: Job, runner_fn) -> None:
+    async def _run_wrapper(self, job: Job, runner_fn, on_update=None) -> None:
+        def notify(status: str, stage: str, progress: int, error: str = "") -> None:
+            if on_update:
+                on_update({"job_id": job.id, "status": status, "stage": stage, "progress": progress, "error": error})
+
         try:
             self._storage.update_job(
                 job.id,
@@ -27,7 +31,13 @@ class BackgroundRunner:
                 stage="Starting...",
                 progress=0,
             )
-            result = await runner_fn(job, self._on_progress)
+            notify("running", "Starting...", 0)
+
+            def on_progress(job_id: str, stage: str, progress: int) -> None:
+                self._on_progress(job_id, stage, progress)
+                notify("running", stage, progress)
+
+            result = await runner_fn(job, on_progress)
             if result.get("ok"):
                 self._storage.update_job(
                     job.id,
@@ -37,6 +47,7 @@ class BackgroundRunner:
                     result_ready=True,
                     completed_at=datetime.now(timezone.utc),
                 )
+                notify("completed", "Complete", 100)
             else:
                 self._storage.update_job(
                     job.id,
@@ -45,6 +56,7 @@ class BackgroundRunner:
                     error_message=result.get("error", "Unknown error"),
                     completed_at=datetime.now(timezone.utc),
                 )
+                notify("failed", "Failed", 0, result.get("error", "Unknown error"))
         except Exception as e:
             _log(f"job {job.id} crashed: {e}")
             self._storage.update_job(
@@ -54,6 +66,7 @@ class BackgroundRunner:
                 error_message=str(e),
                 completed_at=datetime.now(timezone.utc),
             )
+            notify("failed", "Failed", 0, str(e))
         finally:
             self._tasks.pop(job.id, None)
 

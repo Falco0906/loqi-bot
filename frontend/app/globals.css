@@ -8,13 +8,93 @@
 
 @layer base {
   :root {
+    color-scheme: light;
+    --obsidian: 253 248 248;
+    --charcoal: 241 237 236;
+    --background: 253 248 248;
+    --surface-lowest: 255 255 255;
+    --surface-low: 247 243 242;
+    --surface: 241 237 236;
+    --surface-high: 235 231 230;
+    --surface-highest: 229 226 225;
+    --surface-bright: 253 248 248;
+    --surface-variant: 229 226 225;
+    --surface-dim: 221 217 216;
+    --surface-container: 241 237 236;
+    --surface-container-low: 247 243 242;
+    --surface-container-high: 235 231 230;
+    --on-surface: 28 27 27;
+    --on-surface-variant: 68 71 72;
+    --on-background: 28 27 27;
+    --outline: 116 120 120;
+    --outline-variant: 196 199 199;
+    --primary: 0 0 0;
+    --primary-container: 28 27 27;
+    --on-primary: 255 255 255;
+    --on-primary-container: 133 131 131;
+    --secondary: 83 98 92;
+    --secondary-container: 211 227 220;
+    --on-secondary-container: 87 102 96;
+    --tertiary: 95 94 94;
+    --error: 186 26 26;
+    --error-container: 255 218 214;
+    --on-error: 255 255 255;
+    --on-error-container: 147 0 10;
+    --success: 83 98 92;
+    --warning: 154 103 0;
+    --shadow-ai-glow: 0 0 24px rgba(0, 0, 0, 0.08);
+    --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.1);
+    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+    --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.05);
+    --shadow-card-active: 0 1px 2px rgba(0, 0, 0, 0.05);
+  }
+
+  .dark {
     color-scheme: dark;
+    --obsidian: 20 19 19;
+    --charcoal: 32 31 31;
+    --background: 20 19 19;
+    --surface-lowest: 15 14 14;
+    --surface-low: 28 27 27;
+    --surface: 32 31 31;
+    --surface-high: 43 42 42;
+    --surface-highest: 54 52 52;
+    --surface-bright: 58 57 57;
+    --surface-variant: 54 52 52;
+    --surface-dim: 20 19 19;
+    --surface-container: 32 31 31;
+    --surface-container-low: 28 27 27;
+    --surface-container-high: 43 42 42;
+    --on-surface: 230 226 225;
+    --on-surface-variant: 204 196 201;
+    --on-background: 230 226 225;
+    --outline: 149 143 147;
+    --outline-variant: 74 69 73;
+    --primary: 255 255 255;
+    --primary-container: 230 225 225;
+    --on-primary: 49 48 48;
+    --on-primary-container: 102 100 100;
+    --secondary: 201 198 197;
+    --secondary-container: 72 70 70;
+    --on-secondary-container: 184 180 179;
+    --tertiary: 255 255 255;
+    --error: 255 180 171;
+    --error-container: 147 0 10;
+    --on-error: 105 0 5;
+    --on-error-container: 255 218 214;
+    --success: 201 198 197;
+    --warning: 210 153 34;
+    --shadow-ai-glow: 0 0 24px rgba(0, 0, 0, 0.5);
+    --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.5);
+    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-card-hover: 0 4px 20px rgba(0, 0, 0, 0.4), 0 2px 4px rgba(0, 0, 0, 0.3);
+    --shadow-card-active: 0 1px 2px rgba(0, 0, 0, 0.3);
   }
 
   html, body {
     height: 100%;
-    background-color: #09090B;
-    color: #e4e1ee;
+    background-color: rgb(var(--background));
+    color: rgb(var(--on-surface));
   }
 
   body {
@@ -30,14 +110,14 @@
   }
 
   *:focus-visible {
-    outline: 2px solid rgba(196, 192, 255, 0.6);
+    outline: 2px solid rgb(var(--on-surface) / 0.35);
     outline-offset: 2px;
     border-radius: 6px;
   }
 
   * {
     scrollbar-width: thin;
-    scrollbar-color: rgba(145, 143, 161, 0.35) transparent;
+    scrollbar-color: rgb(var(--on-surface) / 0.25) transparent;
   }
 
   *::-webkit-scrollbar {
@@ -52,7 +132,7 @@
     border-radius: 999px;
     border: 2px solid transparent;
     background-clip: padding-box;
-    background-color: rgba(145, 143, 161, 0.35);
+    background-color: rgb(var(--on-surface) / 0.25);
   }
 }
 
@@ -64,19 +144,19 @@
   }
 
   .glass-panel {
-    background: rgba(11, 11, 15, 0.8);
+    background: rgb(var(--surface-container) / 0.75);
     backdrop-filter: blur(20px);
-    border: 1px solid rgba(31, 31, 35, 0.5);
+    border: 1px solid rgb(var(--on-surface) / 0.08);
   }
 
   .glass-effect {
-    background: rgba(11, 11, 15, 0.6);
+    background: rgb(var(--surface-container) / 0.6);
     backdrop-filter: blur(16px);
-    border: 1px solid rgba(31, 31, 35, 0.4);
+    border: 1px solid rgb(var(--on-surface) / 0.06);
   }
 
   .card-base {
-    @apply rounded-2xl border border-outline-variant/10 bg-surface-lowest shadow-card transition-all duration-200;
+    @apply rounded-2xl border border-outline-variant/60 bg-surface-lowest shadow-card transition-all duration-200;
   }
 
   .card-interactive {
@@ -161,7 +241,7 @@
   }
 
   @keyframes highlight-fade {
-    0% { background-color: rgba(196, 192, 255, 0.12); border-radius: 8px; }
+    0% { background-color: rgb(var(--on-surface) / 0.06); border-radius: 8px; }
     100% { background-color: transparent; }
   }
   .animate-highlight-fade {
@@ -182,5 +262,42 @@
   .animate-conversation-fade-delay-2 {
     animation: conversation-fade-in 1.2s cubic-bezier(0.16, 1, 0.3, 1) 0.4s forwards;
     opacity: 0;
+  }
+
+  @keyframes slide-in-right {
+    from { transform: translateX(32px); }
+    to { transform: translateX(0); }
+  }
+  .animate-slide-in-right {
+    animation: slide-in-right 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .reveal {
+    opacity: 0;
+    transform: translateY(20px);
+    transition:
+      opacity 0.7s ease,
+      transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .reveal.is-visible {
+    opacity: 1;
+    transform: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+  @keyframes feed-step-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .feed-step-in {
+    animation: feed-step-in 0.35s ease-out;
+  }
+
+  .reveal {
+      opacity: 1;
+      transform: none;
+      transition: none;
+    }
   }
 }

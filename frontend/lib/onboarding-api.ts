@@ -113,13 +113,14 @@ export async function createWorkspace(
   userId: string,
   workspaceName: string,
   slug: string,
+  sessionToken = "",
 ): Promise<WorkspaceCreateResponse> {
   const res = await fetch(
     `${API_BASE}/api/v1/onboarding/workspace/create?user_id=${encodeURIComponent(userId)}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workspace_name: workspaceName, slug }),
+      body: JSON.stringify({ workspace_name: workspaceName, slug, session_token: sessionToken }),
     },
   );
   if (!res.ok) {

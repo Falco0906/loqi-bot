@@ -5,7 +5,9 @@ import WorkspaceContainer from "../../../components/layout/WorkspaceContainer";
 import AppPage from "../../../components/primitives/AppPage";
 import { useData } from "../../../lib/hooks/use-data";
 import { fetchKnowledge } from "../../../lib/repositories";
+import { useTellLoqi } from "../../../hooks/useTellLoqi";
 import type { KnowledgeCard as KnowledgeCardType } from "../../../lib/domain";
+import { ProfileValue } from "../../../components/shared/ProfileValue";
 
 function KnowledgeCard({ card, isOpen, onToggle }: { card: KnowledgeCardType; isOpen: boolean; onToggle: () => void }) {
   return (
@@ -48,19 +50,21 @@ function KnowledgeCard({ card, isOpen, onToggle }: { card: KnowledgeCardType; is
                 <h4 className="text-[11px] uppercase tracking-wider font-semibold mb-2 text-on-surface-variant">
                   {field.label}
                 </h4>
-                {field.variant === "tags" ? (
-                  <div className="flex flex-wrap gap-2">
-                    {field.tags?.map((tag) => (
-                      <span key={tag} className="px-4 py-1.5 bg-surface-container rounded-full text-sm">{tag}</span>
-                    ))}
-                  </div>
-                ) : field.variant === "quote" ? (
-                  <p className="text-sm text-on-surface-variant italic leading-snug">&ldquo;{field.value}&rdquo;</p>
-                ) : (
-                  <p className={`${card.fields.length <= 2 ? "text-2xl font-serif text-primary font-normal" : "text-sm text-on-surface"}`}>
-                    {field.value}
-                  </p>
-                )}
+                  {field.variant === "tags" ? (
+                    <div className="flex flex-wrap gap-2">
+                      {field.tags?.map((tag) => (
+                        <span key={tag} className="px-4 py-1.5 bg-surface-container rounded-full text-sm">{tag}</span>
+                      ))}
+                    </div>
+                  ) : field.variant === "quote" ? (
+                    <div className="text-sm text-on-surface-variant italic leading-snug">
+                      <ProfileValue value={field.value} />
+                    </div>
+                  ) : (
+                    <div className={`${card.fields.length <= 2 ? "text-2xl font-serif text-primary font-normal" : "text-sm text-on-surface"}`}>
+                      <ProfileValue value={field.value} />
+                    </div>
+                  )}
               </div>
             ))}
           </div>
@@ -94,6 +98,9 @@ function LoadingSkeleton() {
 export default function KnowledgePage() {
   const { data, loading, error, retry } = useData(fetchKnowledge);
   const [openCard, setOpenCard] = useState<string | null>(null);
+  const teachLoqi = useTellLoqi("Knowledge", {
+    cards: data?.cards.length ?? 0,
+  });
 
   if (loading) {
     return (
@@ -133,7 +140,7 @@ export default function KnowledgePage() {
 
           {/* Headline */}
           <header className="animate-conversation-fade">
-            <h1 className="text-[36px] font-serif text-on-surface mb-4 font-normal">
+            <h1 className="text-4xl md:text-5xl font-serif text-on-surface mb-4 font-normal">
               Current Understanding
             </h1>
             <p className="text-lg text-on-surface-variant/80 leading-relaxed">
@@ -222,21 +229,40 @@ export default function KnowledgePage() {
                 <textarea
                   className="w-full bg-surface-lowest border-0 border-b border-outline-variant/20 focus:border-primary focus:ring-0 text-sm p-4 min-h-[120px] transition-all resize-none placeholder:text-on-surface-variant/30 outline-none rounded-lg"
                   placeholder="What should I understand differently?"
+                  value={teachLoqi.text}
+                  onChange={(e) => teachLoqi.setText(e.target.value)}
                 />
-                <button className="absolute bottom-4 right-4 bg-primary text-on-primary px-6 py-2 rounded-lg text-xs font-semibold uppercase tracking-wider flex items-center gap-2 hover:opacity-90 transition-opacity">
+                <button
+                  type="button"
+                  disabled={teachLoqi.sending || !teachLoqi.text.trim()}
+                  onClick={() => void teachLoqi.submit()}
+                  className="absolute bottom-4 right-4 bg-primary text-on-primary px-6 py-2 rounded-lg text-xs font-semibold uppercase tracking-wider flex items-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-40"
+                >
                   Update Brain
                   <span className="material-symbols-outlined text-sm">send</span>
                 </button>
               </div>
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-[10px] uppercase tracking-widest text-on-surface-variant/50 font-medium">Try saying:</span>
-                <button className="px-4 py-1.5 border border-outline-variant/20 rounded-full text-xs text-on-surface-variant/70 hover:bg-surface-container transition-colors">
+                <button
+                  type="button"
+                  onClick={() => void teachLoqi.submit("Our pricing has changed — we now charge per seat.")}
+                  className="px-4 py-1.5 border border-outline-variant/20 rounded-full text-xs text-on-surface-variant/70 hover:bg-surface-container transition-colors"
+                >
                   &ldquo;Our pricing has changed&rdquo;
                 </button>
-                <button className="px-4 py-1.5 border border-outline-variant/20 rounded-full text-xs text-on-surface-variant/70 hover:bg-surface-container transition-colors">
+                <button
+                  type="button"
+                  onClick={() => void teachLoqi.submit("Ignore agencies — focus only on direct enterprise customers.")}
+                  className="px-4 py-1.5 border border-outline-variant/20 rounded-full text-xs text-on-surface-variant/70 hover:bg-surface-container transition-colors"
+                >
                   &ldquo;Ignore agencies&rdquo;
                 </button>
-                <button className="px-4 py-1.5 border border-outline-variant/20 rounded-full text-xs text-on-surface-variant/70 hover:bg-surface-container transition-colors">
+                <button
+                  type="button"
+                  onClick={() => void teachLoqi.submit("Prioritize outreach to CTOs at Series A companies.")}
+                  className="px-4 py-1.5 border border-outline-variant/20 rounded-full text-xs text-on-surface-variant/70 hover:bg-surface-container transition-colors"
+                >
                   &ldquo;Prioritize CTOs&rdquo;
                 </button>
               </div>

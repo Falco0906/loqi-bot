@@ -66,6 +66,8 @@ from services.workspace_timeline import (
 )
 from services.workspace_snapshot import build_snapshot
 from services.recommendation_engine import generate_recommendations
+from services.learning.behavior_tracker import get_tracker as _get_behavior_tracker
+from services.learning.feedback_interpreter import FeedbackInterpreter as _FeedbackInterpreter
 from services.executive_brief import generate_brief
 from services.draft_intelligence import analyze_draft as analyze_draft_intelligence
 from services.strategic_intelligence_api import router as strategic_intelligence_router
@@ -122,6 +124,17 @@ from services.operations import (
     set_startup_time,
     startup_diagnostics,
 )
+from services.world_model import EventType as WMEventType, get_store as get_wm_store, publish
+
+_feedback_interpreter: _FeedbackInterpreter | None = None
+
+
+def _get_feedback() -> _FeedbackInterpreter:
+    global _feedback_interpreter
+    if _feedback_interpreter is None:
+        _feedback_interpreter = _FeedbackInterpreter(_get_behavior_tracker())
+    return _feedback_interpreter
+
 
 load_dotenv()
 
@@ -198,7 +211,7 @@ register_org_deps(_org_deps)
 
 # ── Wire Organization Service into Onboarding ──
 from services.identity.api import get_auth_user_service
-from services.onboarding.api import set_onboarding_service
+from services.onboarding.api import set_onboarding_service, set_onboarding_completion_handler
 from services.onboarding.services import LifecycleService, OnboardingService as OnboardingServiceCls
 from services.onboarding.repositories import InMemoryLifecycleRepository, InMemoryOnboardingSessionRepository
 _onboarding_lifecycle_repo = InMemoryLifecycleRepository()
@@ -255,6 +268,33 @@ _IDENTITY_STATUS: dict[type, int] = {
     SessionRevokedException: 401,
     IdentityException: 400,
 }
+
+
+def _embed_delta_into_snapshot(snapshot: dict, delta: "WorkspaceDelta") -> None:
+    """Embed delta metadata into snapshot for Executive Brief consumption.
+
+    The Executive Brief's public interface (``generate_brief(snapshot, recommendations)``)
+    stays unchanged — it reads delta fields from the snapshot dict.
+    """
+    import dataclasses
+    snapshot["_delta"] = {
+        "first_visit": delta.first_visit,
+        "event_count": delta.event_count,
+        "event_range": list(delta.event_range),
+        "new_campaigns": len(delta.new_campaigns),
+        "changed_campaigns": len(delta.changed_campaigns),
+        "new_drafts": len(delta.new_drafts),
+        "scheduled_drafts": len(delta.scheduled_drafts),
+        "sent_outreach": len(delta.sent_outreach),
+        "new_leads": len(delta.new_leads),
+        "new_providers": len(delta.new_providers),
+        "new_conversations": len(delta.new_conversations),
+        "escalated_conversations": len(delta.escalated_conversations),
+        "completed_jobs": len(delta.completed_jobs),
+        "learned_preferences": len(delta.learned_preferences),
+        "new_insights": len(delta.new_insights),
+        "has_delta": not delta.is_empty(),
+    }
 
 
 def _identity_status(exc: IdentityException) -> int:
@@ -819,10 +859,25 @@ async def _process_batch_drafts(
                 draft_store[session_token] = []
             draft_store[session_token].append(draft_entry)
 
+            publish(session_token, WMEventType.DRAFT_GENERATED, {
+                "id": draft_entry["id"],
+                "campaign_id": draft_entry["campaign_id"],
+                "lead_id": lead.get("id", ""),
+                "lead_name": name,
+                "subject": draft_entry["subject"],
+                "body_preview": draft_entry["text"][:200],
+            }, actor="system")
+
             _sync_draft_to_outbound(draft_entry, session_token)
 
         except Exception as e:
             print(f"[batch] Draft failed for lead {i} ({name}): {e}")
+            publish(session_token, WMEventType.DRAFT_FAILED, {
+                "lead_index": i,
+                "lead_name": name,
+                "error": str(e),
+                "campaign_id": job.get("campaign_id"),
+            }, actor="system")
             job["completed"] = i + 1
 
     job["status"] = "completed"
@@ -837,6 +892,11 @@ async def _process_batch_drafts(
                 c["updated_at"] = datetime.now(timezone.utc).isoformat()
                 campaign_name = c.get("name")
                 break
+        publish(session_token, WMEventType.CAMPAIGN_STATUS_CHANGED, {
+            "campaign_id": campaign_id,
+            "status": "draft_review",
+            "previous_status": "researching",
+        }, actor="system")
     if campaign_name:
         record_drafts_generated(session_token, campaign_name, job.get("completed", 0))
 
@@ -1167,6 +1227,13 @@ async def telegram_webhook(request: Request):
             await asyncio.to_thread(
                 process_message, chat_id, telegram_id, text, username=username,
             )
+            publish(f"telegram:{telegram_id}", WMEventType.MESSAGE_RECEIVED, {
+                "chat_id": chat_id,
+                "telegram_id": telegram_id,
+                "from": username or telegram_id,
+                "text_preview": text[:200],
+                "channel": "telegram",
+            }, actor="user")
 
         return {"status": "ok"}
     except Exception as error:
@@ -1269,6 +1336,11 @@ async def post_web_session_message(session_token: str, payload: SendWebMessageRe
         text=payload.text,
         username=summary.get("display_name"),
     )
+    publish(session_token, WMEventType.MESSAGE_RECEIVED, {
+        "from": summary.get("display_name", "web-user"),
+        "text_preview": payload.text[:200],
+        "channel": "web",
+    }, actor="user")
     print(f"[TRACE] 10 | RESPONSE RETURNED | post_web_session_message | +{int((time.time()-_t0)*1000)}ms")
     return _result
 
@@ -1363,6 +1435,11 @@ async def update_draft(session_token: str, draft_id: str, payload: UpdateDraftRe
     for d in drafts:
         if d.get("id") == draft_id:
             d["text"] = payload.text
+            publish(session_token, WMEventType.DRAFT_UPDATED, {
+                "draft_id": draft_id,
+                "campaign_id": d.get("campaign_id", ""),
+                "lead_name": d.get("lead", {}).get("name", ""),
+            }, actor="user")
             return {"ok": True, "draft": d}
     raise HTTPException(status_code=404, detail="Draft not found")
 
@@ -1422,6 +1499,13 @@ async def refine_draft(session_token: str, draft_id: str, payload: RefineDraftRe
             except Exception:
                 intelligence = None
 
+            publish(session_token, WMEventType.DRAFT_UPDATED, {
+                "draft_id": draft_id,
+                "campaign_id": target.get("campaign_id", ""),
+                "strategy": strategy,
+                "change_summary": rewrite_result.change_summary or [],
+            }, actor="user")
+
             return {
                 "ok": True,
                 "draft": target,
@@ -1462,6 +1546,11 @@ async def refine_draft(session_token: str, draft_id: str, payload: RefineDraftRe
                 change_summary=["✓ Draft rewritten"],
             )
 
+        publish(session_token, WMEventType.DRAFT_UPDATED, {
+            "draft_id": draft_id,
+            "campaign_id": target.get("campaign_id", ""),
+            "method": "workflow_rewrite",
+        }, actor="user")
         return {"ok": True, "draft": target, "rewritten_text": rewritten_text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1634,8 +1723,8 @@ async def approve_draft(session_token: str, draft_id: str):
                 campaign_status = c["status"]
                 break
 
-    pending_drafts = sum(1 for d in draft_store.get(session_token, []) if d.get("campaign_id") == campaign_id and d.get("status") == "pending") if campaign_id else 0
-    if toggled and toggled.get("status") == "approved":
+    new_status = toggled.get("status") if toggled else "pending"
+    if toggled and new_status == "approved":
         lead_name = toggled.get("lead", {}).get("name", "Unknown")
         campaign_name = None
         if campaign_id:
@@ -1643,10 +1732,30 @@ async def approve_draft(session_token: str, draft_id: str):
                 if c.get("id") == campaign_id:
                     campaign_name = c.get("name")
                     break
+        publish(session_token, WMEventType.DRAFT_APPROVED, {
+            "draft_id": draft_id,
+            "campaign_id": campaign_id,
+            "lead_name": lead_name,
+        }, actor="user")
         record_draft_approved(session_token, lead_name, campaign_name)
+        _get_feedback().on_draft_approved(
+            session_token, draft_id,
+            tone=toggled.get("tone"), was_flagged=toggled.get("flagged", False),
+        )
         if campaign_status == "ready_to_send" and campaign_name:
             record_campaign_ready(session_token, campaign_name)
+            publish(session_token, WMEventType.CAMPAIGN_STATUS_CHANGED, {
+                "campaign_id": campaign_id,
+                "status": "ready_to_send",
+                "previous_status": "draft_review",
+            }, actor="system")
         _call_outbound_approval(draft_id, toggled)
+    elif toggled:
+        publish(session_token, WMEventType.DRAFT_UPDATED, {
+            "draft_id": draft_id,
+            "campaign_id": campaign_id,
+            "status": new_status,
+        }, actor="user")
     return {
         "ok": True,
         "draft": toggled,
@@ -1755,6 +1864,13 @@ async def communication_memory_update(session_token: str, payload: AnalyzeMessag
         followup_action=recommendation.action.value,
         existing_memory=existing,
     )
+    publish(session_token, WMEventType.PREFERENCE_LEARNED, {
+        "conversation_id": cid,
+        "intents": [i.value for i in intents] if intents else [],
+        "signals": [s.signal.value for s in signals] if signals else [],
+        "stage": stage.value if stage else "",
+        "followup_action": recommendation.action.value,
+    }, actor="system")
     return {
         "ok": True,
         "memory": memory.model_dump(),
@@ -1857,6 +1973,11 @@ async def provider_connect(session_token: str, payload: ProviderConnectRequest):
     register_instance(provider.id, instance)
     if ptype == ProviderType.GMAIL:
         _register_outbound_gmail_instance(provider.id)
+    publish(session_token, WMEventType.PROVIDER_CONNECTED, {
+        "provider_id": provider.id,
+        "provider_type": payload.provider_type,
+        "email": payload.email,
+    }, actor="user")
     return {"ok": True, "provider": provider.model_dump()}
 
 
@@ -1865,6 +1986,9 @@ async def provider_disconnect(session_token: str, provider_id: str):
     success = registry_disconnect(provider_id)
     if not success:
         raise HTTPException(status_code=404, detail="Provider not found or already disconnected")
+    publish(session_token, WMEventType.PROVIDER_DISCONNECTED, {
+        "provider_id": provider_id,
+    }, actor="user")
     return {"ok": True}
 
 
@@ -1913,6 +2037,11 @@ async def provider_sync(session_token: str, provider_id: str, cursor: str = ""):
         if not instance:
             raise HTTPException(status_code=404, detail="Provider not found")
         result = sync_all(instance)
+    publish(session_token, WMEventType.SYNC_COMPLETED, {
+        "provider_id": provider_id,
+        "new_messages": result.new_messages if result else 0,
+        "updated_threads": result.updated_threads if result else 0,
+    }, actor="system")
     return {
         "ok": True,
         "result": result.model_dump() if result else None,
@@ -2088,6 +2217,14 @@ async def outbound_create_draft(session_token: str, payload: OutboundCreateDraft
     result = reg_create_draft(payload.provider_id, draft)
     if result:
         outbound_draft_store.update(result)
+    publish(session_token, WMEventType.DRAFT_GENERATED, {
+        "id": draft.id,
+        "campaign_id": draft.workflow_id,
+        "subject": draft.subject,
+        "body_preview": draft.body[:200],
+        "recipient_email": draft.recipient.email,
+        "provider_id": payload.provider_id,
+    }, actor="user")
     return {"ok": True, "draft": draft.model_dump()}
 
 
@@ -2111,6 +2248,11 @@ async def outbound_update_draft(session_token: str, draft_id: str, payload: Outb
         reg_result = reg_update_draft(payload.provider_id, updated)
         if reg_result:
             outbound_draft_store.update(reg_result)
+    publish(session_token, WMEventType.DRAFT_UPDATED, {
+        "draft_id": draft_id,
+        "provider_id": payload.provider_id,
+        "subject": payload.subject or existing.subject,
+    }, actor="user")
     return {"ok": True, "draft": updated.model_dump()}
 
 
@@ -2121,6 +2263,12 @@ async def outbound_delete_draft(session_token: str, draft_id: str, provider_id: 
         from services.outbound.outbound_registry import delete_draft as reg_delete_draft
         reg_delete_draft(provider_id, draft.external_draft_id)
     result = outbound_draft_store.delete(draft_id)
+    if result:
+        publish(session_token, WMEventType.DRAFT_REJECTED, {
+            "draft_id": draft_id,
+            "provider_id": provider_id,
+        }, actor="user")
+        _get_feedback().on_draft_rejected(session_token, draft_id)
     return {"ok": result}
 
 
@@ -2178,6 +2326,20 @@ async def send_draft(session_token: str, draft_id: str):
             )
         except Exception as e:
             log.warning("[send_draft] Failed to create conversation: %s", e)
+        publish(session_token, WMEventType.DRAFT_SENT, {
+            "draft_id": draft_id,
+            "thread_id": send_data.get("thread_id", ""),
+            "external_message_id": send_data.get("external_message_id", ""),
+            "provider_id": real_provider_id,
+            "subject": outbound_draft.subject,
+            "recipient_email": outbound_draft.recipient.email,
+            "campaign_id": outbound_draft.workflow_id or "",
+        }, actor="system")
+    else:
+        publish(session_token, WMEventType.DRAFT_FAILED, {
+            "draft_id": draft_id,
+            "error": result.get("error", "Unknown error"),
+        }, actor="system")
     return {"ok": result.get("ok", False), "send_result": result}
 
 
@@ -2210,6 +2372,12 @@ async def schedule_draft(session_token: str, draft_id: str, payload: ScheduleDra
             if d.get("id") == draft_id:
                 d["status"] = "scheduled"
                 break
+        publish(session_token, WMEventType.DRAFT_SCHEDULED, {
+            "draft_id": draft_id,
+            "send_at": payload.send_at,
+            "provider_id": real_provider_id,
+            "campaign_id": outbound_draft.workflow_id if outbound_draft else "",
+        }, actor="user")
     return result
 
 
@@ -2227,6 +2395,11 @@ async def cancel_schedule_draft(session_token: str, draft_id: str):
             if d.get("id") == draft_id:
                 d["status"] = "pending"
                 break
+        publish(session_token, WMEventType.DRAFT_UPDATED, {
+            "draft_id": draft_id,
+            "status": "pending",
+            "previous_status": "scheduled",
+        }, actor="user")
     return result
 
 
@@ -2301,11 +2474,21 @@ async def outbound_approve_draft(session_token: str, draft_id: str, auto: bool =
             if provider_result.thread_id:
                 updated.thread_id = provider_result.thread_id
             outbound_draft_store.update(updated)
+        publish(session_token, WMEventType.DRAFT_APPROVED, {
+            "draft_id": draft_id,
+            "provider_id": result.provider_id,
+            "auto": auto,
+            "campaign_id": result.workflow_id or "",
+        }, actor="user")
         return {"ok": True, "draft": updated.model_dump() if updated else result.model_dump()}
     except HTTPException:
         raise
     except Exception as e:
         outbound_draft_store.mark_failed(draft_id, str(e))
+        publish(session_token, WMEventType.DRAFT_FAILED, {
+            "draft_id": draft_id,
+            "error": str(e),
+        }, actor="system")
         raise HTTPException(status_code=502, detail=str(e))
 
 
@@ -2315,6 +2498,11 @@ async def outbound_reject_draft(session_token: str, draft_id: str):
     if not result:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Draft not found")
+    publish(session_token, WMEventType.DRAFT_REJECTED, {
+        "draft_id": draft_id,
+        "provider_id": result.provider_id,
+        "campaign_id": result.workflow_id or "",
+    }, actor="user")
     return {"ok": True, "draft": result.model_dump()}
 
 
@@ -2350,6 +2538,12 @@ async def outbound_approve_all(session_token: str, payload: ApproveAllRequest):
             results.append({"draft_id": draft.id, "ok": False, "error": str(e)})
     created = sum(1 for r in results if r["ok"])
     failed = sum(1 for r in results if not r["ok"])
+    publish(session_token, WMEventType.CAMPAIGN_STATUS_CHANGED, {
+        "campaign_id": "approve_all",
+        "status": "approved",
+        "draft_count": created,
+        "failed_count": failed,
+    }, actor="user")
     return {"ok": True, "total": len(pending), "created": created, "failed": failed, "results": results}
 
 
@@ -2408,6 +2602,14 @@ async def save_campaign(session_token: str, payload: SaveCampaignRequest):
     }
     campaign_store[session_token].append(campaign)
     record_campaign_created(session_token, payload.name)
+    publish(session_token, WMEventType.CAMPAIGN_CREATED, {
+        "id": campaign["id"],
+        "name": campaign["name"],
+        "status": campaign["status"],
+        "lead_count": campaign["lead_count"],
+        "search_query": campaign["search_query"],
+    }, actor="user")
+    _get_feedback().on_campaign_created(session_token, campaign["id"])
     return {"ok": True, "campaign": campaign}
 
 
@@ -2474,11 +2676,22 @@ async def update_campaign(session_token: str, campaign_id: str, payload: UpdateC
     if payload.status is not None:
         old_status = target.get("status", "")
         target["status"] = payload.status
+        publish(session_token, WMEventType.CAMPAIGN_STATUS_CHANGED, {
+            "campaign_id": campaign_id,
+            "status": payload.status,
+            "previous_status": old_status,
+        }, actor="user")
         if payload.status == "completed" and old_status != "completed":
             record_campaign_launched(session_token, target.get("name", ""))
+            _get_feedback().on_campaign_launched(session_token, campaign_id)
             _dispatch_campaign_sends(session_token, target)
         elif payload.status in ("ready", "ready_to_send"):
             record_campaign_ready(session_token, target.get("name", ""))
+    elif payload.name is not None:
+        publish(session_token, WMEventType.CAMPAIGN_UPDATED, {
+            "campaign_id": campaign_id,
+            "name": payload.name,
+        }, actor="user")
     target["updated_at"] = datetime.now(timezone.utc).isoformat()
     return {"ok": True, "campaign": target}
 
@@ -2531,9 +2744,17 @@ def _dispatch_campaign_sends(session_token: str, campaign: dict) -> dict:
             if r.get("ok"):
                 campaign["sent_count"] = campaign.get("sent_count", 0) + 1
                 outbound_draft_store.mark_sent(draft.id)
+                send_data = r.get("send_result", {})
+                publish(session_token, WMEventType.DRAFT_SENT, {
+                    "draft_id": draft.id,
+                    "thread_id": send_data.get("thread_id", ""),
+                    "external_message_id": send_data.get("external_message_id", ""),
+                    "provider_id": real_provider_id,
+                    "campaign_id": campaign_id,
+                    "recipient_email": draft.recipient.email,
+                }, actor="system")
                 try:
                     from services.conversations.integration import create_conversation_from_send
-                    send_data = r.get("send_result", {})
                     create_conversation_from_send(
                         provider_id=real_provider_id,
                         provider_type="gmail",
@@ -2552,6 +2773,11 @@ def _dispatch_campaign_sends(session_token: str, campaign: dict) -> dict:
                     log.warning("[campaign_launch] Failed to create conversation: %s", conv_err)
             else:
                 campaign["failed_count"] = campaign.get("failed_count", 0) + 1
+                publish(session_token, WMEventType.DRAFT_FAILED, {
+                    "draft_id": draft.id,
+                    "campaign_id": campaign_id,
+                    "error": r.get("error", "Send failed"),
+                }, actor="system")
             results.append({"draft_id": draft.id, "ok": r.get("ok", False), "error": r.get("error")})
             _update_campaign_launch_progress(session_token, campaign_id,
                                               sum(1 for r2 in results if r2["ok"]),
@@ -2591,6 +2817,10 @@ async def delete_campaign(session_token: str, campaign_id: str):
         raise HTTPException(status_code=404, detail="Campaign not found")
     target["status"] = "archived"
     target["updated_at"] = datetime.now(timezone.utc).isoformat()
+    publish(session_token, WMEventType.CAMPAIGN_ARCHIVED, {
+        "campaign_id": campaign_id,
+        "name": target.get("name", ""),
+    }, actor="user")
     return {"ok": True, "campaign": target}
 
 
@@ -2635,6 +2865,12 @@ async def generate_campaign_drafts(session_token: str, campaign_id: str):
     }
     target["status"] = "generating"
     target["updated_at"] = datetime.now(timezone.utc).isoformat()
+    publish(session_token, WMEventType.CAMPAIGN_STATUS_CHANGED, {
+        "campaign_id": campaign_id,
+        "status": "generating",
+        "previous_status": "planning",
+        "lead_count": total,
+    }, actor="user")
     asyncio.create_task(_process_batch_drafts(session_token, batch_id, leads))
     return {"ok": True, "batch_id": batch_id, "total": total}
 
@@ -2659,35 +2895,140 @@ async def campaign_generation_status(session_token: str, campaign_id: str):
     }
 
 
+async def _launch_initial_research(
+    user_id: str,
+    wizard: dict[str, object],
+    session_token: str,
+) -> None:
+    """Start first research immediately after onboarding finalization.
+
+    The durable onboarding user owns the job. The optional web session is used
+    only as the event stream consumed by Mission Control.
+    """
+    if wizard.get("initial_research_launched"):
+        return
+
+    offering = str(wizard.get("companyDescription") or wizard.get("description") or "").strip()
+    icp = str(wizard.get("idealCustomer") or wizard.get("target_market") or "").strip()
+    if not offering and not icp:
+        raise ValueError("Onboarding did not contain research inputs")
+    query = f"{offering} for {icp}".strip() if offering and icp else (offering or icp)
+
+    def publish_job_update(update: dict[str, object]) -> None:
+        if not session_token:
+            return
+        status = update.get("status")
+        event_type = (
+            WMEventType.WORKFLOW_COMPLETED if status == "completed"
+            else WMEventType.WORKFLOW_FAILED if status == "failed"
+            else WMEventType.WORKFLOW_PROGRESS
+        )
+        publish(session_token, event_type, {
+            "workflow_type": "research",
+            "query": query,
+            **update,
+        }, actor="loqi")
+
+    # Persist the launch marker before scheduling to make completion retries
+    # idempotent. If scheduling fails, reset it so a retry can start work.
+    await _onboarding_svc.save_wizard_data(user_id, {"initial_research_launched": True})
+    result = await job_manager.create_search_job(
+        user_id=user_id,
+        query=query,
+        on_update=publish_job_update,
+    )
+    if not result:
+        await _onboarding_svc.save_wizard_data(user_id, {"initial_research_launched": False})
+        if session_token:
+            publish(session_token, WMEventType.WORKFLOW_FAILED, {
+                "workflow_type": "research", "query": query,
+                "error": "Unable to create the initial research job",
+            }, actor="loqi")
+        return
+
+    job_id = str(result.get("job_id", ""))
+    await _onboarding_svc.save_wizard_data(user_id, {
+        "initial_research_job_id": job_id,
+        "initial_research_session_token": session_token,
+    })
+    if session_token:
+        record_search_started(session_token, query)
+        publish(session_token, WMEventType.WORKFLOW_STARTED, {
+            "workflow_type": "research", "job_id": job_id,
+            "query": query, "status": "queued",
+        }, actor="loqi")
+
+
+set_onboarding_completion_handler(_launch_initial_research)
+
+
 @app.get("/api/web/session/{session_token}/mission-control")
-async def mission_control_summary(session_token: str):
+async def mission_control_summary(session_token: str, onboarding_user_id: str = ""):
     campaigns = campaign_store.get(session_token, [])
     drafts = draft_store.get(session_token, [])
     now = datetime.now(timezone.utc)
 
     total_leads = sum(c.get("lead_count", 0) or 0 for c in campaigns)
-    pending_drafts = sum(1 for d in drafts if d.get("status") == "pending")
-    approved_drafts = sum(1 for d in drafts if d.get("status") == "approved")
-    reply_rate_heuristic = round((approved_drafts / len(drafts) * 100) if drafts else 0)
 
     from services.conversation_engine import ConversationEngine
     _engine = ConversationEngine()
     summary = _engine.get_web_session_summary(session_token)
     db_user_id = summary.get("user_id") if summary else None
 
+    # ── Phase 4: compute delta from World Model ──
+    wm_store = get_wm_store()
+    last_seq = wm_store.get_last_sequence(session_token)
+    delta = wm_store.compute_delta(session_token)
+    log.info(
+        f"[phase4] delta: first_visit={delta.first_visit}, "
+        f"events={delta.event_count}, range={delta.event_range}, "
+        f"new_campaigns={len(delta.new_campaigns)}, "
+        f"changed_campaigns={len(delta.changed_campaigns)}, "
+        f"new_drafts={len(delta.new_drafts)}, "
+        f"new_leads={len(delta.new_leads)}"
+    )
+
     snapshot = build_snapshot(session_token, campaigns, drafts, total_leads, user_id=db_user_id)
+
+    # Embed delta into snapshot for Executive Brief (no interface change)
+    _embed_delta_into_snapshot(snapshot, delta)
+
     analysis = snapshot.get("analysis", {})
     recommendations = generate_recommendations(snapshot)
     brief = generate_brief(snapshot, recommendations)
 
+    # Record acknowledgement after generating the brief
+    ack_ts, ack_seq = wm_store.record_acknowledgement(session_token)
+    log.info(f"[phase4] acknowledgement recorded at seq={ack_seq}")
+
+    # Phase 3: use snapshot-derived values (which come from World Model when available)
     campaign_list = snapshot.get("campaigns", [])
+    draft_counts = snapshot.get("drafts", {"total": 0, "pending": 0, "approved": 0})
+    pending_drafts = draft_counts.get("pending", 0)
+    approved_drafts = draft_counts.get("approved", 0)
+    total_drafts = draft_counts.get("total", 0)
+    snapshot_total_leads = snapshot.get("total_leads", total_leads)
+    reply_rate_heuristic = round((approved_drafts / total_drafts * 100) if total_drafts else 0)
+
     try:
-        if db_user_id:
+        if onboarding_user_id:
+            current_jobs = job_manager.list_active_jobs(onboarding_user_id)
+        elif db_user_id:
             current_jobs = job_manager.list_active_jobs(db_user_id)
         else:
             current_jobs = []
     except Exception:
         current_jobs = []
+
+    initial_research = None
+    if onboarding_user_id:
+        try:
+            wizard = await _onboarding_svc.get_wizard_data(onboarding_user_id)
+            job_id = str(wizard.get("initial_research_job_id") or "")
+            if job_id:
+                initial_research = job_manager.get_job(job_id)
+        except Exception:
+            initial_research = None
 
     attention_items = analysis.get("attention_items", [])[:4]
     needs_attention = [
@@ -2707,20 +3048,22 @@ async def mission_control_summary(session_token: str):
     return {
         "ok": True,
         "campaigns": campaign_list[:4],
-        "draft_counts": {"pending": pending_drafts, "approved": approved_drafts, "total": len(drafts)},
+        "draft_counts": draft_counts,
         "needs_attention": needs_attention,
         "live_activity": grouped_activity,
         "campaign_count": len(campaign_list),
         "active_jobs": current_jobs,
+        "initial_research": initial_research,
         "recommendations": recommendations[:3],
         "kpis": {
             "estimated_reply_rate": reply_rate_heuristic,
             "pending_reviews": pending_drafts,
             "campaigns_ready": analysis.get("workspace_health", {}).get("campaigns_ready", 0),
         },
-        "total_leads": total_leads,
+        "total_leads": snapshot_total_leads,
         "brief": brief,
         "workspace_memory": snapshot.get("memory", {}),
+        "delta": snapshot.get("_delta", {}),
         "workspace_analysis": {
             "current_focus": analysis.get("current_focus"),
             "recommended_next_action": analysis.get("recommended_next_action"),
@@ -2730,6 +3073,29 @@ async def mission_control_summary(session_token: str):
             "workflow_continuation": analysis.get("workflow_continuation"),
         },
     }
+
+
+@app.get("/api/web/session/{session_token}/briefing")
+async def briefing_endpoint(session_token: str, onboarding_user_id: str = ""):
+    from services.mission_control.api import handle_get_briefing
+
+    campaigns = campaign_store.get(session_token, [])
+    drafts = draft_store.get(session_token, [])
+
+    total_leads = sum(c.get("lead_count", 0) or 0 for c in campaigns)
+
+    from services.conversation_engine import ConversationEngine
+    _engine = ConversationEngine()
+    summary = _engine.get_web_session_summary(session_token)
+    db_user_id = summary.get("user_id") if summary else None
+
+    return await handle_get_briefing(
+        session_token=session_token,
+        campaigns=campaigns,
+        drafts=drafts,
+        total_leads=total_leads,
+        db_user_id=onboarding_user_id or db_user_id,
+    )
 
 
 @app.get("/api/web/session/{session_token}/export-csv")
@@ -2795,6 +3161,10 @@ async def select_lead_endpoint(session_token: str, payload: SelectLeadRequest):
             if text:
                 log_conversation_internal(user["id"], "assistant", text)
 
+    publish(session_token, WMEventType.LEAD_SELECTED, {
+        "lead_index": payload.index,
+        "lead_name": result.get("messages", [{}])[0].get("lead_name", ""),
+    }, actor="user")
     return {"ok": True, "messages": result.get("messages", [])}
 
 
@@ -2883,6 +3253,13 @@ async def google_callback(code: str, state: str):
         if saved_user is None:
             raise HTTPException(status_code=500, detail="Failed to save Google tokens")
 
+        session_id = f"{channel}:{user_id}"
+        publish(session_id, WMEventType.PROVIDER_CONNECTED, {
+            "provider_type": "gmail",
+            "email": tokens.get("email", ""),
+            "channel": channel,
+        }, actor="user")
+
         if channel == "telegram":
             send_message(
                 chat_id=int(transport_id),
@@ -2929,6 +3306,12 @@ async def start_search(payload: StartSearchRequest, request: Request):
     result = await job_manager.create_search_job(user_id=user_id, query=payload.query)
     if not result:
         raise HTTPException(status_code=500, detail="Failed to create job")
+    if session_token:
+        publish(session_token, WMEventType.LEAD_DISCOVERED, {
+            "job_id": result.get("id", ""),
+            "query": payload.query,
+            "status": "searching",
+        }, actor="user")
     return result
 
 
@@ -3007,6 +3390,13 @@ async def execute_workflow_endpoint(session_token: str, payload: ExecuteWorkflow
     )
     runtime = execute_workflow(plan, session_token)
     progress = calculate_progress(runtime)
+    publish(session_token, WMEventType.WORKFLOW_STARTED, {
+        "workflow_id": runtime.workflow_id,
+        "goal": payload.goal,
+        "step_count": len(payload.steps),
+        "risk_level": payload.risk_level,
+        "requires_approval": payload.requires_approval,
+    }, actor="user")
     return {
         "ok": True,
         "workflow_id": runtime.workflow_id,
@@ -3045,6 +3435,10 @@ async def approve_workflow_step(session_token: str, workflow_id: str):
     try:
         runtime = approve_workflow(workflow_id)
         progress = calculate_progress(runtime)
+        publish(session_token, WMEventType.WORKFLOW_APPROVED, {
+            "workflow_id": workflow_id,
+            "status": runtime.status.value,
+        }, actor="user")
         return {
             "ok": True,
             "workflow_id": runtime.workflow_id,
@@ -3091,6 +3485,10 @@ async def pause_workflow_endpoint(session_token: str, workflow_id: str):
     try:
         runtime = pause_workflow(workflow_id)
         progress = calculate_progress(runtime)
+        publish(session_token, WMEventType.WORKFLOW_PAUSED, {
+            "workflow_id": workflow_id,
+            "status": runtime.status.value,
+        }, actor="user")
         return {
             "ok": True,
             "workflow_id": runtime.workflow_id,
@@ -3106,6 +3504,10 @@ async def resume_workflow_endpoint(session_token: str, workflow_id: str):
     try:
         runtime = resume_workflow(workflow_id)
         progress = calculate_progress(runtime)
+        publish(session_token, WMEventType.WORKFLOW_RESUMED, {
+            "workflow_id": workflow_id,
+            "status": runtime.status.value,
+        }, actor="user")
         return {
             "ok": True,
             "workflow_id": runtime.workflow_id,
@@ -3120,6 +3522,10 @@ async def resume_workflow_endpoint(session_token: str, workflow_id: str):
 async def cancel_workflow_endpoint(session_token: str, workflow_id: str):
     try:
         runtime = cancel_workflow(workflow_id)
+        publish(session_token, WMEventType.WORKFLOW_CANCELLED, {
+            "workflow_id": workflow_id,
+            "status": runtime.status.value,
+        }, actor="user")
         return {
             "ok": True,
             "workflow_id": runtime.workflow_id,

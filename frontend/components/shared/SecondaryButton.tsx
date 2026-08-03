@@ -40,7 +40,7 @@ export default function SecondaryButton({
       type="button"
       onClick={handleClick}
       disabled={disabled || isLoading}
-      className={`inline-flex items-center justify-center rounded-button border border-outline-variant/30 bg-[#1F1F23] px-4 py-2 text-sm font-semibold text-on-surface transition-all duration-150 hover:border-primary/40 hover:brightness-110 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2 ${className}`}
+      className={`inline-flex items-center justify-center rounded-button border border-outline-variant/30 bg-surface-container-high px-4 py-2 text-sm font-semibold text-on-surface transition-all duration-150 hover:border-primary/40 hover:brightness-110 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2 ${className}`}
     >
       {isLoading && (
         <svg

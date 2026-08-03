@@ -816,7 +816,7 @@ export default function DraftReviewWorkspace() {
           {/* Top bar: lead info + status + approve toggle */}
           <div className="flex items-center justify-between px-6 py-3 border-b border-outline-variant/10 bg-surface-lowest/50">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-9 h-9 rounded-lg bg-[#1F1F23] flex items-center justify-center text-on-surface-variant/40 text-sm font-bold shrink-0">
+              <div className="w-9 h-9 rounded-lg bg-surface-container-high flex items-center justify-center text-on-surface-variant/60 text-sm font-bold shrink-0">
                 {((selected.lead?.name as string) || "U").charAt(0).toUpperCase()}
               </div>
               <div className="min-w-0">
@@ -1346,7 +1346,7 @@ function DraftQueueItem({ draft, selected, onSelect }: { draft: DraftEntry; sele
       }`}
     >
       <div className="flex items-start gap-2">
-        <div className="w-7 h-7 rounded-lg bg-[#1F1F23] flex items-center justify-center text-on-surface-variant/40 text-[10px] font-bold shrink-0 mt-0.5">
+        <div className="w-7 h-7 rounded-lg bg-surface-container-high flex items-center justify-center text-on-surface-variant/60 text-[10px] font-bold shrink-0 mt-0.5">
           {name.charAt(0).toUpperCase()}
         </div>
         <div className="min-w-0 flex-1">

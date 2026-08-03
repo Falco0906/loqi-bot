@@ -5,6 +5,7 @@ import Link from "next/link";
 import WorkspaceContainer from "../../../components/layout/WorkspaceContainer";
 import Icon from "../../../components/shared/Icon";
 import { listConversations } from "../../../lib/api";
+import { useTellLoqi } from "../../../hooks/useTellLoqi";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
@@ -44,6 +45,7 @@ export default function ConversationsPage() {
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
+  const tellLoqi = useTellLoqi("Conversations", { count: conversations.length });
 
   useEffect(() => {
     const token = (() => {
@@ -166,6 +168,61 @@ export default function ConversationsPage() {
               })}
             </div>
           )}
+
+          {/* Tell Loqi */}
+          <div className="mt-16 pt-8 border-t border-outline-variant/20">
+            <div className="bg-surface-lowest border border-outline-variant/20 rounded-xl p-4 ambient-shadow">
+              <label className="text-xs uppercase tracking-widest text-on-surface-variant block mb-2 px-2 font-medium">
+                Tell Loqi...
+              </label>
+              <div className="flex items-end gap-3 px-2 pb-1">
+                <textarea
+                  className="w-full border-none p-0 focus:ring-0 text-lg placeholder:text-on-surface-variant/30 resize-none bg-transparent outline-none"
+                  placeholder="Which conversations need follow-up?"
+                  rows={1}
+                  value={tellLoqi.text}
+                  onChange={(e) => tellLoqi.setText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void tellLoqi.submit();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={tellLoqi.sending || !tellLoqi.text.trim()}
+                  onClick={() => void tellLoqi.submit()}
+                  className="bg-primary text-on-primary w-10 h-10 rounded-full flex items-center justify-center hover:opacity-80 transition-opacity shrink-0 disabled:opacity-40"
+                >
+                  <span className="material-symbols-outlined text-sm">arrow_upward</span>
+                </button>
+              </div>
+            </div>
+            <div className="mt-4 flex justify-center gap-3 overflow-x-auto no-scrollbar">
+              <button
+                type="button"
+                onClick={() => void tellLoqi.submit("Which conversations need follow-up attention right now?")}
+                className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+              >
+                NEEDS FOLLOW-UP
+              </button>
+              <button
+                type="button"
+                onClick={() => void tellLoqi.submit("Summarize all replied conversations and suggest next steps.")}
+                className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+              >
+                SUMMARIZE REPLIES
+              </button>
+              <button
+                type="button"
+                onClick={() => void tellLoqi.submit("Identify conversations at risk of going cold and recommend re-engagement.")}
+                className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+              >
+                AT RISK
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </WorkspaceContainer>

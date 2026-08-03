@@ -10,15 +10,11 @@ type Props = {
 export default function CommandBar({ isOpen, onClose }: Props) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault();
-        isOpen ? onClose() : null; // Need a way to open it too
-      }
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [onClose]);
 
   if (!isOpen) return null;
 

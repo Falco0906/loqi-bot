@@ -2,9 +2,14 @@ import hashlib
 import json
 
 from services.job_engine import job_manager
+from services.learning import Learner
 from services.workspace_memory import get_all as get_memory
 from services.workspace_timeline import get_events
 from services.workspace_reasoner import WorkspaceReasoner
+from services.world_model.snapshot_adapter import (
+    build_snapshot_from_wm as _build_wm_snapshot,
+    get_data_source as _wm_data_source,
+)
 
 
 _cache: dict[str, dict] = {}
@@ -55,12 +60,30 @@ def build_snapshot(
     force_refresh: bool = False,
     user_id: str | None = None,
 ) -> dict:
+    # ── Phase 3: try World Model first ──
+    wm_snapshot = _build_wm_snapshot(session_token, user_id=user_id)
+    if wm_snapshot is not None:
+        reasoner = WorkspaceReasoner(wm_snapshot)
+        analysis = reasoner.analyze()
+        wm_snapshot["analysis"] = analysis.to_dict()
+        wm_snapshot["_cached_at"] = 0
+        _log(
+            "World Model snapshot (campaigns/drafts/leads from WM, "
+            "memory/timeline/jobs from legacy) "
+            f"[source={_wm_data_source()}]"
+        )
+        return wm_snapshot
+
+    # ── Legacy fallback ──
+    _log(
+        f"Legacy snapshot (campaigns={len(campaigns)}, drafts={len(drafts)}) "
+        "[source=legacy]"
+    )
+
     ck = _make_cache_key(session_token, campaigns, drafts)
     if not force_refresh and _cache.get(ck):
         _log("returning cached snapshot")
         return _cache[ck]
-
-    _log(f"building new snapshot (campaigns={len(campaigns)}, drafts={len(drafts)})")
 
     if user_id is None:
         user_id = f"web:{session_token}"
@@ -123,6 +146,15 @@ def build_snapshot(
     reasoner = WorkspaceReasoner(snapshot)
     analysis = reasoner.analyze()
     snapshot["analysis"] = analysis.to_dict()
+
+    # ── Phase 8: deterministic learning from user behavior ──
+    try:
+        learner = Learner()
+        learned_event_ids = learner.run(session_token)
+        if learned_event_ids:
+            _log(f"learned {len(learned_event_ids)} new preference(s)")
+    except Exception:
+        _log("learning run failed (non-fatal)")
 
     _cache[ck] = snapshot
     if len(_cache) > 50:

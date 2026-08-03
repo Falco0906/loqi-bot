@@ -34,6 +34,7 @@ class WorkspaceRequest(BaseModel):
 class WorkspaceCreateRequest(BaseModel):
     workspace_name: str
     slug: str = ""
+    session_token: str = ""
 
 
 class WorkspaceCreateResponse(BaseModel):

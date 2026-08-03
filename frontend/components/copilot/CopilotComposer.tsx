@@ -1,14 +1,15 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, memo } from "react";
 import Icon from "../shared/Icon";
 
 type Props = {
   onSend: (text: string) => void;
   disabled?: boolean;
+  placeholder?: string;
 };
 
-export default function CopilotComposer({ onSend, disabled }: Props) {
+function CopilotComposer({ onSend, disabled, placeholder = "Tell Loqi what to do..." }: Props) {
   const [value, setValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -26,13 +27,13 @@ export default function CopilotComposer({ onSend, disabled }: Props) {
 
   return (
     <form onSubmit={handleSubmit} className="border-t border-outline-variant/10 px-4 py-3">
-      <div className="flex items-center gap-2 rounded-xl border border-outline-variant/20 bg-surface-lowest px-3 py-1.5 focus-within:border-primary/50 focus-within:shadow-[0_0_0_1px_rgba(196,192,255,0.15)] transition-all duration-150">
+      <div className="flex items-center gap-2 rounded-xl border border-outline-variant/20 bg-surface-lowest px-3 py-1.5 focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/30 transition-all duration-150">
         <input
           ref={inputRef}
           type="text"
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          placeholder="Tell Loqi what to do..."
+          placeholder={placeholder}
           disabled={disabled}
           className="flex-1 border-none bg-transparent text-body-md text-on-surface outline-none placeholder:text-on-surface-variant/40 disabled:opacity-50"
           aria-label="Ask Loqi"
@@ -56,3 +57,5 @@ export default function CopilotComposer({ onSend, disabled }: Props) {
     </form>
   );
 }
+
+export default memo(CopilotComposer);

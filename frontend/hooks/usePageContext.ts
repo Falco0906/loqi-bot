@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useCopilot } from "../contexts/CopilotContext";
+import { useCopilotActions } from "../contexts/CopilotContext";
 
 export function usePageContext(
   page: string,
   data: Record<string, unknown>,
 ) {
-  const { setPageContext } = useCopilot();
+  const { setPageContext } = useCopilotActions();
   const prevRef = useRef<string>("");
 
   useEffect(() => {

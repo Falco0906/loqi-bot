@@ -1,19 +1,38 @@
 "use client";
 
-import { useEffect } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useCopilot } from "../../contexts/CopilotContext";
-import ConversationHistory from "./ConversationHistory";
+import ActivityFeed from "./ActivityFeed";
+import QuickReplies from "./QuickReplies";
+import SuggestedActions from "./SuggestedActions";
 import CopilotComposer from "./CopilotComposer";
+import Icon from "../shared/Icon";
+import {
+  STATE_LABELS,
+  CLARIFICATION_PROMPT,
+  CLARIFICATION_REPLIES,
+  idleQuickReplies,
+  type QuickReplyOption,
+} from "../../lib/conversationMachine";
 
 export default function CopilotPanel() {
-  const { open, setOpen, messages, sending, send, executeAction, clear } = useCopilot();
+  const {
+    open,
+    setOpen,
+    pageContext,
+    executeAction,
+    clear,
+    conversationState,
+    groups,
+    activeGroupId,
+    recentTask,
+    startTask,
+    answerClarification,
+    acknowledge,
+  } = useCopilot();
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault();
-        setOpen(!open);
-      }
       if (e.key === "Escape" && open) {
         setOpen(false);
       }
@@ -22,82 +41,212 @@ export default function CopilotPanel() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [open, setOpen]);
 
+  const handleQuickReply = useCallback(
+    (o: QuickReplyOption) => startTask(o.instruction),
+    [startTask],
+  );
+
+  const handleClarificationReply = useCallback(
+    (o: QuickReplyOption) => answerClarification(o.id),
+    [answerClarification],
+  );
+
+  const handleSuggestedAction = useCallback(
+    (action: Parameters<typeof executeAction>[0]) => {
+      executeAction(action);
+      acknowledge();
+    },
+    [executeAction, acknowledge],
+  );
+
+  const idleOptions = useMemo(
+    () => idleQuickReplies(pageContext?.page),
+    [pageContext?.page],
+  );
+
   if (!open) {
     return (
       <button
         onClick={() => setOpen(true)}
         className="fixed bottom-6 right-6 z-40 w-12 h-12 rounded-full bg-primary text-on-primary shadow-lg shadow-primary/20 flex items-center justify-center hover:brightness-110 hover:shadow-primary/30 hover:scale-105 active:scale-95 transition-all duration-150"
-        title="Open Loqi OS (⌘K)"
+        title="Open Loqi OS"
         aria-label="Open Loqi OS"
       >
-        <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor">
-          <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM6 10h2v2H6v-2zm0 4h6v2H6v-2zm8-4h4v2h-4v-2zm0 4h4v2h-4v-2zM6 14h2v2H6v-2zm8-4h4v2h-4v-2z" />
-        </svg>
+        <span className="material-symbols-outlined text-[24px]">smart_toy</span>
       </button>
     );
   }
 
+  const working = conversationState === "working";
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-end pt-16 pb-0 pr-4 bg-black/20 backdrop-blur-sm animate-fade-in"
-      onClick={() => setOpen(false)}
+      className="w-[380px] max-w-[92vw] shrink-0 h-full flex flex-col overflow-hidden border-l border-outline-variant/15 bg-surface-lowest shadow-glass animate-slide-in-right"
       role="dialog"
-      aria-modal="true"
       aria-label="Loqi OS"
     >
-      <div
-        className="w-full max-w-sm h-[calc(100vh-5rem)] rounded-2xl border border-outline-variant/20 bg-surface-lowest shadow-2xl flex flex-col overflow-hidden animate-slide-up"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-outline-variant/10 shrink-0">
-          <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-primary/15 flex items-center justify-center">
-              <svg viewBox="0 0 24 24" className="w-4 h-4 text-primary" fill="currentColor">
-                <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12z" />
-              </svg>
-            </div>
-            <span className="text-body-md text-on-surface font-bold">Loqi OS</span>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-outline-variant/10 shrink-0">
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-lg bg-primary/15 flex items-center justify-center">
+            <span className="material-symbols-outlined text-[16px] text-primary">smart_toy</span>
           </div>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={clear}
-              className="p-1.5 rounded-lg text-on-surface-variant/50 hover:text-on-surface hover:bg-surface-high/60 transition-all duration-150 active:scale-95"
-              title="Clear conversation"
-              aria-label="Clear conversation"
-            >
-              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
-                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" />
-              </svg>
-            </button>
-            <button
-              onClick={() => setOpen(false)}
-              className="p-1.5 rounded-lg text-on-surface-variant/50 hover:text-on-surface hover:bg-surface-high/60 transition-all duration-150 active:scale-95"
-              title="Close (ESC)"
-              aria-label="Close Loqi OS"
-            >
-              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
-                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z" />
-              </svg>
-            </button>
-          </div>
+          <span className="text-body-md text-on-surface font-bold">Loqi OS</span>
         </div>
+        <div className="flex items-center gap-2">
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wider font-semibold ${
+              working
+                ? "bg-primary/10 text-primary"
+                : conversationState === "clarification"
+                  ? "bg-warning/10 text-warning"
+                  : conversationState === "completed"
+                    ? "bg-success/10 text-success"
+                    : "bg-surface-high/60 text-on-surface-variant/60"
+            }`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                working ? "bg-primary animate-pulse" : "bg-current"
+              }`}
+            />
+            {STATE_LABELS[conversationState]}
+          </span>
+          <button
+            onClick={clear}
+            className="p-1.5 rounded-lg text-on-surface-variant/50 hover:text-on-surface hover:bg-surface-high/60 transition-all duration-150 active:scale-95"
+            title="Clear conversation"
+            aria-label="Clear conversation"
+          >
+            <span className="material-symbols-outlined text-[18px]">delete_sweep</span>
+          </button>
+          <button
+            onClick={() => setOpen(false)}
+            className="p-1.5 rounded-lg text-on-surface-variant/50 hover:text-on-surface hover:bg-surface-high/60 transition-all duration-150 active:scale-95"
+            title="Close (ESC)"
+            aria-label="Close Loqi OS"
+          >
+            <span className="material-symbols-outlined text-[18px]">close</span>
+          </button>
+        </div>
+      </div>
 
-        <ConversationHistory
-          messages={messages}
-          sending={sending}
-          onExecuteAction={executeAction}
-        />
+      {(conversationState === "idle" || conversationState === "completed") && (
+        <>
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+            {groups.length === 0 && (
+              <div className="flex flex-col items-center justify-center text-center px-6 py-12">
+                <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center text-primary mb-4">
+                  <Icon name="smart_toy" className="text-2xl" />
+                </div>
+                <p className="text-body-md text-on-surface font-bold mb-1">Loqi OS</p>
+                <p className="text-label-sm text-on-surface-variant/60 max-w-xs">
+                  Your workspace is ready. Tell me what to work on.
+                </p>
+              </div>
+            )}
+            {recentTask && conversationState === "idle" && (
+              <div className="rounded-xl border border-outline-variant/10 bg-surface-container-low/60 px-3.5 py-3">
+                <p className="text-label-sm text-on-surface-variant/50 uppercase tracking-wider mb-1">
+                  Recent task
+                </p>
+                <p className="text-body-sm text-on-surface font-semibold mb-0.5">
+                  {recentTask.title}
+                </p>
+                <p className="text-body-sm text-on-surface-variant leading-relaxed mb-2.5">
+                  {recentTask.summary}
+                </p>
+                {recentTask.actions.length > 0 && (
+                  <SuggestedActions
+                    actions={recentTask.actions}
+                    onExecute={handleSuggestedAction}
+                  />
+                )}
+              </div>
+            )}
+            {conversationState === "completed" && (
+              <div className="rounded-xl border border-outline-variant/10 bg-surface-container-low/60 px-3.5 py-3">
+                <p className="text-body-sm text-on-surface font-semibold mb-2.5">
+                  {recentTask?.summary ?? "Task complete."}
+                </p>
+                {recentTask && recentTask.actions.length > 0 && (
+                  <SuggestedActions
+                    actions={recentTask.actions}
+                    onExecute={handleSuggestedAction}
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={acknowledge}
+                  className="mt-3 w-full rounded-lg border border-outline-variant/15 px-3 py-1.5 text-label-sm font-semibold text-on-surface-variant hover:text-on-surface hover:bg-surface-high/50 transition-all active:scale-[0.98]"
+                >
+                  Done
+                </button>
+              </div>
+            )}
+            <ActivityFeed groups={groups} activeGroupId={activeGroupId} />
+          </div>
+          {conversationState === "idle" && (
+            <div className="shrink-0">
+              <QuickReplies options={idleOptions} onSelect={handleQuickReply} />
+              <CopilotComposer
+                onSend={startTask}
+                placeholder="Tell Loqi what to work on..."
+              />
+            </div>
+          )}
+          {conversationState === "completed" && (
+            <div className="shrink-0 px-4 pt-1 pb-0.5">
+              <div className="flex items-center gap-2 text-label-sm text-on-surface-variant/40">
+                <span className="w-1.5 h-1.5 rounded-full bg-success/60" />
+                Loqi OS
+              </div>
+            </div>
+          )}
+        </>
+      )}
 
-        <div className="shrink-0">
-          <div className="px-4 pt-1 pb-0.5">
+      {conversationState === "clarification" && (
+        <>
+          <div className="flex-1 overflow-y-auto px-4 py-4">
+            <ActivityFeed groups={groups} activeGroupId={activeGroupId} />
+            <div className="mt-4 bg-surface-container-low border border-outline-variant/10 rounded-xl px-4 py-3 feed-step-in">
+              <p className="text-body-sm text-on-surface font-medium leading-relaxed">
+                {CLARIFICATION_PROMPT}
+              </p>
+            </div>
+          </div>
+            <div className="shrink-0">
+              <QuickReplies
+                options={CLARIFICATION_REPLIES}
+                onSelect={handleClarificationReply}
+              />
+              <CopilotComposer
+                onSend={startTask}
+                placeholder="Tell Loqi what to work on..."
+              />
+            </div>
+        </>
+      )}
+
+      {conversationState === "working" && (
+        <>
+          <div className="flex-1 overflow-y-auto px-4 py-4">
+            <ActivityFeed groups={groups} activeGroupId={activeGroupId} />
+            <div className="mt-4 flex items-center gap-2 px-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+              <span className="text-label-sm text-on-surface-variant/60">
+                Loqi is working — your workspace stays ready.
+              </span>
+            </div>
+          </div>
+          <div className="shrink-0 px-4 pt-1 pb-0.5">
             <div className="flex items-center gap-2 text-label-sm text-on-surface-variant/40">
               <span className="w-1.5 h-1.5 rounded-full bg-success/60" />
               Loqi OS
             </div>
           </div>
-          <CopilotComposer onSend={send} disabled={sending} />
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 }

@@ -5,6 +5,8 @@ import WorkspaceContainer from "../../../../components/layout/WorkspaceContainer
 import AppPage from "../../../../components/primitives/AppPage";
 import { useData } from "../../../../lib/hooks/use-data";
 import { fetchCampaign } from "../../../../lib/repositories";
+import { useTellLoqi } from "../../../../hooks/useTellLoqi";
+import { toast } from "../../../../components/shared/Toast";
 
 function LoadingSkeleton() {
   return (
@@ -24,6 +26,7 @@ export default function CampaignDetailPage() {
   const params = useParams();
   const campaignId = params.id as string;
   const { data, loading, error, retry } = useData(() => fetchCampaign(campaignId));
+  const tellLoqi = useTellLoqi("CampaignDetail", { campaignId });
 
   if (loading) {
     return (
@@ -212,10 +215,18 @@ export default function CampaignDetailPage() {
                   {data.recommendation.body}
                 </p>
                 <div className="flex gap-4 pt-4">
-                  <button className="bg-primary text-on-primary px-8 py-3 rounded-full text-sm font-medium hover:opacity-90 transition-all flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { toast("success", "Approved — Loqi will apply the recommendation"); }}
+                    className="bg-primary text-on-primary px-8 py-3 rounded-full text-sm font-medium hover:opacity-90 transition-all flex items-center gap-2"
+                  >
                     Review &amp; Approve
                   </button>
-                  <button className="border border-outline-variant text-on-surface px-8 py-3 rounded-full text-sm font-medium hover:bg-surface-container-low transition-all">
+                  <button
+                    type="button"
+                    onClick={() => { toast("success", "Opening draft for review"); }}
+                    className="border border-outline-variant text-on-surface px-8 py-3 rounded-full text-sm font-medium hover:bg-surface-container-low transition-all"
+                  >
                     View Draft
                   </button>
                 </div>
@@ -234,20 +245,45 @@ export default function CampaignDetailPage() {
                   className="w-full border-none p-0 focus:ring-0 text-lg placeholder:text-on-surface-variant/30 resize-none bg-transparent outline-none"
                   placeholder="What would you like me to adjust in this campaign?"
                   rows={1}
+                  value={tellLoqi.text}
+                  onChange={(e) => tellLoqi.setText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void tellLoqi.submit();
+                    }
+                  }}
                 />
-                <button className="bg-primary text-on-primary w-10 h-10 rounded-full flex items-center justify-center hover:opacity-80 transition-opacity shrink-0">
+                <button
+                  type="button"
+                  disabled={tellLoqi.sending || !tellLoqi.text.trim()}
+                  onClick={() => void tellLoqi.submit()}
+                  className="bg-primary text-on-primary w-10 h-10 rounded-full flex items-center justify-center hover:opacity-80 transition-opacity shrink-0 disabled:opacity-40"
+                >
                   <span className="material-symbols-outlined text-sm">arrow_upward</span>
                 </button>
               </div>
             </div>
             <div className="mt-4 flex justify-center gap-3 overflow-x-auto no-scrollbar">
-              <button className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold">
+              <button
+                type="button"
+                onClick={() => void tellLoqi.submit("Pause this campaign temporarily.")}
+                className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+              >
                 PAUSE CAMPAIGN
               </button>
-              <button className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold">
+              <button
+                type="button"
+                onClick={() => void tellLoqi.submit("Duplicate this campaign for a new market segment.")}
+                className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+              >
                 DUPLICATE TO NEW
               </button>
-              <button className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold">
+              <button
+                type="button"
+                onClick={() => void tellLoqi.submit("Export a full performance report for this campaign.")}
+                className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+              >
                 EXPORT REPORT
               </button>
             </div>

@@ -44,6 +44,68 @@ export type MCData = {
   activeJobLabel: string | null;
   activeJobProgress: number | null;
   activeJobTotal: number | null;
+  initialResearchStatus: string | null;
+  initialResearchError: string | null;
+};
+
+/* ─── Phase 11: Briefing-specific domain types ─── */
+
+export type MCIntentionCard = {
+  id: string;
+  title: string;
+  summary: string;
+  priority: "critical" | "high" | "normal" | "low";
+  confidence: number;
+  evidence: Array<{
+    reason_code: string;
+    confidence: number;
+    source: string;
+    detail: string;
+  }>;
+  recommendedAction: string;
+  relatedCampaign: string | null;
+  relatedLead: string | null;
+  reasonCode: string;
+};
+
+export type MCBriefing = {
+  greeting: string;
+  lines: string[];
+  suggestion: string;
+  overallSummary: string;
+  primaryFocus: string;
+  topRecommendation: string;
+};
+
+export type MCHealthSummary = {
+  overallHealth: string;
+  pipelineVelocity: string;
+  bottlenecks: string[];
+  providerHealth: Array<Record<string, unknown>>;
+  confidenceScore: number;
+  campaignsReady: number;
+  campaignsWaiting: number;
+  draftBacklog: number;
+  details: Record<string, unknown>;
+};
+
+export type MCTimelineEvent = {
+  id: string;
+  timestamp: string;
+  type: string;
+  description: string;
+  category: string;
+  actor: string;
+};
+
+export type MCBriefingData = {
+  briefing: MCBriefing;
+  topPriorities: MCIntentionCard[];
+  waitingOnYou: MCIntentionCard[];
+  loqiHandled: MCIntentionCard[];
+  upcoming: MCIntentionCard[];
+  workspaceHealth: MCHealthSummary;
+  timeline: MCTimelineEvent[];
 };
 
 /* ─── Discovery ─── */

@@ -15,7 +15,7 @@ class JobManager:
         self._storage = JobStorage()
         self._runner = BackgroundRunner(self._storage)
 
-    async def create_search_job(self, user_id: str, query: str) -> Optional[dict]:
+    async def create_search_job(self, user_id: str, query: str, on_update=None) -> Optional[dict]:
         import asyncio
         from services.job_engine.registry import STAGES_SEARCH
 
@@ -32,7 +32,7 @@ class JobManager:
 
         from workflow_dispatcher import run_search_workflow
 
-        self._runner.start_job(job, run_search_workflow)
+        self._runner.start_job(job, run_search_workflow, on_update=on_update)
         return {"job_id": job.id, "status": job.status.value}
 
     def get_job(self, job_id: str) -> Optional[dict]:

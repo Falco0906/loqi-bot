@@ -8,7 +8,7 @@ import {
   getOnboardingProgress,
   saveWizardData,
 } from "../../lib/onboarding-api";
-import { getGmailAuthUrl } from "../../lib/api";
+import { createSession, getGmailAuthUrl } from "../../lib/api";
 import { generateStrategicProfile } from "../../lib/strategic-intelligence-api";
 import type { StrategicProfile } from "../../lib/strategic-intelligence-api";
 import { ProfileValue } from "../../components/shared/ProfileValue";
@@ -174,10 +174,10 @@ export default function OnboardingPage() {
     }
   };
 
-  const handleDiscoveryComplete = async (p: OnboardingProfile) => {
+  const handleDiscoveryGenerate = async (p: OnboardingProfile): Promise<StrategicProfile | null> => {
     setProfile(p);
     try { localStorage.removeItem(ONBOARDING_MESSAGES_KEY); } catch { /* ignore */ }
-    // Generate strategic profile before advancing
+    // Generate strategic profile from the conversation
     const generated = await generateProfile(p);
     // Persist strategic profile to backend wizard data
     if (generated && userId) {
@@ -192,6 +192,10 @@ export default function OnboardingPage() {
     }
     // Persist raw profile before advancing
     await persistProfile(p);
+    return generated;
+  };
+
+  const handleDiscoveryComplete = () => {
     setState("knowledge-validation");
   };
 
@@ -257,8 +261,18 @@ export default function OnboardingPage() {
         throw new Error("Failed to save onboarding data");
       }
       
-      // Create workspace
-      await createWorkspace(userId, "My Workspace", "my-workspace");
+      // Ensure Mission Control has a session-specific event stream before the
+      // backend dispatches the automatic research job.
+      let activeSessionToken = sessionToken;
+      if (!activeSessionToken) {
+        const created = await createSession("Loqi Operator");
+        activeSessionToken = created.session_token;
+        localStorage.setItem(ACTIVE_SESSION_KEY, activeSessionToken);
+        setSessionToken(activeSessionToken);
+      }
+
+      // Finalization automatically starts research from the saved profile.
+      await createWorkspace(userId, "My Workspace", "my-workspace", activeSessionToken);
       
       // Refresh user
       await refreshUser();
@@ -286,6 +300,7 @@ export default function OnboardingPage() {
     <main className="relative z-10 w-full min-h-screen onb-surface">
       {state === "conversational-discovery" && (
         <ConversationalDiscovery
+          onGenerate={handleDiscoveryGenerate}
           onComplete={handleDiscoveryComplete}
         />
       )}
@@ -363,15 +378,18 @@ const STRATEGIC_RESPONSES = [
 ];
 
 function ConversationalDiscovery({
+  onGenerate,
   onComplete,
 }: {
-  onComplete: (profile: OnboardingProfile) => void;
+  onGenerate: (profile: OnboardingProfile) => Promise<StrategicProfile | null>;
+  onComplete: () => void;
 }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [currentQ, setCurrentQ] = useState(0);
   const [inputValue, setInputValue] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisComplete, setAnalysisComplete] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [loqiIsResponding, setLoqiIsResponding] = useState(false);
   const [hasWebsite, setHasWebsite] = useState(false);
   const [profile, setProfile] = useState<OnboardingProfile>({
@@ -398,8 +416,15 @@ function ConversationalDiscovery({
           setCurrentQ(saved.currentQ ?? 0);
           if (saved.profile) setProfile(saved.profile);
           if (saved.hasWebsite) setHasWebsite(true);
-          if (saved.isAnalyzing) setIsAnalyzing(true);
-          if (saved.analysisComplete) setAnalysisComplete(true);
+          if (saved.isAnalyzing && !saved.analysisComplete) {
+            // A refresh happened mid-analysis: resume the real generation.
+            setIsAnalyzing(true);
+            const resumed = (saved.profile as OnboardingProfile | undefined) ?? profile;
+            void runProfileGeneration(resumed);
+          } else {
+            if (saved.isAnalyzing) setIsAnalyzing(true);
+            if (saved.analysisComplete) setAnalysisComplete(true);
+          }
           return;
         }
       }
@@ -451,6 +476,22 @@ function ConversationalDiscovery({
     }, typingDelay);
   };
 
+  const runProfileGeneration = async (nextProfile: OnboardingProfile) => {
+    setIsAnalyzing(true);
+    setAnalysisError(null);
+    try {
+      const generated = await onGenerate(nextProfile);
+      if (!generated) {
+        throw new Error("We couldn't generate your strategic profile. Please try again.");
+      }
+      setAnalysisComplete(true);
+    } catch (error) {
+      setAnalysisError(error instanceof Error ? error.message : "We couldn't generate your strategic profile. Please try again.");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
   const handleSend = () => {
     const text = inputValue.trim();
     if (!text || loqiIsResponding) return;
@@ -485,8 +526,8 @@ function ConversationalDiscovery({
     } else {
       setMessages([...updated, { role: "loqi", text: "" }]);
       deliverResponse(STRATEGIC_RESPONSES[currentQ](text), () => {
-        setIsAnalyzing(true);
-        setTimeout(() => setAnalysisComplete(true), 3200);
+        // The visible state is driven by the real profile-generation request.
+        void runProfileGeneration(updatedProfile);
       });
     }
   };
@@ -521,10 +562,10 @@ function ConversationalDiscovery({
         <div className="max-w-[720px] mx-auto">
           <div className="mb-12 opacity-60">
             <span className="font-['Geist'] text-[11px] leading-[1.2] tracking-[0.05em] font-semibold text-[#444748] uppercase block mb-2">
-              Session ID: LS-2024-X9
+              Loqi Chief of Staff
             </span>
             <span className="font-['Geist'] text-[11px] leading-[1.2] tracking-[0.05em] font-semibold text-[#444748] uppercase block">
-              Protocol: Editorial Deep-Dive
+              Initial Strategy Session
             </span>
           </div>
 
@@ -578,7 +619,7 @@ function ConversationalDiscovery({
               );
             })}
 
-            {isAnalyzing && (
+            {(isAnalyzing || analysisError || analysisComplete) && (
               <div className="mt-16 onb-fade-in">
                 <div className="flex items-start gap-8">
                   <div className="w-24 shrink-0 flex justify-end pt-1">
@@ -587,7 +628,7 @@ function ConversationalDiscovery({
                   <div className="flex-1">
                     <div className="mb-8">
                       <p className="font-['Libre_Caslon_Text'] text-[24px] leading-[1.4] italic text-[#444748] mb-6 font-normal">
-                        {hasWebsite ? "Reading website&hellip;" : "Analyzing conversation&hellip;"}
+                        {analysisComplete ? "Your strategic profile is ready." : analysisError ? "Your strategic profile could not be generated." : "Synthesizing your strategic profile&hellip;"}
                       </p>
                     </div>
 
@@ -600,63 +641,13 @@ function ConversationalDiscovery({
                           manage_search
                         </span>
                         <h3 className="font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] font-medium uppercase tracking-widest font-bold">
-                          Investigation Pipeline
+                          Strategic Analysis
                         </h3>
                       </div>
                       <div className="space-y-6 relative">
                         <div className="absolute left-[7px] top-2 bottom-2 w-[1px] bg-[#c4c7c7]/30" />
 
-                        {hasWebsite && (
-                          <div className="flex gap-6 items-start onb-fade-in-fast">
-                            <div className="relative z-10 w-4 h-4 rounded-full bg-[#53625c] flex items-center justify-center">
-                              <span className="material-symbols-outlined text-[10px] text-white">
-                                check
-                              </span>
-                            </div>
-                            <div className="flex-1">
-                              <p className="font-['Inter'] text-[16px] leading-[1.5] font-medium text-[#1c1b1b]">
-                                Reading website...
-                              </p>
-                              <p className="font-['Geist'] text-[11px] leading-[1.2] tracking-[0.05em] font-semibold text-[#444748] mt-1">
-                                Analyzing landing page content and positioning signals.
-                              </p>
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="flex gap-6 items-start onb-fade-in-fast onb-stagger-1">
-                          <div className="relative z-10 w-4 h-4 rounded-full bg-[#53625c] flex items-center justify-center">
-                            <span className="material-symbols-outlined text-[10px] text-white">
-                              check
-                            </span>
-                          </div>
-                          <div className="flex-1">
-                            <p className="font-['Inter'] text-[16px] leading-[1.5] font-medium text-[#1c1b1b]">
-                              Analyzing positioning...
-                            </p>
-                            <p className="font-['Geist'] text-[11px] leading-[1.2] tracking-[0.05em] font-semibold text-[#444748] mt-1">
-                              Cross-referencing against market categories and competitor posture.
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex gap-6 items-start onb-fade-in-fast onb-stagger-2">
-                          <div className="relative z-10 w-4 h-4 rounded-full bg-[#53625c] flex items-center justify-center">
-                            <span className="material-symbols-outlined text-[10px] text-white">
-                              check
-                            </span>
-                          </div>
-                          <div className="flex-1">
-                            <p className="font-['Inter'] text-[16px] leading-[1.5] font-medium text-[#1c1b1b]">
-                              Comparing competitors...
-                            </p>
-                            <p className="font-['Geist'] text-[11px] leading-[1.2] tracking-[0.05em] font-semibold text-[#444748] mt-1">
-                              Mapping differentiation vectors against peer set.
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex gap-6 items-start onb-fade-in-fast onb-stagger-3">
+                        <div className="flex gap-6 items-start onb-fade-in-fast">
                           <div className="relative z-10 w-4 h-4 rounded-full border-2 border-[#000000] bg-[#ffffff] flex items-center justify-center">
                             {analysisComplete ? (
                               <span className="material-symbols-outlined text-[10px] text-[#000000]">
@@ -668,10 +659,10 @@ function ConversationalDiscovery({
                           </div>
                           <div className="flex-1">
                             <p className="font-['Inter'] text-[16px] leading-[1.5] font-bold text-[#000000]">
-                              Building strategic model...
+                            {analysisComplete ? "Profile complete" : analysisError ? "Profile generation failed" : "Building your strategic model..."}
                             </p>
                             <p className="font-['Geist'] text-[11px] leading-[1.2] tracking-[0.05em] font-semibold text-[#444748] mt-1 italic">
-                              Synthesizing insights into an initial strategic position.
+                              {analysisError || "Turning what you shared into a working model of your company, buyers, and goals."}
                             </p>
                           </div>
                         </div>
@@ -685,10 +676,20 @@ function ConversationalDiscovery({
             {analysisComplete && (
               <div className="mt-12 text-center onb-fade-in">
                 <button
-                  onClick={() => onComplete(profile)}
+                  onClick={() => onComplete()}
                   className="font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] font-medium uppercase tracking-widest border border-[#000000]/20 px-10 py-4 rounded-sm hover:bg-[#000000] hover:text-[#ffffff] hover:border-[#000000] transition-all duration-300"
                 >
                   Continue to Knowledge Validation
+                </button>
+              </div>
+            )}
+            {analysisError && (
+              <div className="mt-8 text-center onb-fade-in">
+                <button
+                  onClick={() => void runProfileGeneration(profile)}
+                  className="font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] font-medium uppercase tracking-widest border border-[#000000]/20 px-10 py-4 rounded-sm hover:bg-[#000000] hover:text-[#ffffff] hover:border-[#000000] transition-all duration-300"
+                >
+                  Retry profile generation
                 </button>
               </div>
             )}
@@ -846,7 +847,7 @@ function KnowledgeValidation({
             </div>
             <div className="max-w-[85%]">
               <p className="font-['Geist'] text-[11px] leading-[1.2] tracking-[0.05em] font-semibold text-[#444748] uppercase mb-2">
-                Loqi &middot; Intelligence Agency
+                Loqi &middot; Strategic Intelligence
               </p>
               <p className="font-['Libre_Caslon_Text'] text-[24px] leading-[1.4] text-[#000000] italic font-normal">
                 &ldquo;I think I understand enough to investigate further...
@@ -865,7 +866,14 @@ function KnowledgeValidation({
               >
                 {card.span && (
                   <div className="md:w-1/3 shrink-0">
-                    <div className="w-full h-48 rounded-lg overflow-hidden relative bg-gradient-to-br from-[#f5f0eb] via-[#fdf8f8] to-[#e8e0d8]" />
+                    <div className="w-full h-48 rounded-lg overflow-hidden relative bg-gradient-to-br from-[#f5f0eb] via-[#fdf8f8] to-[#e8e0d8] flex items-center justify-center">
+                      <span
+                        className="material-symbols-outlined text-[#53625c]"
+                        style={{ fontSize: 48 }}
+                      >
+                        flag
+                      </span>
+                    </div>
                   </div>
                 )}
                 <div className="flex flex-col justify-center flex-1">
@@ -981,7 +989,7 @@ function WorkspaceConnection({
           </div>
           <div>
             <p className="font-['Geist'] text-[11px] leading-[1.2] tracking-[0.05em] font-semibold text-[#444748] uppercase tracking-widest">
-              Digital Consiglieri
+              Loqi &middot; Chief of Staff
             </p>
             <h2 className="font-['Libre_Caslon_Text'] text-[24px] leading-[1.4] font-bold text-[#1c1b1b]">
               Loqi
@@ -1085,7 +1093,7 @@ function ExecutiveBriefing({
           </div>
           <div>
             <p className="font-['Geist'] text-[11px] leading-[1.2] tracking-[0.05em] font-semibold text-[#444748] uppercase tracking-widest">
-              Digital Consiglieri
+              Loqi &middot; Chief of Staff
             </p>
             <h2 className="font-['Libre_Caslon_Text'] text-[24px] leading-[1.4] font-bold text-[#1c1b1b]">
               Loqi

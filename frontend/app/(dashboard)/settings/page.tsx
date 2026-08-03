@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Icon from "../../../components/shared/Icon";
+import ThemeToggle from "../../../components/shared/ThemeToggle";
 import { getGmailAuthUrl, listProviders, disconnectProvider, getProviderHealth } from "../../../lib/api";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
@@ -103,6 +104,18 @@ export default function SettingsPage() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
       <h1 className="text-2xl font-bold text-on-surface tracking-tight mb-8">Settings</h1>
+
+      {/* Appearance */}
+      <section className="mb-10">
+        <h2 className="text-lg font-semibold text-on-surface mb-4">Appearance</h2>
+        <div className="flex items-center justify-between rounded-xl border border-outline-variant/10 bg-charcoal/50 px-5 py-4">
+          <div>
+            <span className="text-sm text-on-surface">Theme</span>
+            <p className="text-xs text-on-surface-variant/60 mt-0.5">Switch between light and dark mode</p>
+          </div>
+          <ThemeToggle />
+        </div>
+      </section>
 
       {/* Connected Accounts */}
       <section className="mb-10">

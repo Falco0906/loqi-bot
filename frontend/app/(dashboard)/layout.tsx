@@ -79,19 +79,21 @@ export default function DashboardLayout({
 
   return (
     <ProspectRegistryProvider>
-      <CopilotProvider initialToken={null}>
+      <CopilotProvider>
         <CommandBar isOpen={isCommandBarOpen} onClose={() => setIsCommandBarOpen(false)} />
         <div className="flex h-full overflow-hidden">
           <Sidebar />
           <div className="ml-64 flex flex-1 flex-col h-full">
             <Topbar />
-            <main className="flex-1 overflow-y-auto pt-16 h-full">
-               <AppPage>
-                  {children}
-               </AppPage>
-            </main>
+            <div className="flex flex-1 min-h-0">
+              <main className="flex-1 overflow-y-auto h-full">
+                 <AppPage>
+                    {children}
+                 </AppPage>
+              </main>
+              {!isDraftPage && <CopilotPanel />}
+            </div>
             <ToastContainer />
-            {!isDraftPage && <CopilotPanel />}
           </div>
         </div>
       </CopilotProvider>

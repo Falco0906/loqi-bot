@@ -4,15 +4,19 @@ import { useState } from "react";
 import AppPage from "../primitives/AppPage";
 import WorkspaceContainer from "../layout/WorkspaceContainer";
 import { useData } from "../../lib/hooks/use-data";
-import { fetchDiscovery } from "../../lib/repositories";
+import { fetchDiscovery, peekCachedDiscovery } from "../../lib/repositories";
+import { useTellLoqi } from "../../hooks/useTellLoqi";
+import { toast } from "../shared/Toast";
 import type { DiscoveryRecommendation } from "../../lib/domain";
 
 function RecommendationCard({
   rec,
   onDismiss,
+  onAction,
 }: {
   rec: DiscoveryRecommendation;
   onDismiss: () => void;
+  onAction: (action: string, company: string) => void;
 }) {
   return (
     <article className="bg-surface-lowest ambient-shadow rounded-xl p-8 md:p-10 transition-all hover:-translate-y-0.5 duration-300 border border-outline-variant/10">
@@ -86,17 +90,17 @@ function RecommendationCard({
       {/* Action Footer */}
       <div className="flex flex-wrap items-center justify-between gap-4 pt-6 border-t border-outline-variant/20">
         <div className="flex gap-2">
-          <button className="bg-primary text-on-primary px-6 py-2 rounded-full text-sm font-medium hover:opacity-90 transition-all active:scale-[0.98]">
+          <button onClick={() => onAction("Approved", rec.company)} className="bg-primary text-on-primary px-6 py-2 rounded-full text-sm font-medium hover:opacity-90 transition-all active:scale-[0.98]">
             Approve &amp; Research Leads
           </button>
-          <button className="border border-outline-variant px-6 py-2 rounded-full text-sm font-medium hover:bg-surface-container-low transition-all">
+          <button onClick={() => onAction("Added to Campaign", rec.company)} className="border border-outline-variant px-6 py-2 rounded-full text-sm font-medium hover:bg-surface-container-low transition-all">
             Add to Campaign
           </button>
         </div>
         <div className="flex gap-4">
-          <button className="text-sm text-on-surface-variant/60 hover:text-primary transition-colors">Review Later</button>
+          <button onClick={() => onAction("Saved for Later", rec.company)} className="text-sm text-on-surface-variant/60 hover:text-primary transition-colors">Review Later</button>
           <button
-            onClick={onDismiss}
+            onClick={() => { onAction("Ignored", rec.company); onDismiss(); }}
             className="text-sm text-error hover:opacity-80 transition-opacity"
           >
             Ignore
@@ -141,8 +145,17 @@ function LoadingSkeleton() {
 }
 
 export default function DiscoveryWorkspace() {
-  const { data, loading, error, retry } = useData(fetchDiscovery);
+  const { data, loading, error, retry } = useData(fetchDiscovery, {
+    initial: peekCachedDiscovery(),
+  });
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const tellLoqi = useTellLoqi("Discovery", {
+    recommendations: data?.recommendations.length ?? 0,
+  });
+
+  const handleCardAction = (action: string, company: string) => {
+    toast("success", `${action}: ${company}`);
+  };
 
   const visible = data?.recommendations.filter((r) => !dismissed.has(r.id)) ?? [];
 
@@ -212,17 +225,38 @@ export default function DiscoveryWorkspace() {
                     className="w-full border-none p-0 focus:ring-0 text-lg placeholder:text-on-surface-variant/30 resize-none bg-transparent outline-none"
                     placeholder="Research a different market..."
                     rows={1}
+                    value={tellLoqi.text}
+                    onChange={(e) => tellLoqi.setText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        void tellLoqi.submit();
+                      }
+                    }}
                   />
-                  <button className="bg-primary text-on-primary w-10 h-10 rounded-full flex items-center justify-center hover:opacity-80 transition-opacity shrink-0">
+                  <button
+                    type="button"
+                    disabled={tellLoqi.sending || !tellLoqi.text.trim()}
+                    onClick={() => void tellLoqi.submit()}
+                    className="bg-primary text-on-primary w-10 h-10 rounded-full flex items-center justify-center hover:opacity-80 transition-opacity shrink-0 disabled:opacity-40"
+                  >
                     <span className="material-symbols-outlined text-sm">arrow_upward</span>
                   </button>
                 </div>
               </div>
               <div className="mt-4 flex justify-center gap-3 overflow-x-auto no-scrollbar">
-                <button className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold">
+                <button
+                  type="button"
+                  onClick={() => void tellLoqi.submit("Find Series A fintech companies in cross-border payments.")}
+                  className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+                >
                   FIND SERIES A FINTECH
                 </button>
-                <button className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold">
+                <button
+                  type="button"
+                  onClick={() => void tellLoqi.submit("Shift focus to healthcare SaaS companies.")}
+                  className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+                >
                   SHIFT TO HEALTHCARE
                 </button>
               </div>
@@ -291,6 +325,7 @@ export default function DiscoveryWorkspace() {
               <RecommendationCard
                 key={rec.id}
                 rec={rec}
+                onAction={handleCardAction}
                 onDismiss={() => setDismissed((prev) => new Set(prev).add(rec.id))}
               />
             ))}
@@ -307,11 +342,40 @@ export default function DiscoveryWorkspace() {
                   className="w-full border-none p-0 focus:ring-0 text-lg placeholder:text-on-surface-variant/30 resize-none bg-transparent outline-none"
                   placeholder="Research a different market..."
                   rows={1}
+                  value={tellLoqi.text}
+                  onChange={(e) => tellLoqi.setText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void tellLoqi.submit();
+                    }
+                  }}
                 />
-                <button className="bg-primary text-on-primary w-10 h-10 rounded-full flex items-center justify-center hover:opacity-80 transition-opacity shrink-0">
+                <button
+                  type="button"
+                  disabled={tellLoqi.sending || !tellLoqi.text.trim()}
+                  onClick={() => void tellLoqi.submit()}
+                  className="bg-primary text-on-primary w-10 h-10 rounded-full flex items-center justify-center hover:opacity-80 transition-opacity shrink-0 disabled:opacity-40"
+                >
                   <span className="material-symbols-outlined text-sm">arrow_upward</span>
                 </button>
               </div>
+            </div>
+            <div className="mt-4 flex justify-center gap-3 overflow-x-auto no-scrollbar">
+              <button
+                type="button"
+                onClick={() => void tellLoqi.submit("Find Series A fintech companies in cross-border payments.")}
+                className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+              >
+                FIND SERIES A FINTECH
+              </button>
+              <button
+                type="button"
+                onClick={() => void tellLoqi.submit("Shift focus to healthcare SaaS companies.")}
+                className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+              >
+                SHIFT TO HEALTHCARE
+              </button>
             </div>
           </section>
 

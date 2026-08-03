@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Loqi | Decision Desk</title>
+<!-- Fonts -->
+<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&amp;family=Inter:wght@400;500;600&amp;family=Geist:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        "colors": {
+                "tertiary-fixed": "#e6e1e0",
+                "error-container": "#93000a",
+                "on-secondary": "#313030",
+                "outline-variant": "#4a4549",
+                "secondary-fixed-dim": "#c9c6c5",
+                "primary-fixed": "#e6e1e1",
+                "on-tertiary": "#32302f",
+                "surface": "#141313",
+                "secondary-container": "#484646",
+                "on-primary-fixed-variant": "#484647",
+                "secondary": "#c9c6c5",
+                "on-surface-variant": "#ccc4c9",
+                "secondary-fixed": "#e6e2e0",
+                "primary-container": "#e6e1e1",
+                "on-error": "#690005",
+                "primary": "#ffffff",
+                "tertiary-fixed-dim": "#cac6c4",
+                "inverse-on-surface": "#313030",
+                "inverse-primary": "#605e5e",
+                "surface-container-low": "#1c1b1b",
+                "surface-container-high": "#2b2a2a",
+                "tertiary-container": "#e6e1e0",
+                "outline": "#958f93",
+                "on-primary": "#313030",
+                "surface-bright": "#3a3939",
+                "inverse-surface": "#e6e2e1",
+                "on-background": "#e6e2e1",
+                "surface-container-lowest": "#0f0e0e",
+                "on-surface": "#e6e2e1",
+                "on-secondary-fixed": "#1c1b1b",
+                "surface-container": "#201f1f",
+                "on-error-container": "#ffdad6",
+                "error": "#ffb4ab",
+                "on-primary-container": "#666464",
+                "surface-container-highest": "#363434",
+                "on-tertiary-container": "#666462",
+                "on-secondary-fixed-variant": "#484646",
+                "tertiary": "#ffffff",
+                "on-primary-fixed": "#1c1b1c",
+                "surface-dim": "#141313",
+                "on-tertiary-fixed-variant": "#484645",
+                "surface-tint": "#cac5c6",
+                "on-secondary-container": "#b8b4b3",
+                "surface-variant": "#363434",
+                "on-tertiary-fixed": "#1c1b1a",
+                "primary-fixed-dim": "#cac5c6",
+                "background": "#141313"
+        },
+        "borderRadius": {
+                "DEFAULT": "0.25rem",
+                "lg": "0.5rem",
+                "xl": "0.75rem",
+                "full": "9999px"
+        },
+        "spacing": {
+                "lg": "48px",
+                "xl": "80px",
+                "md": "24px",
+                "gutter": "24px",
+                "base": "8px",
+                "xs": "4px",
+                "margin-mobile": "16px",
+                "sm": "12px",
+                "margin-desktop": "64px"
+        },
+        "fontFamily": {
+                "display-lg": [
+                        "Libre Caslon Text"
+                ],
+                "headline-lg-mobile": [
+                        "Libre Caslon Text"
+                ],
+                "headline-lg": [
+                        "Libre Caslon Text"
+                ],
+                "body-lg": [
+                        "Libre Caslon Text"
+                ],
+                "label-sm": [
+                        "Inter"
+                ],
+                "title-md": [
+                        "Libre Caslon Text"
+                ],
+                "body-md": [
+                        "Libre Caslon Text"
+                ]
+        },
+        "fontSize": {
+                "display-lg": [
+                        "56px",
+                        {
+                                "lineHeight": "64px",
+                                "letterSpacing": "-0.02em",
+                                "fontWeight": "400"
+                        }
+                ],
+                "headline-lg-mobile": [
+                        "28px",
+                        {
+                                "lineHeight": "36px",
+                                "fontWeight": "400"
+                        }
+                ],
+                "headline-lg": [
+                        "32px",
+                        {
+                                "lineHeight": "40px",
+                                "fontWeight": "400"
+                        }
+                ],
+                "body-lg": [
+                        "18px",
+                        {
+                                "lineHeight": "28px",
+                                "fontWeight": "400"
+                        }
+                ],
+                "label-sm": [
+                        "12px",
+                        {
+                                "lineHeight": "16px",
+                                "letterSpacing": "0.05em",
+                                "fontWeight": "500"
+                        }
+                ],
+                "title-md": [
+                        "20px",
+                        {
+                                "lineHeight": "28px",
+                                "fontWeight": "600"
+                        }
+                ],
+                "body-md": [
+                        "16px",
+                        {
+                                "lineHeight": "24px",
+                                "fontWeight": "400"
+                        }
+                ]
+        }
+      },
+    },
+  }
+</script>
+<style>
+      .material-symbols-outlined {
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      }
+      .ambient-shadow {
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      }
+      .reading-container {
+        max-width: 720px;
+        margin: 0 auto;
+      }
+      .perspective-1000 {
+        perspective: 1000px;
+      }
+      .scrollbar-hide::-webkit-scrollbar {
+        display: none;
+      }
+      .scrollbar-hide {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+    </style>
+</head>
+<body class="bg-background text-on-background font-body-md selection:bg-secondary-container">
+<!-- SideNavBar Shell -->
+<aside class="fixed left-0 top-0 h-full w-64 bg-surface-container-low flex flex-col py-8 px-6 border-r border-outline-variant z-50">
+<div class="mb-12 flex items-center gap-3">
+<div class="w-10 h-10 bg-primary flex items-center justify-center rounded-lg">
+<span class="material-symbols-outlined text-on-primary text-xl" style="font-variation-settings: 'FILL' 1;">star</span>
+</div>
+<div>
+<h1 class="font-headline-lg text-[20px] text-primary tracking-tight leading-none">Loqi</h1>
+<p class="font-label-sm text-on-surface-variant uppercase tracking-widest mt-1" style="font-size: 10px;">Chief of Staff</p>
+</div>
+</div>
+<nav class="flex-1 space-y-1">
+<a class="flex items-center gap-3 px-3 py-2.5 text-on-surface-variant hover:text-primary hover:bg-surface-container transition-all rounded-lg group" href="#">
+<span class="material-symbols-outlined text-[20px]">dashboard</span>
+<span class="font-label-sm">Mission Control</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-on-surface-variant hover:text-primary hover:bg-surface-container transition-all rounded-lg group" href="#">
+<span class="material-symbols-outlined text-[20px]">explore</span>
+<span class="font-label-sm">Discovery</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-on-surface-variant hover:text-primary hover:bg-surface-container transition-all rounded-lg group" href="#">
+<span class="material-symbols-outlined text-[20px]">campaign</span>
+<span class="font-label-sm">Campaigns</span>
+</a>
+<!-- Active Navigation Logic: Inbox is Active -->
+<a class="flex items-center gap-3 px-3 py-2.5 text-primary font-bold border-r-2 border-primary bg-surface-container rounded-l-lg group" href="#">
+<span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">inbox</span>
+<span class="font-label-sm">Inbox</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 text-on-surface-variant hover:text-primary hover:bg-surface-container transition-all rounded-lg group" href="#">
+<span class="material-symbols-outlined text-[20px]">database</span>
+<span class="font-label-sm">Knowledge</span>
+</a>
+</nav>
+<div class="mt-auto space-y-4">
+<button class="w-full bg-primary text-on-primary py-3 px-4 rounded-full font-label-sm flex items-center justify-center gap-2 active:scale-95 transition-transform">
+<span class="material-symbols-outlined text-sm">add</span>
+                New Initiative
+            </button>
+<div class="pt-4 border-t border-outline-variant/20 flex flex-col gap-1">
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:text-primary font-label-sm transition-colors" href="#">
+<span class="material-symbols-outlined text-[18px]">settings</span>
+                    Settings
+                </a>
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant hover:text-primary font-label-sm transition-colors" href="#">
+<span class="material-symbols-outlined text-[18px]">help_outline</span>
+                    Support
+                </a>
+</div>
+</div>
+</aside>
+<!-- TopNavBar Shell -->
+<header class="fixed top-0 right-0 left-64 z-40 bg-surface/80 backdrop-blur-md flex justify-between items-center h-16 px-12 border-b border-outline-variant">
+<div class="flex items-center gap-8">
+<h2 class="font-headline-lg text-[24px] text-primary">Inbox</h2>
+<nav class="hidden md:flex gap-6">
+<a class="font-label-sm text-primary font-semibold border-b border-primary py-1" href="#">Directives</a>
+<a class="font-label-sm text-on-surface-variant hover:text-primary py-1 transition-colors" href="#">Summaries</a>
+<a class="font-label-sm text-on-surface-variant hover:text-primary py-1 transition-colors" href="#">Archive</a>
+</nav>
+</div>
+<div class="flex items-center gap-6">
+<div class="relative w-64">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px]">search</span>
+<input class="w-full bg-surface-container-low border border-outline-variant rounded-full pl-10 pr-4 py-1.5 text-label-sm focus:ring-1 focus:ring-primary text-on-surface placeholder:text-on-surface-variant" placeholder="Search directives..." type="text"/>
+</div>
+<button class="font-label-sm bg-surface-container-highest text-primary px-4 py-2 rounded-full hover:bg-primary hover:text-on-primary transition-all">
+                Executive Briefing
+            </button>
+<div class="flex items-center gap-3">
+<button class="w-8 h-8 flex items-center justify-center text-on-surface-variant hover:text-primary">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<div class="w-8 h-8 rounded-full overflow-hidden border border-outline">
+<img class="w-full h-full object-cover" data-alt="A professional close-up headshot of a modern executive in a minimalist studio setting, soft lighting, sharp focus, professional attire, neutral tones matching a luxury corporate aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAmsJAelzlUSnl3LD0kw7XYKaLqFY9J88sSKQF5bOX572pu98TG4-7LTYSLzbrmFYeQHuKiEKsdr1bCuhQZU3GUMhbCbPyFF9jPz_gt7f55b8OD0WMk5iJ4FrduKTpNbaaEDdNyvEtJ2miVgYn0G5J26okZnBlgJV4jAsKW6Iazbfx7CAzEaVC36TGgRoLVQTxZodlLjlM8PCkZrWb-ir5ypgBCtHOeMNINSWx5OpdU-kBtppfRHMeg"/>
+</div>
+</div>
+</div>
+</header>
+<!-- Main Content Canvas -->
+<main class="ml-64 pt-24 pb-12 px-12 min-h-screen">
+<div class="reading-container">
+<!-- Header Section -->
+<header class="mb-10 text-center md:text-left">
+<h1 class="font-headline-lg text-[40px] text-primary mb-2">Needs Your Judgment</h1>
+<p class="font-label-sm text-on-surface-variant uppercase tracking-[0.2em]">3 Conversations</p>
+</header>
+<!-- Decision Cards Section -->
+<section class="space-y-6">
+<!-- Decision Card 1 -->
+<div class="bg-surface-container-lowest ambient-shadow rounded-xl p-8 hover:bg-surface-container-low transition-all duration-300 group cursor-pointer border border-outline-variant">
+<div class="flex justify-between items-start mb-6">
+<div class="flex items-center gap-4">
+<div class="w-12 h-12 rounded-full bg-surface-container-high flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-[24px]" style="font-variation-settings: 'FILL' 1;">apartment</span>
+</div>
+<div>
+<h3 class="font-headline-lg text-[22px] leading-tight text-primary">Enterprise Pricing Request</h3>
+<p class="font-label-sm text-on-surface-variant">Aether Systems</p>
+</div>
+</div>
+<span class="bg-primary text-on-primary font-label-sm px-3 py-1 rounded tracking-widest text-[10px] font-bold">PRIORITY</span>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8 border-l-2 border-outline-variant pl-6 ml-2">
+<div>
+<span class="font-label-sm text-on-surface-variant uppercase tracking-wider mb-2 block text-[11px]">AI Summary</span>
+<p class="font-body-md text-on-surface leading-relaxed">Prospect approved budget, needs pricing for 500 seats. Current quote aligns with Q3 tier-1 targets.</p>
+</div>
+<div>
+<span class="font-label-sm text-on-surface-variant uppercase tracking-wider mb-2 block text-[11px]">Recommended Decision</span>
+<p class="font-headline-lg text-[18px] italic text-primary leading-snug">"Approve pricing proposal."</p>
+</div>
+</div>
+<div class="flex flex-wrap items-center justify-between gap-4 pt-6 border-t border-outline-variant/30">
+<div class="flex gap-3">
+<button class="bg-primary text-on-primary font-label-sm px-8 py-3 rounded-full hover:opacity-90 active:scale-95 transition-all">Approve &amp; Send</button>
+<button class="border border-outline text-primary font-label-sm px-8 py-3 rounded-full hover:bg-surface-container transition-all">Edit Draft</button>
+</div>
+<button class="text-on-surface-variant font-label-sm flex items-center gap-1 hover:text-primary transition-colors">
+                            Join Conversation
+                            <span class="material-symbols-outlined text-[16px]">arrow_forward</span>
+</button>
+</div>
+</div>
+<!-- Decision Card 2 -->
+<div class="bg-surface-container-lowest ambient-shadow rounded-xl p-8 hover:bg-surface-container-low transition-all duration-300 group cursor-pointer border border-outline-variant">
+<div class="flex justify-between items-start mb-6">
+<div class="flex items-center gap-4">
+<div class="w-12 h-12 rounded-full bg-surface-container-high flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-[24px]" style="font-variation-settings: 'FILL' 1;">hub</span>
+</div>
+<div>
+<h3 class="font-headline-lg text-[22px] leading-tight text-primary">Strategic Integration Inquiry</h3>
+<p class="font-label-sm text-on-surface-variant">Vortex Logistics</p>
+</div>
+</div>
+<span class="font-label-sm text-primary font-semibold">$200k ARR</span>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8 border-l-2 border-outline-variant pl-6 ml-2">
+<div>
+<span class="font-label-sm text-on-surface-variant uppercase tracking-wider mb-2 block text-[11px]">AI Summary</span>
+<p class="font-body-md text-on-surface leading-relaxed">Requesting deep ERP integration via private API. Requires sign-off from Architecture Lead.</p>
+</div>
+<div>
+<span class="font-label-sm text-on-surface-variant uppercase tracking-wider mb-2 block text-[11px]">Recommended Decision</span>
+<p class="font-headline-lg text-[18px] italic text-primary leading-snug">"Schedule technical bridge call."</p>
+</div>
+</div>
+<div class="flex items-center justify-between pt-6 border-t border-outline-variant/30">
+<div class="flex gap-3">
+<button class="bg-primary text-on-primary font-label-sm px-8 py-3 rounded-full hover:opacity-90 transition-all">Schedule Call</button>
+<button class="border border-outline text-primary font-label-sm px-8 py-3 rounded-full hover:bg-surface-container transition-all">Review API Docs</button>
+</div>
+<button class="text-on-surface-variant font-label-sm flex items-center gap-1 hover:text-primary transition-colors">
+                            Delegate
+                        </button>
+</div>
+</div>
+<!-- Decision Card 3: Loqi Internal Query -->
+<div class="bg-primary-container text-on-primary-container rounded-xl p-8 ambient-shadow overflow-hidden relative group border border-outline-variant">
+<div class="absolute top-0 right-0 w-32 h-32 opacity-10 -mr-8 -mt-8 text-on-primary-container">
+<span class="material-symbols-outlined text-[128px]">smart_toy</span>
+</div>
+<div class="relative z-10">
+<div class="flex items-center gap-3 mb-6">
+<div class="w-8 h-8 rounded-full bg-on-primary-container flex items-center justify-center">
+<span class="material-symbols-outlined text-primary-container text-[16px]" style="font-variation-settings: 'FILL' 1;">star</span>
+</div>
+<span class="font-label-sm uppercase tracking-[0.2em] text-on-primary-container font-bold" style="font-size: 10px;">Decision Needed — Internal</span>
+</div>
+<h3 class="font-headline-lg text-[28px] mb-8 max-w-md text-on-primary-container">"Should we offer a custom implementation for GreenTech Corp?"</h3>
+<div class="flex flex-wrap gap-3">
+<button class="bg-on-primary-container text-primary-container font-label-sm px-8 py-3 rounded-full hover:opacity-90 transition-all font-bold">Approve</button>
+<button class="border border-on-primary-container/30 text-on-primary-container font-label-sm px-8 py-3 rounded-full hover:bg-on-primary-container/10 transition-all">Decline</button>
+<button class="text-on-primary-container font-label-sm flex items-center gap-2 px-4 py-3 hover:underline">
+<span class="material-symbols-outlined text-sm">chat</span>
+                                Discuss
+                            </button>
+</div>
+</div>
+</div>
+</section>
+<!-- Bottom Sections -->
+<section class="mt-16 grid grid-cols-1 md:grid-cols-2 gap-12">
+<!-- Handled Automatically -->
+<div>
+<h4 class="font-label-sm text-on-surface-variant uppercase tracking-[0.2em] mb-6 border-b border-outline-variant pb-2 text-[11px] font-bold">Handled Automatically</h4>
+<div class="space-y-4">
+<div class="flex items-center justify-between py-2">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-outline text-sm">check_circle</span>
+<span class="font-body-md text-on-surface">Scheduled demo with Acme Corp</span>
+</div>
+<span class="font-label-sm text-on-surface-variant">12m ago</span>
+</div>
+<div class="flex items-center justify-between py-2 border-t border-outline-variant/30">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-outline text-sm">check_circle</span>
+<span class="font-body-md text-on-surface">Answered FAQ for Delta Lab</span>
+</div>
+<span class="font-label-sm text-on-surface-variant">1h ago</span>
+</div>
+<div class="flex items-center justify-between py-2 border-t border-outline-variant/30">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-outline text-sm">check_circle</span>
+<span class="font-body-md text-on-surface">Updated CRM records for 4 leads</span>
+</div>
+<span class="font-label-sm text-on-surface-variant">2h ago</span>
+</div>
+</div>
+</div>
+<!-- Judgment Insights -->
+<div>
+<h4 class="font-label-sm text-on-surface-variant uppercase tracking-[0.2em] mb-6 border-b border-outline-variant pb-2 text-[11px] font-bold">Judgment Insights</h4>
+<div class="grid grid-cols-1 gap-4">
+<div class="bg-surface-container-low p-4 rounded-lg flex items-start gap-3 border border-outline-variant">
+<span class="material-symbols-outlined text-primary text-[20px]">trending_up</span>
+<div>
+<p class="font-label-sm text-on-surface font-semibold mb-1">Security questions increased this week</p>
+<p class="font-label-sm text-on-surface-variant leading-relaxed text-[12px]">Consider updating the standard SOC2 summary to streamline these approvals.</p>
+</div>
+</div>
+<div class="bg-surface-container-low p-4 rounded-lg flex items-start gap-3 border border-outline-variant">
+<span class="material-symbols-outlined text-primary text-[20px]">psychology</span>
+<div>
+<p class="font-label-sm text-on-surface font-semibold mb-1">Decision Lag: 1.4h average</p>
+<p class="font-label-sm text-on-surface-variant leading-relaxed text-[12px]">You are 20% faster than last week in processing pricing approvals.</p>
+</div>
+</div>
+</div>
+</div>
+</section>
+</div>
+</main>
+<!-- Detailed View (Modal Hidden by default) -->
+<div class="fixed inset-0 z-[100] hidden" id="decisionModal">
+<div class="absolute inset-0 bg-background/80 backdrop-blur-md"></div>
+<div class="absolute inset-y-0 right-0 w-full max-w-2xl bg-surface-container-lowest shadow-2xl flex flex-col p-0 transform translate-x-full transition-transform duration-500 ease-out border-l border-outline-variant" id="modalSidebar">
+<div class="flex items-center justify-between px-8 py-6 border-b border-outline-variant">
+<h2 class="font-headline-lg text-[22px] text-primary">Decision Deep-Dive</h2>
+<button class="w-10 h-10 flex items-center justify-center hover:bg-surface-container rounded-full text-primary" onclick="closeDecisionModal()">
+<span class="material-symbols-outlined">close</span>
+</button>
+</div>
+<div class="flex-1 overflow-y-auto scrollbar-hide px-8 py-10 space-y-12">
+<!-- AI Summary -->
+<section>
+<span class="font-label-sm text-on-surface-variant uppercase tracking-[0.2em] block mb-4 text-[11px] font-bold">AI Summary</span>
+<div class="bg-surface-container-low p-6 rounded-lg border border-outline-variant">
+<p class="font-headline-lg text-[20px] leading-relaxed text-primary italic">The prospect is ready to move but requires a specific pricing structure for 500 seats that accounts for seasonal scaling.</p>
+</div>
+</section>
+<!-- Timeline -->
+<section>
+<span class="font-label-sm text-on-surface-variant uppercase tracking-[0.2em] block mb-4 text-[11px] font-bold">Timeline</span>
+<div class="relative pl-6 border-l border-outline-variant space-y-8">
+<div class="relative">
+<div class="absolute -left-[31px] top-1 w-2.5 h-2.5 rounded-full bg-primary"></div>
+<p class="font-label-sm text-on-surface-variant mb-1 text-[11px]">TODAY, 10:24 AM</p>
+<p class="font-body-md text-on-surface">Client sent pricing inquiry for 500 seats.</p>
+</div>
+<div class="relative">
+<div class="absolute -left-[31px] top-1 w-2.5 h-2.5 rounded-full bg-outline"></div>
+<p class="font-label-sm text-on-surface-variant mb-1 text-[11px]">YESTERDAY, 3:15 PM</p>
+<p class="font-body-md text-on-surface">Demo completed by AI Sales agent. Engagement score 9.2/10.</p>
+</div>
+<div class="relative">
+<div class="absolute -left-[31px] top-1 w-2.5 h-2.5 rounded-full bg-outline"></div>
+<p class="font-label-sm text-on-surface-variant mb-1 text-[11px]">OCT 12, 11:00 AM</p>
+<p class="font-body-md text-on-surface">Initial contact via LinkedIn outreach.</p>
+</div>
+</div>
+</section>
+<!-- Key Concerns -->
+<section>
+<span class="font-label-sm text-on-surface-variant uppercase tracking-[0.2em] block mb-4 text-[11px] font-bold">Key Concerns</span>
+<ul class="space-y-4">
+<li class="flex items-center gap-3 font-body-md text-on-surface">
+<span class="material-symbols-outlined text-error text-[20px]">warning</span>
+                            Seat threshold is near our custom-tier boundary.
+                        </li>
+<li class="flex items-center gap-3 font-body-md text-on-surface">
+<span class="material-symbols-outlined text-primary text-[20px]">info</span>
+                            Previous churn in this sector suggests a 12-month lock-in.
+                        </li>
+</ul>
+</section>
+<!-- Recommended Reply -->
+<section>
+<span class="font-label-sm text-on-surface-variant uppercase tracking-[0.2em] block mb-4 text-[11px] font-bold">Recommended Reply</span>
+<div class="p-6 border border-outline rounded-lg bg-surface-container-lowest font-body-md text-on-surface leading-relaxed italic">
+                        "Thank you for the detailed breakdown, Sarah. For 500 seats, our Enterprise tier usually starts higher, but given your growth trajectory, I’ve approved a custom bridge rate of $18/seat for the first year..."
+                    </div>
+</section>
+<!-- Original Conversation -->
+<section class="pb-10">
+<span class="font-label-sm text-on-surface-variant uppercase tracking-[0.2em] block mb-4 text-[11px] font-bold">Original Conversation</span>
+<div class="opacity-50 blur-[1px] hover:blur-0 transition-all cursor-help border-t border-outline-variant pt-6">
+<div class="mb-4">
+<p class="font-label-sm font-bold text-primary mb-1">Sarah Jenkins (Prospect)</p>
+<p class="text-on-surface leading-relaxed">"Hey team, we are ready to pull the trigger. Can you send over the final numbers for 500 seats? We need to have this signed by Friday."</p>
+</div>
+</div>
+</section>
+</div>
+<div class="p-8 border-t border-outline-variant bg-surface-container-low flex gap-4">
+<button class="flex-1 bg-primary text-on-primary font-label-sm py-4 rounded-full shadow-lg font-bold">Execute Decision</button>
+<button class="flex-1 border border-outline text-primary font-label-sm py-4 rounded-full font-bold hover:bg-surface-container">Refine Request</button>
+</div>
+</div>
+</div>
+<script>
+        // Micro-interaction logic for Decision Cards
+        const decisionCards = document.querySelectorAll('.cursor-pointer');
+        const modal = document.getElementById('decisionModal');
+        const modalSidebar = document.getElementById('modalSidebar');
+
+        decisionCards.forEach(card => {
+            card.addEventListener('click', (e) => {
+                // Prevent modal if clicking on buttons
+                if (e.target.tagName === 'BUTTON') return;
+                
+                openDecisionModal();
+            });
+        });
+
+        function openDecisionModal() {
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                modalSidebar.style.transform = 'translateX(0)';
+            }, 10);
+        }
+
+        function closeDecisionModal() {
+            modalSidebar.style.transform = 'translateX(100%)';
+            setTimeout(() => {
+                modal.classList.add('hidden');
+            }, 500);
+        }
+
+        // Close on escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeDecisionModal();
+        });
+    </script>
+</body></html>

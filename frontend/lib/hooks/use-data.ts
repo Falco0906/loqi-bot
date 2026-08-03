@@ -9,9 +9,19 @@ export type AsyncState<T> = {
   retry: () => void;
 };
 
-export function useData<T>(fetcher: () => Promise<T | null>): AsyncState<T> {
-  const [data, setData] = useState<T | null>(null);
-  const [loading, setLoading] = useState(true);
+/**
+ * Data hook with an optional synchronous initial value (e.g. a cache peek).
+ * When `initial` is provided the page renders that data immediately —
+ * Copilot-navigated destinations appear fully formed instead of flashing
+ * skeletons on arrival.
+ */
+export function useData<T>(
+  fetcher: () => Promise<T | null>,
+  options: { initial?: T | null } = {},
+): AsyncState<T> {
+  const hasInitial = options.initial !== undefined;
+  const [data, setData] = useState<T | null>(options.initial ?? null);
+  const [loading, setLoading] = useState(!hasInitial);
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
 

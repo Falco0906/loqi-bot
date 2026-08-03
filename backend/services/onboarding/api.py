@@ -46,6 +46,7 @@ def _build_onboarding_service() -> OnboardingService:
 
 
 _onboarding_service: OnboardingService | None = None
+_onboarding_completion_handler = None
 
 
 def _get_service() -> OnboardingService:
@@ -58,6 +59,16 @@ def _get_service() -> OnboardingService:
 def set_onboarding_service(svc: OnboardingService | None) -> None:
     global _onboarding_service
     _onboarding_service = svc
+
+
+def set_onboarding_completion_handler(handler) -> None:
+    """Register the application-level workflow dispatcher.
+
+    The onboarding service remains responsible only for lifecycle state; the
+    application composition root owns the research workflow and its events.
+    """
+    global _onboarding_completion_handler
+    _onboarding_completion_handler = handler
 
 
 def reset_onboarding_service() -> None:
@@ -209,6 +220,19 @@ async def create_workspace(user_id: str = "", payload: WorkspaceCreateRequest | 
         ) from exc
     except (OrganizationSlugTaken, OrganizationNameTaken) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if _onboarding_completion_handler is not None:
+        try:
+            wizard_data = await svc.get_wizard_data(user_id)
+            await _onboarding_completion_handler(
+                user_id,
+                wizard_data,
+                _data.get("session_token", ""),
+            )
+        except Exception as exc:
+            # Workspace creation is durable; surface the research failure via
+            # workflow events and let the user enter Mission Control.
+            import logging
+            logging.getLogger("loqi.onboarding").exception("Initial research dispatch failed: %s", exc)
     return result
 
 

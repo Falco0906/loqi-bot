@@ -4,6 +4,7 @@ import WorkspaceContainer from "../../../components/layout/WorkspaceContainer";
 import AppPage from "../../../components/primitives/AppPage";
 import { useData } from "../../../lib/hooks/use-data";
 import { fetchStrategicUpdate } from "../../../lib/repositories";
+import { toast } from "../../../components/shared/Toast";
 
 function LoadingSkeleton() {
   return (
@@ -79,7 +80,7 @@ export default function StrategicUpdatePage() {
             <span className="text-[11px] uppercase tracking-[0.2em] text-on-surface-variant/50 font-medium block mb-4">
               Executive Briefing
             </span>
-            <h1 className="text-[32px] font-serif text-on-surface mb-4 font-normal">
+            <h1 className="text-4xl md:text-5xl font-serif text-on-surface mb-4 font-normal">
               Strategic Update
             </h1>
             <p className="text-lg text-on-surface-variant/80 leading-relaxed max-w-xl">
@@ -216,13 +217,25 @@ export default function StrategicUpdatePage() {
       {/* Sticky Bottom Action Bar */}
       <footer className="fixed bottom-0 left-64 right-0 p-6 flex justify-center z-50 bg-gradient-to-t from-charcoal via-charcoal/90 to-transparent pointer-events-none">
         <div className="flex items-center gap-4 bg-surface rounded-full px-4 py-3 ambient-shadow border border-outline-variant/10 pointer-events-auto">
-          <button className="px-8 py-3 bg-primary text-on-primary rounded-full text-xs font-semibold uppercase tracking-wider hover:scale-[0.98] active:scale-95 transition-transform">
+          <button
+            type="button"
+            onClick={() => toast("success", "Strategy applied — Loqi will begin execution")}
+            className="px-8 py-3 bg-primary text-on-primary rounded-full text-xs font-semibold uppercase tracking-wider hover:scale-[0.98] active:scale-95 transition-transform"
+          >
             Apply Strategy
           </button>
-          <button className="px-8 py-3 bg-surface text-on-surface border border-outline-variant/30 rounded-full text-xs font-semibold uppercase tracking-wider hover:bg-surface-container-low transition-colors">
+          <button
+            type="button"
+            onClick={() => toast("success", "Opening strategy modification panel")}
+            className="px-8 py-3 bg-surface text-on-surface border border-outline-variant/30 rounded-full text-xs font-semibold uppercase tracking-wider hover:bg-surface-container-low transition-colors"
+          >
             Modify Plan
           </button>
-          <button className="px-6 py-3 text-on-surface-variant/70 hover:text-error transition-colors text-xs font-semibold uppercase tracking-wider">
+          <button
+            type="button"
+            onClick={() => toast("info", "Strategy update dismissed")}
+            className="px-6 py-3 text-on-surface-variant/70 hover:text-error transition-colors text-xs font-semibold uppercase tracking-wider"
+          >
             Cancel
           </button>
         </div>

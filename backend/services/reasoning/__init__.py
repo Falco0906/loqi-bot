@@ -1,5 +1,4 @@
-"""Autonomous Reasoning Engine.
+"""Modular reasoning pipeline for workspace analysis.
 
-Consumes Conversation Intelligence, produces decisions.
-Never executes actions. Never generates content.
+Entry point: ReasoningCoordinator.analyze()
 """

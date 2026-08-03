@@ -5,6 +5,8 @@ import WorkspaceContainer from "../../../components/layout/WorkspaceContainer";
 import AppPage from "../../../components/primitives/AppPage";
 import { useData } from "../../../lib/hooks/use-data";
 import { fetchInbox } from "../../../lib/repositories";
+import { useTellLoqi } from "../../../hooks/useTellLoqi";
+import { toast } from "../../../components/shared/Toast";
 import type { InboxDecision } from "../../../lib/domain";
 
 function LoadingSkeleton() {
@@ -41,6 +43,14 @@ function LoadingSkeleton() {
 export default function InboxPage() {
   const { data, loading, error, retry } = useData(fetchInbox);
   const [selected, setSelected] = useState<InboxDecision | null>(null);
+  const tellLoqi = useTellLoqi("Inbox", {
+    decisionCount: data?.decisions.length ?? 0,
+  });
+
+  const handleDecisionAction = (action: string, decision: InboxDecision) => {
+    toast("success", `${action}: ${decision.title}`);
+    setSelected(null);
+  };
 
   if (loading) {
     return (
@@ -87,7 +97,7 @@ export default function InboxPage() {
 
           {/* Header */}
           <header className="animate-conversation-fade">
-            <h1 className="text-[36px] font-serif text-on-surface mb-1 font-normal">
+            <h1 className="text-4xl md:text-5xl font-serif text-on-surface mb-1 font-normal">
               Needs Your Judgment
             </h1>
             <p className="text-[11px] uppercase tracking-widest text-on-surface-variant/50 font-medium">
@@ -145,10 +155,10 @@ export default function InboxPage() {
                       </div>
                       <div className="flex flex-wrap items-center justify-between gap-4 pt-6 border-t border-outline-variant/10">
                         <div className="flex gap-2">
-                          <button onClick={(e) => { e.stopPropagation(); }} className="bg-primary text-on-primary text-sm font-medium px-6 py-2.5 rounded-full hover:opacity-90 active:scale-95 transition-all">
+                          <button onClick={(e) => { e.stopPropagation(); handleDecisionAction(d.actions.primary.label, d); }} className="bg-primary text-on-primary text-sm font-medium px-6 py-2.5 rounded-full hover:opacity-90 active:scale-95 transition-all">
                             {d.actions.primary.label}
                           </button>
-                          <button onClick={(e) => { e.stopPropagation(); }} className="border border-outline-variant bg-transparent text-primary text-sm font-medium px-6 py-2.5 rounded-full hover:bg-surface-container transition-all">
+                          <button onClick={(e) => { e.stopPropagation(); handleDecisionAction(d.actions.secondary.label, d); }} className="border border-outline-variant bg-transparent text-primary text-sm font-medium px-6 py-2.5 rounded-full hover:bg-surface-container transition-all">
                             {d.actions.secondary.label}
                           </button>
                         </div>
@@ -216,20 +226,45 @@ export default function InboxPage() {
                   className="w-full border-none p-0 focus:ring-0 text-lg placeholder:text-on-surface-variant/30 resize-none bg-transparent outline-none"
                   placeholder="What decisions need my attention?"
                   rows={1}
+                  value={tellLoqi.text}
+                  onChange={(e) => tellLoqi.setText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void tellLoqi.submit();
+                    }
+                  }}
                 />
-                <button className="bg-primary text-on-primary w-10 h-10 rounded-full flex items-center justify-center hover:opacity-80 transition-opacity shrink-0">
+                <button
+                  type="button"
+                  disabled={tellLoqi.sending || !tellLoqi.text.trim()}
+                  onClick={() => void tellLoqi.submit()}
+                  className="bg-primary text-on-primary w-10 h-10 rounded-full flex items-center justify-center hover:opacity-80 transition-opacity shrink-0 disabled:opacity-40"
+                >
                   <span className="material-symbols-outlined text-sm">arrow_upward</span>
                 </button>
               </div>
             </div>
             <div className="mt-4 flex justify-center gap-3 overflow-x-auto no-scrollbar">
-              <button className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold">
+              <button
+                type="button"
+                onClick={() => void tellLoqi.submit("Prioritize the most urgent decisions first.")}
+                className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+              >
                 PRIORITIZE URGENT
               </button>
-              <button className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold">
+              <button
+                type="button"
+                onClick={() => void tellLoqi.submit("Summarize this week's decisions and outcomes.")}
+                className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+              >
                 SUMMARIZE WEEKLY
               </button>
-              <button className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold">
+              <button
+                type="button"
+                onClick={() => void tellLoqi.submit("Review all pending decisions and recommend priorities.")}
+                className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+              >
                 REVIEW DECISIONS
               </button>
             </div>
@@ -300,10 +335,10 @@ export default function InboxPage() {
               </section>
             </div>
             <div className="p-8 border-t border-outline-variant/20 bg-surface-container flex gap-4">
-              <button className="flex-1 bg-primary text-on-primary text-sm font-medium py-4 rounded-full shadow-lg active:scale-[0.98] transition-all">
+              <button onClick={() => handleDecisionAction("Execute", selected)} className="flex-1 bg-primary text-on-primary text-sm font-medium py-4 rounded-full shadow-lg active:scale-[0.98] transition-all">
                 Execute Decision
               </button>
-              <button className="flex-1 border border-outline-variant text-primary text-sm font-medium py-4 rounded-full active:scale-[0.98] transition-all">
+              <button onClick={() => { toast("success", "Refinement request sent to Loqi"); setSelected(null); }} className="flex-1 border border-outline-variant text-primary text-sm font-medium py-4 rounded-full active:scale-[0.98] transition-all">
                 Refine Request
               </button>
             </div>

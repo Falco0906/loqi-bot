@@ -1,4 +1,4 @@
-from services.workspace_reasoner import _hours_since
+from services.reasoning._shared import hours_since as _hours_since
 
 
 def _find_matching_campaign(campaigns: list[dict], keywords: list[str]) -> dict | None:

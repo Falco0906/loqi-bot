@@ -26,6 +26,8 @@ def get_all(session_token: str) -> dict:
     store = _memory.get(session_token, {}).copy()
     store.pop("_last_updated", None)
     return {
+        "company_description": store.get("company_description", None),
+        "ideal_customer": store.get("ideal_customer", None),
         "last_search": store.get("last_search", None),
         "last_campaign_id": store.get("last_campaign_id", None),
         "last_campaign_name": store.get("last_campaign_name", None),

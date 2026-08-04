@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone, timedelta
 from uuid import uuid4
 
@@ -71,6 +72,7 @@ class LoginResult:
         self.session: Session | None = None
         self.refresh_token: str = ""
         self.events: list[IdentityEvent] = []
+        self.is_new_user: bool = False
 
 
 class RefreshResult:
@@ -303,10 +305,17 @@ class AuthService:
         provider = self._provider_registry.get(provider_type)
         external_dto = await provider.handle_callback(code, state, code_verifier)
 
-        existing_ei = await self._resolve_external_identity(external_dto)
-        is_new_user = False
+        legacy_user = await self._resolve_legacy_oauth_user(external_dto)
+        if legacy_user is not None:
+            user, is_new_user = legacy_user
+            existing_ei = None
+        else:
+            existing_ei = await self._resolve_external_identity(external_dto)
+            is_new_user = False
 
-        if existing_ei is not None:
+        if legacy_user is not None:
+            pass
+        elif existing_ei is not None:
             user = await self._user.get_user(existing_ei.user_id)
             existing_ei.last_login_at = datetime.now(timezone.utc)
             if self._external_identity_repo is not None:
@@ -323,6 +332,8 @@ class AuthService:
             else:
                 user = await self._create_oauth_user(external_dto)
                 is_new_user = True
+
+        await self._sync_external_identity(user.id, external_dto)
 
         if is_new_user:
             org, membership, org_event = await self._org.create_organization(
@@ -359,7 +370,82 @@ class AuthService:
         result.session = session
         result.refresh_token = raw_refresh
         result.events = events
+        result.is_new_user = is_new_user
         return result
+
+    async def _resolve_legacy_oauth_user(
+        self, external_dto: ExternalIdentityDTO,
+    ) -> tuple[User, bool] | None:
+        """Recover OAuth identities from the pre-identity-platform users table."""
+        try:
+            from services.supabase import get_or_create_oauth_user
+
+            row, is_new = await asyncio.to_thread(
+                get_or_create_oauth_user,
+                external_dto.provider.value,
+                external_dto.provider_user_id,
+                email=external_dto.email,
+                username=external_dto.name,
+            )
+            if not row or not row.get("id"):
+                return None
+
+            user_id = str(row["id"])
+            try:
+                user = await self._user.get_user(user_id)
+            except UserNotFoundException:
+                user = User(
+                    id=user_id,
+                    display_name=str(row.get("username") or external_dto.name or ""),
+                    avatar_url=external_dto.avatar_url,
+                )
+                await self._user.save_user(user)
+
+            # The OAuth bridge uses the stable legacy users row, while the
+            # identity user aggregate (including onboarding state) lives in
+            # the durable identity repository. Pre-existing users are
+            # backfilled on first login by the save above.
+
+            existing_email = await self._email_identity_repo.find_by_email(
+                external_dto.email,
+            )
+            if existing_email is None:
+                await self._email_identity_repo.save(EmailIdentity(
+                    user_id=user.id,
+                    email=external_dto.email,
+                    is_verified=True,
+                    is_primary=True,
+                    verified_at=datetime.now(timezone.utc),
+                ))
+            return user, is_new
+        except Exception:
+            # The legacy bridge is best-effort. The identity-platform path
+            # remains the source of truth once its migration is installed.
+            return None
+
+    async def _sync_external_identity(
+        self, user_id: str, external_dto: ExternalIdentityDTO,
+    ) -> None:
+        """Best-effort upsert into the canonical external_identities table."""
+        try:
+            from services.persistence.launch import ExternalIdentity, ExternalIdentityRepository
+            repo = ExternalIdentityRepository()
+            subject = external_dto.provider_user_id or external_dto.email
+            existing = await repo.find_by_provider_subject(external_dto.provider.value, subject)
+            if existing is None:
+                await repo.save(ExternalIdentity(
+                    user_id=user_id,
+                    provider=external_dto.provider.value,
+                    provider_subject=subject,
+                    email=external_dto.email,
+                    username=external_dto.name,
+                    metadata={
+                        "avatar_url": external_dto.avatar_url or "",
+                        "provider_user_id": external_dto.provider_user_id or "",
+                    },
+                ))
+        except Exception:
+            pass
 
     async def _resolve_external_identity(
         self, external_dto: ExternalIdentityDTO,
@@ -451,6 +537,10 @@ class AuthService:
 
         session, event = await self._session_svc.revoke_session(rt.session_id)
         return event
+
+    async def validate_access_token(self, access_token: str) -> Session:
+        """Validate the opaque access token and return its owning session."""
+        return await self._session_svc.validate_session(access_token)
 
     async def list_sessions(self, user_id: str) -> list[Session]:
         return await self._session_svc.list_active_sessions(user_id)

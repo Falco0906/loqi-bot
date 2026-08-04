@@ -59,3 +59,7 @@ class JobManager:
     def list_active_jobs(self, user_id: str) -> list[dict]:
         jobs = self._storage.list_active_jobs(user_id)
         return [j.to_dict() for j in jobs]
+
+    def list_recent_jobs(self, user_id: str, limit: int = 20) -> list[dict]:
+        jobs = self._storage.list_recent_jobs(user_id, limit=limit)
+        return [j.to_dict() for j in jobs]

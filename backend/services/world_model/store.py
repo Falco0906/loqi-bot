@@ -232,6 +232,17 @@ class InMemoryWorldModelStore(WorldModelStore):
                         c.updated_at = _utc_now()
                         break
 
+            elif event.type == EventType.CAMPAIGN_UPDATED:
+                cid = event.data.get("campaign_id", "")
+                for c in state.pipeline.campaigns:
+                    if c.id == cid:
+                        if "name" in event.data:
+                            c.name = event.data["name"]
+                        if "lead_count" in event.data:
+                            c.lead_count = event.data["lead_count"]
+                        c.updated_at = _utc_now()
+                        break
+
             elif event.type == EventType.LEAD_DISCOVERED:
                 state.pipeline.leads.append(LeadState(
                     id=event.data.get("id", ""),

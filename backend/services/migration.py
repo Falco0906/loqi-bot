@@ -30,6 +30,24 @@ create table if not exists search_results (
 create index if not exists search_results_job_id_idx on search_results(job_id, rank);
 """
 
+ONBOARDING_SQL = """
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'onboarding_data'
+    ) THEN
+        ALTER TABLE users ADD COLUMN onboarding_data TEXT;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'onboarding_completed_at'
+    ) THEN
+        ALTER TABLE users ADD COLUMN onboarding_completed_at TIMESTAMPTZ;
+    END IF;
+END $$;
+"""
+
 
 def _log(msg: str) -> None:
     print(f"[migration] {msg}")
@@ -49,13 +67,29 @@ def _check_table_exists() -> bool:
 
 
 def apply_migrations() -> bool:
-    if _check_table_exists():
+    jobs_exist = _check_table_exists()
+    database_url = os.getenv("DATABASE_URL")
+    if jobs_exist and not database_url:
         _log("Jobs table already exists — skipping migration")
         return True
 
+    if jobs_exist and database_url:
+        try:
+            import psycopg2
+            conn = psycopg2.connect(database_url, connect_timeout=10)
+            conn.autocommit = True
+            cur = conn.cursor()
+            cur.execute(ONBOARDING_SQL)
+            cur.close()
+            conn.close()
+            _log("Additive onboarding migration checked successfully")
+            return True
+        except Exception as e:
+            _log(f"Additive onboarding migration failed: {e}")
+            return False
+
     _log("Jobs table not found — attempting migration")
 
-    database_url = os.getenv("DATABASE_URL")
     if database_url:
         try:
             import psycopg2
@@ -63,6 +97,7 @@ def apply_migrations() -> bool:
             conn.autocommit = True
             cur = conn.cursor()
             cur.execute(MIGRATION_SQL)
+            cur.execute(ONBOARDING_SQL)
             cur.close()
             conn.close()
             _log("Migration applied successfully via DATABASE_URL")

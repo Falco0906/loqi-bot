@@ -140,8 +140,16 @@ class ConversationEngine:
 
         return {"ok": True, "messages": messages, "events": events}
 
-    def create_web_session(self, display_name: str | None = None) -> dict:
-        created = create_lightweight_web_session(display_name=display_name)
+    def create_web_session(
+        self,
+        display_name: str | None = None,
+        *,
+        user_id: str | None = None,
+    ) -> dict:
+        created = create_lightweight_web_session(
+            display_name=display_name,
+            user_id=user_id,
+        )
         if created is None:
             raise ValueError("Unable to create web session")
 

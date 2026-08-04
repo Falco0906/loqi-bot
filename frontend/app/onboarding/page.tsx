@@ -35,6 +35,7 @@ export default function OnboardingPage() {
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState<string | null>(null);
   const [loadingInitial, setLoadingInitial] = useState(true);
+  const [initializationError, setInitializationError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const userId = user && "id" in user ? user.id : "";
@@ -42,22 +43,22 @@ export default function OnboardingPage() {
   // Restore onboarding state from backend on load
   useEffect(() => {
     if (authLoading) return;
-    if (!user || ("onboarding_complete" in user && user.onboarding_complete)) {
-      setLoadingInitial(false);
+    if (!user) {
+      router.replace("/login");
       return;
     }
-    const restoredStep = sessionStorage.getItem("loqi_onboarding_step");
-    if (restoredStep) {
-      sessionStorage.removeItem("loqi_onboarding_step");
-      setState(restoredStep as OnboardingState);
-      setLoadingInitial(false);
+    if ("onboarding_complete" in user && user.onboarding_complete) {
+      // A completed account must never render the onboarding state machine.
+      // In particular, stale browser conversation data must not be allowed to
+      // advance into a state whose parent profile has not been loaded.
+      router.replace("/mission-control");
       return;
     }
     (async () => {
       try {
         const progress = await getOnboardingProgress(userId);
         if (progress.onboarding_complete) {
-          router.push("/mission-control");
+          router.replace("/mission-control");
           return;
         }
         const data = progress.wizard_data || {};
@@ -75,16 +76,36 @@ export default function OnboardingPage() {
           setProfile(restoredProfile as OnboardingProfile);
         }
 
+        // Backend progress is authoritative. Only restore a client-side step
+        // after confirming that the account is still incomplete server-side.
+        const restoredStep = sessionStorage.getItem("loqi_onboarding_step");
+        if (restoredStep) {
+          sessionStorage.removeItem("loqi_onboarding_step");
+          if (
+            (restoredStep === "knowledge-validation" || restoredStep === "executive-briefing") &&
+            Object.keys(restoredProfile).length === 0
+          ) {
+            setState("conversational-discovery");
+          } else {
+            setState(restoredStep as OnboardingState);
+          }
+          setLoadingInitial(false);
+          return;
+        }
+
         const savedStep = data.onboarding_step as string | undefined;
-        if (savedStep === "knowledge-validation") {
+        if (savedStep === "knowledge-validation" && Object.keys(restoredProfile).length > 0) {
           setState("knowledge-validation");
-        } else if (savedStep === "workspace-connection") {
+        } else if (savedStep === "workspace-connection" && Object.keys(restoredProfile).length > 0) {
           setState("workspace-connection");
-        } else if (savedStep === "executive-briefing") {
+        } else if (savedStep === "executive-briefing" && Object.keys(restoredProfile).length > 0) {
           setState("executive-briefing");
         }
       } catch {
-        // Proceed with defaults
+        // Do not present a blank or potentially destructive onboarding flow
+        // when the progress endpoint is unavailable. The user can retry once
+        // the backend is reachable.
+        setInitializationError("We couldn't verify your onboarding status. Please try again.");
       }
       setLoadingInitial(false);
     })();
@@ -93,7 +114,7 @@ export default function OnboardingPage() {
   useEffect(() => {
     if (authLoading) return;
     if (!user || ("onboarding_complete" in user && user.onboarding_complete)) {
-      router.push("/mission-control");
+      router.replace(user ? "/mission-control" : "/login");
     }
   }, [user, authLoading, router]);
 
@@ -195,7 +216,13 @@ export default function OnboardingPage() {
     return generated;
   };
 
-  const handleDiscoveryComplete = () => {
+  const handleDiscoveryComplete = (completedProfile: OnboardingProfile) => {
+    // A browser-resumed conversation may already be complete even when the
+    // backend wizard record is missing (for example after a dev-server
+    // restart). Carry the child component's profile into the parent before
+    // advancing so profile-dependent states can never render blank.
+    setProfile(completedProfile);
+    void persistProfile(completedProfile);
     setState("knowledge-validation");
   };
 
@@ -296,6 +323,28 @@ export default function OnboardingPage() {
     );
   }
 
+  if (initializationError) {
+    return (
+      <main className="relative z-10 w-full min-h-screen onb-surface flex items-center justify-center px-6">
+        <div className="max-w-[520px] text-center space-y-6">
+          <span className="material-symbols-outlined text-[#dc2626] text-4xl">error</span>
+          <h1 className="font-['Libre_Caslon_Text'] text-[32px] text-[#1c1b1b]">
+            We couldn&apos;t open your workspace
+          </h1>
+          <p className="font-['Inter'] text-[16px] leading-[1.6] text-[#444748]">
+            {initializationError}
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-8 py-4 bg-[#000000] text-[#ffffff] rounded-lg font-['Inter'] text-[16px]"
+          >
+            Try again
+          </button>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="relative z-10 w-full min-h-screen onb-surface">
       {state === "conversational-discovery" && (
@@ -382,7 +431,7 @@ function ConversationalDiscovery({
   onComplete,
 }: {
   onGenerate: (profile: OnboardingProfile) => Promise<StrategicProfile | null>;
-  onComplete: () => void;
+  onComplete: (profile: OnboardingProfile) => void;
 }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [currentQ, setCurrentQ] = useState(0);
@@ -676,7 +725,7 @@ function ConversationalDiscovery({
             {analysisComplete && (
               <div className="mt-12 text-center onb-fade-in">
                 <button
-                  onClick={() => onComplete()}
+                  onClick={() => onComplete(profile)}
                   className="font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] font-medium uppercase tracking-widest border border-[#000000]/20 px-10 py-4 rounded-sm hover:bg-[#000000] hover:text-[#ffffff] hover:border-[#000000] transition-all duration-300"
                 >
                   Continue to Knowledge Validation

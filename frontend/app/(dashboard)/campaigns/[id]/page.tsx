@@ -1,12 +1,14 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { useCallback, useEffect } from "react";
 import WorkspaceContainer from "../../../../components/layout/WorkspaceContainer";
 import AppPage from "../../../../components/primitives/AppPage";
 import { useData } from "../../../../lib/hooks/use-data";
 import { fetchCampaign } from "../../../../lib/repositories";
 import { useTellLoqi } from "../../../../hooks/useTellLoqi";
 import { toast } from "../../../../components/shared/Toast";
+import { generateCampaignDrafts, getCampaignGenerationStatus, updateCampaign } from "../../../../lib/api";
 
 function LoadingSkeleton() {
   return (
@@ -25,8 +27,27 @@ function LoadingSkeleton() {
 export default function CampaignDetailPage() {
   const params = useParams();
   const campaignId = params.id as string;
-  const { data, loading, error, retry } = useData(() => fetchCampaign(campaignId));
+  const router = useRouter();
+  const loadCampaign = useCallback(() => fetchCampaign(campaignId), [campaignId]);
+  const { data, loading, error, retry } = useData(loadCampaign);
   const tellLoqi = useTellLoqi("CampaignDetail", { campaignId });
+  const token = typeof window !== "undefined" ? localStorage.getItem("loqi_active_session_token") : null;
+
+  useEffect(() => {
+    if (!data || data.status !== "generating" || !token) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const status = await getCampaignGenerationStatus(token, campaignId);
+        if (!cancelled && !status.active) window.location.reload();
+      } catch {
+        // Keep polling; the durable campaign state remains authoritative.
+      }
+    };
+    const timer = window.setInterval(() => void poll(), 2000);
+    void poll();
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [campaignId, data?.status, token]);
 
   if (loading) {
     return (
@@ -68,6 +89,38 @@ export default function CampaignDetailPage() {
     );
   }
 
+  const leads = data.leads || [];
+  const strategy = data.strategy || {};
+
+  async function approveStrategy() {
+    if (!token) return;
+    const result = await updateCampaign(token, campaignId, { status: "lead_selection" });
+    if (!result.ok) return;
+    if (leads.length > 0) {
+      toast("success", `${leads.length} lead${leads.length === 1 ? "" : "s"} ready — generate drafts next`);
+      window.location.reload();
+      return;
+    }
+    toast("success", "Strategy approved — select leads next");
+    router.push(`/discovery?campaign=${encodeURIComponent(campaignId)}`);
+  }
+
+  async function startDrafts() {
+    if (!token || leads.length === 0) return;
+    const result = await generateCampaignDrafts(token, campaignId);
+    if (!result.ok) return;
+    toast("success", "Draft generation started");
+    window.location.reload();
+  }
+
+  async function launchCampaign() {
+    if (!token) return;
+    const result = await updateCampaign(token, campaignId, { status: "completed" });
+    if (!result.ok) return;
+    toast("success", "Campaign launched");
+    window.location.reload();
+  }
+
   return (
     <WorkspaceContainer>
       <AppPage>
@@ -104,6 +157,42 @@ export default function CampaignDetailPage() {
                 )}
               </div>
             </div>
+          </section>
+
+          <section className="p-6 rounded-xl border border-primary/15 bg-primary-container/5 space-y-4 animate-conversation-fade">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-[11px] uppercase tracking-widest text-primary/70 font-semibold">Next step</p>
+                <p className="text-lg font-serif mt-1">
+                  {data.status === "strategy_review" ? "Review and approve the outreach strategy" :
+                    data.status === "lead_selection" ? "Select the prospects this campaign should reach" :
+                    data.status === "draft_review" ? "Review the generated drafts" :
+                    data.status === "ready_to_send" ? "Launch the approved campaign" :
+                    data.status === "generating" ? "Drafts are being generated" :
+                    data.status === "completed" ? "Campaign complete" : "Campaign setup in progress"}
+                </p>
+              </div>
+              {data.status === "strategy_review" && (
+                <button onClick={() => void approveStrategy()} className="rounded-lg bg-success px-4 py-2.5 text-sm font-semibold text-white">Approve Strategy</button>
+              )}
+              {data.status === "lead_selection" && leads.length > 0 && (
+                <button onClick={() => void startDrafts()} className="rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-on-primary">Generate Drafts</button>
+              )}
+              {data.status === "lead_selection" && leads.length === 0 && (
+                <button onClick={() => router.push(`/discovery?campaign=${encodeURIComponent(campaignId)}`)} className="rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-on-primary">Select Leads</button>
+              )}
+              {data.status === "draft_review" && (
+                <button onClick={() => router.push(`/draft?campaign=${encodeURIComponent(campaignId)}`)} className="rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-on-primary">Review Drafts</button>
+              )}
+            </div>
+            {Object.keys(strategy).length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-on-surface-variant">
+                <p><span className="font-semibold text-on-surface">Audience:</span> {String(strategy.audience || "")}</p>
+                <p><span className="font-semibold text-on-surface">Channel:</span> {String(strategy.channel || "")}</p>
+                <p className="md:col-span-2"><span className="font-semibold text-on-surface">Messaging angle:</span> {String(strategy.messaging_angle || "")}</p>
+              </div>
+            )}
+            <p className="text-xs text-on-surface-variant/60">{leads.length} lead{leads.length === 1 ? "" : "s"} selected for this campaign.</p>
           </section>
 
           {/* 3. Narrative Journey */}
@@ -215,20 +304,12 @@ export default function CampaignDetailPage() {
                   {data.recommendation.body}
                 </p>
                 <div className="flex gap-4 pt-4">
-                  <button
-                    type="button"
-                    onClick={() => { toast("success", "Approved — Loqi will apply the recommendation"); }}
-                    className="bg-primary text-on-primary px-8 py-3 rounded-full text-sm font-medium hover:opacity-90 transition-all flex items-center gap-2"
-                  >
-                    Review &amp; Approve
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { toast("success", "Opening draft for review"); }}
-                    className="border border-outline-variant text-on-surface px-8 py-3 rounded-full text-sm font-medium hover:bg-surface-container-low transition-all"
-                  >
-                    View Draft
-                  </button>
+                  {data.status === "ready_to_send" && (
+                    <button type="button" onClick={() => void launchCampaign()} className="bg-primary text-on-primary px-8 py-3 rounded-full text-sm font-medium hover:opacity-90 transition-all">Launch Campaign</button>
+                  )}
+                  {data.status === "draft_review" && (
+                    <a href={`/draft?campaign=${encodeURIComponent(campaignId)}`} className="border border-outline-variant text-on-surface px-8 py-3 rounded-full text-sm font-medium hover:bg-surface-container-low transition-all">Review Drafts</a>
+                  )}
                 </div>
               </div>
             </section>

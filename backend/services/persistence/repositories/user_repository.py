@@ -8,7 +8,7 @@ class SupabaseUserRepository(SupabaseRepository[User]):
 
     @property
     def _table_name(self) -> str:
-        return "users"
+        return "identity_users"
 
     @classmethod
     def _entity_type(cls) -> type[User]:

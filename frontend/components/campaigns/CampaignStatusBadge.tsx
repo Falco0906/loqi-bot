@@ -5,6 +5,8 @@ type Props = {
 
 const config: Record<string, { label: string; bg: string; text: string }> = {
   planning: { label: "Planning", bg: "bg-warning/10", text: "text-warning" },
+  strategy_review: { label: "Strategy Review", bg: "bg-primary/10", text: "text-primary" },
+  lead_selection: { label: "Lead Selection", bg: "bg-secondary/10", text: "text-secondary" },
   ready: { label: "Ready", bg: "bg-primary/10", text: "text-primary" },
   generating: { label: "Generating", bg: "bg-secondary/10", text: "text-secondary" },
   draft_review: { label: "Draft Review", bg: "bg-primary-container/20", text: "text-primary" },

@@ -46,6 +46,7 @@ export type MCData = {
   activeJobTotal: number | null;
   initialResearchStatus: string | null;
   initialResearchError: string | null;
+  initialResearchResultCount: number | null;
 };
 
 /* ─── Phase 11: Briefing-specific domain types ─── */
@@ -168,10 +169,14 @@ export type CampaignInsight = {
 };
 
 export type CampaignData = {
+  id?: string;
   name: string;
   status: string;
   createdAt: string;
   objective: string;
+  leadCount?: number;
+  leads?: Array<Record<string, unknown>>;
+  strategy?: Record<string, unknown> | null;
   milestones: CampaignMilestone[];
   improvements: CampaignImprovement[];
   timeline: CampaignTimelineEntry[];

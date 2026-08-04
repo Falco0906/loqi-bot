@@ -9,11 +9,14 @@ export async function authFetch<T>(
   const timeoutId = setTimeout(() => controller.abort(), 10000);
 
   try {
+    let storedAccessToken = "";
+    try { storedAccessToken = localStorage.getItem("loqi_access_token") || ""; } catch { /* SSR/storage unavailable */ }
     const response = await fetch(url, {
       ...options,
       signal: options.signal || controller.signal,
       headers: {
         "Content-Type": "application/json",
+        ...(storedAccessToken ? { Authorization: `Bearer ${storedAccessToken}` } : {}),
         ...options.headers,
       },
     });
@@ -35,7 +38,7 @@ export async function authFetch<T>(
       throw new AuthApiError("Request timed out", 0, "TIMEOUT");
     }
     throw new AuthApiError(
-      err instanceof Error ? err.message : "Network error",
+      `${err instanceof Error ? err.message : "Network error"} (${API_BASE})`,
       0,
       "NETWORK",
     );

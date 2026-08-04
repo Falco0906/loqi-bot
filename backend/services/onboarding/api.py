@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+
+from services.identity.api import get_authenticated_user_id
 
 from services.onboarding.exceptions import (
     InvalidTransitionException,
@@ -94,6 +97,28 @@ def _onboarding_status(exc: OnboardingException) -> int:
     return 400
 
 
+async def _resolve_user_id(request: Request, requested_user_id: str) -> str:
+    """Use the session identity in production; reject mismatched identities."""
+    if os.getenv("APP_ENV", "development").lower() == "production":
+        authenticated_user_id = await get_authenticated_user_id(request)
+        if requested_user_id and requested_user_id != authenticated_user_id:
+            raise HTTPException(status_code=403, detail="User identity mismatch")
+        return authenticated_user_id
+
+    # Development test fixtures historically call these endpoints with only a
+    # user_id. Preserve that contract locally, but still validate it whenever
+    # a session header is supplied.
+    authorization = request.headers.get("authorization", "")
+    if authorization:
+        authenticated_user_id = await get_authenticated_user_id(request)
+        if requested_user_id and requested_user_id != authenticated_user_id:
+            raise HTTPException(status_code=403, detail="User identity mismatch")
+        return authenticated_user_id
+    if not requested_user_id:
+        raise HTTPException(status_code=400, detail="user_id query parameter required")
+    return requested_user_id
+
+
 # ─── Endpoints ─────────────────────────────────────────────────────────
 
 
@@ -106,9 +131,8 @@ def _onboarding_status(exc: OnboardingException) -> int:
     "and Memory.",
     response_description="Structured AI Context object",
 )
-async def get_personalization_context(user_id: str = ""):
-    if not user_id:
-        raise HTTPException(status_code=400, detail="user_id query parameter required")
+async def get_personalization_context(request: Request, user_id: str = ""):
+    user_id = await _resolve_user_id(request, user_id)
     svc = _get_service()
     context = await svc.get_personalization_context(user_id)
     return context
@@ -123,9 +147,8 @@ async def get_personalization_context(user_id: str = ""):
     "Frontend never infers lifecycle state — it always asks the backend.",
     response_description="Current onboarding progress",
 )
-async def get_onboarding(user_id: str = ""):
-    if not user_id:
-        raise HTTPException(status_code=400, detail="user_id query parameter required")
+async def get_onboarding(request: Request, user_id: str = ""):
+    user_id = await _resolve_user_id(request, user_id)
     svc = _get_service()
     progress = await svc.get_progress(user_id)
     wizard = await svc.get_wizard_data(user_id)
@@ -142,9 +165,8 @@ async def get_onboarding(user_id: str = ""):
     "WORKSPACE_SETUP. Returns updated onboarding progress.",
     response_description="Updated onboarding progress",
 )
-async def complete_profile(user_id: str = "", payload: ProfileRequest | None = None):
-    if not user_id:
-        raise HTTPException(status_code=400, detail="user_id query parameter required")
+async def complete_profile(request: Request, user_id: str = "", payload: ProfileRequest | None = None):
+    user_id = await _resolve_user_id(request, user_id)
     svc = _get_service()
     try:
         _data: dict[str, Any] = {}
@@ -173,9 +195,8 @@ async def complete_profile(user_id: str = "", payload: ProfileRequest | None = N
     "Returns updated onboarding progress.",
     response_description="Updated onboarding progress",
 )
-async def complete_workspace(user_id: str = "", payload: WorkspaceRequest | None = None):
-    if not user_id:
-        raise HTTPException(status_code=400, detail="user_id query parameter required")
+async def complete_workspace(request: Request, user_id: str = "", payload: WorkspaceRequest | None = None):
+    user_id = await _resolve_user_id(request, user_id)
     svc = _get_service()
     try:
         _data: dict[str, Any] = {}
@@ -204,9 +225,8 @@ async def complete_workspace(user_id: str = "", payload: WorkspaceRequest | None
     "is redirected to the dashboard.",
     response_description="Created organization details",
 )
-async def create_workspace(user_id: str = "", payload: WorkspaceCreateRequest | None = None):
-    if not user_id:
-        raise HTTPException(status_code=400, detail="user_id query parameter required")
+async def create_workspace(request: Request, user_id: str = "", payload: WorkspaceCreateRequest | None = None):
+    user_id = await _resolve_user_id(request, user_id)
     svc = _get_service()
     try:
         _data: dict[str, object] = {}
@@ -245,9 +265,8 @@ async def create_workspace(user_id: str = "", payload: WorkspaceCreateRequest | 
     "lifecycle state and advances the state machine accordingly.",
     response_description="Updated onboarding progress",
 )
-async def complete_step(payload: CompleteStepRequest, user_id: str = ""):
-    if not user_id:
-        raise HTTPException(status_code=400, detail="user_id query parameter required")
+async def complete_step(request: Request, payload: CompleteStepRequest, user_id: str = ""):
+    user_id = await _resolve_user_id(request, user_id)
     svc = _get_service()
     try:
         await svc.complete_step(user_id, payload.step_id, payload.data)
@@ -267,9 +286,8 @@ async def complete_step(payload: CompleteStepRequest, user_id: str = ""):
     "resume the wizard after refresh or browser close.",
     response_description="Saved wizard data and completion status",
 )
-async def get_wizard(user_id: str = ""):
-    if not user_id:
-        raise HTTPException(status_code=400, detail="user_id query parameter required")
+async def get_wizard(request: Request, user_id: str = ""):
+    user_id = await _resolve_user_id(request, user_id)
     svc = _get_service()
     data = await svc.get_wizard_data(user_id)
     progress = await svc.get_progress(user_id)
@@ -290,9 +308,8 @@ async def get_wizard(user_id: str = ""):
     "lifecycle advances. Returns saved data and completion status.",
     response_description="Saved wizard data and completion status",
 )
-async def save_wizard(payload: WizardSaveRequest, user_id: str = ""):
-    if not user_id:
-        raise HTTPException(status_code=400, detail="user_id query parameter required")
+async def save_wizard(request: Request, payload: WizardSaveRequest, user_id: str = ""):
+    user_id = await _resolve_user_id(request, user_id)
     svc = _get_service()
     validation_errors = await svc.validate_wizard_data(payload.data)
     if payload.completed and validation_errors:

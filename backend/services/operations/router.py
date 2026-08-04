@@ -44,8 +44,11 @@ async def ready():
         else:
             try:
                 import asyncio
+                # Probe a table that the launch migrations guarantee to exist,
+                # not a throwaway _dummy table (which trips the PostgREST
+                # schema cache on freshly migrated databases).
                 result = await asyncio.to_thread(
-                    lambda: client.table("_dummy").select("count", count="exact").limit(0).execute()
+                    lambda: client.table("workflow_sessions").select("id").limit(0).execute()
                 )
             except Exception as e:
                 failures.append(f"database_connection_failed: {e}")

@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Loqi | Discovery Workspace</title>
+<!-- Google Fonts & Material Symbols -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&amp;family=Geist:wght@400;500;600&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "on-secondary-fixed": "#111e1a",
+                    "surface-dim": "#ddd9d8",
+                    "secondary-fixed": "#d6e6df",
+                    "error-container": "#ffdad6",
+                    "surface-variant": "#e5e2e1",
+                    "surface-container-lowest": "#ffffff",
+                    "on-tertiary-fixed-variant": "#484645",
+                    "inverse-on-surface": "#f4f0ef",
+                    "outline-variant": "#c4c7c7",
+                    "tertiary-container": "#1c1b1a",
+                    "on-secondary": "#ffffff",
+                    "on-background": "#1c1b1b",
+                    "tertiary": "#000000",
+                    "tertiary-fixed-dim": "#cac6c4",
+                    "surface-container-low": "#f7f3f2",
+                    "surface-bright": "#fdf8f8",
+                    "primary-fixed": "#e5e2e1",
+                    "secondary": "#53625c",
+                    "on-primary-fixed-variant": "#474746",
+                    "primary": "#000000",
+                    "error": "#ba1a1a",
+                    "on-secondary-container": "#576660",
+                    "on-surface": "#1c1b1b",
+                    "inverse-surface": "#313030",
+                    "surface-container-highest": "#e5e2e1",
+                    "on-surface-variant": "#444748",
+                    "on-error-container": "#93000a",
+                    "on-tertiary": "#ffffff",
+                    "on-tertiary-fixed": "#1c1b1a",
+                    "tertiary-fixed": "#e6e2df",
+                    "on-primary-container": "#858383",
+                    "on-primary": "#ffffff",
+                    "inverse-primary": "#c8c6c5",
+                    "outline": "#747878",
+                    "surface": "#fdf8f8",
+                    "secondary-container": "#d3e3dc",
+                    "background": "#fdf8f8",
+                    "on-tertiary-container": "#868382",
+                    "surface-tint": "#5f5e5e",
+                    "on-error": "#ffffff",
+                    "on-primary-fixed": "#1c1b1b",
+                    "surface-container": "#f1edec",
+                    "primary-fixed-dim": "#c8c6c5",
+                    "primary-container": "#1c1b1b",
+                    "surface-container-high": "#ebe7e6",
+                    "on-secondary-fixed-variant": "#3c4a44",
+                    "secondary-fixed-dim": "#bacac3"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.25rem",
+                    "lg": "0.5rem",
+                    "xl": "0.75rem",
+                    "full": "9999px"
+            },
+            "spacing": {
+                    "container-max": "1200px",
+                    "element-gap": "16px",
+                    "section-gap": "64px",
+                    "gutter": "24px",
+                    "reading-width": "720px",
+                    "base": "8px"
+            },
+            "fontFamily": {
+                    "display-xl-mobile": ["Libre Caslon Text"],
+                    "body-md": ["Inter"],
+                    "label-sm": ["Geist"],
+                    "headline-lg": ["Libre Caslon Text"],
+                    "display-xl": ["Libre Caslon Text"],
+                    "body-lg": ["Inter"],
+                    "label-xs": ["Geist"],
+                    "headline-md": ["Libre Caslon Text"]
+            },
+            "fontSize": {
+                    "display-xl-mobile": ["36px", {"lineHeight": "1.2", "fontWeight": "400"}],
+                    "body-md": ["16px", {"lineHeight": "1.5", "fontWeight": "400"}],
+                    "label-sm": ["13px", {"lineHeight": "1.2", "letterSpacing": "0.02em", "fontWeight": "500"}],
+                    "headline-lg": ["32px", {"lineHeight": "1.3", "fontWeight": "400"}],
+                    "display-xl": ["48px", {"lineHeight": "1.1", "letterSpacing": "-0.02em", "fontWeight": "400"}],
+                    "body-lg": ["18px", {"lineHeight": "1.6", "fontWeight": "400"}],
+                    "label-xs": ["11px", {"lineHeight": "1.2", "letterSpacing": "0.05em", "fontWeight": "600"}],
+                    "headline-md": ["24px", {"lineHeight": "1.4", "fontWeight": "400"}]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        body {
+            background-color: #fdf8f8; /* background from config */
+            color: #1c1b1b; /* on-background from config */
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .ambient-shadow {
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+        }
+
+        .glass-nav {
+            background-color: rgba(253, 248, 248, 0.5);
+            backdrop-filter: blur(12px);
+        }
+
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
+        }
+
+        .reading-container {
+            max-width: 900px; /* Increased slightly for table density */
+            margin: 0 auto;
+        }
+
+        .divider {
+            height: 0.5px;
+            background-color: #c4c7c7; /* outline-variant */
+            width: 100%;
+        }
+
+        /* Lead List Styles */
+        .lead-row {
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .lead-row:hover {
+            background-color: #f7f3f2;
+        }
+        
+        .expanded-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out, opacity 0.3s ease-out;
+            opacity: 0;
+        }
+        
+        .lead-row.is-expanded .expanded-content {
+            max-height: 1200px;
+            opacity: 1;
+            padding-top: 1.5rem;
+            padding-bottom: 2rem;
+        }
+
+        .lead-row.is-expanded {
+            background-color: #ffffff;
+            box-shadow: 0 10px 30px -10px rgba(0,0,0,0.08);
+            z-index: 10;
+        }
+
+        .rotate-icon {
+            transition: transform 0.3s ease;
+        }
+        .is-expanded .rotate-icon {
+            transform: rotate(180deg);
+        }
+
+        /* Custom scrollbar for subtle feel */
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #e5e2e1;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body class="font-body-md text-body-md overflow-x-hidden">
+<!-- SIDE NAVIGATION (Shared Component) -->
+<nav class="fixed left-0 top-0 h-screen flex flex-col py-8 px-6 z-40 bg-surface dark:bg-on-tertiary-fixed w-64 hidden md:flex">
+<div class="mb-12">
+<h1 class="font-display-xl text-display-xl text-primary tracking-tighter">Loqi</h1>
+<p class="font-label-xs text-label-xs text-on-surface-variant mt-1 uppercase tracking-widest">Chief of Staff</p>
+</div>
+<div class="space-y-6 flex-grow">
+<a class="flex items-center gap-3 text-on-surface-variant hover:text-primary transition-colors duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="dashboard">dashboard</span>
+<span class="font-label-sm text-label-sm">Mission Control</span>
+</a>
+<a class="flex items-center gap-3 text-primary font-bold border-r-2 border-primary transition-opacity opacity-80" href="#">
+<span class="material-symbols-outlined" data-icon="explore">explore</span>
+<span class="font-label-sm text-label-sm">Discovery</span>
+</a>
+<a class="flex items-center gap-3 text-on-surface-variant hover:text-primary transition-colors duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="campaign">campaign</span>
+<span class="font-label-sm text-label-sm">Campaigns</span>
+</a>
+<a class="flex items-center gap-3 text-on-surface-variant hover:text-primary transition-colors duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="menu_book">menu_book</span>
+<span class="font-label-sm text-label-sm">Knowledge</span>
+</a>
+</div>
+<div class="space-y-4 pt-8 border-t border-outline-variant">
+<a class="flex items-center gap-3 text-on-surface-variant hover:text-primary transition-colors duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+<span class="font-label-sm text-label-sm">Settings</span>
+</a>
+<a class="flex items-center gap-3 text-on-surface-variant hover:text-primary transition-colors duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="help_outline">help_outline</span>
+<span class="font-label-sm text-label-sm">Support</span>
+</a>
+<div class="flex items-center gap-3 mt-6">
+<div class="w-8 h-8 rounded-full overflow-hidden">
+<img class="w-full h-full object-cover" data-alt="Executive Portrait" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD30aSfYcTUp1-1gDk9WKOJUOQ6b1RD3n16U3fm1Z9k5lVJsuSvipH8FEW0k-aduNAqPmelwEm1hir5imfY7N-5gnMJ_qmPBGaBqXcpSvB2hP1Fq0hOy1zc6lh9hOsgH-xHm3jdnkrkWY2h_ws5Avf2BYXI9EGOW3rZPpbqboqv0OaTG0RSdjISusvRCU538cHXf6dFV2L-b2lxXbMeFiWaRmzuiIujJV37IydUucG8EJJHklEX9Hie"/>
+</div>
+<div>
+<p class="font-label-xs text-label-xs font-bold">Executive Profile</p>
+<p class="text-[10px] text-on-surface-variant">Strategic Lead</p>
+</div>
+</div>
+</div>
+</nav>
+<!-- TOP NAV BAR -->
+<header class="fixed top-0 right-0 w-full md:w-[calc(100%-16rem)] h-20 flex justify-between items-center px-6 md:px-12 z-30 glass-nav">
+<div class="flex items-center gap-8">
+<span class="md:hidden font-display-xl-mobile text-display-xl-mobile text-primary">Loqi</span>
+<div class="hidden md:flex gap-6">
+<a class="font-label-sm text-label-sm text-on-surface-variant hover:text-primary transition-all" href="#">Directives</a>
+<a class="font-label-sm text-label-sm text-on-surface-variant hover:text-primary transition-all" href="#">Summaries</a>
+<a class="font-label-sm text-label-sm text-on-surface-variant hover:text-primary transition-all" href="#">Archive</a>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<div class="hidden lg:flex items-center bg-surface-container-low px-4 py-2 rounded-full border border-transparent hover:border-outline-variant transition-all">
+<span class="material-symbols-outlined text-on-surface-variant mr-2" data-icon="search" style="font-size: 18px;">search</span>
+<input class="bg-transparent border-none focus:ring-0 text-label-sm w-64 p-0 placeholder-on-surface-variant/50" placeholder="Research a different market..." type="text"/>
+</div>
+<div class="flex items-center gap-4">
+<button class="text-on-surface-variant hover:text-primary">
+<span class="material-symbols-outlined" data-icon="notifications">notifications</span>
+</button>
+<button class="text-on-surface-variant hover:text-primary">
+<span class="material-symbols-outlined" data-icon="account_circle">account_circle</span>
+</button>
+</div>
+</div>
+</header>
+<!-- MAIN CONTENT CANVAS -->
+<main class="pt-32 pb-40 px-6 md:ml-64">
+<div class="reading-container">
+<!-- Opening Narrative Briefing -->
+<section class="mb-12">
+<h2 class="font-display-xl text-display-xl mb-6">Market Discovery: Fintech Infrastructure</h2>
+<div class="space-y-4">
+<p class="font-headline-md text-headline-md leading-relaxed text-on-surface">
+                        I reviewed <span class="italic font-bold text-primary">184 companies</span> overnight. 
+                    </p>
+<p class="font-body-lg text-body-lg text-on-surface-variant max-w-2xl">
+                        Based on your directive for "High-conviction Series A platforms in cross-border payments," I’ve synthesized the landscape. I've isolated the top contenders below for your review.
+                    </p>
+</div>
+</section>
+<!-- Research Toolbar & Filters -->
+<div class="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-outline-variant pb-6">
+<div class="flex items-center gap-2">
+<span class="font-label-xs text-label-xs uppercase tracking-tighter text-on-surface-variant">Active Filters:</span>
+<div class="flex gap-2">
+<span class="bg-surface-container px-3 py-1 rounded-full font-label-xs text-label-xs">Fintech</span>
+<span class="bg-surface-container px-3 py-1 rounded-full font-label-xs text-label-xs">90% Confidence</span>
+</div>
+</div>
+<div class="flex gap-4">
+<button class="flex items-center gap-1 font-label-sm text-label-sm text-on-surface-variant hover:text-primary">
+<span class="material-symbols-outlined text-[18px]" data-icon="filter_list">filter_list</span>
+                        Industry
+                    </button>
+<button class="flex items-center gap-1 font-label-sm text-label-sm text-on-surface-variant hover:text-primary">
+<span class="material-symbols-outlined text-[18px]" data-icon="tune">tune</span>
+                        Status
+                    </button>
+</div>
+</div>
+<!-- HIGH-DENSITY LEAD LIST -->
+<div class="w-full bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden ambient-shadow">
+<!-- Header -->
+<div class="grid grid-cols-12 gap-4 px-6 py-4 bg-surface-container-low border-b border-outline-variant text-label-xs uppercase tracking-widest text-on-surface-variant font-bold">
+<div class="col-span-4">Company</div>
+<div class="col-span-2 text-center">Match</div>
+<div class="col-span-2">Stage</div>
+<div class="col-span-2">Location</div>
+<div class="col-span-2 text-right">Actions</div>
+</div>
+<!-- Lead Row 1 -->
+<div class="lead-row group relative border-b border-outline-variant/30 cursor-pointer" onclick="this.classList.toggle('is-expanded')">
+<div class="grid grid-cols-12 gap-4 px-6 py-5 items-center">
+<div class="col-span-4 flex items-center gap-3">
+<span class="material-symbols-outlined text-on-surface-variant/40 rotate-icon" data-icon="expand_more">expand_more</span>
+<div>
+<p class="font-headline-md text-headline-md leading-none text-primary">Lumina Rails</p>
+<p class="font-label-xs text-label-xs text-on-surface-variant mt-1">Cross-border Settlement</p>
+</div>
+</div>
+<div class="col-span-2 text-center">
+<span class="bg-secondary-container text-on-secondary-container px-2 py-0.5 rounded font-label-sm text-label-sm">98%</span>
+</div>
+<div class="col-span-2">
+<span class="font-label-sm text-label-sm">Series A</span>
+</div>
+<div class="col-span-2">
+<span class="font-label-sm text-label-sm">London, UK</span>
+</div>
+<div class="col-span-2 flex justify-end gap-3">
+<button class="text-on-surface-variant hover:text-primary transition-colors" title="Quick Approve">
+<span class="material-symbols-outlined text-[20px]" data-icon="check_circle">check_circle</span>
+</button>
+<button class="text-on-surface-variant hover:text-error transition-colors" title="Ignore">
+<span class="material-symbols-outlined text-[20px]" data-icon="block">block</span>
+</button>
+</div>
+</div>
+<!-- Expanded Briefing -->
+<div class="expanded-content px-12" onclick="event.stopPropagation()">
+<div class="grid md:grid-cols-5 gap-12 pt-4">
+<div class="md:col-span-3">
+<h4 class="font-label-xs text-label-xs text-on-surface-variant uppercase mb-4 font-bold tracking-widest">Executive Deep Reasoning</h4>
+<p class="font-body-md text-body-md leading-relaxed mb-6">
+                        Lumina is solving the "last-mile" compliance problem for LATAM-to-EU transfers. Unlike their competitors, they have secured direct banking licenses in three key territories, reducing counterparty risk by 40%.
+                    </p>
+<div class="p-6 bg-surface-container-low rounded-lg border border-outline-variant/30">
+<div class="flex gap-4">
+<span class="material-symbols-outlined text-primary" data-icon="auto_awesome">auto_awesome</span>
+<div>
+<p class="font-label-sm text-label-sm font-bold mb-1">Key Buying Signal</p>
+<p class="text-on-surface-variant text-label-sm">Recently appointed a new VP of Sales from Stripe; traditionally a precursor to aggressive market expansion and GTM acceleration.</p>
+</div>
+</div>
+</div>
+</div>
+<div class="md:col-span-2 space-y-8">
+<div>
+<h4 class="font-label-xs text-label-xs text-on-surface-variant uppercase mb-4 font-bold tracking-widest">Research Evidence</h4>
+<div class="space-y-4">
+<div class="flex items-center justify-between text-label-sm border-b border-outline-variant/20 pb-2">
+<span class="text-on-surface-variant">Funding History</span>
+<span class="font-medium">$24M (Led by Index)</span>
+</div>
+<div class="flex items-center justify-between text-label-sm border-b border-outline-variant/20 pb-2">
+<span class="text-on-surface-variant">Hiring Trends</span>
+<span class="font-medium">+15% QoQ (GTM Focus)</span>
+</div>
+</div>
+</div>
+<div class="flex flex-wrap gap-3">
+<button class="bg-primary text-on-primary px-5 py-2 rounded-full font-label-sm text-label-sm hover:opacity-90 transition-all active:scale-[0.98]">Approve &amp; Research</button>
+<button class="border border-outline-variant px-5 py-2 rounded-full font-label-sm text-label-sm hover:bg-surface-container-low transition-all">Add to Campaign</button>
+<button class="text-error font-label-sm text-label-sm px-2 hover:opacity-80 transition-all">Ignore</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Lead Row 2 -->
+<div class="lead-row group relative border-b border-outline-variant/30 cursor-pointer" onclick="this.classList.toggle('is-expanded')">
+<div class="grid grid-cols-12 gap-4 px-6 py-5 items-center">
+<div class="col-span-4 flex items-center gap-3">
+<span class="material-symbols-outlined text-on-surface-variant/40 rotate-icon" data-icon="expand_more">expand_more</span>
+<div>
+<p class="font-headline-md text-headline-md leading-none text-primary">Coda Compliance</p>
+<p class="font-label-xs text-label-xs text-on-surface-variant mt-1">AML Orchestration</p>
+</div>
+</div>
+<div class="col-span-2 text-center">
+<span class="bg-secondary-container text-on-secondary-container px-2 py-0.5 rounded font-label-sm text-label-sm">92%</span>
+</div>
+<div class="col-span-2">
+<span class="font-label-sm text-label-sm">Series A</span>
+</div>
+<div class="col-span-2">
+<span class="font-label-sm text-label-sm">Berlin, DE</span>
+</div>
+<div class="col-span-2 flex justify-end gap-3">
+<button class="text-on-surface-variant hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-[20px]" data-icon="check_circle">check_circle</span>
+</button>
+<button class="text-on-surface-variant hover:text-error transition-colors">
+<span class="material-symbols-outlined text-[20px]" data-icon="block">block</span>
+</button>
+</div>
+</div>
+<div class="expanded-content px-12" onclick="event.stopPropagation()">
+<div class="grid md:grid-cols-5 gap-12 pt-4">
+<div class="md:col-span-3">
+<h4 class="font-label-xs text-label-xs text-on-surface-variant uppercase mb-4 font-bold tracking-widest">Executive Deep Reasoning</h4>
+<p class="font-body-md text-body-md leading-relaxed mb-6">
+                        Coda is uniquely positioned because of their proprietary "Shadow Ledger" technology. I've tracked their mentions across closed executive forums; they are currently the preferred vendor for Neobanks entering the US market.
+                    </p>
+<div class="p-6 bg-surface-container-low rounded-lg border border-outline-variant/30">
+<div class="flex gap-4">
+<span class="material-symbols-outlined text-primary" data-icon="lightbulb">lightbulb</span>
+<div>
+<p class="font-label-sm text-label-sm font-bold mb-1">Strategic Insight</p>
+<p class="text-on-surface-variant text-label-sm">The CTO recently published a whitepaper on real-time fraud detection that is being adopted as a standard by EU regulators.</p>
+</div>
+</div>
+</div>
+</div>
+<div class="md:col-span-2 space-y-8">
+<div>
+<h4 class="font-label-xs text-label-xs text-on-surface-variant uppercase mb-4 font-bold tracking-widest">Research Evidence</h4>
+<div class="space-y-4">
+<div class="flex items-center justify-between text-label-sm border-b border-outline-variant/20 pb-2">
+<span class="text-on-surface-variant">Funding History</span>
+<span class="font-medium">$18.5M (Bessemer)</span>
+</div>
+<div class="flex items-center justify-between text-label-sm border-b border-outline-variant/20 pb-2">
+<span class="text-on-surface-variant">Hiring Trends</span>
+<span class="font-medium">Active (12 Eng Roles)</span>
+</div>
+</div>
+</div>
+<div class="flex flex-wrap gap-3">
+<button class="bg-primary text-on-primary px-5 py-2 rounded-full font-label-sm text-label-sm hover:opacity-90 transition-all active:scale-[0.98]">Approve &amp; Research</button>
+<button class="border border-outline-variant px-5 py-2 rounded-full font-label-sm text-label-sm hover:bg-surface-container-low transition-all">Add to Campaign</button>
+<button class="text-error font-label-sm text-label-sm px-2 hover:opacity-80 transition-all">Ignore</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Lead Row 3 -->
+<div class="lead-row group relative border-b border-outline-variant/30 cursor-pointer" onclick="this.classList.toggle('is-expanded')">
+<div class="grid grid-cols-12 gap-4 px-6 py-5 items-center">
+<div class="col-span-4 flex items-center gap-3">
+<span class="material-symbols-outlined text-on-surface-variant/40 rotate-icon" data-icon="expand_more">expand_more</span>
+<div>
+<p class="font-headline-md text-headline-md leading-none text-primary">Vortex Pay</p>
+<p class="font-label-xs text-label-xs text-on-surface-variant mt-1">Institutional DeFi Rails</p>
+</div>
+</div>
+<div class="col-span-2 text-center">
+<span class="bg-surface-container-highest text-on-surface-variant px-2 py-0.5 rounded font-label-sm text-label-sm">84%</span>
+</div>
+<div class="col-span-2">
+<span class="font-label-sm text-label-sm">Seed+</span>
+</div>
+<div class="col-span-2">
+<span class="font-label-sm text-label-sm">Paris, FR</span>
+</div>
+<div class="col-span-2 flex justify-end gap-3">
+<button class="text-on-surface-variant hover:text-primary transition-colors">
+<span class="material-symbols-outlined text-[20px]" data-icon="check_circle">check_circle</span>
+</button>
+<button class="text-on-surface-variant hover:text-error transition-colors">
+<span class="material-symbols-outlined text-[20px]" data-icon="block">block</span>
+</button>
+</div>
+</div>
+<div class="expanded-content px-12" onclick="event.stopPropagation()">
+<!-- Minimal placeholder for Row 3 brief -->
+<div class="pt-4 pb-8"><p class="text-on-surface-variant italic font-label-sm">Deep brief loading from vault...</p></div>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- BOTTOM INPUT AREA -->
+<footer class="fixed bottom-0 right-0 w-full md:w-[calc(100%-16rem)] p-6 md:p-8 flex justify-center z-50">
+<div class="w-full max-w-3xl bg-surface-container-low dark:bg-tertiary-container shadow-sm p-2 rounded-full flex items-center gap-4">
+<div class="flex-grow flex items-center pl-6">
+<span class="material-symbols-outlined text-primary mr-3" data-icon="auto_awesome">auto_awesome</span>
+<input class="bg-transparent border-none focus:ring-0 w-full font-body-lg text-body-lg p-0 placeholder-on-primary-container" placeholder="Tell Loqi... Filter for US-based leads only..." type="text"/>
+</div>
+<button class="bg-primary text-on-primary px-6 py-3 rounded-full font-label-sm text-label-sm hover:bg-primary/90 transition-all active:scale-[0.98] flex items-center gap-2">
+                Send
+                <span class="material-symbols-outlined text-[18px]" data-icon="north_east">north_east</span>
+</button>
+</div>
+</footer>
+</body></html>

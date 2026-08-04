@@ -196,7 +196,12 @@ export default function MissionControlDashboard() {
   const { data: mcData, loading: mcLoading, error: mcError, retry: mcRetry } = useData(fetchMissionControl, {
     initial: peekCachedMissionControl(),
   });
-  const { data: briefingData, loading: briefingLoading } = useData(fetchBriefing, {
+  const {
+    data: briefingData,
+    loading: briefingLoading,
+    error: briefingError,
+    retry: briefingRetry,
+  } = useData(fetchBriefing, {
     initial: peekCachedBriefing(),
   });
   const tellLoqi = useTellLoqi("Mission Control", {
@@ -250,7 +255,7 @@ export default function MissionControlDashboard() {
 
   const loading = mcLoading && briefingLoading;
   const data = briefingData || mcData;
-  const error = mcError;
+  const error = mcError || briefingError;
 
   if (loading && !data) {
     return (
@@ -269,7 +274,10 @@ export default function MissionControlDashboard() {
           <div className="reading-column py-16 text-center">
             <p className="text-lg text-error mb-4">{error}</p>
             <button
-              onClick={mcRetry}
+              onClick={() => {
+                mcRetry();
+                briefingRetry();
+              }}
               className="bg-primary text-on-primary px-6 py-2 rounded-full text-sm font-medium hover:opacity-90 transition-opacity"
             >
               Retry
@@ -310,7 +318,10 @@ export default function MissionControlDashboard() {
   const health = hasBriefing ? (data as MCBriefingData).workspaceHealth : null;
   const timeline = hasBriefing ? (data as MCBriefingData).timeline : [];
 
-  const mc = data as NonNullable<typeof mcData> | null;
+  // Keep the legacy Mission Control payload alongside the richer briefing;
+  // it carries the research job status and result count that the briefing
+  // response intentionally does not expose as lead data.
+  const mc = mcData;
   const todayTasks = !hasBriefing && mc ? mc.tasks : [];
   const recommendations = !hasBriefing && mc ? mc.recommendations : [];
   const liveActivity = !hasBriefing && mc ? mc.liveActivity : [];
@@ -320,6 +331,7 @@ export default function MissionControlDashboard() {
   const activeJobTotal = mc?.activeJobTotal ?? null;
   const initialResearchStatus = mc?.initialResearchStatus ?? null;
   const initialResearchError = mc?.initialResearchError ?? null;
+  const initialResearchResultCount = mc?.initialResearchResultCount ?? null;
 
   const hasNewData = priorities.length > 0 || waiting.length > 0 || handled.length > 0 || upcoming.length > 0;
 
@@ -346,7 +358,19 @@ export default function MissionControlDashboard() {
                 {initialResearchStatus === "failed" ? (
                   <p className="text-sm text-error">Research could not be completed{initialResearchError ? `: ${initialResearchError}` : "."}</p>
                 ) : initialResearchStatus === "completed" ? (
-                  <p className="text-sm text-on-surface">Your first prospect research is complete. Results are ready in Discovery.</p>
+                  <>
+                    <p className="text-sm text-on-surface">
+                      {initialResearchResultCount !== null
+                        ? `I found ${initialResearchResultCount} compan${initialResearchResultCount === 1 ? "y" : "ies"} matching your ICP. Your results are ready to review in Discovery.`
+                        : "Your first prospect research is complete. Results are ready to review in Discovery."}
+                    </p>
+                    <Link
+                      href="/discovery"
+                      className="inline-flex mt-4 bg-primary text-on-primary px-5 py-2 rounded-full text-sm font-medium hover:opacity-90 transition-opacity"
+                    >
+                      Review Leads
+                    </Link>
+                  </>
                 ) : (
                   <>
                     <p className="text-lg font-serif text-on-surface mb-4">{activeJobLabel || "Preparing your prospect research"}</p>

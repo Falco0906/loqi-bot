@@ -1,5 +1,6 @@
 import os
 import re
+import threading
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
@@ -141,6 +142,65 @@ def get_or_create_user(telegram_id: str, username: str | None = None) -> dict | 
         return None
 
 
+def get_or_create_oauth_user(
+    provider: str,
+    provider_subject: str,
+    *,
+    email: str = "",
+    username: str = "",
+) -> tuple[dict | None, bool]:
+    """Persist a provider identity using the legacy users table.
+
+    The identity-platform tables are not present in every existing Loqi
+    workspace yet. Until that migration is applied, the legacy users table's
+    stable telegram_id column provides a durable bridge for OAuth identities.
+    The boolean indicates whether this provider identity was created now.
+    """
+    client = get_supabase_client()
+    if client is None or not provider_subject:
+        return None, False
+
+    try:
+        # Prefer an identity already associated with this email when the
+        # identity table exists, allowing accounts created by the newer schema
+        # to be recognized during the transition.
+        if email:
+            identity_result = (
+                client.table("email_identities")
+                .select("user_id")
+                .eq("email", email)
+                .limit(1)
+                .execute()
+            )
+            identity_rows = getattr(identity_result, "data", None) or []
+            if identity_rows:
+                user = get_user(str(identity_rows[0].get("user_id", "")))
+                if user:
+                    return user, False
+    except Exception:
+        # Older deployments may not have email_identities yet. The stable
+        # provider subject fallback below remains safe and deterministic.
+        pass
+
+    synthetic_id = f"oauth:{provider}:{provider_subject}"
+    existing = (
+        client.table("users")
+        .select("*")
+        .eq("telegram_id", synthetic_id)
+        .limit(1)
+        .execute()
+    )
+    existing_user = _first_row(existing)
+    if existing_user:
+        return existing_user, False
+
+    user = get_or_create_user(
+        synthetic_id,
+        username=username or (email.split("@", 1)[0] if email else provider),
+    )
+    return user, user is not None
+
+
 def update_user_telegram_chat_id(user_id: str, telegram_chat_id: int) -> dict | None:
     _log(
         "update_user_telegram_chat_id called: "
@@ -183,6 +243,77 @@ def get_user(user_id: str) -> dict | None:
         return None
 
 
+def _run_coro(coro):
+    """Run an async persistence call from sync code; safe inside a running loop."""
+    import asyncio
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(coro())
+    except RuntimeError:
+        threading.Thread(target=lambda: asyncio.run(coro()), daemon=True).start()
+
+
+def _parse_dt(value):
+    from datetime import datetime
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def sync_connected_account(
+    user_id: str,
+    *,
+    provider: str,
+    account_id: str = "",
+    email: str = "",
+    access_token: str = "",
+    refresh_token: str = "",
+    token_expiry: str | None = None,
+) -> bool:
+    """Mirror OAuth tokens into the canonical connected_accounts table.
+
+    The legacy users google_* columns remain the compatibility bridge; this is
+    the canonical dual-write so tokens never live in only one place.
+    """
+    from services.persistence.launch import ConnectedAccount, ConnectedAccountRepository
+    try:
+        repo = ConnectedAccountRepository()
+        if not account_id:
+            account_id = email
+
+        async def _upsert():
+            existing = await repo.find_for_user(user_id, provider)
+            if existing:
+                existing.email = email or existing.email
+                existing.access_token = access_token or existing.access_token
+                existing.refresh_token = refresh_token or existing.refresh_token
+                if token_expiry:
+                    existing.token_expires_at = _parse_dt(token_expiry)
+                existing.status = "active"
+                await repo.save(existing)
+            else:
+                await repo.save(ConnectedAccount(
+                    user_id=user_id,
+                    provider=provider,
+                    account_id=account_id,
+                    display_name=email,
+                    email=email,
+                    access_token=access_token,
+                    refresh_token=refresh_token,
+                    token_expires_at=_parse_dt(token_expiry),
+                    status="active",
+                ))
+
+        _run_coro(_upsert)
+        return True
+    except Exception as error:
+        _log(f"sync_connected_account error: {error}")
+        return False
+
+
 def save_google_tokens(
     user_id: str,
     *,
@@ -202,7 +333,6 @@ def save_google_tokens(
         return None
 
     payload = {
-        "email": email,
         "google_access_token": access_token,
         "google_refresh_token": refresh_token,
         "token_expiry": token_expiry,
@@ -210,6 +340,7 @@ def save_google_tokens(
     if telegram_chat_id is not None:
         payload["telegram_chat_id"] = str(telegram_chat_id)
 
+    user = None
     try:
         result = (
             client.table("users")
@@ -219,10 +350,38 @@ def save_google_tokens(
         )
         user = _first_row(result)
         _log(f"save_google_tokens success: {user}")
-        return user
     except Exception as error:
         _log(f"save_google_tokens error: {error}")
-        return None
+        # The current legacy schema has no users.email column. Tokens are
+        # still durable in the Google-specific columns, so retry without the
+        # optional email field instead of reporting a false connection error.
+        if "email" in str(error):
+            try:
+                result = (
+                    client.table("users")
+                    .update({
+                        "google_access_token": access_token,
+                        "google_refresh_token": refresh_token,
+                        "token_expiry": token_expiry,
+                        **({"telegram_chat_id": str(telegram_chat_id)} if telegram_chat_id is not None else {}),
+                    })
+                    .eq("id", user_id)
+                    .execute()
+                )
+                user = _first_row(result)
+            except Exception as retry_error:
+                _log(f"save_google_tokens compatibility retry error: {retry_error}")
+
+    if user is not None:
+        sync_connected_account(
+            user_id,
+            provider="google",
+            email=email,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_expiry=token_expiry,
+        )
+    return user
 
 
 def update_google_access_token(
@@ -254,6 +413,13 @@ def update_google_access_token(
         )
         user = _first_row(result)
         _log(f"update_google_access_token success: {user}")
+        if user is not None:
+            sync_connected_account(
+                user_id,
+                provider="google",
+                access_token=access_token,
+                token_expiry=token_expiry,
+            )
         return user
     except Exception as error:
         _log(f"update_google_access_token error: {error}")
@@ -622,13 +788,14 @@ def save_provider_credentials(
     client_id: str = "",
     client_secret: str = "",
 ) -> bool:
-    """Persist provider credentials to the users table.
-    Uses a synthetic telegram_id ('provider:<user_id>') to create/lookup the user record.
-    This avoids requiring a real Supabase auth user.
-    """
+    """Persist provider credentials on the authenticated user's row."""
     _log(f"save_provider_credentials: user_id={user_id}, provider_id={provider_id}, email={email}")
-    synthetic_id = f"provider:{user_id}"
-    user = get_or_create_user(synthetic_id, username=f"Provider:{provider_id[:8]}")
+    # OAuth now passes the durable Loqi user ID. Only use the legacy
+    # provider:* row for callers that have no authenticated account.
+    user = get_user(user_id)
+    if not user:
+        synthetic_id = f"provider:{user_id}"
+        user = get_or_create_user(synthetic_id, username=f"Provider:{provider_id[:8]}")
     if not user:
         _log("save_provider_credentials: failed to get or create user")
         return False
@@ -655,29 +822,67 @@ def save_provider_credentials(
 
 
 def load_all_provider_credentials() -> list[dict]:
-    """Load all persisted provider credentials from the users table.
-    Returns list of dicts with: user_id, provider_id, access_token, refresh_token, token_expiry, email, client_id, client_secret
+    """Load all persisted provider credentials.
+
+    Prefers the canonical connected_accounts table; falls back to the legacy
+    users google_* columns for compatibility. Returns legacy-shaped rows with:
+    id, google_provider_id, access_token, refresh_token, token_expiry, email.
     """
     _log("load_all_provider_credentials called")
     client = get_supabase_client()
     if client is None:
         _log("load_all_provider_credentials: no client")
         return []
+
+    # Canonical read: connected_accounts first.
+    canonical_rows = []
+    try:
+        result = (
+            client.table("connected_accounts")
+            .select("user_id, provider, email, display_name, access_token, refresh_token, token_expires_at, status")
+            .neq("refresh_token", "")
+            .neq("refresh_token", None)
+            .execute()
+        )
+        rows = getattr(result, "data", None) or []
+        for r in rows:
+            if not r.get("refresh_token"):
+                continue
+            canonical_rows.append({
+                "id": r.get("user_id", ""),
+                "google_provider_id": r.get("provider", "google") + "-" + (r.get("email") or r.get("display_name") or ""),
+                "google_refresh_token": r.get("refresh_token", ""),
+                "google_access_token": r.get("access_token", ""),
+                "email": r.get("email") or r.get("display_name") or "",
+                "google_client_id": "",
+                "google_client_secret": "",
+                "token_expiry": r.get("token_expires_at") or "",
+                "telegram_id": "",
+                "_canonical": True,
+            })
+    except Exception as canonical_error:
+        _log(f"load_all_provider_credentials canonical read error: {canonical_error}")
+    if canonical_rows:
+        _log(f"load_all_provider_credentials: found {len(canonical_rows)} canonical credential records")
+        return canonical_rows
+
+    # Legacy fallback: users table google_* columns.
     try:
         result = (
             client.table("users")
-            .select("id, google_access_token, google_refresh_token, token_expiry, google_client_id, google_client_secret, google_provider_id, telegram_id, email_identities(email)")
+            .select("id, google_access_token, google_refresh_token, token_expiry, google_client_id, google_client_secret, google_provider_id, telegram_id")
             .neq("google_refresh_token", "")
             .neq("google_refresh_token", None)
             .execute()
         )
         rows = getattr(result, "data", None) or []
         for r in rows:
-            identities = r.pop("email_identities", [])
-            r["email"] = identities[0]["email"] if identities else ""
-        rows = [r for r in rows if r.get("telegram_id", "").startswith("provider:")]
-        _log(f"load_all_provider_credentials: found {len(rows)} credential records")
+            r["email"] = ""
+        # Include authenticated users as well as legacy provider:* rows. The
+        # old filter made stable-account credentials invisible on restart.
+        rows = [r for r in rows if r.get("google_refresh_token")]
+        _log(f"load_all_provider_credentials: found {len(rows)} legacy credential records")
         return rows
     except Exception as e:
-        _log(f"load_all_provider_credentials error: {e}")
+        _log(f"load_all_provider_credentials legacy error: {e}")
         return []

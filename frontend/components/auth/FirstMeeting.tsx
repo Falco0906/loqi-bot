@@ -1,9 +1,18 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useEffect } from "react";
+import { useAuth } from "../../hooks/useAuth";
 
 export default function FirstMeeting() {
   const router = useRouter();
+  const { user, isLoading } = useAuth();
+
+  useEffect(() => {
+    if (!isLoading && user && "onboarding_complete" in user && user.onboarding_complete) {
+      router.replace("/mission-control");
+    }
+  }, [isLoading, router, user]);
 
   const handleBegin = () => {
     router.push("/onboarding");

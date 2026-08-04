@@ -68,6 +68,8 @@ class RecommendationReasoner:
         attention_items: list[AttentionItem],
         priorities: list[CampaignPriority],
         campaign_signals: list[CampaignSignals],
+        research_available: bool = False,
+        research_in_progress: bool = False,
     ) -> RecommendedAction:
         if attention_items:
             top = attention_items[0]
@@ -99,11 +101,29 @@ class RecommendationReasoner:
                     link="/discovery",
                 )
 
+        if research_in_progress:
+            return RecommendedAction(
+                title="Researching your ideal prospects",
+                reason="Loqi is using your onboarding context to find and qualify the right leads.",
+                confidence=95,
+                priority="high",
+                link="/discovery",
+            )
+
+        if research_available:
+            return RecommendedAction(
+                title="Review your researched leads",
+                reason="Your first prospect research is ready. Review the matches before creating a campaign.",
+                confidence=95,
+                priority="high",
+                link="/discovery",
+            )
+
         return RecommendedAction(
-            title="Start by creating a campaign",
-            reason="A campaign is the first step toward running outbound outreach.",
+            title="Research your ideal prospects",
+            reason="Loqi needs to find the right leads from your onboarding context before a campaign can be created.",
             confidence=90,
-            priority="medium",
+            priority="high",
             link="/discovery",
         )
 

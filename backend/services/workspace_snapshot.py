@@ -112,7 +112,7 @@ def build_snapshot(
     running_jobs = []
     recent_jobs = []
     try:
-        all_jobs = job_manager.list_active_jobs(user_id)
+        all_jobs = job_manager.list_recent_jobs(user_id)
         running_jobs = [j for j in all_jobs if j.get("status") in ("queued", "running")]
         recent_jobs = [j for j in all_jobs if j.get("status") == "completed"][:5]
     except Exception:

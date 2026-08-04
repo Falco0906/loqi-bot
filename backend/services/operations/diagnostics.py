@@ -64,7 +64,11 @@ def get_required_vars() -> dict[str, str]:
         required.update(SUPABASE_CONFIG)
     if os.getenv("BILLING_PROVIDER_MODE", "mock") == "live":
         required.update(STRIPE_LIVE_CONFIG)
-    if os.getenv("EMAIL_PROVIDER", "console") == "resend":
+    # Transactional email credentials gate readiness only in production.
+    # Local dev / CI commonly set EMAIL_PROVIDER=resend without secrets;
+    # a missing key there must not flip /ready to 503.
+    is_production = os.getenv("ENVIRONMENT", "development").lower() == "production"
+    if is_production and os.getenv("EMAIL_PROVIDER", "console") == "resend":
         required["EMAIL_API_KEY"] = "Resend API key for transactional email"
         required["EMAIL_FROM"] = "Sender email address for transactional email"
         required["EMAIL_REPLY_TO"] = "Reply-to address for transactional email"

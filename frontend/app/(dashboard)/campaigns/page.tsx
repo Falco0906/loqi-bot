@@ -104,7 +104,8 @@ export default function CampaignsPage() {
     <WorkspaceContainer>
       <div className="h-full overflow-y-auto px-6 py-6">
         <div className="max-w-5xl mx-auto">
-        <div className="flex items-center gap-3 mb-8">
+        <div className="flex items-center justify-between gap-3 mb-8">
+          <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
             <Icon name="campaign" className="text-primary text-xl" />
           </div>
@@ -115,6 +116,8 @@ export default function CampaignsPage() {
               {activeCampaigns.length > 0 ? ` \u00b7 ${activeCampaigns.length} active` : ""}
             </p>
           </div>
+          </div>
+          <a href="/campaigns/new" className="rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-on-primary hover:brightness-110">Create Campaign</a>
         </div>
 
         {loading ? (

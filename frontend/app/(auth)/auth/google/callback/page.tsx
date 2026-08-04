@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "../../../../../hooks/useAuth";
 
@@ -9,6 +9,7 @@ function GoogleCallbackInner() {
   const searchParams = useSearchParams();
   const { handleOAuthCallback } = useAuth();
   const [error, setError] = useState("");
+  const attemptedRef = useRef<string | null>(null);
 
   useEffect(() => {
     const code = searchParams.get("code");
@@ -18,6 +19,10 @@ function GoogleCallbackInner() {
       setError("Missing code or state");
       return;
     }
+
+    const attemptKey = `${state}:${code}`;
+    if (attemptedRef.current === attemptKey) return;
+    attemptedRef.current = attemptKey;
 
     (async () => {
         try {

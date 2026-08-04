@@ -141,3 +141,23 @@ class JobStorage:
         except Exception as e:
             _log(f"list_active_jobs error: {e}")
             return []
+
+    def list_recent_jobs(self, user_id: str, limit: int = 20) -> list[Job]:
+        """Return recent jobs so completed research remains discoverable."""
+        client = get_supabase_client()
+        if not client:
+            return []
+        try:
+            result = (
+                client.table("jobs")
+                .select("*")
+                .eq("user_id", user_id)
+                .order("created_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+            rows = result.data if hasattr(result, "data") else []
+            return [Job.from_dict(r) for r in rows]
+        except Exception as e:
+            _log(f"list_recent_jobs error: {e}")
+            return []

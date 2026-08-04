@@ -76,13 +76,16 @@ class TestHealthEndpoint:
 class TestReadinessEndpoint:
 
     def test_ready_with_no_db(self, client):
-        reset_connection_manager()
+        # No credentials configured → the manager cannot build a client.
+        cm = SupabaseConnectionManager(url="", key="")
+        set_connection_manager(cm)
         resp = client.get("/ready")
         assert resp.status_code == 503
         data = resp.json()
         assert data["status"] == "unready"
         assert len(data["failures"]) > 0
         assert any("database" in f for f in data["failures"])
+        reset_connection_manager()
 
     def test_ready_with_mock_db(self, client):
         cm = SupabaseConnectionManager(url="http://test", key="test-key")

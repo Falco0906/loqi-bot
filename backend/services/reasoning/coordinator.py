@@ -106,8 +106,24 @@ class ReasoningCoordinator:
         )
 
         # ── 7. Recommendation (next action + workflow continuation) ──
+        recent_jobs = jobs.get("recently_completed", []) if isinstance(jobs, dict) else []
+        running_jobs = jobs.get("running", []) if isinstance(jobs, dict) else []
+        research_available = bool(snapshot.get("total_leads", 0)) or bool(
+            wm_delta.get("new_leads", 0)
+        ) or any(
+            j.get("type") == "search" and j.get("status") == "completed"
+            for j in recent_jobs if isinstance(j, dict)
+        )
+        research_in_progress = any(
+            j.get("type") == "search" and j.get("status") in ("queued", "running")
+            for j in running_jobs if isinstance(j, dict)
+        )
         recommended_next_action = self.recommendation.pick_next_action(
-            attention_items, campaign_priorities, campaign_signals,
+            attention_items,
+            campaign_priorities,
+            campaign_signals,
+            research_available=research_available,
+            research_in_progress=research_in_progress,
         )
         workflow_continuation = self.recommendation.workflow_continuation(
             current_focus, campaign_priorities, campaign_signals,

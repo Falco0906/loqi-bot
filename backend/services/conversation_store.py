@@ -45,17 +45,34 @@ def get_or_create_channel_user(
     if channel == "telegram":
         return get_or_create_user(external_user_id, username=username)
 
+    # Web sessions must never fabricate a second identity for an already
+    # resolved session: resolve through the existing user row or the durable
+    # workflow_sessions mapping first. Only fall back to creating a user row
+    # for a genuinely new anonymous token.
+    existing = get_web_session(external_user_id)
+    if existing:
+        return existing
+
     channel_key = f"{channel}:{external_user_id}"
     return get_or_create_user(channel_key, username=username)
 
 
-def create_lightweight_web_session(display_name: str | None = None) -> dict | None:
+def create_lightweight_web_session(
+    display_name: str | None = None,
+    *,
+    user_id: str | None = None,
+) -> dict | None:
     session_token = secrets.token_urlsafe(18)
-    user = get_or_create_channel_user(
-        channel="web",
-        external_user_id=session_token,
-        username=display_name or "web-user",
-    )
+    if user_id:
+        user = get_user(user_id)
+    else:
+        user = None
+    if user is None:
+        user = get_or_create_channel_user(
+            channel="web",
+            external_user_id=session_token,
+            username=display_name or "web-user",
+        )
     if user is None:
         return None
 
@@ -80,10 +97,30 @@ def get_web_session(session_token: str) -> dict | None:
             .limit(1)
             .execute()
         )
-        return _first_row(result)
+        row = _first_row(result)
+        if row:
+            return row
     except Exception as error:
         print(f"[conversation_store] get_web_session error: {error}")
         return None
+
+    # Authenticated web sessions never create a second users row; they are
+    # bound to the authenticated user through the durable workflow_sessions
+    # mapping. Resolve the token through that mapping when present.
+    linked = _safe_query(
+        "workflow_sessions",
+        lambda table: (
+            table.select("user_id")
+            .eq("channel", "web")
+            .eq("session_key", session_token)
+            .order("created_at", desc=True)
+            .limit(1)
+        ),
+    )
+    linked_row = _first_row(linked) if linked is not None else None
+    if linked_row and linked_row.get("user_id"):
+        return get_user(str(linked_row["user_id"]))
+    return None
 
 
 def get_channel_user(

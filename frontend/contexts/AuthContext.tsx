@@ -23,6 +23,7 @@ import {
   type OAuthCallbackResponse,
 } from "../lib/auth-api";
 import { getOnboardingProgress } from "../lib/onboarding-api";
+import { createSession } from "../lib/api";
 
 const STORAGE_KEYS = {
   ACCESS_TOKEN: "loqi_access_token",
@@ -112,6 +113,18 @@ function readStoredRefreshToken(): string | null {
   }
 }
 
+async function establishWebSession(displayName: string): Promise<void> {
+  try {
+    const session = await createSession(displayName || "Loqi Operator");
+    if (session.ok && session.session_token) {
+      localStorage.setItem("loqi_active_session_token", session.session_token);
+    }
+  } catch {
+    // Authentication remains valid if workspace-session bootstrap is
+    // temporarily unavailable; dashboard requests can retry it later.
+  }
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [state, setState] = useState<AuthState>({
@@ -121,7 +134,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   });
   const initRef = useRef(false);
 
-  const handleTokenResponse = useCallback(async (res: TokenResponse) => {
+  const handleTokenResponse = useCallback(async (res: TokenResponse): Promise<MeResponse | null> => {
     storeTokens(res);
     try {
       const me = await fetchMe(res.user_id);
@@ -130,6 +143,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isAuthenticated: true,
         isLoading: false,
       });
+      await establishWebSession(me.display_name);
+      return me;
     } catch {
       setState({
         user: {
@@ -143,6 +158,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isAuthenticated: true,
         isLoading: false,
       });
+      await establishWebSession("");
+      return null;
     }
   }, []);
 
@@ -226,9 +243,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback(
     async (email: string, password: string) => {
       const res = await apiLogin(email, password);
-      await handleTokenResponse(res);
-      
-      // Check onboarding status before redirecting
+      const me = await handleTokenResponse(res);
+      // The authenticated profile is the primary source of truth. The
+      // onboarding endpoint is only needed for older accounts that do not
+      // expose the completion flag yet.
+      if (me?.onboarding_complete) {
+        router.push("/mission-control");
+        return;
+      }
       try {
         const userId = res.user_id;
         const progress = await getOnboardingProgress(userId);
@@ -238,8 +260,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           router.push("/first-meeting");
         }
       } catch {
-        // If onboarding check fails, default to first meeting
-        router.push("/first-meeting");
+        // Do not turn a status transport failure into a false onboarding
+        // reset. If profile loading succeeded, it was already handled above.
+        router.push(me ? "/mission-control" : "/first-meeting");
       }
     },
     [handleTokenResponse, router],
@@ -340,9 +363,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         org_id: res.org_id,
         expires_at: res.expires_at,
       };
-      await handleTokenResponse(tokenRes);
-      
-      // Check onboarding status before redirecting
+      const me = await handleTokenResponse(tokenRes);
+
+      // Google OAuth already resolves whether this is a new identity. An
+      // existing Google account must go straight to the application even if
+      // the separate onboarding progress request is unavailable.
+      if (!res.is_new_user || me?.onboarding_complete) {
+        router.push("/mission-control");
+        return;
+      }
       try {
         const progress = await getOnboardingProgress(res.user_id);
         if (progress.onboarding_complete) {

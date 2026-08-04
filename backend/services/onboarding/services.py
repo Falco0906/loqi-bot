@@ -376,6 +376,25 @@ class OnboardingService:
 
     async def get_progress(self, user_id: str) -> dict:
         lc = await self._lifecycle.get_or_create(user_id)
+        # Completion is an account property on the durable identity user.
+        # Rehydrate the completed state after a backend restart before
+        # treating the user as new.
+        if self._user_service is not None:
+            try:
+                user = await self._user_service.get_user(user_id)
+                if user is not None and user.is_onboarding_complete:
+                    completed_ids = [s.value for s in STEP_ORDER]
+                    return {
+                        "lifecycle_state": LifecycleState.ONBOARDING_COMPLETE.value,
+                        "current_step": None,
+                        "next_route": "/dashboard",
+                        "progress_percentage": 100,
+                        "completed_steps": completed_ids,
+                        "remaining_steps": [],
+                        "onboarding_complete": True,
+                    }
+            except Exception:
+                pass
         session = await self._session_repo.find_active_by_user_id(user_id)
         if session is None:
             if lc.state in (LifecycleState.ACTIVE, LifecycleState.ONBOARDING_COMPLETE, LifecycleState.SUBSCRIPTION_ACTIVE):
@@ -451,10 +470,11 @@ class OnboardingService:
         return merged
 
     async def get_wizard_data(self, user_id: str) -> dict[str, object]:
-        if self._user_service is None:
-            return {}
-        user = await self._user_service.get_user(user_id)
-        return dict(user.onboarding_data_dict)
+        if self._user_service is not None:
+            user = await self._user_service.get_user(user_id)
+            if user is not None and user.onboarding_data_dict:
+                return dict(user.onboarding_data_dict)
+        return {}
 
     async def complete_wizard(
         self, user_id: str, data: dict[str, object],
@@ -502,9 +522,28 @@ class OnboardingService:
             display_name=workspace_name,
         )
 
+        # Every user auto-owns a Personal Workspace within the org so the
+        # canonical ownership chain (Org → Workspace → campaigns) holds.
+        try:
+            from services.workspace_state import ensure_workspace
+            ensure_workspace(
+                user_id,
+                name=workspace_name,
+                organization_id=org.id,
+                slug=slug,
+            )
+        except Exception:
+            pass
+
         if user is not None and self._user_service is not None:
             user.onboarding_completed_at = datetime.now(timezone.utc)
+            user.set_onboarding_data(data)
             await self._user_service.save_user(user)
+
+        # save_user() above is the single durable persistence path for
+        # onboarding completion. It writes the User aggregate to the identity
+        # platform repository; failure propagates so completion is never
+        # acknowledged without a durable marker.
 
         self._onboarding_completed(user_id)
 

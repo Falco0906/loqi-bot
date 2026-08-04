@@ -21,6 +21,22 @@ from .types import (
 )
 
 
+def _delta_count(value: Any) -> int:
+    """Normalize both current count fields and older list-shaped deltas."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value)
+    return 0
+
+
+def _delta_items(value: Any) -> list[Any]:
+    """Return iterable delta items without treating persisted counts as lists."""
+    return list(value) if isinstance(value, (list, tuple, set)) else []
+
+
 class MissionControlService:
 
     def __init__(self) -> None:
@@ -112,9 +128,10 @@ class MissionControlService:
             "urgent_replies": health_raw.get("blocked_count", 0),
             "follow_ups_due": health_raw.get("follow_ups_due", 0),
             "pending_meetings": delta.get("pending_meetings", 0),
-            "new_leads_count": len(delta.get("new_leads", [])),
+            "new_leads_count": _delta_count(delta.get("new_leads", 0)),
             "high_quality_leads": sum(
-                1 for _ in delta.get("new_leads", []) if _ and _.get("confidence", 0) > 0.7
+                1 for _ in _delta_items(delta.get("new_leads", []))
+                if isinstance(_, dict) and _.get("confidence", 0) > 0.7
             ),
             "failing_providers": health_raw.get("failing_providers", 0),
             "research_jobs_completed": jobs.get("completed", 0),
@@ -196,7 +213,7 @@ class MissionControlService:
 
         delta = snapshot.get("_delta", {})
         if delta:
-            for c in delta.get("new_campaigns", []):
+            for c in _delta_items(delta.get("new_campaigns", [])):
                 name = c.get("name", "") if isinstance(c, dict) else getattr(c, "name", "")
                 events.append(TimelineEvent(
                     id=f"dc-{len(events)}", timestamp="",
@@ -204,7 +221,7 @@ class MissionControlService:
                     description=f"Campaign created: {name}",
                     category="campaign", actor="user",
                 ))
-            for d in delta.get("new_drafts", []):
+            for d in _delta_items(delta.get("new_drafts", [])):
                 subject = d.get("subject", "") if isinstance(d, dict) else getattr(d, "subject", "")
                 events.append(TimelineEvent(
                     id=f"dd-{len(events)}", timestamp="",
@@ -212,7 +229,7 @@ class MissionControlService:
                     description=f"Draft generated: {subject}",
                     category="draft", actor="loqi",
                 ))
-            for d in delta.get("sent_outreach", []):
+            for d in _delta_items(delta.get("sent_outreach", [])):
                 events.append(TimelineEvent(
                     id=f"ds-{len(events)}", timestamp="",
                     type="draft_sent",

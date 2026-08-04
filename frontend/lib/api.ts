@@ -3,6 +3,15 @@ import type { LeadIntelligence, LoqiMessage, LoqiSessionSummary } from "./types"
 const API_BASE =
   process.env.NEXT_PUBLIC_LOQI_API_BASE_URL || "http://127.0.0.1:10000";
 
+function authHeaders(): Record<string, string> {
+  try {
+    const token = localStorage.getItem("loqi_access_token");
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -109,13 +118,19 @@ export async function checkHealth() {
 }
 
 export async function createSession(displayName?: string) {
+  const accessToken = typeof window !== "undefined" ? localStorage.getItem("loqi_access_token") : null;
   return fetchWithRetry<{
     ok: boolean;
     session_token: string;
     gmail_connected: boolean;
   }>(`${API_BASE}/api/web/session`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    timeout: 35000,
+    retries: 0,
+    headers: {
+      "Content-Type": "application/json",
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
     body: JSON.stringify({ display_name: displayName }),
   });
 }
@@ -123,7 +138,7 @@ export async function createSession(displayName?: string) {
 export async function getSession(sessionToken: string) {
   return fetchWithRetry<LoqiSessionSummary>(
     `${API_BASE}/api/web/session/${sessionToken}`,
-    { cache: "no-store" },
+    { cache: "no-store", headers: authHeaders() },
   );
 }
 
@@ -132,7 +147,7 @@ export async function sendMessage(sessionToken: string, text: string) {
     `${API_BASE}/api/web/session/${sessionToken}/messages`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ text }),
     },
   );
@@ -196,12 +211,14 @@ export async function previewLead(sessionToken: string, index: number) {
 }
 
 export async function getGmailStatus(sessionToken: string) {
+  const accessToken = typeof window !== "undefined" ? localStorage.getItem("loqi_access_token") : null;
   return fetchWithRetry<{
     ok: boolean;
     gmail_connected: boolean;
     connect_url: string;
   }>(`${API_BASE}/api/web/session/${sessionToken}/gmail`, {
     cache: "no-store",
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
   });
 }
 
@@ -270,6 +287,7 @@ export async function batchStatus(sessionToken: string, batchId: string) {
 export async function listDrafts(sessionToken: string) {
   return fetchWithRetry<{ ok: boolean; drafts: unknown[] }>(
     `${API_BASE}/api/web/session/${sessionToken}/drafts`,
+    { headers: authHeaders() },
   );
 }
 
@@ -278,7 +296,7 @@ export async function updateDraft(sessionToken: string, draftId: string, text: s
     `${API_BASE}/api/web/session/${sessionToken}/drafts/${draftId}`,
     {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ text }),
     },
   );
@@ -311,7 +329,7 @@ export async function refineDraft(
     `${API_BASE}/api/web/session/${sessionToken}/drafts/${draftId}/refine`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(body),
     },
   );
@@ -474,7 +492,7 @@ export async function approveDraft(sessionToken: string, draftId: string) {
     pending_drafts?: number;
   }>(
     `${API_BASE}/api/web/session/${sessionToken}/drafts/${draftId}/approve`,
-    { method: "POST" },
+    { method: "POST", headers: authHeaders() },
   );
 }
 
@@ -504,6 +522,7 @@ export async function cancelScheduleDraft(sessionToken: string, draftId: string)
 export async function saveCampaign(
   sessionToken: string,
   name: string,
+  objective?: string,
   searchQuery?: string,
   leadCount?: number,
   strategy?: unknown,
@@ -514,9 +533,10 @@ export async function saveCampaign(
     `${API_BASE}/api/web/session/${sessionToken}/campaigns`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({
         name,
+        objective,
         search_query: searchQuery,
         lead_count: leadCount,
         strategy,
@@ -527,28 +547,63 @@ export async function saveCampaign(
   );
 }
 
+export async function generateCampaignStrategy(sessionToken: string, campaignId: string) {
+  return fetchWithRetry<{ ok: boolean; campaign: Record<string, unknown> }>(
+    `${API_BASE}/api/web/session/${sessionToken}/campaigns/${campaignId}/generate-strategy`,
+    { method: "POST", headers: authHeaders() },
+  );
+}
+
+export async function addLeadToCampaign(sessionToken: string, campaignId: string, lead: Record<string, unknown>) {
+  return fetchWithRetry<{ ok: boolean; added: boolean; campaign: Record<string, unknown> }>(
+    `${API_BASE}/api/web/session/${sessionToken}/campaigns/${campaignId}/leads`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ lead }),
+    },
+  );
+}
+
+export async function decideLead(
+  sessionToken: string,
+  lead: Record<string, unknown>,
+  approved: boolean,
+) {
+  return fetchWithRetry<{ ok: boolean; lead: Record<string, unknown>; approved: boolean }>(
+    `${API_BASE}/api/web/session/${sessionToken}/leads/decision`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ lead, approved }),
+    },
+  );
+}
+
 export async function listCampaigns(sessionToken: string) {
   return fetchWithRetry<{ ok: boolean; campaigns: Array<Record<string, unknown>> }>(
     `${API_BASE}/api/web/session/${sessionToken}/campaigns`,
+    { headers: authHeaders() },
   );
 }
 
 export async function getCampaign(sessionToken: string, campaignId: string) {
   return fetchWithRetry<{ ok: boolean; campaign: Record<string, unknown> }>(
     `${API_BASE}/api/web/session/${sessionToken}/campaigns/${campaignId}`,
+    { headers: authHeaders() },
   );
 }
 
 export async function updateCampaign(
   sessionToken: string,
   campaignId: string,
-  updates: { name?: string; status?: string },
+  updates: { name?: string; objective?: string; strategy?: unknown; status?: string },
 ) {
   return fetchWithRetry<{ ok: boolean; campaign: Record<string, unknown> }>(
     `${API_BASE}/api/web/session/${sessionToken}/campaigns/${campaignId}`,
     {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(updates),
     },
   );
@@ -557,13 +612,14 @@ export async function updateCampaign(
 export async function archiveCampaign(sessionToken: string, campaignId: string) {
   return fetchWithRetry<{ ok: boolean; campaign: Record<string, unknown> }>(
     `${API_BASE}/api/web/session/${sessionToken}/campaigns/${campaignId}`,
-    { method: "DELETE" },
+    { method: "DELETE", headers: authHeaders() },
   );
 }
 
 export async function listCampaignDrafts(sessionToken: string, campaignId: string) {
   return fetchWithRetry<{ ok: boolean; drafts: unknown[] }>(
     `${API_BASE}/api/web/session/${sessionToken}/campaigns/${campaignId}/drafts`,
+    { headers: authHeaders() },
   );
 }
 
@@ -577,6 +633,7 @@ export async function getCampaignSummary(sessionToken: string) {
     updated_at: string;
   }> }>(
     `${API_BASE}/api/web/session/${sessionToken}/campaigns/summary`,
+    { headers: authHeaders() },
   );
 }
 
@@ -632,6 +689,7 @@ export type MCSummary = {
   campaign_count: number;
   active_jobs: unknown[];
   initial_research?: Record<string, unknown> | null;
+  initial_research_result_count?: number | null;
   recommendations: MCRecommendation[];
   kpis: {
     estimated_reply_rate: number;
@@ -654,6 +712,7 @@ export type MCSummary = {
 export async function getMissionControl(sessionToken: string, onboardingUserId = "") {
   return fetchWithRetry<MCSummary>(
     `${API_BASE}/api/web/session/${sessionToken}/mission-control?onboarding_user_id=${encodeURIComponent(onboardingUserId)}`,
+    { headers: authHeaders() },
   );
 }
 
@@ -662,7 +721,7 @@ export async function getMissionControl(sessionToken: string, onboardingUserId =
 export async function generateCampaignDrafts(sessionToken: string, campaignId: string) {
   return fetchWithRetry<{ ok: boolean; batch_id: string; total: number }>(
     `${API_BASE}/api/web/session/${sessionToken}/campaigns/${campaignId}/generate-drafts`,
-    { method: "POST" },
+    { method: "POST", headers: authHeaders() },
   );
 }
 
@@ -676,6 +735,7 @@ export async function getCampaignGenerationStatus(sessionToken: string, campaign
     batch_id?: string;
   }>(
     `${API_BASE}/api/web/session/${sessionToken}/campaigns/${campaignId}/generation-status`,
+    { headers: authHeaders() },
   );
 }
 
@@ -735,8 +795,10 @@ export async function getJobResults(jobId: string) {
 
 export async function getGmailAuthUrl(sessionToken?: string) {
   const params = sessionToken ? `?session_token=${encodeURIComponent(sessionToken)}` : '';
+  const accessToken = typeof window !== "undefined" ? localStorage.getItem("loqi_access_token") : null;
   return fetchWithRetry<{ ok: boolean; url: string }>(
     `${API_BASE}/api/auth/gmail/url${params}`,
+    { headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {} },
   );
 }
 
@@ -893,11 +955,19 @@ export async function getCommunicationRecommend(sessionToken: string, text: stri
 }
 
 
-export async function listActiveJobs(sessionToken: string) {
+export async function listActiveJobs(sessionToken: string, userId = "") {
+  const query = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
+  let accessToken = "";
+  try {
+    accessToken = localStorage.getItem("loqi_access_token") || "";
+  } catch { /* browser storage unavailable */ }
   return fetchWithRetry<{ jobs: JobResponse[] }>(
-    `${API_BASE}/api/jobs`,
+    `${API_BASE}/api/jobs${query}`,
     {
-      headers: { "x-session-token": sessionToken },
+      headers: {
+        "x-session-token": sessionToken,
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
       timeout: 5000,
       retries: 0,
     },
@@ -1140,5 +1210,6 @@ export type BriefingResponse = {
 export async function getBriefing(sessionToken: string, onboardingUserId = "") {
   return fetchWithRetry<BriefingResponse>(
     `${API_BASE}/api/web/session/${sessionToken}/briefing?onboarding_user_id=${encodeURIComponent(onboardingUserId)}`,
+    { headers: authHeaders() },
   );
 }

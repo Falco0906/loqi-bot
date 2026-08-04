@@ -158,6 +158,22 @@ class TestMissionControlService:
         assert signals["new_leads_count"] == 2
         assert signals["high_quality_leads"] == 1
 
+    def test_signals_accept_persisted_delta_counts(self):
+        snapshot = {
+            "campaigns": [],
+            "drafts": {"pending": 0, "approved": 0, "total": 0},
+            "timeline": [],
+            "jobs": {},
+        }
+        signals = self.svc._build_signals(
+            snapshot,
+            {},
+            {},
+            {"new_leads": 3, "new_conversations": 0},
+        )
+        assert signals["new_leads_count"] == 3
+        assert signals["high_quality_leads"] == 0
+
     def test_intention_to_card(self):
         now = datetime.now(timezone.utc).isoformat()
         intention = Intention(

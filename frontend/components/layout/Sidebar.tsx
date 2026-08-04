@@ -9,6 +9,7 @@ const navigation = [
   { label: "Mission Control", href: "/mission-control", icon: "dashboard" },
   { label: "Discovery", href: "/discovery", icon: "explore" },
   { label: "Campaigns", href: "/campaigns", icon: "campaign" },
+  { label: "Draft Review", href: "/draft", icon: "draft" },
   { label: "Inbox", href: "/inbox", icon: "inbox" },
   { label: "Knowledge", href: "/knowledge", icon: "psychology" },
   { label: "Strategic Update", href: "/strategic-update", icon: "auto_awesome" },

@@ -137,6 +137,9 @@ def _mock_data(*rows: dict) -> MagicMock:
 
 class TestSupabaseUserRepository:
 
+    def test_table_name_is_identity_users(self):
+        assert SupabaseUserRepository()._table_name == "identity_users"
+
     @pytest.mark.asyncio
     async def test_save_and_get(self, mock_cm):
         cm, client = mock_cm
@@ -162,6 +165,38 @@ class TestSupabaseUserRepository:
         assert fetched is not None
         assert fetched.id == user.id
         assert fetched.display_name == "Alice"
+
+    @pytest.mark.asyncio
+    async def test_save_and_get_onboarding_state(self, mock_cm):
+        cm, client = mock_cm
+        repo = SupabaseUserRepository()
+        completed_at = datetime.now(timezone.utc)
+        user = User(display_name="Alice", locale="en")
+        user.set_onboarding_data({"company_name": "Acme"})
+        user.onboarding_completed_at = completed_at
+
+        # save — no existing
+        client.execute.return_value = _row_result([])
+        saved = await repo.save(user)
+        assert saved.id == user.id
+
+        # get — full aggregate round trip including onboarding columns
+        client.execute.return_value = _row_result([{
+            "id": user.id,
+            "display_name": "Alice",
+            "avatar_url": "",
+            "locale": "en",
+            "onboarding_data": '{"company_name": "Acme"}',
+            "onboarding_completed_at": completed_at.isoformat(),
+            "created_at": _make_future(),
+            "updated_at": _make_future(),
+            "deleted_at": None,
+        }])
+        fetched = await repo.get(user.id)
+        assert fetched is not None
+        assert fetched.onboarding_completed_at is not None
+        assert fetched.onboarding_data_dict == {"company_name": "Acme"}
+        assert fetched.is_onboarding_complete is True
 
     @pytest.mark.asyncio
     async def test_get_nonexistent(self, mock_cm):

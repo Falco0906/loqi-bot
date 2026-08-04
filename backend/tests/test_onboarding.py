@@ -34,6 +34,7 @@ from services.onboarding.repositories import (
     InMemoryLifecycleRepository,
     InMemoryOnboardingSessionRepository,
 )
+from services.identity.models import User
 from services.onboarding.services import LifecycleService, OnboardingService
 
 
@@ -648,3 +649,90 @@ class TestOnboardingSessionRepository:
 
         sessions = await repo.find_by_user_id("u1")
         assert len(sessions) == 2
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 7. Durable completion through the identity UserService
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestDurableOnboardingCompletion:
+
+    def _wired_service(self) -> OnboardingService:
+        from services.identity.repositories import (
+            InMemoryEmailIdentityRepository,
+            InMemoryUserRepository,
+        )
+        from services.identity.services import UserService
+        from services.organizations.repositories import (
+            InMemoryMembershipRepository,
+            InMemoryOrganizationRepository,
+        )
+        from services.organizations.services import (
+            MembershipService,
+            OrganizationService,
+        )
+        user_repo = InMemoryUserRepository()
+        ei_repo = InMemoryEmailIdentityRepository()
+        org_repo = InMemoryOrganizationRepository()
+        mem_repo = InMemoryMembershipRepository()
+        user_svc = UserService(user_repo, ei_repo)
+        org_svc = OrganizationService(org_repo, mem_repo)
+        MembershipService(mem_repo, org_repo)
+        lifecycle_svc = LifecycleService(InMemoryLifecycleRepository())
+        return OnboardingService(
+            lifecycle_service=lifecycle_svc,
+            session_repo=InMemoryOnboardingSessionRepository(),
+            org_service=org_svc,
+            user_service=user_svc,
+        )
+
+    @pytest.mark.asyncio
+    async def test_finalize_persists_through_user_service_only(self):
+        svc = self._wired_service()
+        user_id = "finalize-user"
+        await svc._user_service.save_user(User(id=user_id, display_name="Final"))
+        assert await svc._user_service.get_user(user_id) is not None
+
+        result = await svc.create_workspace_and_finalize(user_id, {
+            "workspace_name": "Acme",
+            "slug": "acme",
+            "company_name": "Acme",
+        })
+        assert result["organization_slug"] == "acme"
+
+        user = await svc._user_service.get_user(user_id)
+        assert user.is_onboarding_complete is True
+        assert user.onboarding_data_dict["company_name"] == "Acme"
+
+    @pytest.mark.asyncio
+    async def test_finalize_creates_personal_workspace_in_org(self, monkeypatch):
+        from unittest.mock import MagicMock
+        from services.workspace_state import ensure_workspace
+        svc = self._wired_service()
+        user_id = "finalize-ws-user"
+        await svc._user_service.save_user(User(id=user_id, display_name="Final"))
+
+        calls = []
+        mock_ensure = MagicMock(side_effect=lambda *a, **kw: calls.append((a, kw)) or "wsid")
+        monkeypatch.setattr("services.workspace_state.ensure_workspace", mock_ensure)
+
+        result = await svc.create_workspace_and_finalize(user_id, {
+            "workspace_name": "Acme",
+            "slug": "acme",
+        })
+        assert len(calls) == 1
+        args, kwargs = calls[0]
+        assert args[0] == user_id
+        assert kwargs["organization_id"] == result["organization_id"]
+        assert kwargs["name"] == "Acme"
+        assert kwargs["slug"] == "acme"
+
+    @pytest.mark.asyncio
+    async def test_wizard_data_round_trips_through_user_service(self):
+        svc = self._wired_service()
+        user_id = "wizard-user"
+        await svc._user_service.save_user(User(id=user_id))
+
+        await svc.save_wizard_data(user_id, {"offering": "AI tools"})
+        data = await svc.get_wizard_data(user_id)
+        assert data == {"offering": "AI tools"}

@@ -59,6 +59,17 @@ class BriefingContext:
         """Build the user prompt from structured context."""
         parts = [f"Greeting: {self.greeting}"]
 
+        company = self.memory.get("company_description")
+        icp = self.memory.get("ideal_customer")
+        if company or icp:
+            parts.append("")
+            parts.append("ONBOARDING CONTEXT:")
+            if company:
+                parts.append(f"  - Business: {company}")
+            if icp:
+                parts.append(f"  - Ideal customer: {icp}")
+            parts.append("Reference this context naturally so the user can see it was remembered.")
+
         # ── Delta section (pre-computed, no judgment) ──
         if self.is_first_visit():
             parts.append("")

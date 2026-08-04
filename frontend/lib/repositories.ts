@@ -240,6 +240,7 @@ function mcActiveJobFromBackend(data: MCSummary): {
   activeJobTotal: number | null;
   initialResearchStatus: string | null;
   initialResearchError: string | null;
+  initialResearchResultCount: number | null;
 } {
   const jobs = Array.isArray(data.active_jobs) ? data.active_jobs : [];
   const first = jobs[0] as Record<string, unknown> | undefined;
@@ -251,6 +252,9 @@ function mcActiveJobFromBackend(data: MCSummary): {
       activeJobTotal: initial ? 100 : null,
       initialResearchStatus: initial && typeof initial.status === "string" ? initial.status : null,
       initialResearchError: initial && typeof initial.error_message === "string" ? initial.error_message : null,
+      initialResearchResultCount: typeof data.initial_research_result_count === "number"
+        ? data.initial_research_result_count
+        : null,
     };
   }
 
@@ -276,6 +280,7 @@ function mcActiveJobFromBackend(data: MCSummary): {
     activeJobTotal: 100,
     initialResearchStatus: "running",
     initialResearchError: null,
+    initialResearchResultCount: null,
   };
 }
 
@@ -297,6 +302,7 @@ export async function fetchMissionControl(): Promise<MCData | null> {
       activeJobTotal: job.activeJobTotal,
       initialResearchStatus: job.initialResearchStatus,
       initialResearchError: job.initialResearchError,
+      initialResearchResultCount: job.initialResearchResultCount,
     };
   });
 }
@@ -405,10 +411,14 @@ export async function fetchCampaign(id: string): Promise<CampaignData | null> {
   if (!raw.ok || !raw.campaign) return null;
   const c = raw.campaign;
   return {
+    id: (c.id as string) || id,
     name: (c.name as string) || "Untitled Campaign",
     status: (c.status as string) || "planning",
     createdAt: (c.created_at as string) || "",
     objective: (c.objective as string) || "",
+    leadCount: Number(c.lead_count || 0),
+    leads: Array.isArray(c.leads) ? c.leads as Array<Record<string, unknown>> : [],
+    strategy: (c.strategy as Record<string, unknown>) || null,
     milestones: campaignMilestonesFromBackend(c),
     improvements: campaignImprovementsFromBackend(c),
     timeline: campaignTimelineFromBackend(c),
@@ -914,9 +924,11 @@ export async function fetchDiscovery(): Promise<DiscoveryData | null> {
     if (!token) return null;
 
     try {
-      const active = await listActiveJobs(token);
-      const jobs = Array.isArray(active.jobs) ? active.jobs : [];
-      const searchJob = jobs.find((j) => j.type === "search") || jobs[0];
+      const recent = await listActiveJobs(token, getUserId() ?? "");
+      const jobs = Array.isArray(recent.jobs) ? recent.jobs : [];
+      const searchJob = jobs.find((j) =>
+        j.type === "search" && (j.status === "queued" || j.status === "running"),
+      );
 
       if (searchJob) {
         storeDiscoveryJobId(searchJob.id);
@@ -932,7 +944,10 @@ export async function fetchDiscovery(): Promise<DiscoveryData | null> {
         };
       }
 
-      const storedId = getStoredDiscoveryJobId();
+      const completedSearch = jobs.find((j) =>
+        j.type === "search" && j.status === "completed" && j.result_ready,
+      );
+      const storedId = getStoredDiscoveryJobId() || completedSearch?.id;
       if (storedId) {
         try {
           const results = await getJobResults(storedId);

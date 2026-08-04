@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from services.identity.metrics import get_metrics
 from services.identity.models import RegistrationSessionStatus
@@ -26,7 +26,6 @@ from services.identity.repositories import (
     InMemoryRefreshTokenRepository,
     InMemoryRegistrationSessionRepository,
     InMemorySessionRepository,
-    InMemoryUserRepository,
     InMemoryVerificationTokenRepository,
 )
 from services.persistence import (
@@ -82,15 +81,16 @@ log = logging.getLogger("loqi.auth")
 # ─── Service wiring ────────────────────────────────────────────────────
 
 def _make_identity_repositories():
+    # The User aggregate is the account of record and is always durable
+    # through Supabase (identity_users). The remaining identity repositories
+    # follow the repository provider selection until their tables are applied.
     if REPOSITORY_PROVIDER == RepositoryProvider.SUPABASE:
         vt_repo = SupabaseVerificationTokenRepository()
-        user_repo = SupabaseUserRepository()
         session_repo = SupabaseSessionRepository()
         rt_repo = SupabaseRefreshTokenRepository()
         pr_repo = SupabasePasswordResetRepository()
     else:
         vt_repo = InMemoryVerificationTokenRepository()
-        user_repo = InMemoryUserRepository()
         session_repo = InMemorySessionRepository()
         rt_repo = InMemoryRefreshTokenRepository()
         pr_repo = InMemoryPasswordResetRepository()
@@ -98,7 +98,7 @@ def _make_identity_repositories():
         "reg_session_repo": InMemoryRegistrationSessionRepository(),
         "vt_repo": vt_repo,
         "ei_repo": InMemoryEmailIdentityRepository(),
-        "user_repo": user_repo,
+        "user_repo": SupabaseUserRepository(),
         "pc_repo": InMemoryPasswordCredentialRepository(),
         "org_repo": InMemoryOrganizationRepository(),
         "mem_repo": InMemoryMembershipRepository(),
@@ -184,6 +184,19 @@ def _get_service() -> AuthService:
     return _auth_service
 
 
+async def get_authenticated_user_id(request: Request) -> str:
+    """Resolve the authenticated user from the opaque session access token."""
+    authorization = request.headers.get("authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        session = await _get_service().validate_access_token(token.strip())
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid or expired session") from exc
+    return session.user_id
+
+
 def get_auth_user_service() -> UserService | None:
     svc = _get_service()
     return svc._user if hasattr(svc, "_user") else None
@@ -201,6 +214,7 @@ def reset_auth_service() -> None:
 # ─── Endpoints ─────────────────────────────────────────────────────────
 
 _oauth_session_repo: InMemoryOAuthSessionRepository | None = None
+_oauth_callback_results: dict[str, tuple[str, OAuthCallbackResponse]] = {}
 
 
 def _get_oauth_session_repo() -> InMemoryOAuthSessionRepository:
@@ -211,8 +225,9 @@ def _get_oauth_session_repo() -> InMemoryOAuthSessionRepository:
 
 
 def reset_oauth_session_repo() -> None:
-    global _oauth_session_repo
+    global _oauth_session_repo, _oauth_callback_results
     _oauth_session_repo = None
+    _oauth_callback_results = {}
 
 
 @router.get(
@@ -260,7 +275,12 @@ async def oauth_google_callback(code: str = "", state: str = ""):
         await repo.delete(oauth_session.id)
         raise HTTPException(status_code=401, detail="OAuth session expired")
     if oauth_session.is_used:
-        await repo.delete(oauth_session.id)
+        cached = _oauth_callback_results.get(state)
+        if cached is not None and cached[0] == code:
+            # Browsers/dev-mode React can replay the callback URL after the
+            # first request has already succeeded. Return the same issued
+            # session rather than presenting a successful login as a failure.
+            return cached[1]
         raise HTTPException(status_code=401, detail="OAuth state already used — possible replay attack")
 
     oauth_session.mark_used()
@@ -278,14 +298,20 @@ async def oauth_google_callback(code: str = "", state: str = ""):
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
     get_metrics().login_total["ok"] += 1
-    return OAuthCallbackResponse(
+    response = OAuthCallbackResponse(
         access_token=result.session.id,
         refresh_token=result.refresh_token,
         session_id=result.session.id,
         user_id=result.session.user_id,
         org_id=result.session.organization_id,
         expires_at=result.session.expires_at,
+        is_new_user=result.is_new_user,
     )
+    _oauth_callback_results[state] = (code, response)
+    if len(_oauth_callback_results) > 1000:
+        oldest = next(iter(_oauth_callback_results))
+        del _oauth_callback_results[oldest]
+    return response
 
 
 @router.post(

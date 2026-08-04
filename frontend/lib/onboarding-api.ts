@@ -1,6 +1,15 @@
 const API_BASE =
   process.env.NEXT_PUBLIC_LOQI_API_BASE_URL || "http://127.0.0.1:10000";
 
+function sessionHeaders(): HeadersInit {
+  try {
+    const token = localStorage.getItem("loqi_access_token");
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
+}
+
 export type OnboardingProgress = {
   lifecycle_state: string;
   current_step: string | null;
@@ -61,6 +70,7 @@ export async function getOnboardingProgress(
 ): Promise<OnboardingProgress> {
   const res = await fetch(
     `${API_BASE}/api/v1/onboarding?user_id=${encodeURIComponent(userId)}`,
+    { headers: sessionHeaders() },
   );
   if (!res.ok) throw new Error("Failed to fetch onboarding progress");
   return res.json();
@@ -71,6 +81,7 @@ export async function getWizardData(
 ): Promise<WizardDataResponse> {
   const res = await fetch(
     `${API_BASE}/api/v1/onboarding/wizard?user_id=${encodeURIComponent(userId)}`,
+    { headers: sessionHeaders() },
   );
   if (!res.ok) throw new Error("Failed to fetch wizard data");
   return res.json();
@@ -85,7 +96,7 @@ export async function saveWizardData(
     `${API_BASE}/api/v1/onboarding/wizard?user_id=${encodeURIComponent(userId)}`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...sessionHeaders() },
       body: JSON.stringify({ data, completed }),
     },
   );
@@ -98,6 +109,7 @@ export async function getPersonalizationContext(
 ): Promise<PersonalizationContext> {
   const res = await fetch(
     `${API_BASE}/api/v1/onboarding/context?user_id=${encodeURIComponent(userId)}`,
+    { headers: sessionHeaders() },
   );
   if (!res.ok) throw new Error("Failed to fetch personalization context");
   return res.json();
@@ -119,7 +131,7 @@ export async function createWorkspace(
     `${API_BASE}/api/v1/onboarding/workspace/create?user_id=${encodeURIComponent(userId)}`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...sessionHeaders() },
       body: JSON.stringify({ workspace_name: workspaceName, slug, session_token: sessionToken }),
     },
   );

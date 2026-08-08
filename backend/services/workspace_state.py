@@ -261,6 +261,33 @@ def persist_campaign_update(user_id: str, campaign_id: str, updates: dict[str, A
     })
 
 
+
+async def persist_campaign_update_awaited(user_id: str, campaign_id: str, updates: dict[str, Any]) -> bool:
+    """Durable (awaited) campaign update for interactive endpoints.
+
+    Mirrors ``persist_campaign_update``'s contract but guarantees the row is
+    written before the caller proceeds. Fire-and-forget writes race reads, so
+    the campaign endpoints and launch path must await persistence instead of
+    scheduling it in the background.
+    """
+    try:
+        await _update_campaign_row(user_id, campaign_id, updates)
+    except Exception as error:
+        print(f"[workspace_state] campaign update failed: {error}")
+        return False
+    # Mirror persist_campaign_update: append campaign.updated so the events
+    # fallback projection stays consistent with the durable row (status and
+    # launch progress must survive a transient canonical-read failure).
+    try:
+        append_event(user_id, "campaign.updated", {
+            "campaign_id": campaign_id,
+            "updates": updates,
+        })
+    except Exception as error:
+        print(f"[workspace_state] campaign update event append failed: {error}")
+    return True
+
+
 async def _update_campaign_row(user_id: str, campaign_id: str, updates: dict[str, Any]) -> None:
     repo = CampaignRepository()
     entity = await repo.get(campaign_id)
@@ -271,6 +298,10 @@ async def _update_campaign_row(user_id: str, campaign_id: str, updates: dict[str
             setattr(entity, key, str(updates[key]))
     if updates.get("status") in ("archived", "cancelled"):
         entity.archived_at = datetime.now(timezone.utc)
+    if isinstance(updates.get("launch"), dict):
+        settings = dict(entity.settings or {})
+        settings["launch"] = updates["launch"]
+        entity.settings = settings
     entity.updated_at = datetime.now(timezone.utc)
     await repo.save(entity)
 
@@ -444,6 +475,28 @@ def persist_draft(user_id: str, draft: dict[str, Any]) -> bool:
     _run(_write_draft_row(user_id, draft))
     return append_event(user_id, "draft.created", {"draft": draft})
 
+async def persist_draft_awaited(user_id: str, draft: dict[str, Any]) -> bool:
+    """Durable (awaited) draft write for batch generation.
+
+    Draft generation must not treat an event-append as success: the draft row
+    write is the source of truth for review/sending steps. The batch loop uses
+    this so partial/complete generation is reported accurately and retries
+    never double-persist. The draft.created event is appended after the row
+    write so the events-fallback projection stays consistent with durable
+    drafts.
+    """
+    try:
+        await _write_draft_row(user_id, draft)
+    except Exception as error:
+        print(f"[workspace_state] draft write failed: {error}")
+        return False
+    try:
+        append_event(user_id, "draft.created", {"draft": draft})
+    except Exception as error:
+        print(f"[workspace_state] draft event append failed: {error}")
+    return True
+
+
 
 async def _write_draft_row(user_id: str, draft: dict[str, Any]) -> None:
     workspace = await _async_workspace(user_id)
@@ -481,6 +534,30 @@ async def _write_draft_row(user_id: str, draft: dict[str, Any]) -> None:
 
 
 def persist_draft_update(user_id: str, draft_id: str, updates: dict[str, Any]) -> bool:
+    if draft_id:
+        _run(_update_draft_row(user_id, draft_id, updates))
+    return append_event(user_id, "draft.updated", {
+        "draft_id": draft_id,
+        "updates": updates,
+    })
+
+
+def persist_draft_update_awaited(user_id: str, draft_id: str, updates: dict[str, Any], extra: dict[str, Any] | None = None) -> bool:
+    if draft_id:
+        merged = dict(updates)
+        if extra:
+            merged.update(extra)
+        try:
+            _run(_update_draft_row(user_id, draft_id, merged))
+        except Exception as error:
+            print(f"[workspace_state] draft update write failed: {error}")
+            return False
+    return append_event(user_id, "draft.updated", {
+        "draft_id": draft_id,
+        "updates": updates,
+        **({"extra": extra} if extra else {}),
+    })
+
     if draft_id:
         _run(_update_draft_row(user_id, draft_id, updates))
     return append_event(user_id, "draft.updated", {
@@ -566,11 +643,27 @@ def _project_from_events(events: list[dict[str, Any]]) -> dict[str, Any]:
             draft = drafts.get(payload.get("draft_id"))
             if draft:
                 draft.update(payload.get("updates") or {})
+    _flatten_launch_counters(campaigns)
     return {
         "campaigns": list(campaigns.values()),
         "drafts": list(drafts.values()),
         "approved_leads": list(approved_leads.values()),
     }
+
+
+def _flatten_launch_counters(campaigns: dict[str, dict[str, Any]]) -> None:
+    """Mirror the canonical state's flat launch_sent/total/failed fields.
+
+    The events fallback merges ``campaign.updated`` updates as ``launch`` (the
+    nested dict), but the API only reads the flat fields. Without this the
+    fallback view loses launch progress during a transient canonical failure.
+    """
+    for campaign in campaigns.values():
+        launch = campaign.get("launch") or {}
+        if isinstance(launch, dict):
+            campaign["launch_sent"] = int(launch.get("sent", 0))
+            campaign["launch_total"] = int(launch.get("total", 0))
+            campaign["launch_failed"] = int(launch.get("failed", 0))
 
 
 def load_workspace_state(user_id: str) -> dict[str, Any]:
@@ -638,6 +731,11 @@ async def _load_canonical_state(user_id: str) -> dict[str, Any] | None:
             "status": campaign.status,
             "search_query": campaign.search_query,
             "lead_count": len(ws_leads),
+            "generation": (campaign.settings or {}).get("generation"),
+            "launch": (campaign.settings or {}).get("launch") or {},
+            "launch_sent": int(((campaign.settings or {}).get("launch") or {}).get("sent", 0)),
+            "launch_total": int(((campaign.settings or {}).get("launch") or {}).get("total", 0)),
+            "launch_failed": int(((campaign.settings or {}).get("launch") or {}).get("failed", 0)),
             "leads": [
                 _lead_as_dict(ws_lead, profiles.get(ws_lead.lead_id), companies_by_id)
                 for ws_lead in ws_leads
@@ -654,6 +752,7 @@ async def _load_canonical_state(user_id: str) -> dict[str, Any] | None:
             "id": draft.id,
             "campaign_id": draft.campaign_id or "",
             "lead_id": draft.lead_id or "",
+            "lead": dict(draft.lead_snapshot or {}),
             "subject": draft.subject,
             "body_preview": draft.preview or draft.body[:200],
             "text": draft.body,

@@ -1905,22 +1905,20 @@ async def approve_draft(session_token: str, draft_id: str, request: Request):
     durable_target = next((d for d in durable_drafts if d.get("id") == draft_id), None)
     if durable_target:
         new_status = "approved" if durable_target.get("status") != "approved" else "pending"
-        from services.workspace_state import persist_draft_update, persist_campaign_update
-        if not persist_draft_update(owner_id, draft_id, {"status": new_status}):
+        from services.workspace_state import persist_draft_update_awaited
+        if not await persist_draft_update_awaited(owner_id, draft_id, {"status": new_status}):
             raise HTTPException(status_code=503, detail="Draft approval could not be persisted")
         durable_target["status"] = new_status
         campaign_id = durable_target.get("campaign_id")
-        campaign_status = None
+        current_step = None
         if campaign_id:
             campaign_drafts = [d for d in durable_drafts if d.get("campaign_id") == campaign_id]
             all_approved = bool(campaign_drafts) and all(d.get("status") == "approved" for d in campaign_drafts)
-            campaign_status = "ready_to_send" if all_approved else "draft_review"
-            if not persist_campaign_update(owner_id, campaign_id, {"status": campaign_status}):
-                raise HTTPException(status_code=503, detail="Campaign status could not be persisted")
+            current_step = "sending" if all_approved else "review"
         publish(session_token, WMEventType.DRAFT_APPROVED if new_status == "approved" else WMEventType.DRAFT_UPDATED, {
             "draft_id": draft_id, "campaign_id": campaign_id, "status": new_status,
         }, actor="user")
-        return {"ok": True, "draft": durable_target, "campaign_status": campaign_status,
+        return {"ok": True, "draft": durable_target, "current_step": current_step,
                 "pending_drafts": sum(1 for d in durable_drafts if d.get("status") == "pending")}
 
     raise HTTPException(status_code=404, detail="Draft not found in the durable workspace")
@@ -2911,9 +2909,21 @@ async def update_campaign(session_token: str, campaign_id: str, payload: UpdateC
             "previous_status": old_status,
         }, actor="user")
         if payload.status == "completed" and old_status != "completed":
+            durable_drafts = _workspace_drafts(owner_id, session_token)
+            approved = [d for d in durable_drafts
+                        if d.get("campaign_id") == campaign_id and d.get("status") == "approved"]
+            if not approved:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No approved drafts — approve at least one draft before launching",
+                )
             record_campaign_launched(session_token, target.get("name", ""))
             _get_feedback().on_campaign_launched(session_token, campaign_id)
-            _dispatch_campaign_sends(session_token, target)
+            launch_result = await _dispatch_campaign_sends(session_token, target, owner_id)
+            target["launch_result"] = {k: launch_result.get(k) for k in
+                                       ("total", "sent", "failed", "error") if k in launch_result}
+            if not launch_result.get("ok") and launch_result.get("error"):
+                raise HTTPException(status_code=400, detail=launch_result["error"])
         elif payload.status in ("ready", "ready_to_send"):
             record_campaign_ready(session_token, target.get("name", ""))
     elif payload.name is not None:
@@ -2922,8 +2932,8 @@ async def update_campaign(session_token: str, campaign_id: str, payload: UpdateC
             "name": payload.name,
         }, actor="user")
     target["updated_at"] = datetime.now(timezone.utc).isoformat()
-    from services.workspace_state import persist_campaign_update
-    if updates and not persist_campaign_update(owner_id, campaign_id, updates):
+    from services.workspace_state import persist_campaign_update_awaited
+    if updates and not await persist_campaign_update_awaited(owner_id, campaign_id, updates):
         raise HTTPException(status_code=503, detail="Campaign update could not be persisted")
     return {"ok": True, "campaign": target}
 
@@ -3029,12 +3039,31 @@ async def decide_workspace_lead(session_token: str, payload: LeadDecisionRequest
     return {"ok": True, "lead": lead, "approved": payload.approved}
 
 
-def _dispatch_campaign_sends(session_token: str, campaign: dict) -> dict:
+async def _dispatch_campaign_sends(session_token: str, campaign: dict, owner_id: str) -> dict:
     campaign_id = campaign.get("id", "")
     from services.outbound.draft_store import draft_store as outbound_draft_store
+
+    # Durable workspace drafts are the source of truth: UI approvals persist
+    # to workspace state, never the in-memory outbound store. Dispatch starts
+    # from the durable approved set and syncs each approved draft to the
+    # outbound store before sending.
+    durable = _workspace_drafts(owner_id, session_token)
+    approved_durable = [
+        d for d in durable
+        if d.get("campaign_id") == campaign_id and d.get("status") == "approved"
+    ]
+    if approved_durable:
+        for d in approved_durable:
+            _sync_draft_to_outbound(d, session_token)
+
+    approved_ids = {d["id"] for d in approved_durable}
     all_outbound = outbound_draft_store.list_by_workflow(campaign_id)
-    approved = [d for d in all_outbound.drafts
-                if d.status.value in ("approved", "auto_approved")]
+    approved = [
+        d for d in all_outbound.drafts
+        if d.id in approved_ids and d.status.value in ("approved", "auto_approved")
+    ]
+
+    # Back-compat: drafts approved through the legacy in-memory session store.
     if not approved:
         legacy_drafts = _get_outbound_drafts_for_session(session_token)
         legacy_approved = [d for d in legacy_drafts
@@ -3042,12 +3071,13 @@ def _dispatch_campaign_sends(session_token: str, campaign: dict) -> dict:
         if legacy_approved:
             for ld in legacy_approved:
                 _sync_draft_to_outbound(ld, session_token)
-            approved = [outbound_draft_store.get(ld["id"])
-                        for ld in legacy_approved]
+            approved = [outbound_draft_store.get(ld["id"]) for ld in legacy_approved]
             approved = [d for d in approved if d and d.status.value in ("approved", "auto_approved")]
     if not approved:
         log.info("[campaign_launch] No approved drafts found for campaign %s", campaign_id)
-        return {"ok": True, "total": 0, "sent": 0, "failed": 0, "results": []}
+        return {"ok": False,
+                "error": "No approved drafts to send — approve drafts before launching",
+                "total": 0, "sent": 0, "failed": 0, "results": []}
 
     real_provider_id = _find_outbound_gmail_provider_id()
     if not real_provider_id:
@@ -3056,11 +3086,14 @@ def _dispatch_campaign_sends(session_token: str, campaign: dict) -> dict:
         campaign["total_sends"] = total
         campaign["sent_count"] = 0
         campaign["failed_count"] = total
+        await _update_campaign_launch_progress(owner_id, session_token, campaign_id, 0, total, total)
         return {"ok": False, "error": "No Gmail outbound provider registered",
                 "total": total, "sent": 0, "failed": total, "results": []}
 
     log.info("[campaign_launch] Dispatching %d approved drafts via provider %s", len(approved), real_provider_id)
     results = []
+    sent_count = 0
+    failed_count = 0
     for draft in approved:
         try:
             r = outbound_executor.execute("send_reply", {
@@ -3075,8 +3108,13 @@ def _dispatch_campaign_sends(session_token: str, campaign: dict) -> dict:
                 "sender": {"email": draft.sender.email, "name": draft.sender.name},
             })
             if r.get("ok"):
-                campaign["sent_count"] = campaign.get("sent_count", 0) + 1
+                sent_count += 1
                 outbound_draft_store.mark_sent(draft.id)
+                try:
+                    from services.workspace_state import persist_draft_update_awaited
+                    await persist_draft_update_awaited(owner_id, draft.id, {"status": "sent"})
+                except Exception as e:
+                    log.warning("[campaign_launch] Durable sent-mark failed: %s", e)
                 send_data = r.get("send_result", {})
                 publish(session_token, WMEventType.DRAFT_SENT, {
                     "draft_id": draft.id,
@@ -3105,41 +3143,53 @@ def _dispatch_campaign_sends(session_token: str, campaign: dict) -> dict:
                 except Exception as conv_err:
                     log.warning("[campaign_launch] Failed to create conversation: %s", conv_err)
             else:
-                campaign["failed_count"] = campaign.get("failed_count", 0) + 1
+                failed_count += 1
                 publish(session_token, WMEventType.DRAFT_FAILED, {
                     "draft_id": draft.id,
                     "campaign_id": campaign_id,
                     "error": r.get("error", "Send failed"),
                 }, actor="system")
             results.append({"draft_id": draft.id, "ok": r.get("ok", False), "error": r.get("error")})
-            _update_campaign_launch_progress(session_token, campaign_id,
-                                              sum(1 for r2 in results if r2["ok"]),
-                                              len(results))
         except Exception as e:
-            campaign["failed_count"] = campaign.get("failed_count", 0) + 1
+            failed_count += 1
             results.append({"draft_id": draft.id, "ok": False, "error": str(e)})
-            _update_campaign_launch_progress(session_token, campaign_id,
-                                              sum(1 for r2 in results if r2["ok"]),
-                                              len(results))
+            publish(session_token, WMEventType.DRAFT_FAILED, {
+                "draft_id": draft.id,
+                "campaign_id": campaign_id,
+                "error": str(e),
+            }, actor="system")
+        await _update_campaign_launch_progress(
+            owner_id, session_token, campaign_id, sent_count, failed_count, len(approved))
     total = len(approved)
-    sent = sum(1 for r in results if r["ok"])
     campaign["total_sends"] = total
-    campaign["sent_count"] = sent
-    campaign["failed_count"] = total - sent
-    log.info("[campaign_launch] Complete: %d/%d sent, %d failed", sent, total, total - sent)
-    return {"ok": True, "total": total, "sent": sent, "failed": total - sent, "results": results}
+    campaign["sent_count"] = sent_count
+    campaign["failed_count"] = failed_count
+    log.info("[campaign_launch] Complete: %d/%d sent, %d failed", sent_count, total, failed_count)
+    return {"ok": True, "total": total, "sent": sent_count, "failed": failed_count, "results": results}
 
 
-def _update_campaign_launch_progress(session_token: str, campaign_id: str,
-                                     sent_count: int, total_count: int) -> None:
-    """Store launch progress in the campaign dict so frontend can poll it."""
-    campaigns = campaign_store.get(session_token, [])
-    for c in campaigns:
-        if c.get("id") == campaign_id:
-            c["launch_sent"] = sent_count
-            c["launch_total"] = total_count
-            c["updated_at"] = datetime.now(timezone.utc).isoformat()
-            break
+async def _update_campaign_launch_progress(owner_id: str, session_token: str, campaign_id: str,
+                                           sent_count: int, failed_count: int, total_count: int) -> None:
+    """Persist launch progress onto the durable campaign row for polling.
+
+    The in-memory campaign store is never populated by the web flow, so
+    progress must live on the campaign's settings for /launch-progress to read.
+    """
+    from services.workspace_state import persist_campaign_update_awaited
+    if total_count <= 0:
+        status = "idle"
+    elif failed_count == 0:
+        status = "launched" if sent_count >= total_count else "sending"
+    elif sent_count == 0:
+        status = "failed"
+    else:
+        status = "partial"
+    await persist_campaign_update_awaited(owner_id, campaign_id, {"launch": {
+        "total": total_count,
+        "sent": sent_count,
+        "failed": failed_count,
+        "status": status,
+    }})
 
 
 @app.delete("/api/web/session/{session_token}/campaigns/{campaign_id}")

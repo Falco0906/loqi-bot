@@ -1911,15 +1911,23 @@ async def approve_draft(session_token: str, draft_id: str, request: Request):
         durable_target["status"] = new_status
         campaign_id = durable_target.get("campaign_id")
         current_step = None
+        pending_in_campaign = 0
         if campaign_id:
-            campaign_drafts = [d for d in durable_drafts if d.get("campaign_id") == campaign_id]
-            all_approved = bool(campaign_drafts) and all(d.get("status") == "approved" for d in campaign_drafts)
-            current_step = "sending" if all_approved else "review"
+            from services.workspace_snapshot import enrich_campaigns
+            enriched = next(
+                (c for c in enrich_campaigns(
+                    _workspace_campaigns(owner_id, session_token), durable_drafts)
+                 if c.get("id") == campaign_id),
+                None,
+            )
+            if enriched:
+                current_step = enriched.get("current_step")
+                pending_in_campaign = int(enriched.get("pending_drafts", 0) or 0)
         publish(session_token, WMEventType.DRAFT_APPROVED if new_status == "approved" else WMEventType.DRAFT_UPDATED, {
             "draft_id": draft_id, "campaign_id": campaign_id, "status": new_status,
         }, actor="user")
         return {"ok": True, "draft": durable_target, "current_step": current_step,
-                "pending_drafts": sum(1 for d in durable_drafts if d.get("status") == "pending")}
+                "pending_drafts": pending_in_campaign}
 
     raise HTTPException(status_code=404, detail="Draft not found in the durable workspace")
 
@@ -2880,6 +2888,35 @@ async def campaign_launch_progress(session_token: str, campaign_id: str, request
         "launch_total": target.get("launch_total", 0),
         "launch_complete": target.get("launch_sent", 0) >= target.get("launch_total", 0) if target.get("launch_total", 0) > 0 else False,
     }
+
+
+@app.get("/api/web/session/{session_token}/campaigns/{campaign_id}/timeline")
+async def campaign_timeline(session_token: str, campaign_id: str, request: Request):
+    """Read-only campaign event timeline derived from World Model events.
+
+    Aggregates events carrying this campaign_id (draft generated/updated/
+    approved/sent/failed, campaign status changes) from the in-memory WM
+    log, ordered by sequence. No new persistence — read-only projection.
+    """
+    owner_id = await _workspace_owner(request, session_token)
+    campaigns = _workspace_campaigns(owner_id, session_token)
+    target = next((c for c in campaigns if c.get("id") == campaign_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    store = get_wm_store()
+    events: list[dict] = []
+    after_sequence = 0
+    while True:
+        batch = store.get_events(session_token, after_sequence=after_sequence, limit=100)
+        if not batch:
+            break
+        after_sequence = batch[-1].sequence
+        for event in batch:
+            if event.data.get("campaign_id") == campaign_id:
+                events.append(event.to_dict())
+        if len(batch) < 100:
+            break
+    return {"ok": True, "campaign_id": campaign_id, "events": events}
 
 
 @app.put("/api/web/session/{session_token}/campaigns/{campaign_id}")

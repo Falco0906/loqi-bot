@@ -193,3 +193,22 @@ async def test_launch_progress_endpoint_reads_durable_values(env):
     assert result["launch_sent"] == 1
     assert result["launch_total"] == 2
     assert result["launch_complete"] is False
+
+
+async def test_campaign_timeline_endpoint_filters_wm_events(env):
+    """PR3B — timeline endpoint aggregates World Model events for one campaign."""
+    from services.world_model import EventType as WMET
+    from services.world_model import publish as wm_publish
+
+    wm_publish("pr3b-tok-1", WMET.DRAFT_SENT, {
+        "draft_id": "d1", "campaign_id": "c-1", "recipient_email": "ada@acme.com"})
+    wm_publish("pr3b-tok-1", WMET.DRAFT_FAILED, {
+        "draft_id": "d2", "campaign_id": "c-1", "error": "smtp refused"})
+    wm_publish("pr3b-tok-1", WMET.DRAFT_SENT, {
+        "draft_id": "d3", "campaign_id": "c-9", "recipient_email": "zed@acme.com"})
+
+    result = await main_module.campaign_timeline("pr3b-tok-1", "c-1", request=None)
+    assert result["ok"] is True
+    assert [e["type"] for e in result["events"]] == ["draft_sent", "draft_failed"]
+    assert all(e["data"]["campaign_id"] == "c-1" for e in result["events"])
+    assert result["events"][1]["data"]["error"] == "smtp refused"

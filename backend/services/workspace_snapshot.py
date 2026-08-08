@@ -28,11 +28,39 @@ def _make_cache_key(session_token: str, campaigns: list, drafts: list) -> str:
     return hashlib.sha256(content.encode()).hexdigest()[:32]
 
 
+def _derive_campaign_step(c: dict) -> str:
+    """Derive the workflow step from persisted state, never from lifecycle status.
+
+    research -> strategy -> drafts -> review -> sending. Research is the
+    first production step; strategy is generated from the selected audience,
+    never before leads exist. Draft gates (review/sending) only apply after
+    leads and strategy exist — a campaign cannot be reviewing or sending
+    drafts without an audience and messaging. Backward compatible —
+    campaigns that already have a strategy keep flowing forward from
+    wherever they are. Terminal/removed statuses have no actionable step.
+    """
+    status = c.get("status")
+    if status in ("completed", "archived", "cancelled", "failed", "deleted"):
+        return ""
+    lead_count = c.get("lead_count", 0) or 0
+    pending = c.get("pending_drafts", 0) or 0
+    approved = c.get("approved_drafts", 0) or 0
+    if lead_count == 0:
+        return "research"
+    if not c.get("strategy"):
+        return "strategy"
+    if pending > 0:
+        return "review"
+    if approved > 0:
+        return "sending"
+    return "drafts"
+
+
 def enrich_campaigns(campaigns: list, drafts: list) -> list[dict]:
     """Single source of truth for campaign enrichment.
 
-    Returns enriched campaign dicts with pending_drafts and approved_drafts
-    computed from the drafts list. All endpoints that display campaigns
+    Returns enriched campaign dicts with pending_drafts, approved_drafts and
+    the derived workflow current_step. All endpoints that display campaigns
     MUST call this instead of duplicating the iteration logic.
     """
     result = []
@@ -41,7 +69,10 @@ def enrich_campaigns(campaigns: list, drafts: list) -> list[dict]:
         cdrafts = [d for d in drafts if d.get("campaign_id") == cid]
         pending = sum(1 for d in cdrafts if d.get("status") == "pending")
         approved = sum(1 for d in cdrafts if d.get("status") == "approved")
-        result.append({**c, "pending_drafts": pending, "approved_drafts": approved})
+        sent = sum(1 for d in cdrafts if d.get("status") == "sent")
+        enriched = {**c, "pending_drafts": pending, "approved_drafts": approved, "sent_drafts": sent}
+        enriched["current_step"] = _derive_campaign_step(enriched)
+        result.append(enriched)
     return result
 
 
@@ -61,7 +92,7 @@ def build_snapshot(
     user_id: str | None = None,
 ) -> dict:
     # ── Phase 3: try World Model first ──
-    wm_snapshot = _build_wm_snapshot(session_token, user_id=user_id)
+    wm_snapshot = _build_wm_snapshot(session_token, user_id=user_id, campaigns=campaigns)
     if wm_snapshot is not None:
         reasoner = WorkspaceReasoner(wm_snapshot)
         analysis = reasoner.analyze()
@@ -102,6 +133,7 @@ def build_snapshot(
             "id": c.get("id", ""),
             "name": c.get("name", ""),
             "status": c.get("status", "planning"),
+            "current_step": c.get("current_step", ""),
             "lead_count": c.get("lead_count", 0),
             "pending_drafts": pending,
             "approved_drafts": approved,
@@ -121,8 +153,8 @@ def build_snapshot(
     memory = get_memory(session_token)
     timeline = get_events(session_token, limit=10)
 
-    campaigns_ready = sum(1 for c in campaign_list if c["status"] in ("ready", "ready_to_send"))
-    campaigns_draft_review = sum(1 for c in campaign_list if c["status"] == "draft_review")
+    campaigns_ready = sum(1 for c in campaign_list if c.get("current_step") == "sending")
+    campaigns_draft_review = sum(1 for c in campaign_list if c.get("current_step") == "review")
 
     snapshot = {
         "campaigns": campaign_list,

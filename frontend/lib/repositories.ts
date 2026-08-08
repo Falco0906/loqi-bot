@@ -414,9 +414,25 @@ export async function fetchCampaign(id: string): Promise<CampaignData | null> {
     id: (c.id as string) || id,
     name: (c.name as string) || "Untitled Campaign",
     status: (c.status as string) || "planning",
+    currentStep: (c.current_step as string) || "",
+    generation:
+      typeof c.generation === "object" && c.generation !== null
+        ? (c.generation as { status?: string; total?: number; completed?: number; batch_id?: string })
+        : undefined,
     createdAt: (c.created_at as string) || "",
     objective: (c.objective as string) || "",
     leadCount: Number(c.lead_count || 0),
+    pendingDrafts: Number(c.pending_drafts || 0),
+    approvedDrafts: Number(c.approved_drafts || 0),
+    launch:
+      isRecord(c.launch) || typeof c.launch === "object"
+        ? {
+            status: String(((c.launch as Record<string, unknown>).status as string) || ""),
+            total: Number(((c.launch as Record<string, unknown>).total as number) || 0),
+            sent: Number(((c.launch as Record<string, unknown>).sent as number) || 0),
+            failed: Number(((c.launch as Record<string, unknown>).failed as number) || 0),
+          }
+        : undefined,
     leads: Array.isArray(c.leads) ? c.leads as Array<Record<string, unknown>> : [],
     strategy: (c.strategy as Record<string, unknown>) || null,
     milestones: campaignMilestonesFromBackend(c),

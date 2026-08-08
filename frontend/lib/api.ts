@@ -489,6 +489,7 @@ export async function approveDraft(sessionToken: string, draftId: string) {
       created_at?: string;
     };
     campaign_status?: string | null;
+    current_step?: string | null;
     pending_drafts?: number;
   }>(
     `${API_BASE}/api/web/session/${sessionToken}/drafts/${draftId}/approve`,
@@ -1079,6 +1080,21 @@ export async function outboundApproveAll(sessionToken: string, auto = false) {
 export async function getCampaignLaunchProgress(sessionToken: string, campaignId: string) {
   return fetchWithRetry<{ ok: boolean; launch_sent: number; launch_total: number; launch_complete: boolean }>(
     `${API_BASE}/api/web/session/${sessionToken}/campaigns/${campaignId}/launch-progress`,
+  );
+}
+
+export type CampaignTimelineEvent = {
+  id?: string;
+  type: string;
+  timestamp: string;
+  actor?: string;
+  data?: Record<string, unknown>;
+  sequence?: number;
+};
+
+export async function getCampaignTimeline(sessionToken: string, campaignId: string) {
+  return fetchWithRetry<{ ok: boolean; events: CampaignTimelineEvent[] }>(
+    `${API_BASE}/api/web/session/${sessionToken}/campaigns/${campaignId}/timeline`,
   );
 }
 

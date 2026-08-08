@@ -168,13 +168,30 @@ export type CampaignInsight = {
   footnote: string;
 };
 
+export type CampaignLaunchProgress = {
+  status: string;
+  total: number;
+  sent: number;
+  failed: number;
+};
+
 export type CampaignData = {
   id?: string;
   name: string;
   status: string;
+  currentStep?: string;
+  generation?: {
+    status?: string;
+    total?: number;
+    completed?: number;
+    batch_id?: string;
+  };
   createdAt: string;
   objective: string;
   leadCount?: number;
+  pendingDrafts?: number;
+  approvedDrafts?: number;
+  launch?: CampaignLaunchProgress;
   leads?: Array<Record<string, unknown>>;
   strategy?: Record<string, unknown> | null;
   milestones: CampaignMilestone[];

@@ -21,8 +21,18 @@ def _draft_status(s: str) -> str:
     return s.lower() if s else "pending"
 
 
-def _campaigns_from_wm(state: WorkspaceState) -> list[dict]:
-    """Build enriched campaign list (with pending/approved counts) from WM."""
+def _campaigns_from_wm(state: WorkspaceState, campaigns: list | None = None) -> list[dict]:
+    """Build enriched campaign list (with pending/approved counts) from WM.
+
+    Progression is derived by the canonical ``_derive_campaign_step`` — the
+    single source of truth shared with the web API path. Strategy presence is
+    merged from the canonical campaign rows (the WM event log does not carry
+    strategy facts), so every surface derives the same step from the same
+    gates: leads -> strategy -> drafts -> review -> sending.
+    """
+    from services.workspace_snapshot import _derive_campaign_step
+
+    legacy_by_id = {c.get("id"): c for c in (campaigns or [])}
     result = []
     for c in state.pipeline.campaigns:
         cdrafts = [d for d in state.pipeline.drafts if d.campaign_id == c.id]
@@ -31,16 +41,20 @@ def _campaigns_from_wm(state: WorkspaceState) -> list[dict]:
             1 for d in cdrafts
             if _draft_status(d.status) in ("approved", "auto_approved")
         )
-        result.append({
+        legacy = legacy_by_id.get(c.id)
+        entry = {
             "id": c.id,
             "name": c.name,
-            "status": c.status,
-            "lead_count": c.lead_count,
+            "status": (legacy or {}).get("status", c.status),
+            "lead_count": int((legacy or {}).get("lead_count", c.lead_count) or 0),
             "pending_drafts": pending,
             "approved_drafts": approved,
+            "strategy": bool(legacy and legacy.get("strategy")),
             "created_at": c.created_at,
             "updated_at": c.updated_at,
-        })
+        }
+        entry["current_step"] = _derive_campaign_step(entry)
+        result.append(entry)
     return result
 
 
@@ -58,6 +72,7 @@ def _draft_summary_from_wm(state: WorkspaceState) -> dict:
 def build_snapshot_from_wm(
     session_token: str,
     user_id: str | None = None,
+    campaigns: list | None = None,
 ) -> dict | None:
     """Build a snapshot dict from the World Model.
 
@@ -78,14 +93,14 @@ def build_snapshot_from_wm(
         _DATA_SOURCE = None
         return None
 
-    campaign_list = _campaigns_from_wm(state)
+    campaign_list = _campaigns_from_wm(state, campaigns=campaigns)
 
     campaigns_ready = sum(
         1 for c in campaign_list
-        if c["status"] in ("ready", "ready_to_send")
+        if c["current_step"] == "sending"
     )
     campaigns_draft_review = sum(
-        1 for c in campaign_list if c["status"] == "draft_review"
+        1 for c in campaign_list if c["current_step"] == "review"
     )
 
     draft_summary = _draft_summary_from_wm(state)

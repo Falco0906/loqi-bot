@@ -9,6 +9,7 @@ import {
   saveWizardData,
 } from "../../lib/onboarding-api";
 import { createSession, getGmailAuthUrl } from "../../lib/api";
+import { isTrustedGmailOAuthMessage, openGmailAuthPopup } from "../../lib/gmail-oauth";
 import { generateStrategicProfile } from "../../lib/strategic-intelligence-api";
 import type { StrategicProfile } from "../../lib/strategic-intelligence-api";
 import { ProfileValue } from "../../components/shared/ProfileValue";
@@ -133,6 +134,8 @@ export default function OnboardingPage() {
   // Listen for Gmail OAuth callback from popup
   useEffect(() => {
     const handler = (event: MessageEvent) => {
+      // Strict origin validation — only accept messages from the API origin.
+      if (!isTrustedGmailOAuthMessage(event)) return;
       if (event.data?.type === "gmail-oauth") {
         setConnecting(false);
         const payload = event.data?.payload;
@@ -242,21 +245,17 @@ export default function OnboardingPage() {
   const handleConnect = async () => {
     setConnecting(true);
     setConnectError(null);
-    try {
-      const res = await getGmailAuthUrl(sessionToken || undefined);
-      if (res.ok && res.url) {
-        const popup = window.open(res.url, "gmail-oauth", "width=600,height=700");
-        if (!popup) {
-          window.location.href = res.url;
-        }
-      } else {
-        setConnecting(false);
-        setConnectError("Failed to initiate OAuth flow.");
-      }
-    } catch (e) {
+    // PR10.9: open the popup synchronously (within the click gesture), then
+    // navigate it to the auth URL. Never replace the onboarding tab.
+    const result = await openGmailAuthPopup(() => getGmailAuthUrl(sessionToken || undefined));
+    if (result.status === "blocked") {
       setConnecting(false);
-      setConnectError("Failed to connect. Please try again.");
+      setConnectError("Popup blocked — please allow popups for this site and try again.");
+    } else if (result.status === "error") {
+      setConnecting(false);
+      setConnectError("Failed to initiate OAuth flow.");
     }
+    // "opened" keeps connecting=true until the popup reports back.
   };
 
   const handleEnterMissionControl = async () => {

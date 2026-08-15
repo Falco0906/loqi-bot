@@ -2250,6 +2250,17 @@ def _remove_existing_gmail_provider(user_id: str) -> None:
         log.info("[oauth] Replaced %d existing Gmail provider(s) for user %s", removed, user_id[:8])
 
 
+def _frontend_postmessage_origin() -> str:
+    """Origin the OAuth callback may postMessage to (the Loqi frontend).
+
+    PR10.8.x: the callback must NOT broadcast to '*' — it targets the
+    configured frontend origin (FRONTEND_ORIGIN or FRONTEND_URL). Falls back
+    to '*' only in development when no frontend origin is configured; the
+    receiving frontend listener always validates event.origin strictly.
+    """
+    return os.getenv("FRONTEND_ORIGIN") or os.getenv("FRONTEND_URL") or ""
+
+
 def _resolve_oauth_state_user(state: str) -> str:
     """Resolve the OAuth callback state to the durable Loqi user id.
 
@@ -2317,6 +2328,7 @@ def gmail_auth_callback(code: str = "", state: str = "", error: str = ""):
         error_msg = str(e)
     payload = json.dumps({"ok": ok, "provider_id": provider_id, "email": email_val, "error": error_msg})
     status_text = "✓ Gmail Connected" if ok else "✗ Gmail Connection Failed"
+    pm_target = _frontend_postmessage_origin() or "*"
     html = f"""<!DOCTYPE html>
 <html><body style="font-family:sans-serif;background:#0f172a;color:#e2e8f0;padding:40px;text-align:center">
 <h2>{status_text}</h2>
@@ -2324,7 +2336,7 @@ def gmail_auth_callback(code: str = "", state: str = "", error: str = ""):
 <p style="color:#6b7280;font-size:13px">You can close this window.</p>
 <script>
 if (window.opener) {{
-    window.opener.postMessage({{ type: 'gmail-oauth', payload: {payload} }}, '*');
+    window.opener.postMessage({{ type: 'gmail-oauth', payload: {payload} }}, {json.dumps(pm_target)});
     setTimeout(function() {{ window.close(); }}, 500);
 }}
 </script>
@@ -5862,13 +5874,13 @@ async def google_callback(code: str, state: str):
             return PlainTextResponse("Gmail connected. You can go back to Telegram.")
 
         return HTMLResponse(
-            """
+            f"""
             <html>
               <body style="background:#0b1020;color:#f3f4f6;font-family:system-ui;padding:32px;">
                 <h1 style="margin:0 0 12px;">Gmail connected</h1>
                 <p style="opacity:.8;">You can close this window and return to Loqi.</p>
                 <script>
-                  window.opener && window.opener.postMessage({ type: 'loqi:gmail-connected' }, '*');
+                  window.opener && window.opener.postMessage({{ type: 'loqi:gmail-connected' }}, {json.dumps(_frontend_postmessage_origin() or '*')});
                 </script>
               </body>
             </html>

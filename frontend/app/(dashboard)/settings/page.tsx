@@ -11,6 +11,7 @@ import {
   statusTone,
   type ProviderInfo,
 } from "../../../lib/gmail-settings";
+import { isTrustedGmailOAuthMessage, openGmailAuthPopup } from "../../../lib/gmail-oauth";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
@@ -19,6 +20,7 @@ export default function SettingsPage() {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState("");
   const [healthMap, setHealthMap] = useState<Record<string, { status: string; last_sync: string }>>({});
 
   useEffect(() => {
@@ -56,8 +58,13 @@ export default function SettingsPage() {
 
   useEffect(() => {
     const handler = (event: MessageEvent) => {
+      // Strict origin validation: only accept messages from the API origin
+      // (the Gmail OAuth callback popup). Never trust a message from an
+      // arbitrary origin.
+      if (!isTrustedGmailOAuthMessage(event)) return;
       if (event.data?.type === "gmail-oauth") {
         setConnecting(false);
+        setConnectError("");
         fetchProviders();
       }
     };
@@ -68,19 +75,20 @@ export default function SettingsPage() {
   const handleConnect = async () => {
     if (!sessionToken) return;
     setConnecting(true);
-    try {
-      const res = await getGmailAuthUrl(sessionToken);
-      if (res.ok && res.url) {
-        const popup = window.open(res.url, "gmail-oauth", "width=600,height=700");
-        if (!popup) {
-          window.location.href = res.url;
-        }
-      } else {
-        setConnecting(false);
-      }
-    } catch {
+    setConnectError("");
+    // PR10.9: open the popup synchronously (within the click gesture) so it
+    // is not blocked, then navigate it to the auth URL. Never replace the
+    // current Loqi tab with the OAuth callback.
+    const result = await openGmailAuthPopup(() => getGmailAuthUrl(sessionToken));
+    if (result.status === "blocked") {
       setConnecting(false);
+      setConnectError("Popup blocked — please allow popups for this site and try again.");
+    } else if (result.status === "error") {
+      setConnecting(false);
+      setConnectError("Could not start Gmail connection. Please try again.");
     }
+    // "opened" keeps the button disabled until the popup reports back via
+    // postMessage (the message handler above re-fetches the accounts).
   };
 
   const handleDisconnect = async (providerId: string) => {
@@ -133,6 +141,10 @@ export default function SettingsPage() {
             </button>
           )}
         </div>
+
+        {connectError && (
+          <p className="mb-3 text-sm text-error" role="alert">{connectError}</p>
+        )}
 
         {loading ? (
           <div className="flex items-center gap-3 rounded-xl border border-outline-variant/10 bg-charcoal/50 px-5 py-6">

@@ -34,6 +34,7 @@ import {
   outboundApproveAll,
   TimeoutError,
 } from "../../../lib/api";
+import { isTrustedGmailOAuthMessage, openGmailAuthPopup } from "../../../lib/gmail-oauth";
 
 const SESSION_KEY = "loqi_active_session_token";
 const DEV_MODE =
@@ -288,10 +289,11 @@ export default function DevProvidersPage() {
     setOauthError("");
     setOauthResult(null);
     try {
-      const res = await getGmailAuthUrl(token || undefined);
-      if (res.ok && res.url) {
-        setAuthUrl(res.url);
-        window.open(res.url, "_blank");
+      const result = await openGmailAuthPopup(() => getGmailAuthUrl(token || undefined));
+      if (result.status === "opened") {
+        setAuthUrl("(popup opened)");
+      } else if (result.status === "blocked") {
+        setOauthError("Popup blocked — please allow popups for this site and try again.");
       } else {
         setOauthError("Failed to get auth URL. Check GOOGLE_CLIENT_ID env.");
       }
@@ -585,6 +587,7 @@ export default function DevProvidersPage() {
   // Listen for OAuth callback from popup via postMessage
   useEffect(() => {
     function onMessage(ev: MessageEvent) {
+      if (!isTrustedGmailOAuthMessage(ev)) return;
       if (ev.data?.type === "gmail-oauth" && ev.data?.payload) {
         const p = ev.data.payload;
         if (p.ok && p.provider_id) {

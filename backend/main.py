@@ -563,6 +563,31 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Sanitize server-error (5xx) responses end to end.
+
+    FastAPI's default HTTPException handler returns ``exc.detail`` verbatim.
+    Several routes raise ``HTTPException(status_code=5xx, detail=str(e))`` which
+    would leak raw exception text (internal paths, provider/SQL fragments) to
+    production clients. For 5xx we log the real detail server-side (with the
+    request/correlation id) and return a generic message; 4xx details are
+    preserved because they describe the client's request, not internals.
+    """
+    status = exc.status_code
+    detail = exc.detail
+    headers = exc.headers or {}
+    if status >= 500:
+        req_id = request_id_var.get("") or str(getattr(request.state, "request_id", "") or "")
+        log.error(
+            "http_5xx request_id=%s method=%s path=%s status=%d detail=%s",
+            req_id, request.method, redact_session_path(request.url.path), status, detail,
+        )
+        detail = "Internal Server Error"
+    content = {"detail": detail} if not isinstance(detail, (dict, list)) else detail
+    return JSONResponse(status_code=status, content=content, headers=headers)
+
+
 engine = ConversationEngine()
 _start_time = time.time()
 

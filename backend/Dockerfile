@@ -49,7 +49,7 @@ RUN useradd --create-home --uid 10001 appuser \
 USER appuser
 
 EXPOSE 10000
-VOLUME ["/data"]
+# shit causes a failed railway deploy VOLUME ["/data"]
 
 # Production startup (matches render.yaml); never a reload server.
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000}"]

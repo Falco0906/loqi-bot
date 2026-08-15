@@ -10,20 +10,17 @@ type Props = {
   id: string;
   name: string;
   status: string;
+  step?: string;
   leadCount: number;
   pendingDrafts: number;
   approvedDrafts: number;
   createdAt: string;
   updatedAt: string;
-  onContinue?: () => void;
-  onGenerate?: () => void;
   onArchive?: () => void;
   onUnarchive?: () => void;
   onDelete?: () => void;
   onRename?: () => void;
   onDuplicate?: () => void;
-  onMerge?: () => void;
-  onSplit?: () => void;
 };
 
 function timeAgo(iso: string): string {
@@ -35,34 +32,29 @@ function timeAgo(iso: string): string {
   return `${Math.floor(ms / 86400000)}d ago`;
 }
 
-const STATUS_ACTIONS: Record<string, { primary: string; secondary?: string; link?: string }> = {
-  planning: { primary: "Continue Planning", link: `/campaigns/${"id"}` },
-  ready: { primary: "Generate Drafts", link: `/campaigns/${"id"}` },
-  generating: { primary: "Generating..." },
-  draft_review: { primary: "Review Drafts", link: "/draft?campaign=" },
-  ready_to_send: { primary: "Launch Campaign", link: `/campaigns/${"id"}` },
-  completed: { primary: "View Campaign", link: `/campaigns/${"id"}` },
-  archived: { primary: "View Campaign", link: `/campaigns/${"id"}` },
+const STEP_ACTIONS: Record<string, { primary: string; link: (id: string) => string }> = {
+  research: { primary: "Research Prospects", link: (id) => `/campaigns/${id}` },
+  strategy: { primary: "Generate Strategy", link: (id) => `/campaigns/${id}` },
+  drafts: { primary: "Generate Drafts", link: (id) => `/campaigns/${id}` },
+  review: { primary: "Review Drafts", link: (id) => `/draft?campaign=${encodeURIComponent(id)}` },
+  sending: { primary: "Launch Campaign", link: (id) => `/campaigns/${id}` },
 };
 
 export default function CampaignCard({
   id,
   name,
   status,
+  step,
   leadCount,
   pendingDrafts,
   approvedDrafts,
   createdAt,
   updatedAt,
-  onContinue,
-  onGenerate,
   onArchive,
   onUnarchive,
   onDelete,
   onRename,
   onDuplicate,
-  onMerge,
-  onSplit,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -77,69 +69,52 @@ export default function CampaignCard({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const hasDrafts = pendingDrafts > 0 || approvedDrafts > 0;
-  const actions = STATUS_ACTIONS[status] || STATUS_ACTIONS.planning;
+  const stepAction = STEP_ACTIONS[step || ""] || (status === "planning" ? STEP_ACTIONS.research : null);
 
   const primaryAction = (() => {
-    switch (status) {
-      case "planning":
-        return (
-          <Link
-            href={`/campaigns/${id}`}
-            className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
-          >
-            {actions.primary}
-          </Link>
-        );
-      case "ready":
-        return (
-          <Link
-            href={`/campaigns/${id}`}
-            className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
-          >
-            {actions.primary}
-          </Link>
-        );
-      case "generating":
-        return (
-          <span className="px-3 py-1.5 rounded-lg bg-outline-variant/20 text-on-surface-variant/60 text-xs font-medium cursor-not-allowed">
-            <span className="inline-block w-3 h-3 border-2 border-on-surface-variant/30 border-t-transparent rounded-full animate-spin mr-1 align-middle" />
-            {actions.primary}
-          </span>
-        );
-      case "draft_review":
-        return (
-          <Link
-            href={`/draft?campaign=${id}`}
-            className="px-3 py-1.5 rounded-lg bg-secondary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
-          >
-            {actions.primary}
-          </Link>
-        );
-      case "ready_to_send":
-        return (
-          <Link
-            href={`/campaigns/${id}`}
-            className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
-          >
-            <Icon name="rocket_launch" className="text-xs mr-1 align-middle inline-block" />
-            {actions.primary}
-          </Link>
-        );
-      default:
-        return (
-          <Link
-            href={`/campaigns/${id}`}
-            className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
-          >
-            {actions.primary}
-          </Link>
-        );
+    if (status === "archived") {
+      return (
+        <Link
+          href={`/campaigns/${id}`}
+          className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
+        >
+          View Campaign
+        </Link>
+      );
     }
+    if (step === "review") {
+      return (
+        <Link
+          href={stepAction?.link(id) || `/draft?campaign=${encodeURIComponent(id)}`}
+          className="px-3 py-1.5 rounded-lg bg-secondary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
+        >
+          {stepAction?.primary || "Review Drafts"}
+        </Link>
+      );
+    }
+    if (step === "sending") {
+      return (
+        <Link
+          href={stepAction?.link(id) || `/campaigns/${id}`}
+          className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
+        >
+          <Icon name="rocket_launch" className="text-xs mr-1 align-middle inline-block" />
+          {stepAction?.primary || "Launch Campaign"}
+        </Link>
+      );
+    }
+    return (
+      <Link
+        href={stepAction?.link(id) || `/campaigns/${id}`}
+        className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
+      >
+        {stepAction?.primary || "Continue Planning"}
+      </Link>
+    );
   })();
 
   const secondaryAction = (() => {
-    if (status === "draft_review" || status === "ready_to_send") {
+    if (status !== "archived" && (step === "review" || step === "sending")) {
       return (
         <Link
           href={`/campaigns/${id}`}
@@ -245,21 +220,6 @@ export default function CampaignCard({
                   Archive
                 </button>
               )}
-              <hr className="border-outline-variant/10 my-1" />
-              <button
-                onClick={() => { setMenuOpen(false); onMerge?.(); }}
-                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-on-surface hover:bg-surface/60 transition-all"
-              >
-                <Icon name="tune" className="text-sm text-on-surface-variant" />
-                Merge
-              </button>
-              <button
-                onClick={() => { setMenuOpen(false); onSplit?.(); }}
-                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-xs text-on-surface hover:bg-surface/60 transition-all"
-              >
-                <Icon name="tune" className="text-sm text-on-surface-variant" />
-                Split
-              </button>
               <hr className="border-outline-variant/10 my-1" />
               <button
                 onClick={() => { setMenuOpen(false); onDelete?.(); }}

@@ -446,14 +446,33 @@ def _get_deterministic_icp(user_input: str, existing_context: Optional[dict] = N
     search_hints = _generate_search_hints(offer, buyer_industries, buyer_roles)
     _log(f"search_hints={search_hints}")
 
+    # Workspace ICP Knowledge is optional guidance. It supplements the user
+    # request but never replaces prospect-specific evidence or creates a hard
+    # rule from Strategic Updates.
+    context_icp = (existing_context or {}).get("knowledge_icp") or {}
+    buyer_industries = _dedupe_and_cap(
+        buyer_industries[:3] + list(context_icp.get("buyer_industries") or []), 4)
+    buyer_roles = _dedupe_and_cap(
+        buyer_roles[:7] + list(context_icp.get("buyer_roles") or []), 10)
+    excluded_roles = _dedupe_and_cap(
+        excluded_roles[:7] + list(context_icp.get("excluded_roles") or []), 10)
+    company_types = _dedupe_and_cap(
+        list(context_icp.get("company_types") or []), 4)
+    pain_points = _dedupe_and_cap(
+        list(context_icp.get("pain_points") or []), 6)
+    keywords = _dedupe_and_cap(
+        keywords[:7] + list(context_icp.get("keywords") or []), 10)
+    search_hints = _dedupe_and_cap(
+        search_hints + buyer_roles[:3], 6)
+
     return {
         "offer": offer,
         "service_category": service_category,
         "buyer_industries": buyer_industries,
         "buyer_roles": _dedupe_and_cap(buyer_roles, 10),
         "excluded_roles": excluded_roles,
-        "company_types": [],
-        "pain_points": [],
+        "company_types": company_types,
+        "pain_points": pain_points,
         "keywords": keywords,
         "search_hints": search_hints,
         "mode": "fallback"
@@ -580,6 +599,11 @@ Rules:
             context_info += f"Previous service: {existing_context['service']}\n"
         if existing_context.get("target"):
             context_info += f"Previous target: {existing_context['target']}\n"
+        try:
+            from services.discovery_context import format_discovery_context
+            context_info += format_discovery_context(existing_context)
+        except Exception:
+            pass
 
     user_text = f"""User input: {user_input}
 {context_info}

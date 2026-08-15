@@ -172,14 +172,18 @@ class SyntheticEnricher(BaseEnricher):
     # ------------------------------------------------------------------
 
     def _recommend_pitch(self, company: str, industry: str, pain_points: list, buying_signals: list) -> str:
-        """Recommend what angle the AI should lead with."""
+        """Recommend what angle the AI should lead with — grounded only in
+        actual evidence. Returns an empty string when nothing specific is
+        known: a generic angle is worse than an honest gap, because the
+        outreach model would otherwise "ground" drafts in invented filler.
+        """
         if pain_points:
             top = pain_points[0]
             return f"Lead with how your solution addresses '{top}', which directly relates to {company}'s current challenges in the {industry or 'industry'} space."
         if buying_signals:
             signal = buying_signals[0]
             return f"Reference '{signal}' as a timely reason to connect with {company}."
-        return f"Position your solution as a way to help {company} modernize operations in {industry or 'their industry'}."
+        return ""
 
     def _pain_summary(self, pain_points: list, description: str) -> str:
         if pain_points:

@@ -24,6 +24,11 @@ from services.communication.provider_models import (
 from services.communication.communication_store import store
 from services.communication.provider_normalizer import normalize_message
 from services.communication.provider_events import emit_event
+from services.gmail_auth_failure import (
+    GmailReauthRequired,
+    GmailTransientError,
+    raise_for_token_response,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +48,7 @@ class GmailProvider(CommunicationProviderBase):
     def __init__(self) -> None:
         self._provider_id: str = ""
         self._user_id: str = ""
+        self._account_id: str = ""
         self._access_token: str = ""
         self._refresh_token: str = ""
         self._token_expiry: float = 0.0
@@ -57,14 +63,15 @@ class GmailProvider(CommunicationProviderBase):
 
     def connect(self, auth_token: str, **kwargs) -> CommunicationProvider:
         logger.info(
-            "[GMail] connect() called | user_id=%s | email=%s | has_refresh_token=%s | token_prefix=%s...",
+            "[GMail] connect() called | user_id=%s | email=%s | has_refresh_token=%s | has_access_token=%s",
             kwargs.get("user_id", "default"),
             kwargs.get("email", ""),
             bool(kwargs.get("refresh_token")),
-            auth_token[:20] if auth_token else "none",
+            bool(auth_token),
         )
         user_id = kwargs.get("user_id", "default")
         self._user_id = user_id
+        self._account_id = kwargs.get("account_id", "")
         self._access_token = auth_token
         self._refresh_token = kwargs.get("refresh_token", "")
         self._client_id = kwargs.get("client_id", "")
@@ -79,6 +86,7 @@ class GmailProvider(CommunicationProviderBase):
             status=ProviderStatus.HEALTHY,
             metadata={
                 "email": kwargs.get("email", ""),
+                "account_id": kwargs.get("account_id", ""),
                 "scope": kwargs.get("scope", ""),
             },
         )
@@ -106,6 +114,11 @@ class GmailProvider(CommunicationProviderBase):
 
     def health(self) -> ProviderStatus:
         if not self._connected:
+            # A reauth-required provider must NOT attempt a token refresh from
+            # a health probe (that would hammer Google with a doomed refresh).
+            current = store.get_provider(self._provider_id)
+            if current is not None and current.status == ProviderStatus.AUTH_FAILED:
+                return ProviderStatus.AUTH_FAILED
             logger.warning("[GMail] health() => OFFLINE (not connected)")
             return ProviderStatus.OFFLINE
         try:
@@ -125,6 +138,38 @@ class GmailProvider(CommunicationProviderBase):
             logger.error("[GMail] health() exception: %s", e, exc_info=True)
             raise
 
+    # ── Re-auth lifecycle ──
+
+    def mark_reauth_required(self) -> None:
+        """Enter the explicit reauth-required state.
+
+        - stops the sync engine from attempting doomed refreshes (``_connected``
+          becomes False)
+        - reflects the state through the existing provider status field
+        - persists the condition on the connected_accounts row so a restart
+          restores the provider already in the reauth-required state
+        - emits a single meaningful transition event
+        """
+        self._connected = False
+        store.update_provider_status(self._provider_id, ProviderStatus.AUTH_FAILED)
+        try:
+            from services.supabase import mark_connected_account_auth_failed
+            mark_connected_account_auth_failed(self._user_id, "google")
+        except Exception as e:
+            logger.warning(
+                "gmail_auth_state_persist_failed provider_id=%s user_id=%s error_type=%s",
+                self._provider_id[:12], self._user_id, type(e).__name__,
+            )
+        emit_event(
+            ProviderEventType.TOKEN_FAILED,
+            self._provider_id,
+            "Gmail re-authentication required",
+        )
+        logger.warning(
+            "gmail_auth_reauth_required provider_id=%s user_id=%s action=reauth_required",
+            self._provider_id[:12], self._user_id,
+        )
+
     # ── Token Management ──
 
     def _ensure_auth(self) -> None:
@@ -143,9 +188,12 @@ class GmailProvider(CommunicationProviderBase):
 
     def _refresh_auth(self) -> None:
         if not self._refresh_token:
-            raise Exception("No refresh token available — cannot refresh Gmail auth")
+            raise GmailReauthRequired("No refresh token available — Gmail re-auth required")
 
-        logger.info("[GMail] Refreshing access token via %s", TOKEN_URL)
+        logger.info(
+            "gmail_token_refresh_started provider_id=%s user_id=%s",
+            self._provider_id[:12], self._user_id,
+        )
         try:
             resp = requests.post(
                 TOKEN_URL,
@@ -158,13 +206,12 @@ class GmailProvider(CommunicationProviderBase):
                 timeout=15,
             )
             logger.info(
-                "[GMail] Token refresh response | status=%s body_preview=%s",
-                resp.status_code, resp.text[:200] if resp.text else "(empty)",
+                "gmail_token_refresh_status provider_id=%s status=%d",
+                self._provider_id[:12], resp.status_code,
             )
-            if resp.status_code != 200:
-                raise Exception(
-                    f"Token refresh failed | status={resp.status_code} body={resp.text[:500]}"
-                )
+            raise_for_token_response(
+                resp, provider_id=self._provider_id, user_id=self._user_id,
+            )
 
             data = resp.json()
             new_token = data.get("access_token", "")
@@ -176,19 +223,25 @@ class GmailProvider(CommunicationProviderBase):
                 self._refresh_token = data["refresh_token"]
 
             logger.info(
-                "[GMail] Token refreshed | expires_in=%ds new_prefix=%s...",
-                expires_in, self._access_token[:20] if self._access_token else "none",
+                "gmail_token_refreshed provider_id=%s expires_in=%ds",
+                self._provider_id[:12], expires_in,
             )
             emit_event(ProviderEventType.TOKEN_REFRESHED, self._provider_id, "Token refreshed")
 
+        except GmailReauthRequired:
+            self.mark_reauth_required()
+            raise
         except requests.RequestException as e:
-            logger.error("[GMail] Token refresh request failed: %s", e, exc_info=True)
+            logger.warning(
+                "gmail_token_refresh_transient provider_id=%s user_id=%s error_type=%s",
+                self._provider_id[:12], self._user_id, type(e).__name__,
+            )
             emit_event(
                 ProviderEventType.TOKEN_FAILED,
                 self._provider_id,
-                f"Token refresh failed: {e}",
+                "Token refresh failed (transient)",
             )
-            raise
+            raise GmailTransientError("Gmail token refresh failed") from e
 
     def _gmail_get(self, path: str, params: dict | None = None) -> dict:
         """Make an authenticated GET request to the Gmail API."""
@@ -197,8 +250,8 @@ class GmailProvider(CommunicationProviderBase):
         headers = {"Authorization": f"Bearer {self._access_token}"}
 
         logger.info(
-            "[GMail] GET %s | params=%s | token_prefix=%s...",
-            url, params, self._access_token[:20] if self._access_token else "none",
+            "[GMail] GET %s | params=%s | authed=%s",
+            url, params, bool(self._access_token),
         )
 
         resp = requests.get(url, headers=headers, params=params, timeout=30)
@@ -209,8 +262,8 @@ class GmailProvider(CommunicationProviderBase):
 
         if resp.status_code == 401:
             logger.warning(
-                "[GMail] 401 on %s | body=%s | refreshing token and retrying...",
-                path, resp.text[:300],
+                "gmail_api_401 provider_id=%s path=%s action=refresh_retry",
+                self._provider_id[:12], path,
             )
             self._refresh_auth()
             headers = {"Authorization": f"Bearer {self._access_token}"}
@@ -221,17 +274,16 @@ class GmailProvider(CommunicationProviderBase):
             )
 
         if resp.status_code != 200:
-            body = resp.text[:1000]
             logger.error(
-                "[GMail] Non-200 response | url=%s status=%d body=%s",
-                url, resp.status_code, body,
+                "gmail_api_error provider_id=%s path=%s status=%d",
+                self._provider_id[:12], path, resp.status_code,
             )
-            raise Exception(
-                f"Gmail API error | path={path} status={resp.status_code} body={body}"
+            raise GmailTransientError(
+                f"Gmail API error | path={path} status={resp.status_code}"
             )
 
         json_data = resp.json()
-        logger.debug("[GMail] GET %s response JSON (truncated): %s", path, json_data)
+        logger.debug("[GMail] GET %s response parsed keys=%s", path, sorted(json_data.keys())[:10])
         return json_data
 
     # ── Sync Engine ──

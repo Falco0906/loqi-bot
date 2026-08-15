@@ -10,7 +10,12 @@ _INDUSTRY_MAP: dict[str, str] = {
     "restaurants": "Restaurant",
     "restaurant": "Restaurant",
     "cafe": "Cafe",
-    "hospitality": "Hotel",
+    "cafes": "Cafe",
+    "coffee shop": "Cafe",
+    "coffee shops": "Cafe",
+    "food and beverage": "Restaurant",
+    "food service": "Restaurant",
+    "hospitality": "Restaurant",
     "hotels": "Hotel",
     "hotel": "Hotel",
     "healthcare": "Healthcare",
@@ -265,6 +270,8 @@ class SyntheticProvider(BaseProvider):
         buyer_roles: list[str] = icp.get("buyer_roles") or []
         excluded_roles: list[str] = icp.get("excluded_roles") or []
         keywords: list[str] = icp.get("keywords") or []
+        negative_keywords: list[str] = icp.get("negative_keywords") or []
+        wanted_technologies: list[str] = icp.get("technologies") or []
 
         # Normalize industries from ICP to synthetic names
         target_industries: set[str] = set()
@@ -287,24 +294,65 @@ class SyntheticProvider(BaseProvider):
             for c in ds.companies:
                 matched_cids.add(c.get("company_id"))
 
-        # Match and score
+        # Match and score. Constraint stages are relaxed progressively so a
+        # locality-only mapping gap can never collapse the result to zero:
+        #   1. industry filter + negative keywords
+        #   2. industry filter, negatives dropped
+        #   3. industry filter dropped, negatives kept
+        #   4. no constraints at all
+        stages = [
+            (matched_cids, True),
+            (matched_cids, False),
+            (None, True),
+            (None, False),
+        ]
+        stage_names = [
+            "industry+negatives",
+            "industry-only",
+            "all+negatives",
+            "unconstrained",
+        ]
+
         scored: list[tuple[float, dict]] = []
+        used_stage = 0
 
-        for lead in ds.all_leads:
-            cid = lead.get("company_id") or ""
-            if cid and cid not in matched_cids:
-                continue
+        for stage_index, (stage_cids, apply_negatives) in enumerate(stages):
+            stage_results: list[tuple[float, dict]] = []
 
-            title = lead.get("title") or ""
-            if _is_excluded(title, excluded_roles):
-                continue
+            for lead in ds.all_leads:
+                cid = lead.get("company_id") or ""
+                if stage_cids is not None and (cid not in stage_cids):
+                    continue
 
-            role_score = _title_matches_role(title, buyer_roles)
-            keyword_score = self._score_keywords(lead, keywords)
+                title = lead.get("title") or ""
+                if _is_excluded(title, excluded_roles):
+                    continue
 
-            total = float(role_score * 10 + keyword_score * 2 + (lead.get("buying_authority") or 0) * 0.1)
-            scored.append((total, lead))
+                if apply_negatives and self._company_is_excluded(lead, negative_keywords):
+                    continue
 
+                role_score = _title_matches_role(title, buyer_roles)
+                keyword_score = self._score_keywords(lead, keywords)
+                tech_score = self._score_technologies(lead, wanted_technologies)
+
+                total = float(
+                    role_score * 10
+                    + keyword_score * 2
+                    + tech_score * 3
+                    + (lead.get("buying_authority") or 0) * 0.1
+                )
+                stage_results.append((total, lead))
+
+            if len(stage_results) > 0:
+                scored = stage_results
+                used_stage = stage_index
+                break
+
+        if used_stage > 0:
+            _log(
+                f"Zero candidates under strict constraints — relaxed to stage {used_stage}"
+                f" ({stage_names[used_stage]})"
+            )
         scored.sort(key=lambda x: x[0], reverse=True)
 
         leads = [lead for _, lead in scored[:limit]]
@@ -351,6 +399,31 @@ class SyntheticProvider(BaseProvider):
                 if len(word) >= 3 and word in text_fields:
                     score += 1
         return score
+
+    def _score_technologies(self, lead: dict, wanted_technologies: list[str]) -> int:
+        """Score a lead by how many plan technologies its stack matches."""
+        if not wanted_technologies:
+            return 0
+        stack = (lead.get("company_technology") or {})
+        tech_names = " ".join(str(x) for x in stack.values() if isinstance(x, str)).lower()
+        tech_names += " " + " ".join(k.lower() for k in stack.keys())
+        return sum(1 for t in wanted_technologies if str(t).lower() in tech_names)
+
+    def _company_is_excluded(self, lead: dict, negative_keywords: list[str]) -> bool:
+        """Exclude companies that match a negative keyword (franchises,
+        national chains, hotels, nightclubs, etc.)."""
+        if not negative_keywords:
+            return False
+        haystack = " ".join([
+            lead.get("company") or "",
+            lead.get("company_description") or "",
+            lead.get("company_industry") or "",
+            lead.get("company_sub_industry") or "",
+        ]).lower()
+        for neg in negative_keywords:
+            if str(neg).strip().lower() in haystack:
+                return True
+        return False
 
     def get_lead(self, lead_id: str) -> dict | None:
         return self._data.leads_by_id.get(lead_id)

@@ -14,6 +14,13 @@ from types import SimpleNamespace
 import pytest
 
 import main as main_module
+def _auth_request(token="pr3b-tok-1"):
+    from unittest.mock import MagicMock
+    request = MagicMock()
+    request.headers.get = lambda k, d="": f"Bearer {token}" if k == "authorization" else d
+    return request
+
+
 import services.workspace_state as workspace_state
 from services.outbound.draft_store import DraftStore
 
@@ -207,7 +214,7 @@ async def test_campaign_timeline_endpoint_filters_wm_events(env):
     wm_publish("pr3b-tok-1", WMET.DRAFT_SENT, {
         "draft_id": "d3", "campaign_id": "c-9", "recipient_email": "zed@acme.com"})
 
-    result = await main_module.campaign_timeline("pr3b-tok-1", "c-1", request=None)
+    result = await main_module.campaign_timeline("_", "c-1", _auth_request("pr3b-tok-1"))
     assert result["ok"] is True
     assert [e["type"] for e in result["events"]] == ["draft_sent", "draft_failed"]
     assert all(e["data"]["campaign_id"] == "c-1" for e in result["events"])

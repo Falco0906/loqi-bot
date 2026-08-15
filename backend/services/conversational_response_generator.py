@@ -769,7 +769,7 @@ def generate_copilot_response(
         f"Navigation format: <<action:label:/path>> (e.g. <<action:Discovery:/discovery>>)\n"
         f"Include 2-4 specific action or navigation buttons at the end of your response.\n"
         f"Good navigation targets: /campaigns, /draft, /discovery, /mission-control, /campaign-intelligence, /campaigns/{{id}}\n"
-        f"Good action types: launch_campaign, view_drafts, open_campaign, approve_all, generate_drafts, select_all, search\n"
+        f"Good action types: generate_strategy, launch_campaign, view_drafts, open_campaign, duplicate_campaign, delete_campaign, add_leads, approve_all, generate_drafts, select_all, search\n"
     )
 
     if available_actions:

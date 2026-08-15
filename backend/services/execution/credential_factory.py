@@ -70,48 +70,61 @@ def resolve_google_credentials(
         )
         return {}
 
-    from services.supabase import get_user, is_token_expired
+    from services.supabase import get_google_credentials, is_token_expired
     from services.google_auth import refresh_access_token
     from services.supabase import update_google_access_token
 
-    user = get_user(user_id)
-    if user is None:
-        logger.warning("User '%s' not found — returning empty credentials", user_id)
+    creds = get_google_credentials(user_id)
+    if not creds:
+        logger.warning(
+            "User '%s' has no google connected account — returning empty credentials",
+            user_id,
+        )
         return {}
 
     # Fast path: token is still fresh — no lock needed.
-    if not is_token_expired(user.get("token_expiry")):
-        access_token = user.get("google_access_token") or ""
+    if not is_token_expired(creds.get("token_expiry")):
+        access_token = creds.get("access_token") or ""
         return {"access_token": access_token, "token_type": "Bearer"}
 
     # Token is (or appears) expired.  Serialise refreshes per user so
     # that concurrent tasks don't fire duplicate refresh requests.
     with _get_user_lock(user_id):
-        # Re-read user state — another thread may have already refreshed.
-        user = get_user(user_id)
-        if user is None:
+        # Re-read credentials — another thread may have already refreshed.
+        creds = get_google_credentials(user_id)
+        if not creds:
             return {}
-        if not is_token_expired(user.get("token_expiry")):
-            access_token = user.get("google_access_token") or ""
+        if not is_token_expired(creds.get("token_expiry")):
+            access_token = creds.get("access_token") or ""
             return {"access_token": access_token, "token_type": "Bearer"}
 
         try:
-            refresh_token = user.get("google_refresh_token", "")
+            refresh_token = creds.get("refresh_token", "")
             if not refresh_token:
                 logger.warning(
                     "User '%s' has no refresh_token — cannot refresh", user_id,
                 )
                 return {}
 
+            # Reauth-required: Google already rejected this credential. Do NOT
+            # keep attempting the doomed refresh — surface the failure once
+            # and return empty so callers fail cleanly (PR10.8.1).
+            from services.supabase import is_connected_account_reauth_required
+            if is_connected_account_reauth_required(user_id, "google"):
+                logger.warning(
+                    "gmail_auth_reauth_required user_id=%s action=reauth_required skip_refresh=yes",
+                    user_id,
+                )
+                return {}
+
             refreshed = refresh_access_token(refresh_token)
             access_token = refreshed.get("access_token", "")
-            updated_user = update_google_access_token(
+            updated = update_google_access_token(
                 user_id,
                 access_token=access_token,
                 token_expiry=refreshed.get("token_expiry"),
             )
-            if updated_user:
-                user = updated_user
+            if updated:
                 logger.info("Refreshed access token for user '%s'", user_id)
         except Exception as e:
             logger.error("Token refresh failed for user '%s': %s", user_id, e)

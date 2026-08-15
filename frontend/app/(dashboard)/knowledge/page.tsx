@@ -1,276 +1,434 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import WorkspaceContainer from "../../../components/layout/WorkspaceContainer";
 import AppPage from "../../../components/primitives/AppPage";
-import { useData } from "../../../lib/hooks/use-data";
-import { fetchKnowledge } from "../../../lib/repositories";
-import { useTellLoqi } from "../../../hooks/useTellLoqi";
-import type { KnowledgeCard as KnowledgeCardType } from "../../../lib/domain";
-import { ProfileValue } from "../../../components/shared/ProfileValue";
+import EmptyState from "../../../components/shared/EmptyState";
+import Icon from "../../../components/shared/Icon";
+import { toast } from "../../../components/shared/Toast";
+import { usePageContext } from "../../../hooks/usePageContext";
+import {
+  archiveKnowledgeItem,
+  archiveKnowledgeSource,
+  createKnowledgeItem,
+  createKnowledgeSource,
+  listKnowledge,
+  listKnowledgeSources,
+  updateKnowledgeItem,
+  updateKnowledgeSource,
+  type KnowledgeCategory,
+  type KnowledgeItem,
+  type KnowledgeItemPayload,
+  type KnowledgeItemSourceType,
+  type KnowledgeSource,
+  type KnowledgeSourcePayload,
+  type KnowledgeSourceType,
+} from "../../../lib/api";
 
-function KnowledgeCard({ card, isOpen, onToggle }: { card: KnowledgeCardType; isOpen: boolean; onToggle: () => void }) {
+const ACTIVE_SESSION_KEY = "loqi_active_session_token";
+
+const CATEGORY_CONFIG: Array<{
+  key: KnowledgeCategory;
+  label: string;
+  description: string;
+  icon: string;
+}> = [
+  { key: "company", label: "Company", description: "Products, positioning, differentiators and business context.", icon: "add_business" },
+  { key: "icp", label: "Ideal Customer Profile", description: "Who Loqi should target and who it should avoid.", icon: "groups" },
+  { key: "messaging", label: "Messaging", description: "Approved positioning, voice, claims and angles.", icon: "forum" },
+  { key: "sales_offer", label: "Sales & Proof", description: "Offers, use cases, objections, FAQs and proof points.", icon: "monetization_on" },
+];
+
+const ITEM_SOURCE_TYPES: Array<{ value: KnowledgeItemSourceType; label: string }> = [
+  { value: "user_input", label: "User input" },
+  { value: "uploaded_document", label: "Uploaded document" },
+  { value: "imported_source", label: "Imported source" },
+  { value: "system_generated", label: "System generated" },
+];
+
+const SOURCE_TYPES: Array<{ value: KnowledgeSourceType; label: string }> = [
+  { value: "user_input", label: "Note / user input" },
+  { value: "uploaded_document", label: "Uploaded document" },
+  { value: "imported_source", label: "Imported source" },
+  { value: "system_generated", label: "System generated" },
+];
+
+type ItemForm = {
+  category: KnowledgeCategory;
+  title: string;
+  summary: string;
+  content: string;
+  tags: string;
+  source_type: KnowledgeItemSourceType;
+  source_id: string;
+};
+
+type SourceForm = {
+  title: string;
+  source_type: KnowledgeSourceType;
+  content: string;
+  reference: string;
+};
+
+const emptyItemForm = (category: KnowledgeCategory = "company"): ItemForm => ({
+  category,
+  title: "",
+  summary: "",
+  content: "",
+  tags: "",
+  source_type: "user_input",
+  source_id: "",
+});
+
+const emptySourceForm = (): SourceForm => ({
+  title: "",
+  source_type: "user_input",
+  content: "",
+  reference: "",
+});
+
+function updatedLabel(value: string | null): string {
+  if (!value) return "Not dated";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Not dated";
+  return `Updated ${date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
+}
+
+function sourceLabel(value: string): string {
+  return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function Modal({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
   return (
-    <div
-      className={`bg-surface-lowest ambient-shadow rounded-xl overflow-hidden border border-transparent transition-all duration-200 ${
-        isOpen ? "border-primary/20" : "hover:border-outline-variant/20"
-      }`}
-    >
-      <button onClick={onToggle} className="w-full flex justify-between items-center p-6 text-left">
-        <div className="flex flex-col">
-          <span className="text-[10px] uppercase tracking-[0.15em] text-on-surface-variant/50 font-medium mb-1">
-            {card.category}
-          </span>
-          <h3 className="text-2xl font-serif text-on-surface font-normal">{card.title}</h3>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-obsidian/55 px-4 backdrop-blur-sm" role="dialog" aria-modal="true">
+      <button type="button" aria-label="Close dialog" className="absolute inset-0 cursor-default" onClick={onClose} />
+      <div className="relative z-10 max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-outline-variant/20 bg-surface-container-low p-6 shadow-2xl">
+        <div className="mb-6 flex items-center justify-between gap-4">
+          <h2 className="font-serif text-2xl text-on-surface">{title}</h2>
+          <button type="button" onClick={onClose} className="rounded-lg p-2 text-on-surface-variant/60 hover:bg-surface-container-high hover:text-on-surface" aria-label="Close">
+            <Icon name="close" className="text-lg" />
+          </button>
         </div>
-        <div className="flex items-center gap-4">
-          <span
-            className={`text-[10px] uppercase tracking-wider font-semibold px-3 py-1 rounded-full ${
-              card.confidenceMode === "high"
-                ? "bg-emerald-900/30 text-emerald-400"
-                : card.confidenceMode === "medium"
-                ? "bg-surface-high text-on-surface-variant"
-                : card.confidenceMode === "low"
-                ? "bg-error-container/20 text-error"
-                : "bg-surface-high text-on-surface-variant"
-            }`}
-          >
-            {card.confidence}
-          </span>
-          <span className={`material-symbols-outlined text-on-surface-variant/60 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}>
-            expand_more
-          </span>
-        </div>
-      </button>
-      <div className={`overflow-hidden transition-all duration-300 ${isOpen ? "max-h-96 opacity-100" : "max-h-0 opacity-0"}`}>
-        <div className="px-6 pb-8 pt-6 border-t border-outline-variant/10">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            {card.fields.map((field, i) => (
-              <div key={i} className={field.variant === "tags" ? "" : field.variant === "quote" ? "bg-surface-container p-4 rounded-lg" : ""}>
-                <h4 className="text-[11px] uppercase tracking-wider font-semibold mb-2 text-on-surface-variant">
-                  {field.label}
-                </h4>
-                  {field.variant === "tags" ? (
-                    <div className="flex flex-wrap gap-2">
-                      {field.tags?.map((tag) => (
-                        <span key={tag} className="px-4 py-1.5 bg-surface-container rounded-full text-sm">{tag}</span>
-                      ))}
-                    </div>
-                  ) : field.variant === "quote" ? (
-                    <div className="text-sm text-on-surface-variant italic leading-snug">
-                      <ProfileValue value={field.value} />
-                    </div>
-                  ) : (
-                    <div className={`${card.fields.length <= 2 ? "text-2xl font-serif text-primary font-normal" : "text-sm text-on-surface"}`}>
-                      <ProfileValue value={field.value} />
-                    </div>
-                  )}
-              </div>
-            ))}
-          </div>
-        </div>
+        {children}
       </div>
     </div>
   );
 }
 
-function LoadingSkeleton() {
+function TextField({
+  label,
+  value,
+  onChange,
+  multiline = false,
+  placeholder,
+  required = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  multiline?: boolean;
+  placeholder?: string;
+  required?: boolean;
+}) {
+  const className = "mt-1.5 w-full rounded-lg border border-outline-variant/20 bg-surface-lowest px-3 py-2.5 text-sm text-on-surface outline-none transition focus:border-primary/60";
   return (
-    <div className="space-y-4">
-      {[1, 2, 3, 4].map((i) => (
-        <div key={i} className="bg-surface-lowest rounded-xl overflow-hidden border border-outline-variant/10 animate-skeleton-pulse">
-          <div className="flex justify-between items-center p-6">
-            <div className="space-y-2">
-              <div className="h-3 w-16 bg-surface-high/50 rounded" />
-              <div className="h-6 w-32 bg-surface-high/50 rounded-lg" />
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="h-5 w-24 bg-surface-high/50 rounded-full" />
-              <div className="h-5 w-5 bg-surface-high/50 rounded" />
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
+    <label className="block text-xs font-semibold text-on-surface-variant">
+      {label}{required ? " *" : ""}
+      {multiline ? (
+        <textarea className={`${className} min-h-24 resize-y`} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
+      ) : (
+        <input className={className} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
+      )}
+    </label>
+  );
+}
+
+function TypeSelect<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: Array<{ value: T; label: string }>;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <label className="block text-xs font-semibold text-on-surface-variant">
+      {label}
+      <select className="mt-1.5 w-full rounded-lg border border-outline-variant/20 bg-surface-lowest px-3 py-2.5 text-sm text-on-surface outline-none focus:border-primary/60" value={value} onChange={(event) => onChange(event.target.value as T)}>
+        {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+      </select>
+    </label>
   );
 }
 
 export default function KnowledgePage() {
-  const { data, loading, error, retry } = useData(fetchKnowledge);
-  const [openCard, setOpenCard] = useState<string | null>(null);
-  const teachLoqi = useTellLoqi("Knowledge", {
-    cards: data?.cards.length ?? 0,
-  });
+  const [sessionToken, setSessionToken] = useState<string | null>(null);
+  const [items, setItems] = useState<KnowledgeItem[]>([]);
+  const [sources, setSources] = useState<KnowledgeSource[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [itemModal, setItemModal] = useState<KnowledgeItem | null | false>(false);
+  const [itemForm, setItemForm] = useState<ItemForm>(emptyItemForm());
+  const [sourceModal, setSourceModal] = useState<KnowledgeSource | null | false>(false);
+  const [sourceForm, setSourceForm] = useState<SourceForm>(emptySourceForm());
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  usePageContext("Knowledge", { items: items.length, sources: sources.length });
+
+  useEffect(() => {
+    try {
+      setSessionToken(localStorage.getItem(ACTIVE_SESSION_KEY));
+    } catch {
+      setSessionToken(null);
+    }
+  }, []);
+
+  const load = useCallback(async (token: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [itemResponse, sourceResponse] = await Promise.all([
+        listKnowledge(token),
+        listKnowledgeSources(token),
+      ]);
+      setItems(itemResponse.items || []);
+      setSources(sourceResponse.sources || []);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Knowledge could not be loaded");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (sessionToken) void load(sessionToken);
+    else setLoading(false);
+  }, [sessionToken, load]);
+
+  const visibleItems = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return items;
+    return items.filter((item) => JSON.stringify(item).toLowerCase().includes(query));
+  }, [items, search]);
+
+  function openNewItem(category: KnowledgeCategory) {
+    setFormError(null);
+    setItemForm(emptyItemForm(category));
+    setItemModal(null);
+  }
+
+  function openEditItem(item: KnowledgeItem) {
+    setFormError(null);
+    setItemForm({
+      category: item.category,
+      title: item.title,
+      summary: item.summary,
+      content: Object.keys(item.content || {}).length ? JSON.stringify(item.content, null, 2) : "",
+      tags: item.tags.join(", "),
+      source_type: item.source_type,
+      source_id: item.source_id,
+    });
+    setItemModal(item);
+  }
+
+  async function saveItem(event: FormEvent) {
+    event.preventDefault();
+    if (!sessionToken) return;
+    setFormError(null);
+    let content: Record<string, unknown> = {};
+    if (itemForm.content.trim()) {
+      try {
+        const parsed: unknown = JSON.parse(itemForm.content);
+        if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("JSON must be an object");
+        content = parsed as Record<string, unknown>;
+      } catch (cause) {
+        setFormError(cause instanceof Error ? cause.message : "Content must be valid JSON");
+        return;
+      }
+    }
+    const payload: KnowledgeItemPayload = {
+      category: itemForm.category,
+      title: itemForm.title,
+      summary: itemForm.summary,
+      content,
+      tags: itemForm.tags.split(",").map((tag) => tag.trim()).filter(Boolean),
+      source_type: itemForm.source_type,
+      source_id: itemForm.source_id,
+    };
+    setSaving(true);
+    try {
+      if (itemModal) {
+        const response = await updateKnowledgeItem(sessionToken, itemModal.id, payload);
+        setItems((current) => current.map((item) => item.id === itemModal.id ? response.item : item));
+        toast("success", "Knowledge updated");
+      } else {
+        const response = await createKnowledgeItem(sessionToken, payload);
+        setItems((current) => [response.item, ...current]);
+        toast("success", "Knowledge added");
+      }
+      setItemModal(false);
+    } catch (cause) {
+      setFormError(cause instanceof Error ? cause.message : "Knowledge could not be saved");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeItem() {
+    if (!sessionToken || !itemModal || !window.confirm("Archive this Knowledge entry?")) return;
+    setSaving(true);
+    try {
+      await archiveKnowledgeItem(sessionToken, itemModal.id);
+      setItems((current) => current.filter((item) => item.id !== itemModal.id));
+      setItemModal(false);
+      toast("success", "Knowledge archived");
+    } catch (cause) {
+      setFormError(cause instanceof Error ? cause.message : "Knowledge could not be archived");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function openNewSource() {
+    setFormError(null);
+    setSourceForm(emptySourceForm());
+    setSourceModal(null);
+  }
+
+  function openEditSource(source: KnowledgeSource) {
+    setFormError(null);
+    setSourceForm({ title: source.title, source_type: source.source_type, content: source.content, reference: source.reference });
+    setSourceModal(source);
+  }
+
+  async function saveSource(event: FormEvent) {
+    event.preventDefault();
+    if (!sessionToken) return;
+    setFormError(null);
+    const payload: KnowledgeSourcePayload = sourceForm;
+    setSaving(true);
+    try {
+      if (sourceModal) {
+        const response = await updateKnowledgeSource(sessionToken, sourceModal.id, payload);
+        setSources((current) => current.map((source) => source.id === sourceModal.id ? response.source : source));
+        toast("success", "Source updated");
+      } else {
+        const response = await createKnowledgeSource(sessionToken, payload);
+        setSources((current) => [response.source, ...current]);
+        toast("success", "Source added");
+      }
+      setSourceModal(false);
+    } catch (cause) {
+      setFormError(cause instanceof Error ? cause.message : "Source could not be saved");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeSource() {
+    if (!sessionToken || !sourceModal || !window.confirm("Archive this source?")) return;
+    setSaving(true);
+    try {
+      await archiveKnowledgeSource(sessionToken, sourceModal.id);
+      setSources((current) => current.filter((source) => source.id !== sourceModal.id));
+      setSourceModal(false);
+      toast("success", "Source archived");
+    } catch (cause) {
+      setFormError(cause instanceof Error ? cause.message : "Source could not be archived");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   if (loading) {
     return (
-      <WorkspaceContainer>
-        <AppPage>
-          <div className="reading-column py-16 flex flex-col gap-16">
-            <div className="space-y-4 animate-skeleton-pulse">
-              <div className="h-10 w-64 bg-surface-high/50 rounded-lg" />
-              <div className="h-4 w-96 bg-surface-high/50 rounded-lg" />
-            </div>
-            <LoadingSkeleton />
-          </div>
-        </AppPage>
-      </WorkspaceContainer>
+      <WorkspaceContainer><AppPage><div className="mx-auto w-full max-w-5xl space-y-6 py-8 animate-skeleton-pulse">
+        <div className="h-10 w-48 rounded-lg bg-surface-high/50" />
+        <div className="h-4 w-96 max-w-full rounded bg-surface-high/50" />
+        {[1, 2, 3].map((key) => <div key={key} className="h-28 rounded-xl bg-surface-lowest" />)}
+      </div></AppPage></WorkspaceContainer>
     );
   }
 
   if (error) {
     return (
-      <WorkspaceContainer>
-        <AppPage>
-          <div className="reading-column py-16 text-center">
-            <p className="text-lg text-error mb-4">{error}</p>
-            <button onClick={retry} className="bg-primary text-on-primary px-6 py-2 rounded-full text-sm font-medium hover:opacity-90 transition-opacity">
-              Retry
-            </button>
-          </div>
-        </AppPage>
-      </WorkspaceContainer>
+      <WorkspaceContainer><AppPage><div className="mx-auto w-full max-w-5xl py-16">
+        <EmptyState icon="cloud_off" title="Knowledge is unavailable" description={error} action={sessionToken ? { label: "Retry", onClick: () => void load(sessionToken) } : undefined} />
+      </div></AppPage></WorkspaceContainer>
     );
   }
 
   return (
     <WorkspaceContainer>
-      <AppPage>
-        <div className="reading-column py-16 flex flex-col gap-16">
-
-          {/* Headline */}
-          <header className="animate-conversation-fade">
-            <h1 className="text-4xl md:text-5xl font-serif text-on-surface mb-4 font-normal">
-              Current Understanding
-            </h1>
-            <p className="text-lg text-on-surface-variant/80 leading-relaxed">
-              This is my current understanding of your business. Update anything that no longer reflects reality.
-            </p>
+      <AppPage className="overflow-y-auto">
+        <div className="mx-auto w-full max-w-5xl space-y-8 py-4 pb-16">
+          <header className="flex flex-col gap-5 border-b border-outline-variant/10 pb-7 md:flex-row md:items-end md:justify-between">
+            <div>
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">Knowledge foundation</p>
+              <h1 className="font-serif text-4xl font-normal text-on-surface">Knowledge</h1>
+              <p className="mt-2 max-w-xl text-sm leading-relaxed text-on-surface-variant/75">Everything Loqi knows about your business, kept in one place for the work ahead.</p>
+            </div>
+            <label className="flex w-full items-center gap-2 rounded-lg border border-outline-variant/20 bg-surface-lowest px-3 py-2 md:max-w-xs">
+              <Icon name="search" className="text-base text-on-surface-variant/50" />
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search Knowledge" className="min-w-0 flex-1 bg-transparent text-sm text-on-surface outline-none placeholder:text-on-surface-variant/40" />
+            </label>
           </header>
 
-          {!data ? (
-            <div className="flex flex-col items-center justify-center py-20 text-center animate-fade-in">
-              <div className="w-16 h-16 rounded-2xl bg-surface-high/30 flex items-center justify-center text-on-surface-variant/40 mb-4">
-                <span className="material-symbols-outlined text-3xl">psychology</span>
-              </div>
-              <p className="text-body-lg text-on-surface-variant/80 font-medium">No knowledge yet</p>
-              <p className="mt-1.5 text-body-md text-on-surface-variant/50 max-w-sm leading-relaxed">
-                As we work together, I will build a shared understanding of your business. Share what matters and I will remember it.
-              </p>
-            </div>
-          ) : (
-            <>
-              {/* Knowledge Cards */}
-              <section className="space-y-4">
-                {data.cards.map((card, i) => (
-                  <div key={card.id} className="animate-conversation-fade" style={{ animationDelay: `${i * 0.15}s` }}>
-                    <KnowledgeCard
-                      card={card}
-                      isOpen={openCard === card.id}
-                      onToggle={() => setOpenCard(openCard === card.id ? null : card.id)}
-                    />
+          <div className="space-y-5">
+            {CATEGORY_CONFIG.map((section) => {
+              const sectionItems = visibleItems.filter((item) => item.category === section.key);
+              return (
+                <section key={section.key} className="rounded-xl border border-outline-variant/15 bg-surface-lowest/70">
+                  <div className="flex items-start justify-between gap-4 border-b border-outline-variant/10 px-5 py-4">
+                    <div className="flex min-w-0 gap-3">
+                      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><Icon name={section.icon} className="text-base" /></div>
+                      <div><h2 className="text-sm font-bold text-on-surface">{section.label}</h2><p className="mt-1 text-xs text-on-surface-variant/60">{section.description}</p></div>
+                    </div>
+                    <button type="button" onClick={() => openNewItem(section.key)} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-primary/30 px-3 py-2 text-xs font-bold text-primary hover:bg-primary/10"><Icon name="add_circle" className="text-sm" /> Add</button>
                   </div>
-                ))}
-              </section>
-
-              {/* Recent Learnings + Evolution */}
-              <section className="grid grid-cols-1 md:grid-cols-2 gap-12 animate-conversation-fade">
-                {data.timeline.length > 0 && (
-                  <div>
-                    <h3 className="text-[11px] uppercase tracking-widest text-on-surface-variant/50 font-semibold mb-6 flex items-center gap-2">
-                      <span className="material-symbols-outlined text-base">history</span>
-                      Recent Learnings
-                    </h3>
-                    <div className="relative pl-6 space-y-8 before:content-[''] before:absolute before:left-[7px] before:top-1 before:bottom-0 before:w-px before:bg-outline-variant/20">
-                      {data.timeline.map((entry, i) => (
-                        <div key={i} className="relative">
-                          <div className={`absolute -left-[27px] top-1.5 w-2 h-2 rounded-full ring-4 ring-surface ${entry.highlight ? "bg-primary" : "bg-outline-variant/40"}`} />
-                          <span className="text-[10px] uppercase tracking-wider text-on-surface-variant/50 font-medium block mb-1">{entry.time}</span>
-                          <p className="text-sm text-on-surface leading-snug">{entry.event}</p>
-                        </div>
+                  {sectionItems.length === 0 ? (
+                    <div className="px-5 py-7 text-sm text-on-surface-variant/50">No {section.label.toLowerCase()} added yet. Add the context Loqi should use as a source of truth.</div>
+                  ) : (
+                    <div className="divide-y divide-outline-variant/10">
+                      {sectionItems.map((item) => (
+                        <button type="button" key={item.id} onClick={() => openEditItem(item)} className="group flex w-full items-start justify-between gap-4 px-5 py-4 text-left hover:bg-surface-container-low">
+                          <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-semibold text-on-surface">{item.title}</span><span className="rounded-full bg-surface-container-high px-2 py-0.5 text-[10px] text-on-surface-variant/70">{sourceLabel(item.source_type)}</span></div><p className="mt-1 line-clamp-2 text-xs leading-relaxed text-on-surface-variant/65">{item.summary || "Structured Knowledge entry"}</p>{item.tags.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{item.tags.map((tag) => <span key={tag} className="rounded-full border border-outline-variant/15 px-2 py-0.5 text-[10px] text-on-surface-variant/55">{tag}</span>)}</div>}</div>
+                          <span className="flex shrink-0 items-center gap-2 text-[10px] text-on-surface-variant/40"><span className="hidden sm:inline">{updatedLabel(item.updated_at)}</span><Icon name="chevron_right" className="text-sm transition-transform group-hover:translate-x-0.5" /></span>
+                        </button>
                       ))}
                     </div>
-                  </div>
-                )}
+                  )}
+                </section>
+              );
+            })}
 
-                {data.evolution.length > 0 && (
-                  <div>
-                    <h3 className="text-[11px] uppercase tracking-widest text-on-surface-variant/50 font-semibold mb-6 flex items-center gap-2">
-                      <span className="material-symbols-outlined text-base">trending_up</span>
-                      Evolution
-                    </h3>
-                    <div className="space-y-4">
-                      {data.evolution.map((item, i) => (
-                        <div key={i} className="flex items-center justify-between py-2 border-b border-outline-variant/10">
-                          <span className="text-sm text-on-surface">{item.label}</span>
-                          <span className="material-symbols-outlined text-secondary text-base">check_circle</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </section>
-
-              {/* Footer */}
-              <footer className="text-center animate-conversation-fade">
-                <p className="text-[10px] uppercase tracking-widest text-on-surface-variant/30 font-medium">
-                  {data.brainVersion} &bull; {data.lastSync}
-                </p>
-              </footer>
-            </>
-          )}
-
-          {/* Teach Loqi */}
-          <section className="pt-6 border-t border-outline-variant/20 animate-conversation-fade">
-            <div className="bg-surface-container-low rounded-2xl p-8 border border-outline-variant/20 shadow-inner">
-              <h3 className="text-2xl font-serif text-on-surface font-normal mb-2">Teach Loqi...</h3>
-              <p className="text-sm text-on-surface-variant/70 mb-6">What should I understand differently about your business today?</p>
-              <div className="relative mb-6">
-                <textarea
-                  className="w-full bg-surface-lowest border-0 border-b border-outline-variant/20 focus:border-primary focus:ring-0 text-sm p-4 min-h-[120px] transition-all resize-none placeholder:text-on-surface-variant/30 outline-none rounded-lg"
-                  placeholder="What should I understand differently?"
-                  value={teachLoqi.text}
-                  onChange={(e) => teachLoqi.setText(e.target.value)}
-                />
-                <button
-                  type="button"
-                  disabled={teachLoqi.sending || !teachLoqi.text.trim()}
-                  onClick={() => void teachLoqi.submit()}
-                  className="absolute bottom-4 right-4 bg-primary text-on-primary px-6 py-2 rounded-lg text-xs font-semibold uppercase tracking-wider flex items-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-40"
-                >
-                  Update Brain
-                  <span className="material-symbols-outlined text-sm">send</span>
-                </button>
+            <section className="rounded-xl border border-outline-variant/15 bg-surface-lowest/70">
+              <div className="flex items-start justify-between gap-4 border-b border-outline-variant/10 px-5 py-4">
+                <div className="flex min-w-0 gap-3"><div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-secondary/10 text-secondary"><Icon name="folder_zip" className="text-base" /></div><div><h2 className="text-sm font-bold text-on-surface">Sources</h2><p className="mt-1 text-xs text-on-surface-variant/60">Notes, documents and imported material with preserved provenance.</p></div></div>
+                <button type="button" onClick={openNewSource} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-secondary/30 px-3 py-2 text-xs font-bold text-secondary hover:bg-secondary/10"><Icon name="add_circle" className="text-sm" /> Add source</button>
               </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="text-[10px] uppercase tracking-widest text-on-surface-variant/50 font-medium">Try saying:</span>
-                <button
-                  type="button"
-                  onClick={() => void teachLoqi.submit("Our pricing has changed — we now charge per seat.")}
-                  className="px-4 py-1.5 border border-outline-variant/20 rounded-full text-xs text-on-surface-variant/70 hover:bg-surface-container transition-colors"
-                >
-                  &ldquo;Our pricing has changed&rdquo;
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void teachLoqi.submit("Ignore agencies — focus only on direct enterprise customers.")}
-                  className="px-4 py-1.5 border border-outline-variant/20 rounded-full text-xs text-on-surface-variant/70 hover:bg-surface-container transition-colors"
-                >
-                  &ldquo;Ignore agencies&rdquo;
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void teachLoqi.submit("Prioritize outreach to CTOs at Series A companies.")}
-                  className="px-4 py-1.5 border border-outline-variant/20 rounded-full text-xs text-on-surface-variant/70 hover:bg-surface-container transition-colors"
-                >
-                  &ldquo;Prioritize CTOs&rdquo;
-                </button>
-              </div>
-            </div>
-          </section>
-
+              {sources.length === 0 ? <div className="px-5 py-7 text-sm text-on-surface-variant/50">No sources added yet. Add a note or a reference to source material when it is ready.</div> : <div className="divide-y divide-outline-variant/10">{sources.filter((source) => !search.trim() || JSON.stringify(source).toLowerCase().includes(search.trim().toLowerCase())).map((source) => <button type="button" key={source.id} onClick={() => openEditSource(source)} className="group flex w-full items-start justify-between gap-4 px-5 py-4 text-left hover:bg-surface-container-low"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-semibold text-on-surface">{source.title}</span><span className="rounded-full bg-surface-container-high px-2 py-0.5 text-[10px] text-on-surface-variant/70">{sourceLabel(source.source_type)}</span></div><p className="mt-1 line-clamp-2 text-xs leading-relaxed text-on-surface-variant/65">{source.content || source.reference || "Referenced source material"}</p></div><span className="flex shrink-0 items-center gap-2 text-[10px] text-on-surface-variant/40"><span className="hidden sm:inline">{updatedLabel(source.updated_at)}</span><Icon name="chevron_right" className="text-sm transition-transform group-hover:translate-x-0.5" /></span></button>)}</div>}
+            </section>
+          </div>
         </div>
       </AppPage>
+
+      {itemModal !== false && <Modal title={itemModal ? "Edit Knowledge" : "Add Knowledge"} onClose={() => setItemModal(false)}><form onSubmit={saveItem} className="space-y-4"><TypeSelect label="Category" value={itemForm.category} options={CATEGORY_CONFIG.map(({ key, label }) => ({ value: key, label }))} onChange={(value) => setItemForm((form) => ({ ...form, category: value }))} /><TextField label="Title" value={itemForm.title} onChange={(value) => setItemForm((form) => ({ ...form, title: value }))} placeholder="e.g. Core positioning" required /><TextField label="Summary" value={itemForm.summary} onChange={(value) => setItemForm((form) => ({ ...form, summary: value }))} placeholder="A concise explanation future agents can use" multiline /><TextField label="Structured content (JSON)" value={itemForm.content} onChange={(value) => setItemForm((form) => ({ ...form, content: value }))} placeholder={'{"products": ["..."]}'} multiline /><TextField label="Tags" value={itemForm.tags} onChange={(value) => setItemForm((form) => ({ ...form, tags: value }))} placeholder="product, positioning" /><TypeSelect label="Provenance" value={itemForm.source_type} options={ITEM_SOURCE_TYPES} onChange={(value) => setItemForm((form) => ({ ...form, source_type: value }))} /><TextField label="Source ID / reference" value={itemForm.source_id} onChange={(value) => setItemForm((form) => ({ ...form, source_id: value }))} placeholder="Optional source ID" />{formError && <p className="text-xs text-error">{formError}</p>}<div className="flex items-center justify-between gap-3 pt-2">{itemModal ? <button type="button" onClick={() => void removeItem()} className="text-xs font-semibold text-error hover:underline">Archive</button> : <span /> }<div className="flex gap-2"><button type="button" onClick={() => setItemModal(false)} className="rounded-lg border border-outline-variant/20 px-4 py-2 text-xs font-semibold text-on-surface-variant">Cancel</button><button type="submit" disabled={saving} className="rounded-lg bg-primary px-4 py-2 text-xs font-bold text-on-primary disabled:opacity-50">{saving ? "Saving..." : itemModal ? "Save changes" : "Add Knowledge"}</button></div></div></form></Modal>}
+
+      {sourceModal !== false && <Modal title={sourceModal ? "Edit Source" : "Add Source"} onClose={() => setSourceModal(false)}><form onSubmit={saveSource} className="space-y-4"><TextField label="Title" value={sourceForm.title} onChange={(value) => setSourceForm((form) => ({ ...form, title: value }))} placeholder="e.g. Pricing notes" required /><TypeSelect label="Source type" value={sourceForm.source_type} options={SOURCE_TYPES} onChange={(value) => setSourceForm((form) => ({ ...form, source_type: value }))} /><TextField label="Content" value={sourceForm.content} onChange={(value) => setSourceForm((form) => ({ ...form, content: value }))} placeholder="Enter a note, or leave blank when using a reference" multiline /><TextField label="Reference" value={sourceForm.reference} onChange={(value) => setSourceForm((form) => ({ ...form, reference: value }))} placeholder="Optional file or external reference" />{formError && <p className="text-xs text-error">{formError}</p>}<div className="flex items-center justify-between gap-3 pt-2">{sourceModal ? <button type="button" onClick={() => void removeSource()} className="text-xs font-semibold text-error hover:underline">Archive</button> : <span /> }<div className="flex gap-2"><button type="button" onClick={() => setSourceModal(false)} className="rounded-lg border border-outline-variant/20 px-4 py-2 text-xs font-semibold text-on-surface-variant">Cancel</button><button type="submit" disabled={saving} className="rounded-lg bg-primary px-4 py-2 text-xs font-bold text-on-primary disabled:opacity-50">{saving ? "Saving..." : sourceModal ? "Save changes" : "Add source"}</button></div></div></form></Modal>}
     </WorkspaceContainer>
   );
 }

@@ -15,11 +15,25 @@ class BackgroundRunner:
         self._storage = storage
         self._tasks: dict[str, asyncio.Task] = {}
 
-    def start_job(self, job: Job, runner_fn, on_update=None) -> None:
-        task = asyncio.create_task(self._run_wrapper(job, runner_fn, on_update))
+    def start_job(self, job: Job, runner_fn, on_update=None, on_complete=None) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        _log(
+            f"[kickoff] start_job spawn for job={job.id} discovery_id={job.discovery_id} "
+            f"running_loop={'yes' if loop else 'NO RUNNING LOOP'} "
+            f"task_count={len(self._tasks)}"
+        )
+        if loop is None:
+            _log(f"[kickoff] start_job ABORTED for job={job.id}: no running event loop")
+            return
+        task = asyncio.create_task(self._run_wrapper(job, runner_fn, on_update, on_complete))
         self._tasks[job.id] = task
+        _log(f"[kickoff] start_job task created for job={job.id}")
 
-    async def _run_wrapper(self, job: Job, runner_fn, on_update=None) -> None:
+    async def _run_wrapper(self, job: Job, runner_fn, on_update=None, on_complete=None) -> None:
+        _log(f"[kickoff] _run_wrapper TASK STARTED job={job.id} discovery_id={job.discovery_id}")
         def notify(status: str, stage: str, progress: int, error: str = "") -> None:
             if on_update:
                 on_update({"job_id": job.id, "status": status, "stage": stage, "progress": progress, "error": error})
@@ -48,6 +62,11 @@ class BackgroundRunner:
                     completed_at=datetime.now(timezone.utc),
                 )
                 notify("completed", "Complete", 100)
+                if on_complete:
+                    try:
+                        await on_complete(job)
+                    except Exception as e:
+                        _log(f"job {job.id} on_complete hook failed: {e}")
             else:
                 self._storage.update_job(
                     job.id,

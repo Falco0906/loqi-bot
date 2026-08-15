@@ -21,6 +21,7 @@ from services.supabase import (
     get_pending_leads,
     get_selected_lead,
     get_session_context,
+    has_connected_account,
     log_conversation,
     select_lead,
     update_user_telegram_chat_id,
@@ -206,7 +207,7 @@ class ConversationEngine:
             "session_token": created["session_token"],
             "user_id": user["id"],
             "display_name": user.get("username"),
-            "gmail_connected": bool(user.get("google_refresh_token")),
+            "gmail_connected": has_connected_account(user["id"]),
             "initial_messages": [welcome_message, prompt_message],
         }
 
@@ -223,7 +224,7 @@ class ConversationEngine:
             "session_token": session_token,
             "user_id": user["id"],
             "display_name": user.get("username"),
-            "gmail_connected": bool(user.get("google_refresh_token")),
+            "gmail_connected": has_connected_account(user["id"]),
             "workflow_sessions": sessions,
             "messages": messages,
         }
@@ -994,6 +995,7 @@ class ConversationEngine:
                     "target": target,
                     "lead": selected_lead,
                     "conversation_context": conversation_context,
+                    "user_id": user["id"],
                 }
             )
             print(f"[WORKFLOW] draft_generation complete: ok={workflow_result.get('ok')}")

@@ -15,6 +15,10 @@ from .models import (
     Draft,
     ExternalIdentity,
     Knowledge,
+    KnowledgeItem,
+    KnowledgeSource,
+    StrategicUpdate,
+    StrategicAction,
     Lead,
     LeadSignal,
     LeadSource,
@@ -68,6 +72,16 @@ class LaunchRepository(SupabaseRepository, Generic[T]):
 
     # ─── shared query helpers ─────────────────────────────────────────
 
+    # Python-keyword filter methods are exposed by postgrest with a trailing
+    # underscore (is_, in_, not_, or_, and_); translate the conventional names.
+    _OP_ALIASES = {
+        "is": "is_",
+        "in": "in_",
+        "not": "not_",
+        "or": "or_",
+        "and": "and_",
+    }
+
     async def _list(self, where: list[tuple[str, Any, Any]] | None = None,
                     order: str = "created_at", desc: bool = True,
                     limit: int = 1000) -> list[T]:
@@ -77,21 +91,26 @@ class LaunchRepository(SupabaseRepository, Generic[T]):
         def _run():
             query = client.table(self._table_name).select("*")
             for col, op, val in (where or []):
-                query = getattr(query, op)(col, val)
+                op_method = self._OP_ALIASES.get(op, op)
+                query = getattr(query, op_method)(col, val)
             query = query.order(order, desc=desc).limit(limit)
             return query.execute()
         result = await asyncio.to_thread(_run)
         rows = getattr(result, "data", None) or []
         return [self._from_row(r) for r in rows]
 
-    async def _first_where(self, where: list[tuple[str, Any, Any]]) -> T | None:
+    async def _first_where(self, where: list[tuple[str, Any, Any]], *,
+                           order: str | None = None, desc: bool = False) -> T | None:
         client = self._client()
         if client is None:
             return None
         def _run():
             query = client.table(self._table_name).select("*")
             for col, op, val in where:
-                query = getattr(query, op)(col, val)
+                op_method = self._OP_ALIASES.get(op, op)
+                query = getattr(query, op_method)(col, val)
+            if order:
+                query = query.order(order, desc=desc)
             return query.limit(1).execute()
         result = await asyncio.to_thread(_run)
         rows = getattr(result, "data", None) or []
@@ -130,7 +149,8 @@ class ConnectedAccountRepository(LaunchRepository[ConnectedAccount]):
         return await self._first_where([
             ("user_id", "eq", user_id),
             ("provider", "eq", provider),
-        ])
+            ("deleted_at", "is", "null"),
+        ], order="created_at", desc=True)
 
     async def list_for_user(self, user_id: str) -> list[ConnectedAccount]:
         return await self._list([("user_id", "eq", user_id)])
@@ -243,6 +263,13 @@ class WorkspaceLeadRepository(LaunchRepository[WorkspaceLead]):
         return await self._list([
             ("workspace_id", "eq", workspace_id),
             ("email", "eq", email),
+        ])
+
+    async def find_by_company(self, workspace_id: str, company_id: str) -> WorkspaceLead | None:
+        """The workspace lead behind a company-only prospect (no person email)."""
+        return await self._first_where([
+            ("workspace_id", "eq", workspace_id),
+            ("company_id", "eq", company_id),
         ])
 
 
@@ -374,6 +401,75 @@ class KnowledgeRepository(LaunchRepository[Knowledge]):
 
     async def list_for_workspace(self, workspace_id: str) -> list[Knowledge]:
         return await self._list([("workspace_id", "eq", workspace_id)])
+
+
+class KnowledgeItemRepository(LaunchRepository[KnowledgeItem]):
+    """User-owned canonical Knowledge entries (PR5)."""
+
+    _table_name = "knowledge_items"
+    _json_columns = ("content", "tags")
+
+    @classmethod
+    def _entity_type(cls) -> type[KnowledgeItem]:
+        return KnowledgeItem
+
+    async def list_for_workspace(self, workspace_id: str,
+                                 category: str | None = None) -> list[KnowledgeItem]:
+        where = [("workspace_id", "eq", workspace_id)]
+        if category:
+            where.append(("category", "eq", category))
+        return await self._list(where, order="updated_at", desc=True)
+
+
+class KnowledgeSourceRepository(LaunchRepository[KnowledgeSource]):
+    """User-owned source material (PR5)."""
+
+    _table_name = "knowledge_sources"
+    _json_columns = ("metadata",)
+
+    @classmethod
+    def _entity_type(cls) -> type[KnowledgeSource]:
+        return KnowledgeSource
+
+    async def list_for_workspace(self, workspace_id: str) -> list[KnowledgeSource]:
+        return await self._list([("workspace_id", "eq", workspace_id)])
+
+
+class StrategicUpdateRepository(LaunchRepository[StrategicUpdate]):
+    """Supabase persistence for derived, evidence-backed updates."""
+
+    _table_name = "strategic_updates"
+    _json_columns = ("structured_analysis", "evidence", "metadata")
+
+    @classmethod
+    def _entity_type(cls) -> type[StrategicUpdate]:
+        return StrategicUpdate
+
+    async def list_for_workspace(self, workspace_id: str) -> list[StrategicUpdate]:
+        return await self._list([("workspace_id", "eq", workspace_id)], order="updated_at", desc=True)
+
+    async def find_by_pattern_key(self, workspace_id: str, pattern_key: str) -> StrategicUpdate | None:
+        return await self._first_where([
+            ("workspace_id", "eq", workspace_id),
+            ("pattern_key", "eq", pattern_key),
+        ])
+
+
+class StrategicActionRepository(LaunchRepository[StrategicAction]):
+    """Supabase persistence for explicit Strategic Action approvals."""
+
+    _table_name = "strategic_actions"
+    _json_columns = ("proposal", "result", "metadata")
+
+    @classmethod
+    def _entity_type(cls) -> type[StrategicAction]:
+        return StrategicAction
+
+    async def list_for_update(self, workspace_id: str, update_id: str) -> list[StrategicAction]:
+        return await self._list([
+            ("workspace_id", "eq", workspace_id),
+            ("strategic_update_id", "eq", update_id),
+        ], order="created_at", desc=True)
 
 
 class NotificationRepository(LaunchRepository[Notification]):

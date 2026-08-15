@@ -14,10 +14,14 @@ async def handle_get_briefing(
     drafts: list[dict],
     total_leads: int = 0,
     db_user_id: str | None = None,
+    prebuilt: dict | None = None,
 ):
     """Handler for GET /api/web/session/{session_token}/briefing.
 
     Call this from main.py with the resolved campaign_store, draft_store, etc.
+    ``prebuilt`` carries the shared Mission Control payload (snapshot,
+    analysis, recommendations, brief) so the narrative steps are not
+    recomputed per endpoint.
     """
     service = get_service()
     return service.get_briefing(
@@ -27,4 +31,5 @@ async def handle_get_briefing(
         total_leads=total_leads,
         user_id=session_token,
         db_user_id=db_user_id,
+        prebuilt=prebuilt,
     )

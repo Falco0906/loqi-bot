@@ -40,7 +40,12 @@ def get_google_auth_url(state: str = "") -> str:
     return f"{GOOGLE_AUTH_URL}?{urllib.parse.urlencode(params)}"
 
 
-def _fetch_user_email(access_token: str) -> str:
+def _fetch_user_profile(access_token: str) -> dict:
+    """Fetch the authenticated Google user's profile (email + stable subject).
+
+    The userinfo ``id`` is the stable Google account identifier (the ``sub``
+    equivalent) — the strongest identity for a connected Google account.
+    """
     response = requests.get(
         GOOGLE_USERINFO_URL,
         headers={"Authorization": f"Bearer {access_token}"},
@@ -48,7 +53,15 @@ def _fetch_user_email(access_token: str) -> str:
     )
     response.raise_for_status()
     data = response.json()
-    return data.get("email", "")
+    return {
+        "email": data.get("email", ""),
+        "account_id": str(data.get("id") or ""),
+    }
+
+
+def _fetch_user_email(access_token: str) -> str:
+    """Return the authenticated Google user's primary email address."""
+    return _fetch_user_profile(access_token).get("email", "")
 
 
 def _expiry_from_seconds(expires_in: int | str | None) -> str | None:
@@ -71,7 +84,9 @@ def exchange_code_for_tokens(code: str) -> dict:
     response = requests.post(GOOGLE_TOKEN_URL, data=payload, timeout=30)
     response.raise_for_status()
     data = response.json()
-    data["email"] = _fetch_user_email(data["access_token"])
+    profile = _fetch_user_profile(data["access_token"])
+    data["email"] = profile.get("email", "")
+    data["account_id"] = profile.get("account_id") or data.get("email", "")
     data["token_expiry"] = _expiry_from_seconds(data.get("expires_in"))
     return data
 

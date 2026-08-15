@@ -2,6 +2,7 @@ from __future__ import annotations
 from services.reply_generation.generation_models import GenerationContext, GenerationStyle, PROMPT_BUILDER_VERSION
 from services.reply_generation.template_library import get_template_instructions
 from services.reply_generation.style_engine import get_style_instructions
+from services.knowledge.context_adapter import format_knowledge_context
 
 
 INDUSTRY_CONTEXT = (
@@ -83,6 +84,10 @@ def build_user_prompt(context: GenerationContext) -> str:
         for policy in context.policy_results:
             sections.append(f"- {policy}")
 
+    knowledge_block = format_knowledge_context(context.knowledge_context)
+    if knowledge_block:
+        sections.append(f"\n{knowledge_block}")
+
     sections.append("\n## Reasoning Summary")
     sections.append(f"Decision: {context.decision_type.replace('_', ' ').title()}")
     sections.append(f"Priority: {context.decision_priority.title()}")
@@ -95,8 +100,15 @@ def build_user_prompt(context: GenerationContext) -> str:
         sections.append(f"Risk Level: {context.risk_level.title()}")
 
     sections.append("\n## Task")
-    sections.append("Generate a reply to the prospect based on the above context. "
-                    "Follow the style and template instructions precisely. "
-                    "Output only the reply content — no preamble, no explanation, no markdown.")
+    if context.follow_up:
+        sections.append("Generate a follow-up email to the prospect based on the above context. "
+                        "No inbound reply has been received yet — this follow-up continues the "
+                        "original outreach and must not pretend to answer a prospect message. "
+                        "Follow the style and template instructions precisely. "
+                        "Output only the email content — no preamble, no explanation, no markdown.")
+    else:
+        sections.append("Generate a reply to the prospect based on the above context. "
+                        "Follow the style and template instructions precisely. "
+                        "Output only the reply content — no preamble, no explanation, no markdown.")
 
     return "\n".join(sections)

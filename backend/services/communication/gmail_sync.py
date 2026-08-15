@@ -5,12 +5,15 @@ After sync, automatically feeds into Conversation Intelligence pipeline.
 """
 
 import logging
+import re
+from datetime import datetime, timezone
 from typing import Optional
 
 from services.communication.provider_models import (
     SyncResult,
     ProviderMessage,
     ProviderEventType,
+    MessageDirection,
 )
 from services.communication.communication_store import store
 from services.communication.provider_events import emit_event
@@ -30,10 +33,21 @@ def sync_all(provider: GmailProvider) -> SyncResult:
                 provider._provider_id, cursor[:30] if cursor else "none")
     result = provider.sync(cursor=cursor)
     if result.cursor:
-        logger.info("[Sync] sync_all | storing cursor=%s", result.cursor[:30] if result.cursor else "none")
-        _store_cursor(provider, result.cursor)
+        if result.errors:
+            # Cursor safety (PR10.8): never advance past messages whose
+            # persistence/processing failed. The next cycle re-runs the same
+            # range and retries them (already-persisted messages are skipped
+            # via the durable seen-set and the idempotent integration layer).
+            logger.warning(
+                "[Sync] sync_all | cursor NOT advanced: %d message error(s) pending retry",
+                len(result.errors),
+            )
+        else:
+            logger.info("[Sync] sync_all | storing cursor=%s", result.cursor[:30] if result.cursor else "none")
+            _store_cursor(provider, result.cursor)
     else:
         logger.warning("[Sync] sync_all | result.cursor is empty, NOT storing")
+    store.save_state()
     return result
 
 
@@ -56,14 +70,51 @@ def sync_thread(provider: GmailProvider, thread_id: str) -> list[str]:
             {"thread_id": thread_id, "conversations": conversation_ids},
         )
 
+    store.save_state()
     return list(set(conversation_ids))
 
 
 def sync_since_cursor(provider: GmailProvider, cursor: str) -> SyncResult:
     result = provider.sync(cursor=cursor)
     if result.cursor and result.messages_synced > 0:
-        _store_cursor(provider, result.cursor)
+        if result.errors:
+            logger.warning(
+                "[Sync] sync_since_cursor | cursor NOT advanced: %d message error(s) pending retry",
+                len(result.errors),
+            )
+        else:
+            _store_cursor(provider, result.cursor)
+    store.save_state()
     return result
+
+
+def _split_address(header: str) -> tuple[str, str]:
+    """Parse an RFC-ish address header into (email, name).
+
+    Handles ``Name <email>``, ``"Name" <email>``, and bare ``email``.
+    """
+    header = (header or "").strip()
+    if not header:
+        return "", ""
+    m = re.match(r'^(?:"?([^"<>]*)"?\s*)?<([^>]+)>\s*$', header)
+    if m:
+        name = m.group(1).strip()
+        email = m.group(2).strip()
+        if email.lower().startswith("me"):
+            return "", ""
+        return email, name
+    if header.lower().startswith("me"):
+        return "", ""
+    return header, ""
+
+
+def _parse_received_at(value: str) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _process_provider_message(
@@ -99,10 +150,9 @@ def _process_provider_message(
         )
         return None
 
-    store.mark_message_seen(external_id)
     logger.info(
-        "[Sync]   DEDUP | marked seen | ext_id=%s seen_set_size=%d",
-        external_id, len(store.seen_messages()),
+        "[Sync]   DEDUP | not yet seen, will mark after successful processing | ext_id=%s",
+        external_id,
     )
 
     # ── THREAD MAPPING ──
@@ -120,10 +170,35 @@ def _process_provider_message(
             thread_id, conversation_id,
         )
     else:
-        conversation_id = thread_id
+        # ── LEAD-SCOPED COMMUNICATION BOUNDARY (PR8.1) ──
+        # An unmatched thread is only ingested when it resolves to a trusted
+        # Loqi relationship. Unrelated Gmail mail is dropped from Loqi Inbox
+        # (never persisted, never mapped, no orphan state) while the provider
+        # cursor still advances.
+        from services.communication.inbound_filter import (
+            normalize_email,
+            resolve_inbound_conversation,
+        )
+
+        sender_email = normalize_email(provider_msg.raw_headers.get("from", ""))
+        conversation_id, disposition = resolve_inbound_conversation(
+            provider_id=provider.provider_id,
+            provider_user_id=getattr(provider, "_user_id", "") or "",
+            thread_id=thread_id,
+            sender_email=sender_email,
+        )
+        if conversation_id is None:
+            logger.info(
+                "[Sync]   FILTER | ignored unrelated inbound | ext_id=%s thread=%s disposition=%s",
+                external_id, thread_id, disposition,
+            )
+            # Deterministic decision — safe to dedup even though nothing was
+            # persisted; keeps the next cycle from re-fetching it.
+            store.mark_message_seen(external_id)
+            return None
         logger.info(
-            "[Sync]   THREAD | no existing mapping | creating new with thread_id=%s as conversation_id",
-            thread_id,
+            "[Sync]   THREAD | resolved trusted relationship | thread=%s -> conversation=%s disposition=%s",
+            thread_id, conversation_id, disposition,
         )
         store.map_thread(
             external_thread_id=thread_id,
@@ -177,6 +252,38 @@ def _process_provider_message(
         logger.error("[Sync]   ANALYZE | EXCEPTION: %s", e, exc_info=True)
         return None
 
+    # ── CONVERSATION INTEGRATION (real provider inbound) ──
+    # Persist inbound replies into the conversation module (message,
+    # classification, status transition, timeline events) — the exact same
+    # path the reply simulator uses. Only for inbound messages on threads
+    # already mapped to a workspace conversation; unmatched threads stay
+    # sync-only (memory/analysis). Idempotent by external message id.
+    # A persistence failure here propagates so the caller records the error
+    # and the sync cursor does NOT advance (PR10.8 cursor safety) — the
+    # message is retried on the next cycle and never silently dropped.
+    if provider_msg.direction == MessageDirection.INCOMING:
+        try:
+            from services.conversations.conversation_store import conversation_store
+            from services.conversations.integration import handle_reply
+            mapped_convo = conversation_store.get_conversation(conversation_id)
+            if mapped_convo is not None:
+                from_email, from_name = _split_address(provider_msg.raw_headers.get("from", ""))
+                to_email, to_name = _split_address(provider_msg.raw_headers.get("to", ""))
+                handle_reply(
+                    conversation_id=conversation_id,
+                    external_message_id=external_id,
+                    from_email=from_email,
+                    from_name=from_name,
+                    to_email=to_email,
+                    to_name=to_name,
+                    subject=provider_msg.raw_headers.get("subject", ""),
+                    body=conversation_msg.text,
+                    timestamp=_parse_received_at(provider_msg.received_at),
+                )
+        except Exception as e:
+            logger.error("[Sync]   CONVERSATION INTEGRATION | EXCEPTION: %s", e, exc_info=True)
+            raise
+
     # ── EMIT EVENT ──
     emit_event(
         ProviderEventType.MESSAGE_RECEIVED,
@@ -189,6 +296,14 @@ def _process_provider_message(
             "intents": [i.intent.value for i in intelligence.intents],
             "stage": intelligence.conversation_stage.value,
         },
+    )
+
+    # Mark seen only after full successful processing: a transient failure
+    # above leaves the message un-seen so the next cycle retries it safely.
+    store.mark_message_seen(external_id)
+    logger.info(
+        "[Sync]   DEDUP | marked seen after success | ext_id=%s seen_set_size=%d",
+        external_id, len(store.seen_messages()),
     )
 
     logger.info(

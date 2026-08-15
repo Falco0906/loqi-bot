@@ -6,11 +6,12 @@ from services.operations.diagnostics import (
     startup_diagnostics,
     validate_config,
 )
-from services.operations.middleware import RequestLoggingMiddleware
+from services.operations.middleware import RequestLoggingMiddleware, redact_session_path
 from services.operations.router import router as operations_router
 
 __all__ = [
     "RequestLoggingMiddleware",
+    "redact_session_path",
     "operations_router",
     "get_build_metadata",
     "get_startup_time",

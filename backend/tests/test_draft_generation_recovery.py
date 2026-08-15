@@ -82,7 +82,13 @@ def fake_persist(monkeypatch):
         updates.append((user_id, campaign_id, payload))
         return True
 
+    async def fake_awaited(user_id: str, campaign_id: str, payload: dict) -> bool:
+        updates.append((user_id, campaign_id, payload))
+        return True
+
     monkeypatch.setattr(workspace_state, "persist_campaign_update", fake)
+    monkeypatch.setattr(
+        workspace_state, "persist_campaign_update_awaited", fake_awaited)
     return updates
 
 
@@ -137,29 +143,27 @@ class TestBatchTaskRetention:
 
 
 class TestReconcileCampaignGeneration:
-    def test_no_drafts_returns_to_lead_selection(self, monkeypatch, fake_persist):
+    def test_no_drafts_marks_generation_failed(self, monkeypatch, fake_persist):
         campaign = _campaign()
         monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": [])
 
         result = _reconcile_campaign_generation("owner-1", campaign)
 
-        assert result["status"] == "lead_selection"
+        assert result["generation"]["status"] == "failed"
         assert fake_persist[0][1] == campaign["id"]
         updates = fake_persist[0][2]
-        assert updates["status"] == "lead_selection"
         assert updates["generation"]["status"] == "failed"
         assert updates["generation"]["batch_id"] == "batch-1"
 
-    def test_with_drafts_moves_to_draft_review(self, monkeypatch, fake_persist):
+    def test_with_drafts_marks_generation_completed(self, monkeypatch, fake_persist):
         campaign = _campaign()
         drafts = [_draft(campaign["id"], batch_id="batch-1")]
         monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": drafts)
 
         result = _reconcile_campaign_generation("owner-1", campaign)
 
-        assert result["status"] == "draft_review"
+        assert result["generation"]["status"] == "completed"
         updates = fake_persist[0][2]
-        assert updates["status"] == "draft_review"
         assert updates["generation"]["status"] == "completed"
         assert updates["generation"]["completed"] == 1
 
@@ -170,22 +174,22 @@ class TestReconcileCampaignGeneration:
 
         result = _reconcile_campaign_generation("owner-1", campaign)
 
-        assert result["status"] == "lead_selection"
+        assert result["generation"]["status"] == "failed"
 
-    def test_legacy_campaign_without_generation_metadata(self, monkeypatch, fake_persist):
+    def test_legacy_campaign_without_generation_metadata_is_left_alone(self, monkeypatch, fake_persist):
         campaign = _campaign(generation=None)
         drafts = [_draft(campaign["id"], batch_id=None)]
         monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": drafts)
 
         result = _reconcile_campaign_generation("owner-1", campaign)
 
-        assert result["status"] == "draft_review"
-        assert fake_persist[0][2]["status"] == "draft_review"
+        assert result.get("generation") is None
+        assert fake_persist == []
 
     def test_non_generating_campaign_is_left_alone(self, fake_persist):
-        campaign = _campaign(status="draft_review")
+        campaign = _campaign(status="active", generation=None)
         result = _reconcile_campaign_generation("owner-1", campaign)
-        assert result["status"] == "draft_review"
+        assert result["status"] == "active"
         assert fake_persist == []
 
 
@@ -221,12 +225,12 @@ class TestGenerationStatus:
 
         assert result["ok"] is True
         assert result["active"] is False
-        assert result["status"] == "lead_selection"
-        assert fake_persist[0][2]["status"] == "lead_selection"
+        assert result["status"] == "failed"
+        assert fake_persist[0][2]["generation"]["status"] == "failed"
 
     async def test_completed_campaign_reports_durable_counts(self, monkeypatch):
         campaign = _campaign(
-            status="draft_review",
+            status="active",
             generation={
                 "batch_id": "b1",
                 "total": 3,
@@ -244,7 +248,7 @@ class TestGenerationStatus:
         result = await main_module.campaign_generation_status("token", campaign["id"], MagicMock())
 
         assert result["active"] is False
-        assert result["status"] == "draft_review"
+        assert result["status"] == "completed"
         assert result["total"] == 3
         assert result["completed"] == 3
         assert result["batch_id"] == "b1"
@@ -312,11 +316,14 @@ class TestGenerateDraftsGuard:
         assert len(launched) == 1
         assert launched[0][1] == result["batch_id"]
         assert batch_jobs[result["batch_id"]]["status"] == "processing"
-        generating = [u for _, _, u in fake_persist if u.get("status") == "generating"]
-        assert generating, "expected a persisted generating transition"
+        processing = [
+            u for _, _, u in fake_persist
+            if (u.get("generation") or {}).get("status") == "processing"
+        ]
+        assert processing, "expected a persisted processing generation transition"
 
     async def test_missing_leads_rejected(self, monkeypatch):
-        campaign = _campaign(status="lead_selection", leads=[], generation=None)
+        campaign = _campaign(status="active", leads=[], generation=None)
         monkeypatch.setattr(
             main_module, "_workspace_owner", _fake_owner("owner-1"))
         monkeypatch.setattr(
@@ -339,25 +346,31 @@ class TestStartupRecovery:
     async def test_sweep_reconciles_generating_campaigns(self, monkeypatch, fake_persist):
         campaign = _campaign()
         client = MagicMock()
-        client.table("workflow_sessions").select("user_id").eq(
-            "channel", "workspace"
-        ).execute.return_value = MagicMock(data=[{"user_id": "owner-1"}])
+        client.table("campaigns").select(
+            "id, workspace_id, settings"
+        ).filter(
+            "settings->generation->>status", "eq", "processing"
+        ).execute.return_value = MagicMock(data=[{
+            "id": campaign["id"],
+            "workspace_id": "ws-1",
+            "settings": {"generation": {"status": "processing", "batch_id": "batch-1"}},
+        }])
+        client.table("campaigns").select("settings").eq(
+            "id", campaign["id"]
+        ).limit(1).execute.return_value = MagicMock(data=[{
+            "settings": {"generation": {"status": "processing", "batch_id": "batch-1"}},
+        }])
+        client.table("workflow_sessions").select("id, user_id").in_(
+            "id", ["ws-1"]
+        ).execute.return_value = MagicMock(data=[{"id": "ws-1", "user_id": "owner-1"}])
         monkeypatch.setattr(
             "services.supabase.get_supabase_client", lambda: client)
-        monkeypatch.setattr(
-            workspace_state,
-            "_events",
-            lambda user_id: [{
-                "event_type": "campaign.created",
-                "payload": {"campaign": campaign},
-            }],
-        )
         monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": [])
 
         recovered = await asyncio.to_thread(_reconcile_stale_generating_campaigns)
 
         assert recovered == 1
-        assert fake_persist[0][2]["status"] == "lead_selection"
+        assert fake_persist[0][2]["generation"]["status"] == "failed"
 
     async def test_sweep_is_noop_without_sessions(self, monkeypatch):
         client = MagicMock()

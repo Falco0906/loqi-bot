@@ -1,13 +1,20 @@
-"""In-memory conversation store.
+"""Conversation store with explicit JSON persistence.
 
 Stores conversations, threads, messages, and timeline events.
 Provides indexed lookups by provider, campaign, workflow, and status.
+
+The store itself is in-memory, but every mutation is persisted through
+``services.conversations.persistence`` (an isolated file backend) and the
+complete store is rehydrated from that snapshot at startup.  Later
+swapping the file backend for Supabase does not change this module's API.
 """
 
 from __future__ import annotations
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import Optional
+from services.conversations import persistence
 from services.conversations.conversation_models import (
     Conversation,
     ConversationThread,
@@ -31,6 +38,120 @@ class ConversationStore:
         self._by_workflow: dict[str, set[str]] = {}
         self._by_status: dict[ConversationStatus, set[str]] = {}
         self._by_external_thread: dict[str, str] = {}
+        self._sequence = 0
+        self._persist_lock = threading.RLock()
+        self.reload()
+
+    # ── Persistence ──
+
+    def to_snapshot(self) -> dict:
+        """Explicit JSON-safe snapshot built from the public serializers."""
+        return {
+            "version": persistence.SNAPSHOT_VERSION,
+            "saved_at": datetime.now(timezone.utc).isoformat(),
+            "sequence": self._sequence,
+            "conversations": [c.to_dict() for c in self._conversations.values()],
+            "threads": [t.to_dict() for t in self._threads.values()],
+            "messages": [m.to_dict() for m in self._messages.values()],
+            "timeline": {
+                cid: [e.to_dict() for e in events]
+                for cid, events in self._timeline.items()
+            },
+        }
+
+    def _restore_from_snapshot(self, data: dict) -> None:
+        """Replace all in-memory state from a snapshot (atomic build)."""
+        self._conversations.clear()
+        self._threads.clear()
+        self._messages.clear()
+        self._timeline.clear()
+        self._by_provider.clear()
+        self._by_campaign.clear()
+        self._by_workflow.clear()
+        self._by_status.clear()
+        self._by_external_thread.clear()
+
+        try:
+            self._sequence = int(data.get("sequence") or 0)
+        except (TypeError, ValueError):
+            self._sequence = 0
+
+        for raw in data.get("conversations", []):
+            convo = Conversation.from_dict(raw)
+            self._conversations[convo.conversation_id] = convo
+            self._add_index(convo)
+        for raw in data.get("threads", []):
+            thread = ConversationThread.from_dict(raw)
+            self._threads[thread.thread_id] = thread
+        for raw in data.get("messages", []):
+            message = ConversationMessage.from_dict(raw)
+            self._messages[message.message_id] = message
+        for cid, raw_events in data.get("timeline", {}).items():
+            events = [TimelineEvent.from_dict(raw) for raw in raw_events]
+            events.sort(key=lambda e: e.timestamp)
+            self._timeline[cid] = events
+
+    def _seed_communication_mappings(self) -> None:
+        """Re-map restored external threads in the communication store so the
+        ingestion pipeline (Gmail sync / simulator) resolves them back to the
+        restored conversations instead of falling back to thread-id orphans."""
+        try:
+            from services.communication.communication_store import store as communication_store
+            for convo in self._conversations.values():
+                if not convo.external_thread_id:
+                    continue
+                try:
+                    communication_store.map_thread(
+                        external_thread_id=convo.external_thread_id,
+                        conversation_id=convo.conversation_id,
+                        provider_id=convo.provider_id or "",
+                        subject=convo.subject,
+                    )
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.warning("[conversations] communication mapping seed failed: %s", e)
+
+    def reload(self) -> None:
+        """Rehydrate the complete store from the persisted snapshot.
+
+        Idempotent: with no (or a corrupt) snapshot the store is left empty
+        and a corrupt file is preserved (never destroyed). Called at backend
+        startup before the API can serve conversation requests, and after
+        any persistence backend change (tests).
+        """
+        data, status = persistence.load_state()
+        if data is None and status is persistence.json_file.JsonFileStatus.ABSENT:
+            self._restore_from_snapshot({})
+            logger.info("persistence_rehydration_absent category=conversations")
+            return
+        if data is None:
+            self._restore_from_snapshot({})
+            logger.warning(
+                "persistence_rehydration_degraded category=conversations "
+                "status=%s store_reset=empty preserved=yes",
+                status.value,
+            )
+            return
+        self._restore_from_snapshot(data)
+        self._seed_communication_mappings()
+        logger.info(
+            "persistence_rehydration_completed category=conversations "
+            "conversations=%d threads=%d messages=%d",
+            len(self._conversations), len(self._threads), len(self._messages),
+        )
+
+    def _persist(self) -> None:
+        try:
+            with self._persist_lock:
+                self._sequence += 1
+                persistence.save(self.to_snapshot())
+        except Exception as e:
+            logger.error(
+                "persistence_write_failed category=conversations error_type=%s",
+                type(e).__name__,
+                exc_info=True,
+            )
 
     # ── Conversation CRUD ──
 
@@ -46,6 +167,7 @@ class ConversationStore:
             metadata={"status": conversation.status.value},
         ))
         logger.info("[conversations] Created conversation %s", cid[:12])
+        self._persist()
         return conversation
 
     def get_conversation(self, conversation_id: str) -> Optional[Conversation]:
@@ -72,6 +194,7 @@ class ConversationStore:
         else:
             self._conversations[cid] = conversation
             self._add_index(conversation)
+        self._persist()
         return conversation
 
     def list_conversations(
@@ -109,12 +232,14 @@ class ConversationStore:
         msg_ids = [mid for mid, m in self._messages.items() if m.conversation_id == conversation_id]
         for mid in msg_ids:
             self._messages.pop(mid, None)
+        self._persist()
         return True
 
     # ── Thread CRUD ──
 
     def add_thread(self, thread: ConversationThread) -> ConversationThread:
         self._threads[thread.thread_id] = thread
+        self._persist()
         return thread
 
     def get_thread(self, thread_id: str) -> Optional[ConversationThread]:
@@ -131,6 +256,8 @@ class ConversationStore:
         if convo:
             convo.message_count += 1
             convo.last_activity_at = message.sent_at or datetime.now(timezone.utc)
+            convo.metadata["last_message_preview"] = (message.body_preview or message.body or "")[:160]
+        self._persist()
         return message
 
     def get_message(self, message_id: str) -> Optional[ConversationMessage]:
@@ -156,6 +283,7 @@ class ConversationStore:
             self._timeline[cid] = []
         self._timeline[cid].append(event)
         self._timeline[cid].sort(key=lambda e: e.timestamp)
+        self._persist()
         return event
 
     def get_timeline(self, conversation_id: str) -> list[TimelineEvent]:

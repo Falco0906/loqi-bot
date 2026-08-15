@@ -9,8 +9,6 @@ from services.operations.diagnostics import (
     _get_version,
     get_build_metadata,
     get_repository_provider,
-    get_startup_time,
-    validate_config,
 )
 
 router = APIRouter(tags=["operations"])
@@ -23,47 +21,17 @@ async def health():
 
 @router.get("/ready")
 async def ready():
-    failures: list[str] = []
+    """Readiness is lifecycle-driven (PR10.6): ALIVE != READY.
 
-    startup_time = get_startup_time()
-    if startup_time is None:
-        failures.append("application_startup_not_complete")
-
-    config_errors = validate_config()
-    if config_errors:
-        failures.append(f"configuration_missing: {', '.join(e['variable'] for e in config_errors)}")
-
-    from services.persistence.database import get_connection_manager
-    cm = get_connection_manager()
-    if cm is None:
-        failures.append("database_connection_not_initialized")
-    else:
-        client = cm.get_client()
-        if client is None:
-            failures.append("database_client_unavailable")
-        else:
-            try:
-                import asyncio
-                # Probe a table that the launch migrations guarantee to exist,
-                # not a throwaway _dummy table (which trips the PostgREST
-                # schema cache on freshly migrated databases).
-                result = await asyncio.to_thread(
-                    lambda: client.table("workflow_sessions").select("id").limit(0).execute()
-                )
-            except Exception as e:
-                failures.append(f"database_connection_failed: {e}")
-
-    provider = get_repository_provider()
-    if not provider:
-        failures.append("repository_provider_not_initialized")
-
-    if failures:
-        return JSONResponse(
-            status_code=503,
-            content={"status": "unready", "failures": failures},
-        )
-
-    return {"status": "ready"}
+    No external calls (no Supabase/Gmail/OpenAI probe) and no optional
+    integration is required for readiness — the existing architecture
+    intentionally supports degraded-mode operation.
+    """
+    from services.lifecycle import get_state
+    state = get_state()
+    if state == "ready":
+        return {"status": "ready"}
+    return JSONResponse(status_code=503, content={"status": state})
 
 
 @router.get("/version")

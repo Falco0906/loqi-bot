@@ -1,0 +1,68 @@
+# Loqi production-like local stack (PR10.1).
+#
+# Backend and frontend run as separate services, as in the existing
+# architecture. No database or new persistence is introduced; the backend
+# keeps using its existing Supabase-backed persistence. The only local volume
+# is for the JSON conversation-state file so restart/reload preserves the
+# conversation store.
+#
+# Secrets/keys are supplied via backend/.env (Compose `env_file`), never
+# committed. Only container-correct values (port, state-file path) and the
+# production-safety defaults are forced inline; inline `environment:` takes
+# precedence over `env_file`, so these four are guaranteed in the container.
+name: loqi
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - backend/.env
+    environment:
+      - PORT=10000
+      - CONVERSATIONS_STATE_FILE=/data/conversations.json
+      - LOQI_ENABLE_TEST_RECIPIENT_OVERRIDE=false
+      - SIMULATE_REPLIES=false
+    ports:
+      - "10000:10000"
+    volumes:
+      - loqi-conversations:/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:10000/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_LOQI_API_BASE_URL: http://localhost:10000
+    environment:
+      - PORT=3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  loqi-conversations:

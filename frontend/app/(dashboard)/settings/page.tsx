@@ -4,20 +4,19 @@ import { useState, useEffect, useCallback } from "react";
 import Icon from "../../../components/shared/Icon";
 import ThemeToggle from "../../../components/shared/ThemeToggle";
 import { getGmailAuthUrl, listProviders, disconnectProvider, getProviderHealth } from "../../../lib/api";
+import {
+  hasGmailProvider,
+  isReauthRequired,
+  shouldShowConnectButton,
+  statusTone,
+  type ProviderInfo,
+} from "../../../lib/gmail-settings";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
-type Provider = {
-  id: string;
-  provider_type: string;
-  status: string;
-  email: string;
-  last_sync: string;
-};
-
 export default function SettingsPage() {
   const [sessionToken, setSessionToken] = useState<string | null>(null);
-  const [providers, setProviders] = useState<Provider[]>([]);
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [healthMap, setHealthMap] = useState<Record<string, { status: string; last_sync: string }>>({});
@@ -36,9 +35,9 @@ export default function SettingsPage() {
     try {
       const res = await listProviders(sessionToken);
       if (res.ok) {
-        const gmailProviders = (res.providers || []).filter(p => p.provider_type === "gmail");
-        setProviders(gmailProviders);
-        gmailProviders.forEach(async (p) => {
+        setProviders(res.providers || []);
+        setHealthMap({});
+        (res.providers || []).forEach(async (p) => {
           try {
             const h = await getProviderHealth(sessionToken, p.id);
             if (h.ok) {
@@ -89,17 +88,15 @@ export default function SettingsPage() {
     try {
       await disconnectProvider(sessionToken, providerId);
       setProviders(prev => prev.filter(p => p.id !== providerId));
+      setHealthMap(prev => {
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
+      });
     } catch {}
   };
 
-  const statusColor = (status: string) => {
-    switch (status) {
-      case "connected": return "text-success";
-      case "error": return "text-error";
-      case "disconnected": return "text-on-surface-variant/50";
-      default: return "text-warning";
-    }
-  };
+  const showConnect = shouldShowConnectButton(providers);
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
@@ -121,18 +118,20 @@ export default function SettingsPage() {
       <section className="mb-10">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-on-surface">Connected Accounts</h2>
-          <button
-            onClick={handleConnect}
-            disabled={connecting}
-            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-on-primary hover:bg-primary/90 transition-colors disabled:opacity-50"
-          >
-            {connecting ? (
-              <span className="w-4 h-4 border-2 border-on-primary border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <Icon name="add_circle" className="text-base" />
-            )}
-            {connecting ? "Connecting..." : "Connect Gmail"}
-          </button>
+          {showConnect && (
+            <button
+              onClick={handleConnect}
+              disabled={connecting}
+              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-on-primary hover:bg-primary/90 transition-colors disabled:opacity-50"
+            >
+              {connecting ? (
+                <span className="w-4 h-4 border-2 border-on-primary border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <Icon name="add_circle" className="text-base" />
+              )}
+              {connecting ? "Connecting..." : "Connect Gmail"}
+            </button>
+          )}
         </div>
 
         {loading ? (
@@ -150,6 +149,7 @@ export default function SettingsPage() {
           <div className="space-y-3">
             {providers.map((p) => {
               const health = healthMap[p.id];
+              const reauth = isReauthRequired(p.status) || (health ? isReauthRequired(health.status) : false);
               return (
                 <div key={p.id} className="flex items-center justify-between rounded-xl border border-outline-variant/10 bg-charcoal/50 px-5 py-4">
                   <div className="flex items-center gap-3 min-w-0">
@@ -159,12 +159,12 @@ export default function SettingsPage() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium text-on-surface truncate">{p.email || "Gmail"}</span>
-                        <span className={`text-xs font-medium ${statusColor(p.status)}`}>{p.status}</span>
+                        <span className={`text-xs font-medium ${statusTone(p.status)}`}>{p.status}</span>
                       </div>
                       <div className="flex items-center gap-3 mt-0.5">
                         {health ? (
                           <>
-                            <span className={`text-xs ${statusColor(health.status)}`}>{health.status}</span>
+                            <span className={`text-xs ${statusTone(health.status)}`}>{health.status}</span>
                             {health.last_sync && (
                               <span className="text-xs text-on-surface-variant/50">Last sync: {new Date(health.last_sync).toLocaleString()}</span>
                             )}
@@ -173,30 +173,33 @@ export default function SettingsPage() {
                           <span className="text-xs text-on-surface-variant/50">Health unknown</span>
                         )}
                       </div>
+                      {reauth && (
+                        <p className="text-xs text-error mt-1">
+                          Gmail re-authentication is required. Reconnect to resume syncing.
+                        </p>
+                      )}
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleDisconnect(p.id)}
-                    className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium text-error hover:bg-error/10 transition-colors"
-                  >
-                    Disconnect
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={handleConnect}
+                      disabled={connecting}
+                      className="rounded-lg px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
+                    >
+                      {reauth ? "Reconnect Gmail" : "Reconnect"}
+                    </button>
+                    <button
+                      onClick={() => handleDisconnect(p.id)}
+                      className="rounded-lg px-3 py-1.5 text-xs font-medium text-error hover:bg-error/10 transition-colors"
+                    >
+                      Disconnect
+                    </button>
+                  </div>
                 </div>
               );
             })}
           </div>
         )}
-      </section>
-
-      {/* Account Info */}
-      <section className="mb-10">
-        <h2 className="text-lg font-semibold text-on-surface mb-4">Account</h2>
-        <div className="rounded-xl border border-outline-variant/10 bg-charcoal/50 px-5 py-4">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-on-surface-variant/70">Session Token</span>
-            <span className="text-sm font-mono text-on-surface/70 truncate max-w-[300px]">{sessionToken || "—"}</span>
-          </div>
-        </div>
       </section>
     </div>
   );

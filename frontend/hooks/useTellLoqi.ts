@@ -23,8 +23,11 @@ export function useTellLoqi(page: string, pageData: Record<string, unknown> = {}
       try {
         setPageContext({ page, data: pageData });
         setOpen(true);
-        startTask(message);
-        setText("");
+        const handled = startTask(message);
+        // Only clear the input when the instruction was routed (a task began
+        // or an explicit clarification surfaced). Never discard typed input
+        // without either starting a search or showing an error/prompt.
+        if (handled) setText("");
       } finally {
         setSending(false);
       }

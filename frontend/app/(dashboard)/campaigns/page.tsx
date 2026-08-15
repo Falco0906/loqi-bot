@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { listCampaigns, updateCampaign, archiveCampaign } from "../../../lib/api";
+import { listCampaigns, updateCampaign, archiveCampaign, duplicateCampaign, deleteCampaign } from "../../../lib/api";
 import CampaignCard from "../../../components/campaigns/CampaignCard";
 import Icon from "../../../components/shared/Icon";
 import { toast } from "../../../components/shared/Toast";
 import WorkspaceContainer from "../../../components/layout/WorkspaceContainer";
 import { useTellLoqi } from "../../../hooks/useTellLoqi";
+import { useActionHandlers } from "../../../hooks/useActionHandlers";
+import { buildResearchUrl, campaignAttachContext } from "../../../lib/discovery-mode";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
@@ -42,15 +44,6 @@ export default function CampaignsPage() {
     fetchCampaigns();
   }, [sessionToken]);
 
-  async function handleGenerate(id: string) {
-    if (!sessionToken) return;
-    try {
-      await updateCampaign(sessionToken, id, { status: "ready" });
-      toast("success", "Campaign is ready for drafting");
-      fetchCampaigns();
-    } catch { toast("error", "Failed to update campaign"); }
-  }
-
   async function handleArchive(id: string) {
     if (!sessionToken) return;
     try {
@@ -79,25 +72,75 @@ export default function CampaignsPage() {
     } catch { toast("error", "Failed to restore campaign"); }
   }
 
-  const activeCampaigns = campaigns.filter((c) => c.status !== "archived");
-  const archivedCampaigns = campaigns.filter((c) => c.status === "archived");
+  async function handleDuplicate(id: string) {
+    if (!sessionToken) return;
+    try {
+      const res = await duplicateCampaign(sessionToken, id);
+      if (!res.ok) throw new Error("duplicate failed");
+      const copy = res.campaign as Record<string, unknown>;
+      toast("success", `Duplicated — ${String(copy.name || "copy")} created`);
+      fetchCampaigns();
+    } catch { toast("error", "Failed to duplicate campaign"); }
+  }
+
+  async function handleDelete(id: string) {
+    if (!sessionToken) return;
+    if (!window.confirm("Delete this campaign? This removes it from your workspace. Its strategy and leads are removed with it.")) return;
+    try {
+      await deleteCampaign(sessionToken, id);
+      toast("success", "Campaign deleted");
+      fetchCampaigns();
+    } catch { toast("error", "Failed to delete campaign"); }
+  }
+
+  useActionHandlers({
+    generate_strategy: (params) => {
+      const campaignId = (params?.campaignId as string) || String(campaigns[0]?.id || "");
+      if (campaignId) window.location.href = `/campaigns/${campaignId}`;
+    },
+    add_leads: (params) => {
+      const campaignId = (params?.campaignId as string) || String(campaigns[0]?.id || "");
+      if (campaignId) {
+        const target = campaigns.find((c) => String(c.id) === campaignId) || null;
+        const ctx = campaignAttachContext(target || { id: campaignId });
+        if (ctx) window.location.href = buildResearchUrl(ctx);
+      }
+    },
+    duplicate_campaign: async (params) => {
+      const campaignId = (params?.campaignId as string) || String(campaigns[0]?.id || "");
+      if (campaignId && sessionToken) await handleDuplicate(campaignId);
+    },
+    delete_campaign: async (params) => {
+      const campaignId = (params?.campaignId as string) || String(campaigns[0]?.id || "");
+      if (campaignId && sessionToken) await handleDelete(campaignId);
+    },
+    open_campaign: (params) => {
+      const campaignId = params?.campaignId as string | undefined;
+      if (campaignId) window.location.href = `/campaigns/${campaignId}`;
+    },
+  });
+
+  const visibleCampaigns = campaigns.filter((c) => c.status !== "deleted");
+  const activeCampaigns = visibleCampaigns.filter((c) => c.status !== "archived");
+  const archivedCampaigns = visibleCampaigns.filter((c) => c.status === "archived");
 
   const SORT_ORDER: Record<string, number> = {
-    planning: 0,
-    ready: 1,
-    generating: 2,
-    draft_review: 3,
-    ready_to_send: 4,
-    completed: 5,
+    strategy: 0,
+    leads: 1,
+    drafts: 2,
+    review: 3,
+    sending: 4,
   };
 
   const tellLoqi = useTellLoqi("Campaigns", {
     active: activeCampaigns.length,
-    total: campaigns.length,
+    total: visibleCampaigns.length,
   });
 
   function sortFn(a: Record<string, unknown>, b: Record<string, unknown>) {
-    return (SORT_ORDER[a.status as string] ?? 99) - (SORT_ORDER[b.status as string] ?? 99);
+    const stepA = SORT_ORDER[a.current_step as string] ?? 99;
+    const stepB = SORT_ORDER[b.current_step as string] ?? 99;
+    return stepA - stepB;
   }
 
   return (
@@ -209,13 +252,15 @@ export default function CampaignsPage() {
                       id={c.id as string}
                       name={c.name as string}
                       status={c.status as string}
+                      step={c.current_step as string}
                       leadCount={c.lead_count as number}
                       pendingDrafts={c.pending_drafts as number}
                       approvedDrafts={c.approved_drafts as number}
                       createdAt={c.created_at as string}
                       updatedAt={c.updated_at as string}
-                      onGenerate={() => handleGenerate(c.id as string)}
                       onArchive={() => handleArchive(c.id as string)}
+                      onDuplicate={() => handleDuplicate(c.id as string)}
+                      onDelete={() => handleDelete(c.id as string)}
                       onRename={() => handleRename(c.id as string, c.name as string)}
                     />
                   </div>
@@ -235,6 +280,7 @@ export default function CampaignsPage() {
                       id={c.id as string}
                       name={c.name as string}
                       status={c.status as string}
+                      step={c.current_step as string}
                       leadCount={c.lead_count as number}
                       pendingDrafts={c.pending_drafts as number}
                       approvedDrafts={c.approved_drafts as number}

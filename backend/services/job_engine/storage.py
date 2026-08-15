@@ -24,6 +24,7 @@ class JobStorage:
                 "stage": job.stage,
                 "progress": job.progress,
                 "query": job.query,
+                "discovery_id": job.discovery_id if job.discovery_id else None,
                 "error_message": job.error_message,
                 "result_ready": job.result_ready,
                 "created_at": job.created_at.isoformat(),

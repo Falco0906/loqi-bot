@@ -24,6 +24,8 @@ class EventType(str, Enum):
     CAMPAIGN_STATUS_CHANGED = "campaign_status_changed"
     CAMPAIGN_UPDATED = "campaign_updated"
     CAMPAIGN_ARCHIVED = "campaign_archived"
+    CAMPAIGN_DELETED = "campaign_deleted"
+    CAMPAIGN_DUPLICATED = "campaign_duplicated"
     GOAL_SET = "goal_set"
     GOAL_UPDATED = "goal_updated"
 

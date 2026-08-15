@@ -19,6 +19,7 @@ ALLOWED_TRANSITIONS: dict[ConversationStatus, set[ConversationStatus]] = {
         ConversationStatus.BOUNCED,
         ConversationStatus.REPLIED,
         ConversationStatus.OPENED,
+        ConversationStatus.INTERESTED,
         ConversationStatus.FOLLOW_UP_PENDING,
         ConversationStatus.CLOSED_LOST,
     },
@@ -35,6 +36,7 @@ ALLOWED_TRANSITIONS: dict[ConversationStatus, set[ConversationStatus]] = {
         ConversationStatus.CLOSED_LOST,
     },
     ConversationStatus.REPLIED: {
+        ConversationStatus.SENT,
         ConversationStatus.FOLLOW_UP_PENDING,
         ConversationStatus.INTERESTED,
         ConversationStatus.MEETING_BOOKED,
@@ -43,6 +45,7 @@ ALLOWED_TRANSITIONS: dict[ConversationStatus, set[ConversationStatus]] = {
     },
     ConversationStatus.FOLLOW_UP_PENDING: {
         ConversationStatus.FOLLOW_UP_READY,
+        ConversationStatus.FOLLOW_UP_SENT,
         ConversationStatus.REPLIED,
         ConversationStatus.CLOSED_LOST,
     },
@@ -60,6 +63,7 @@ ALLOWED_TRANSITIONS: dict[ConversationStatus, set[ConversationStatus]] = {
     ConversationStatus.INTERESTED: {
         ConversationStatus.MEETING_BOOKED,
         ConversationStatus.REPLIED,
+        ConversationStatus.SENT,
         ConversationStatus.FOLLOW_UP_PENDING,
         ConversationStatus.CLOSED_WON,
         ConversationStatus.CLOSED_LOST,

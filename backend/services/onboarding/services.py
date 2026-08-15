@@ -391,6 +391,7 @@ class OnboardingService:
                         "progress_percentage": 100,
                         "completed_steps": completed_ids,
                         "remaining_steps": [],
+                        "total_steps": len(completed_ids),
                         "onboarding_complete": True,
                     }
             except Exception:
@@ -471,9 +472,12 @@ class OnboardingService:
 
     async def get_wizard_data(self, user_id: str) -> dict[str, object]:
         if self._user_service is not None:
-            user = await self._user_service.get_user(user_id)
-            if user is not None and user.onboarding_data_dict:
-                return dict(user.onboarding_data_dict)
+            try:
+                user = await self._user_service.get_user(user_id)
+                if user is not None and user.onboarding_data_dict:
+                    return dict(user.onboarding_data_dict)
+            except Exception:
+                pass
         return {}
 
     async def complete_wizard(

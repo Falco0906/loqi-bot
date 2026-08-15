@@ -9,6 +9,8 @@ def build_context(
     reasoning: ReasoningResult,
     style: GenerationStyle = GenerationStyle.PROFESSIONAL,
     latest_messages: list[str] = None,
+    follow_up: bool = False,
+    knowledge_context: dict | None = None,
 ) -> GenerationContext:
     """Build a normalized GenerationContext from intelligence and reasoning.
     
@@ -56,6 +58,7 @@ def build_context(
         conversation_stage = "Active"
 
     target_action = reasoning.decision.type.value.replace("_", " ").title() if reasoning.decision else ""
+    knowledge = knowledge_context if isinstance(knowledge_context, dict) else {}
 
     return GenerationContext(
         conversation_id=intelligence.conversation_id,
@@ -76,4 +79,9 @@ def build_context(
         risk_level=reasoning.decision.risk.value,
         health_score=intelligence.health.score if intelligence.health else 0,
         target_action=target_action,
+        follow_up=follow_up,
+        knowledge_context=knowledge,
+        knowledge_item_ids=list(knowledge.get("item_ids") or []),
+        knowledge_source_ids=list(knowledge.get("source_ids") or []),
+        knowledge_query=str(knowledge.get("query") or ""),
     )

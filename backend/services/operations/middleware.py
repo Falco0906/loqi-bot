@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 import traceback
 import uuid
@@ -10,6 +11,19 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 log = logging.getLogger("loqi")
+
+# The web session token is a bearer credential carried in the URL path for
+# legacy routes (`/api/web/session/{token}/...`). It must never reach logs,
+# exception traces, or responses. PR10.8.3: redact it from any logged path.
+_SESSION_PATH_RE = re.compile(r"(/api/web/session/)[^/?]+")
+
+
+def redact_session_path(path: str) -> str:
+    """Replace the session token in a request path with [REDACTED]."""
+    try:
+        return _SESSION_PATH_RE.sub(r"\1[REDACTED]", path or "")
+    except Exception:
+        return path or ""
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -27,7 +41,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 "request_id=%s method=%s path=%s status=500 duration_ms=%d exception=%s message=%s trace=%s",
                 request_id,
                 request.method,
-                request.url.path,
+                redact_session_path(request.url.path),
                 duration_ms,
                 type(exc).__name__,
                 str(exc),
@@ -49,7 +63,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             "request_id=%s method=%s path=%s status=%d duration_ms=%d",
             request_id,
             request.method,
-            request.url.path,
+            redact_session_path(request.url.path),
             response.status_code,
             duration_ms,
         )

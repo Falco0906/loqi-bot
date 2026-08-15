@@ -3,10 +3,10 @@ import {
   getBriefing,
   getCampaign,
   listCampaigns,
-  listActiveJobs,
   listConversations,
-  getJobResults,
-  startSearchJob,
+  listDiscoveries,
+  getDiscovery,
+  startDiscoveryJob,
 } from "./api";
 import type { MCSummary, BriefingResponse } from "./api";
 import { getStrategicProfile } from "./strategic-intelligence-api";
@@ -24,9 +24,13 @@ import type {
   MCTimelineEvent,
   DiscoveryData,
   DiscoveryRecommendation,
+  DiscoveryListItem,
+  DiscoveryStatus,
+  DiscoveryPlan,
+  DiscoveryProgress,
   CampaignData,
   InboxData,
-  InboxDecision,
+  InboxConversationRow,
   KnowledgeData,
   KnowledgeCard,
   KnowledgeTimelineEntry,
@@ -39,11 +43,25 @@ import type {
   CampaignTimelineEntry,
   CampaignInsight,
 } from "./domain";
+import { qualificationFromPersistedMetadata } from "./discovery-qualification";
 
 /* ─── Utilities ─── */
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function recordFromJson(value: unknown): Record<string, unknown> {
+  if (isRecord(value)) return value;
+  if (typeof value === "string") {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      return isRecord(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
 }
 
 const CACHE_TTL_MS = 20_000;
@@ -100,14 +118,6 @@ export function prefetchMissionControl(): Promise<MCData | null> {
   return memoizedFetch(sessionKey("mission-control"), fetchMissionControl);
 }
 
-export function prefetchDiscovery(): Promise<DiscoveryData | null> {
-  return memoizedFetch(sessionKey("discovery"), fetchDiscovery);
-}
-
-export function peekCachedDiscovery(): DiscoveryData | null {
-  return peekCached<DiscoveryData>("discovery");
-}
-
 export function peekCachedMissionControl(): MCData | null {
   return peekCached<MCData>("mission-control");
 }
@@ -146,6 +156,16 @@ function getUserId(): string | null {
   } catch {
     return null;
   }
+}
+
+function toRecord(value: unknown): Record<string, number> {
+  if (!isRecord(value)) return {};
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(value)) {
+    const n = Number(v);
+    out[k] = Number.isFinite(n) ? n : 0;
+  }
+  return out;
 }
 
 /* ─── Mission Control ─── */
@@ -421,6 +441,7 @@ export async function fetchCampaign(id: string): Promise<CampaignData | null> {
         : undefined,
     createdAt: (c.created_at as string) || "",
     objective: (c.objective as string) || "",
+    discoveryId: String((c.discovery_id as string) || ""),
     leadCount: Number(c.lead_count || 0),
     pendingDrafts: Number(c.pending_drafts || 0),
     approvedDrafts: Number(c.approved_drafts || 0),
@@ -454,90 +475,57 @@ export async function fetchCampaignList() {
 
 /* ─── Inbox ─── */
 
-const JUDGMENT_STATUSES = new Set([
-  "replied",
-  "interested",
-  "follow_up_ready",
-  "bounced",
-  "follow_up_pending",
-]);
-
-function inboxDecisionFromConversation(c: Record<string, unknown>): InboxDecision {
-  const id = String(c.conversation_id || c.id || "");
-  const status = String(c.status || "unknown");
-  const participants = Array.isArray(c.participants) ? c.participants : [];
-  const primary = (participants[0] as Record<string, unknown> | undefined) || {};
-  const name = String(primary.name || primary.email || "Contact");
-  const company = String(c.company_name || c.campaign_name || primary.company || "Unknown company");
-  const summary = String(
-    c.last_message_preview || c.summary || c.subject || `Conversation status: ${status}`,
+/**
+ * The contact is the participant with role "contact". Senders (the agent's own
+ * outbound addresses) are role "sender" and come first in participants, so
+ * picking participants[0] would surface the agent instead of the contact.
+ */
+function contactFromConversation(
+  c: Record<string, unknown>,
+): Record<string, unknown> {
+  const participants = Array.isArray(c.participants)
+    ? (c.participants as Record<string, unknown>[])
+    : [];
+  const byRole = participants.find(
+    (p) => String(p.role || "").toLowerCase() === "contact",
   );
+  return byRole || participants[1] || participants[0] || {};
+}
 
-  const badge =
-    status === "interested"
-      ? "Interested"
-      : status === "bounced"
-        ? "Bounced"
-        : status === "follow_up_ready"
-          ? "Follow-up ready"
-          : "Needs reply";
-
-  const recommendedDecision =
-    status === "interested"
-      ? "Approve a meeting-oriented reply"
-      : status === "bounced"
-        ? "Investigate bounce and pause outreach"
-        : "Review and decide on next reply";
-
+function inboxRowFromConversation(c: Record<string, unknown>): InboxConversationRow {
+  const contact = contactFromConversation(c);
+  const summary = (c.summary as Record<string, unknown>) || {};
+  const metadata = (c.metadata as Record<string, unknown>) || {};
   return {
-    id,
-    title: name,
-    company,
-    icon: status === "bounced" ? "error" : status === "interested" ? "handshake" : "mail",
-    badge,
-    summary,
-    recommendedDecision,
-    actions: {
-      primary: { label: "Review conversation" },
-      secondary: { label: "Open details" },
-    },
-    footerLink: { label: "Open conversation" },
-    detail: {
-      aiSummary: summary,
-      timeline: [],
-      concerns: [],
-      recommendedReply: "",
-      originalConversation: [],
-    },
+    id: String(c.conversation_id || c.id || ""),
+    name: String(
+      contact.name || contact.email || summary.contact_name || "Contact",
+    ),
+    email: String(contact.email || summary.contact_email || ""),
+    company: String(
+      c.company_name || summary.company || contact.company || "",
+    ),
+    status: String(c.status || "unknown"),
+    classification: String(metadata.last_reply_category || ""),
+    interest: String(summary.interest_level || ""),
+    preview: String(c.last_message_preview || ""),
+    lastActivityAt: String(c.last_activity_at || c.updated_at || ""),
+    messageCount: Number(c.message_count || 0),
   };
 }
 
 export async function fetchInbox(): Promise<InboxData | null> {
   const token = getToken();
   if (!token) return null;
-  try {
-    const raw = await listConversations(token);
-    const conversations = Array.isArray(raw.conversations) ? raw.conversations : [];
-    const decisions = conversations
-      .filter((c) => JUDGMENT_STATUSES.has(String((c as Record<string, unknown>).status || "")))
-      .map((c) => inboxDecisionFromConversation(c as Record<string, unknown>));
+  const raw = await listConversations(token);
+  const conversations = Array.isArray(raw.conversations)
+    ? raw.conversations
+    : [];
+  const rows = conversations.map((c) =>
+    inboxRowFromConversation(c as Record<string, unknown>),
+  );
 
-    return {
-      decisions,
-      autoActions: [],
-      insights: decisions.length
-        ? [
-            {
-              icon: "priority_high",
-              title: "Human judgment required",
-              description: `${decisions.length} conversation${decisions.length === 1 ? "" : "s"} need your decision.`,
-            },
-          ]
-        : [],
-    };
-  } catch {
-    return { decisions: [], autoActions: [], insights: [] };
-  }
+  return { rows };
 }
 
 /* ─── Knowledge ─── */
@@ -880,126 +868,281 @@ export async function fetchStrategicUpdate(): Promise<StrategicData | null> {
 
 /* ─── Discovery ─── */
 
-const DISCOVERY_JOB_KEY = "loqi_discovery_last_job_id";
-
-export function getStoredDiscoveryJobId(): string | null {
-  try {
-    return sessionStorage.getItem(DISCOVERY_JOB_KEY);
-  } catch {
-    return null;
-  }
+function _scoreToMatch(value: unknown, fallback: number): number {
+  if (typeof value === "number") return Math.round(value);
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : fallback;
 }
 
-export function storeDiscoveryJobId(jobId: string): void {
-  try {
-    sessionStorage.setItem(DISCOVERY_JOB_KEY, jobId);
-  } catch {
-    /* ignore */
-  }
-}
-
-function leadToDiscoveryRecommendation(
-  lead: Record<string, unknown>,
+function _companyToRecommendation(
+  company: Record<string, unknown>,
   index: number,
+  qualification?: DiscoveryRecommendation["qualification"],
 ): DiscoveryRecommendation {
-  const company = String(lead.company || lead.company_name || "Unknown company");
-  const title = String(lead.title || lead.job_title || "");
-  const name = String(lead.name || lead.full_name || "");
-  const location = String(lead.location || lead.city || "Unknown");
-  const scoreRaw = lead.relevance_score ?? lead.score ?? lead.match_score;
-  const match =
-    typeof scoreRaw === "number"
-      ? Math.round(scoreRaw > 1 ? scoreRaw : scoreRaw * 100)
-      : Math.max(55, 90 - index * 3);
-
-  const reasoningParts = [
-    name && title ? `${name} (${title})` : name || title,
-    lead.linkedin_url ? "LinkedIn profile available" : null,
-    lead.email ? "Email on file" : null,
-  ].filter(Boolean);
-
+  const stage = (company.stage as string) || "";
+  const employeeCount = company.employee_count;
+  const stageLabel = stage
+    || (typeof employeeCount === "number" && employeeCount > 0
+        ? `${employeeCount} employees`
+        : "Prospect");
   return {
-    id: String(lead.id || lead.linkedin_url || `lead-${index}`),
-    company,
-    match,
-    subtitle: title || name || "Prospect",
-    stage: String(lead.seniority || lead.stage || "Prospect"),
-    location,
-    reasoning: reasoningParts.join(". ") || "Matched from research job results.",
-    buyingSignal: String(lead.buying_signal || lead.signal || "Research match"),
-    signalDetail: String(lead.buying_signal_detail || lead.snippet || lead.headline || ""),
-    funding: String(lead.funding || "—"),
-    hiring: String(lead.hiring || "—"),
+    id: String(company.id || `company-${index}`),
+    company: String(company.name || company.domain || "Unknown company"),
+    match: _scoreToMatch(company.match_score, Math.max(55, 90 - index * 3)),
+    subtitle: String(company.industry || "Company"),
+    stage: stageLabel,
+    location: [company.city, company.country].filter(Boolean).join(", ") || "Unknown",
+    reasoning: String(company.description || "Matched from research results."),
+    buyingSignal: String(company.buying_signal || "Research match"),
+    signalDetail: String(company.snippet || company.headline || ""),
+    funding: String(company.funding || "—"),
+    hiring: String(company.hiring || "—"),
     alsoConsidered: [],
+    qualification,
   };
 }
 
-export async function fetchDiscovery(): Promise<DiscoveryData | null> {
-  return memoizedFetch(sessionKey("discovery"), async () => {
+export function workspaceLeadToRecommendation(
+  wl: Record<string, unknown>,
+  index: number,
+): DiscoveryRecommendation {
+  const profile =
+    (wl.lead as Record<string, unknown> | undefined)
+    || (wl as Record<string, unknown>);
+  const firstName = String(wl.first_name || profile.first_name || "");
+  const lastName = String(wl.last_name || profile.last_name || "");
+  const name = [firstName, lastName].filter(Boolean).join(" ");
+  const title = String(wl.title || profile.title || "");
+  const profileMetadata = recordFromJson(profile.metadata);
+  const qualification: DiscoveryRecommendation["qualification"] | null =
+    qualificationFromPersistedMetadata(wl.metadata) as DiscoveryRecommendation["qualification"] | null;
+  return {
+    id: String(wl.id || `lead-${index}`),
+    company: String(
+      profile.company_name
+       || profileMetadata.company
+      || name
+      || "Unknown company",
+    ),
+    match: _scoreToMatch(wl.match_score, Math.max(55, 90 - index * 3)),
+    subtitle: title || name || "Prospect",
+    stage: String(profile.seniority || wl.lead_status || "Prospect"),
+    location: String(
+      profile.location
+      || profile.city
+      || wl.location
+      || "Unknown",
+    ),
+    reasoning: [
+      name && title ? `${name} (${title})` : name || title,
+      wl.linkedin_url || profile.linkedin_url ? "LinkedIn profile available" : null,
+      wl.email ? "Email on file" : null,
+    ].filter(Boolean).join(". ") || "Matched from research results.",
+    buyingSignal: String(profile.buying_signal || profile.signal || "Research match"),
+    signalDetail: String(profile.buying_signal_detail || profile.snippet || profile.headline || ""),
+    funding: String(profile.funding || "—"),
+    hiring: String(profile.hiring || "—"),
+    alsoConsidered: [],
+    qualification: qualification || undefined,
+  };
+}
+
+export async function fetchDiscoveryList(): Promise<DiscoveryListItem[] | null> {
+  return memoizedFetch(sessionKey("discovery-list"), async () => {
     const token = getToken();
     if (!token) return null;
-
     try {
-      const recent = await listActiveJobs(token, getUserId() ?? "");
-      const jobs = Array.isArray(recent.jobs) ? recent.jobs : [];
-      const searchJob = jobs.find((j) =>
-        j.type === "search" && (j.status === "queued" || j.status === "running"),
-      );
-
-      if (searchJob) {
-        storeDiscoveryJobId(searchJob.id);
-        return {
-          narrativeTitle: "Research in progress",
-          narrativeLines: [
-            searchJob.stage || "Working through discovery…",
-            searchJob.query ? `Query: ${searchJob.query}` : "Refining results against your ICP.",
-            `Progress: ${searchJob.progress}%`,
-          ],
-          filters: [],
-          recommendations: [],
-        };
-      }
-
-      const completedSearch = jobs.find((j) =>
-        j.type === "search" && j.status === "completed" && j.result_ready,
-      );
-      const storedId = getStoredDiscoveryJobId() || completedSearch?.id;
-      if (storedId) {
-        try {
-          const results = await getJobResults(storedId);
-          const leads = Array.isArray(results.leads) ? results.leads : [];
-          if (leads.length > 0) {
-            return {
-              narrativeTitle: "Research complete",
-              narrativeLines: [
-                `I found ${leads.length} prospect${leads.length === 1 ? "" : "s"} worth your attention.`,
-                "Review the recommendations below and decide who to pursue.",
-              ],
-              filters: [],
-              recommendations: leads.map((l, i) =>
-                leadToDiscoveryRecommendation(l as Record<string, unknown>, i),
-              ),
-            };
-          }
-        } catch {
-          /* job may still be incomplete or expired */
-        }
-      }
-
-      return null;
+      const res = await listDiscoveries(token);
+      const items = Array.isArray(res.discoveries) ? res.discoveries : [];
+      return items.map((d) => ({
+        id: String(d.id),
+        query: String(d.query || ""),
+        status: (d.status as DiscoveryStatus) || "queued",
+        companyCount: Number(d.company_count) || 0,
+        leadCount: Number(d.lead_count) || 0,
+        createdAt: String(d.created_at || ""),
+        completedAt: d.completed_at ? String(d.completed_at) : null,
+        summary: d.summary || {},
+        title: d.title ?? null,
+        description: d.description ?? null,
+        favorite: Boolean(d.favorite),
+        archivedAt: d.archived_at ? String(d.archived_at) : null,
+        lastViewedAt: d.last_viewed_at ? String(d.last_viewed_at) : null,
+        lastRefreshedAt: d.last_refreshed_at ? String(d.last_refreshed_at) : null,
+        metadata: d.metadata || {},
+      }));
     } catch {
       return null;
     }
   });
 }
 
-export async function startDiscoverySearch(query: string): Promise<string | null> {
+export function prefetchDiscoveryList(): Promise<DiscoveryListItem[] | null> {
+  return memoizedFetch(sessionKey("discovery-list"), fetchDiscoveryList);
+}
+
+export function peekCachedDiscoveryList(): DiscoveryListItem[] | null {
+  return peekCached<DiscoveryListItem[]>("discovery-list");
+}
+
+export async function fetchDiscovery(id: string): Promise<DiscoveryData | null> {
+  return memoizedFetch(sessionKey(`discovery:${id}`), async () => {
+    const token = getToken();
+    if (!token || !id) return null;
+    try {
+      const res = await getDiscovery(token, id);
+      const d = res.discovery;
+      if (!d) return null;
+
+      const status = (d.status as DiscoveryStatus) || "queued";
+      const companies = Array.isArray(d.discovery_companies) ? d.discovery_companies : [];
+      const leads = Array.isArray(d.discovery_leads) ? d.discovery_leads : [];
+      const providerCounts = toRecord(d.provider_provenance);
+      const metadata = isRecord(d.metadata) ? d.metadata : {};
+      const rawProgress = isRecord(metadata.progress) ? metadata.progress : {};
+      const rawPlan = isRecord(metadata.plan) ? metadata.plan : {};
+      const progress: DiscoveryProgress = {
+        stage: typeof rawProgress.stage === "string" ? rawProgress.stage : "",
+        progress:
+          typeof rawProgress.progress === "number"
+            ? rawProgress.progress
+            : Number(rawProgress.progress) || 0,
+      };
+      const plan: DiscoveryPlan = {
+        offering: String(rawPlan.offering || ""),
+        primaryServices: Array.isArray(rawPlan.primary_services) ? rawPlan.primary_services.map(String) : [],
+        targetAudience: String(rawPlan.target_audience || ""),
+        industries: Array.isArray(rawPlan.industries) ? rawPlan.industries.map(String) : [],
+        subIndustries: Array.isArray(rawPlan.sub_industries) ? rawPlan.sub_industries.map(String) : [],
+        icpSummary: String(rawPlan.icp_summary || ""),
+        buyerPersonas: Array.isArray(rawPlan.buyer_personas) ? rawPlan.buyer_personas.map(String) : [],
+        companyKeywords: Array.isArray(rawPlan.company_keywords) ? rawPlan.company_keywords.map(String) : [],
+        decisionMakerRoles: Array.isArray(rawPlan.decision_maker_roles) ? rawPlan.decision_maker_roles.map(String) : [],
+        negativeKeywords: Array.isArray(rawPlan.negative_keywords) ? rawPlan.negative_keywords.map(String) : [],
+        painPoints: Array.isArray(rawPlan.pain_points) ? rawPlan.pain_points.map(String) : [],
+        buyingSignals: Array.isArray(rawPlan.buying_signals) ? rawPlan.buying_signals.map(String) : [],
+        technologies: Array.isArray(rawPlan.technologies) ? rawPlan.technologies.map(String) : [],
+        businessCharacteristics: Array.isArray(rawPlan.business_characteristics) ? rawPlan.business_characteristics.map(String) : [],
+        exclusions: Array.isArray(rawPlan.exclusions) ? rawPlan.exclusions.map(String) : [],
+        geography: Array.isArray(rawPlan.geography) ? rawPlan.geography.map(String) : [],
+        companySize: Array.isArray(rawPlan.company_size) ? rawPlan.company_size.map(String) : [],
+        messagingAngle: String(rawPlan.messaging_angle || ""),
+        successCriteria: String(rawPlan.success_criteria || ""),
+      };
+
+      let recommendations: DiscoveryRecommendation[] = [];
+      let narrativeTitle: string;
+      let narrativeLines: string[];
+
+      if (status === "searching" || status === "queued") {
+        narrativeTitle = "Research in progress";
+        narrativeLines = [
+          "Working through discovery…",
+          d.query ? `Query: ${d.query}` : "Refining results against your ICP.",
+        ];
+      } else if (status === "failed" || status === "cancelled") {
+        narrativeTitle = "Research stopped";
+        narrativeLines = [
+          `The search for "${d.query || "this market"}" did not complete.`,
+          "Try telling Loqi the market again to refine the query.",
+        ];
+      } else {
+        const qualificationByCompany = new Map<string, DiscoveryRecommendation["qualification"]>();
+        for (const lead of leads) {
+          const workspaceLead = isRecord(lead.workspace_lead) ? lead.workspace_lead : {};
+          const qualification: DiscoveryRecommendation["qualification"] | null =
+            qualificationFromPersistedMetadata(workspaceLead.metadata) as DiscoveryRecommendation["qualification"] | null;
+          if (qualification && workspaceLead.company_id) {
+            qualificationByCompany.set(String(workspaceLead.company_id), qualification);
+          }
+        }
+        recommendations = companies.map((c, i) =>
+          _companyToRecommendation(
+            c.company || {},
+            i,
+            qualificationByCompany.get(String(c.company_id || (c.company as Record<string, unknown> | undefined)?.id || "")),
+          ),
+        );
+        if (recommendations.length === 0 && leads.length > 0) {
+          recommendations = leads.map((l, i) =>
+            workspaceLeadToRecommendation(l.workspace_lead || {}, i),
+          );
+        }
+        const companyCount = companies.length;
+        narrativeTitle = "Research complete";
+        narrativeLines = [
+          companyCount > 0
+            ? `I surfaced ${companyCount} compan${companyCount === 1 ? "y" : "ies"} worth your attention.`
+            : "No new prospects matched your ICP this time.",
+          "Review the recommendations below and decide who to pursue.",
+        ];
+      }
+
+      return {
+        id: String(d.id),
+        query: String(d.query || ""),
+        status,
+        createdAt: String(d.created_at || ""),
+        completedAt: d.completed_at ? String(d.completed_at) : null,
+        companyCount: companies.length,
+        leadCount: leads.length,
+        providers: providerCounts,
+        narrativeTitle,
+        narrativeLines,
+        filters: [],
+        recommendations,
+        title: d.title ?? null,
+        description: d.description ?? null,
+        favorite: Boolean(d.favorite),
+        archivedAt: d.archived_at ? String(d.archived_at) : null,
+        lastViewedAt: d.last_viewed_at ? String(d.last_viewed_at) : null,
+        lastRefreshedAt: d.last_refreshed_at ? String(d.last_refreshed_at) : null,
+        metadata: d.metadata || {},
+        progress,
+        plan,
+      };
+    } catch {
+      return null;
+    }
+  });
+}
+
+export function prefetchDiscovery(id: string): Promise<DiscoveryData | null> {
+  return memoizedFetch(sessionKey(`discovery:${id}`), () => fetchDiscovery(id));
+}
+
+export function peekCachedDiscovery(id: string): DiscoveryData | null {
+  return peekCached<DiscoveryData>(`discovery:${id}`);
+}
+
+/**
+ * Bypass the memoized cache and hit the API now. Used by the detail page's
+ * polling loop while a run is in flight — the memoized fetch would otherwise
+ * throttle real updates to the 20s cache TTL and the UI would look stuck.
+ */
+export async function fetchDiscoveryFresh(id: string): Promise<DiscoveryData | null> {
+  fetchCache.delete(sessionKey(`discovery:${id}`));
+  return fetchDiscovery(id);
+}
+
+export function invalidateDiscoveryCache(): void {
+  fetchCache.delete(sessionKey("discovery-list"));
+}
+
+export async function startDiscoverySearch(query: string): Promise<{ jobId: string; discoveryId: string } | null> {
   const token = getToken();
-  if (!token || !query.trim()) return null;
-  const res = await startSearchJob(token, query.trim());
-  if (res.job_id) {
-    storeDiscoveryJobId(res.job_id);
-    return res.job_id;
+  console.log("[kickoff] startDiscoverySearch: enter", { tokenPresent: !!token, query: query.slice(0, 80) });
+  if (!token || !query.trim()) {
+    console.log("[kickoff] startDiscoverySearch: ABORT (no token or empty query)");
+    return null;
   }
+  const res = await startDiscoveryJob(token, query.trim());
+  console.log("[kickoff] startDiscoverySearch: startDiscoveryJob resolved", res);
+  if (res && res.discovery_id) {
+    invalidateDiscoveryCache();
+    console.log("[kickoff] startDiscoverySearch: OK ->", { jobId: res.job_id, discoveryId: res.discovery_id });
+    return { jobId: String(res.job_id), discoveryId: String(res.discovery_id) };
+  }
+  console.log("[kickoff] startDiscoverySearch: null (no discovery_id in response)");
   return null;
 }

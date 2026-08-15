@@ -49,7 +49,7 @@ const TRANSITIONS: Record<ConversationState, Record<TransitionEvent["type"], Con
 };
 
 export function nextState(from: ConversationState, event: TransitionEvent): ConversationState {
-  if (event.type === "instruction" && event.kind === "unknown") return from;
+  if (event.type === "instruction" && event.kind === "unknown") return "clarification";
   return TRANSITIONS[from][event.type];
 }
 
@@ -65,6 +65,7 @@ const KEYWORD_SCORES: Record<TaskKind, Array<[string, number]>> = {
   campaign: [
     ["campaign", 3], ["draft", 2], ["write", 2], ["personalize", 2],
     ["launch", 2], ["outreach", 2], ["sequence", 2],
+    ["strategy", 2], ["duplicate", 2], ["clone", 2], ["delete", 1],
   ],
   briefing: [
     ["brief", 2], ["what changed", 2], ["what's new", 2], ["whats new", 2],
@@ -87,6 +88,25 @@ export function classifyInstruction(text: string): TaskKind | "unknown" {
   );
   if (best === null || scores[best] === 0) return "unknown";
   return best;
+}
+
+/**
+ * Resolve which task an instruction maps to, falling back to a page-aware
+ * default when the keyword classifier cannot match.
+ *
+ * Discovery must never depend on keyword classification to start a search:
+ * an unclassified instruction submitted there ("AI startups", "Climate tech",
+ * "Healthcare SaaS", …) routes straight into the lead-search flow instead of
+ * being discarded. Every other page falls through to "unknown", which the
+ * caller surfaces through the clarification UI rather than silently ignoring.
+ */
+export function resolveTaskKind(
+  instruction: string,
+  page?: string | null,
+): TaskKind | "unknown" {
+  const kind = classifyInstruction(instruction);
+  if (kind !== "unknown") return kind;
+  return page === "Discovery" ? "research" : "unknown";
 }
 
 export const TASKS: Record<TaskKind, WorkspaceTask> = {
@@ -211,15 +231,15 @@ export const KIND_FIRST_STEPS: Record<TaskKind, string> = {
  * never a log viewer).
  */
 export const RESEARCH_STAGE_LABELS: Record<string, string> = {
-  "Analyzing your target audience...": "Analyzing your target audience…",
-  "Extracting buyer profile...": "Studying your target buyer…",
-  "Finding similar companies...": "Finding similar companies…",
-  "Ranking opportunities...": "Ranking the strongest matches…",
+  "Initializing research...": "Setting up your discovery run…",
+  "Understanding target market...": "Understanding your target market…",
+  "Finding matching companies...": "Finding matching companies…",
+  "Ranking prospects...": "Ranking the strongest matches…",
+  "Preparing recommendations...": "Preparing your recommendations…",
 };
 
 export const RESEARCH_SKIPPED_STAGES = new Set([
   "Starting...",
-  "Preparing results...",
 ]);
 
 const COMPLETION_LABELS: Record<TaskKind, { primary: string; secondary: string }> = {
@@ -229,10 +249,58 @@ const COMPLETION_LABELS: Record<TaskKind, { primary: string; secondary: string }
   briefing: { primary: "Continue Briefing", secondary: "Open Mission Control" },
 };
 
-export function completionActions(task: WorkspaceTask): CopilotAction[] {
+/**
+ * Per-step campaign actions for the Copilot. Each workflow step offers the
+ * exact next action on that campaign (mirrors the guided campaign lifecycle).
+ */
+export function campaignStepActions(
+  campaignId: string,
+  step: string | undefined,
+): CopilotAction[] {
+  const campaignPath = `/campaigns/${campaignId}`;
+  switch (step) {
+    case "strategy":
+      return [
+        { type: "navigate", label: "Generate Strategy", path: campaignPath },
+        { type: "navigate", label: "Open Campaigns", path: "/campaigns" },
+      ];
+    case "leads":
+      return [
+        { type: "navigate", label: "Add Leads", path: `/discovery?campaign=${encodeURIComponent(campaignId)}` },
+        { type: "navigate", label: "Open Campaign", path: campaignPath },
+      ];
+    case "drafts":
+      return [
+        { type: "navigate", label: "Generate Drafts", path: campaignPath },
+        { type: "navigate", label: "Open Campaign", path: campaignPath },
+      ];
+    case "review":
+      return [
+        { type: "navigate", label: "Review Drafts", path: `/draft?campaign=${encodeURIComponent(campaignId)}` },
+        { type: "navigate", label: "Open Campaign", path: campaignPath },
+      ];
+    case "sending":
+      return [
+        { type: "navigate", label: "Launch Campaign", path: campaignPath },
+        { type: "navigate", label: "Open Campaign", path: campaignPath },
+      ];
+    default:
+      return [
+        { type: "navigate", label: "Open Campaign", path: campaignPath },
+        { type: "navigate", label: "Open Campaigns", path: "/campaigns" },
+      ];
+  }
+}
+
+export function completionActions(
+  task: WorkspaceTask,
+  primaryPath?: string,
+  extra: CopilotAction[] | null = null,
+): CopilotAction[] {
+  if (extra && extra.length > 0) return extra;
   const labels = COMPLETION_LABELS[task.kind];
   const actions: CopilotAction[] = [
-    { type: "navigate", label: labels.primary, path: task.workspacePath },
+    { type: "navigate", label: labels.primary, path: primaryPath || task.workspacePath },
   ];
   if (labels.secondary === "Open Mission Control") {
     actions.push({ type: "navigate", label: labels.secondary, path: "/mission-control" });

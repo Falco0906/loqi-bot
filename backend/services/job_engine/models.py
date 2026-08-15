@@ -31,6 +31,7 @@ class Job:
     stage: str = ""
     progress: int = 0
     query: str = ""
+    discovery_id: str = ""
     error_message: Optional[str] = None
     result_ready: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -46,6 +47,7 @@ class Job:
             "stage": self.stage,
             "progress": self.progress,
             "query": self.query,
+            "discovery_id": self.discovery_id,
             "error_message": self.error_message,
             "result_ready": self.result_ready,
             "created_at": self.created_at.isoformat() if self.created_at else None,
@@ -64,6 +66,7 @@ class Job:
             stage=data.get("stage", ""),
             progress=data.get("progress", 0),
             query=data.get("query", ""),
+            discovery_id=data.get("discovery_id", ""),
             error_message=data.get("error_message"),
             result_ready=data.get("result_ready", False),
             created_at=_parse_dt(data.get("created_at")),

@@ -57,22 +57,21 @@ class WorkflowReasoner:
         return self.total_leads > 0
 
     def campaigns_ready_to_launch(self) -> list[dict]:
-        return [c for c in self.campaigns if c.get("status") in ("ready", "ready_to_send")]
+        return [c for c in self.campaigns if c.get("current_step") == "sending"]
 
     def campaigns_in_draft_review(self) -> list[dict]:
-        return [c for c in self.campaigns if c.get("status") == "draft_review"]
+        return [c for c in self.campaigns if c.get("current_step") == "review"]
 
     def campaigns_in_planning(self) -> list[dict]:
         return [c for c in self.campaigns if c.get("status") == "planning"]
 
     def campaigns_with_leads_no_drafts(self) -> list[dict]:
         return [c for c in self.campaigns
-                if c.get("status") == "planning"
-                and (c.get("lead_count") or 0) > 0]
+                if c.get("current_step") == "drafts"]
 
     def idle_campaigns(self) -> list[dict]:
         return [c for c in self.campaigns
-                if c.get("status") not in ("completed", "archived")
+                if c.get("status") not in ("completed", "archived", "deleted")
                 and _hours_since(c.get("updated_at", "")) > 72]
 
     def last_action_type(self) -> str:

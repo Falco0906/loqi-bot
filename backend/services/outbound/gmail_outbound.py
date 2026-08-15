@@ -6,6 +6,7 @@ No intelligence, no AI, no recommendations, no planner.
 import base64
 import json
 import logging
+import re
 from typing import Optional
 
 import requests
@@ -21,8 +22,23 @@ from services.outbound.outbound_models import (
     Recipient,
 )
 from services.communication.gmail_provider import GMAIL_API_BASE, TOKEN_URL
+from services.gmail_auth_failure import (
+    GmailReauthRequired,
+    raise_for_token_response,
+)
 
 logger = logging.getLogger(__name__)
+
+_GMAIL_ID_RE = re.compile(r"^[0-9a-fA-F]{16,}$")
+
+
+def _is_real_gmail_id(value: str) -> bool:
+    """True only for genuine Gmail thread/message ids (hex, >=16 chars).
+
+    Synthetic ids (e.g. simulator's ``thread_<uuid>``) are rejected here so
+    they are never sent to Gmail, which answers 400 INVALID_ARGUMENT.
+    """
+    return bool(value) and bool(_GMAIL_ID_RE.fullmatch(value))
 
 
 class ScopeUpgradeRequired(Exception):
@@ -36,6 +52,7 @@ class GmailOutboundProvider(OutboundProviderBase):
 
     def __init__(self) -> None:
         self._provider_id: str = ""
+        self._user_id: str = ""
         self._access_token: str = ""
         self._refresh_token: str = ""
         self._token_expiry: float = 0.0
@@ -43,8 +60,10 @@ class GmailOutboundProvider(OutboundProviderBase):
         self._client_secret: str = ""
 
     def configure(self, provider_id: str, access_token: str, refresh_token: str,
-                  client_id: str, client_secret: str, token_expiry: float) -> None:
+                  client_id: str, client_secret: str, token_expiry: float,
+                  user_id: str = "") -> None:
         self._provider_id = provider_id
+        self._user_id = user_id
         self._access_token = access_token
         self._refresh_token = refresh_token
         self._client_id = client_id
@@ -79,7 +98,16 @@ class GmailOutboundProvider(OutboundProviderBase):
 
     def _refresh_auth(self) -> None:
         if not self._refresh_token:
-            raise Exception("No refresh token available")
+            raise GmailReauthRequired("No refresh token available — Gmail re-auth required")
+        if self._user_id:
+            try:
+                from services.supabase import is_connected_account_reauth_required
+                if is_connected_account_reauth_required(self._user_id, "google"):
+                    raise GmailReauthRequired("Gmail account requires re-authentication")
+            except GmailReauthRequired:
+                raise
+            except Exception:
+                pass
         resp = requests.post(
             TOKEN_URL,
             data={
@@ -90,14 +118,52 @@ class GmailOutboundProvider(OutboundProviderBase):
             },
             timeout=15,
         )
-        if resp.status_code != 200:
-            raise Exception(f"Token refresh failed: {resp.text[:500]}")
+        raise_for_token_response(
+            resp, provider_id=self._provider_id, user_id=self._user_id,
+        )
         data = resp.json()
         if data.get("access_token"):
             self._access_token = data["access_token"]
         expires_in = data.get("expires_in", 3600)
         import time
         self._token_expiry = time.time() + int(expires_in)
+        if data.get("refresh_token"):
+            self._refresh_token = data["refresh_token"]
+        if self._user_id:
+            try:
+                from datetime import datetime, timezone
+                from services.supabase import update_google_access_token
+                update_google_access_token(
+                    self._user_id,
+                    access_token=self._access_token,
+                    token_expiry=datetime.fromtimestamp(
+                        self._token_expiry, tz=timezone.utc
+                    ).isoformat(),
+                )
+            except Exception as e:
+                logger.warning("[GmailOutbound] Failed to persist refreshed token: %s", e)
+
+    def _request_with_auth_retry(self, method: str, url: str,
+                                 timeout: int = 30, **kwargs) -> requests.Response:
+        """Issue a Gmail API request, refreshing auth and retrying once on 401.
+
+        Google may reject an access token before its local expiry (e.g. it was
+        superseded or revoked server-side). Time-based refresh alone never
+        recovers from that, so force a refresh and retry once when Gmail
+        answers 401.
+        """
+        kwargs["timeout"] = timeout
+        kwargs["headers"] = self._headers()
+        resp = requests.request(method, url, **kwargs)
+        if resp.status_code == 401 and self._refresh_token:
+            logger.warning(
+                "[GmailOutbound] 401 on %s %s — forcing token refresh and retrying",
+                method.upper(), url,
+            )
+            self._refresh_auth()
+            kwargs["headers"] = self._headers()
+            resp = requests.request(method, url, **kwargs)
+        return resp
 
     def _headers(self) -> dict:
         self._ensure_auth()
@@ -146,10 +212,15 @@ class GmailOutboundProvider(OutboundProviderBase):
                 thread_id = in_reply_to
             elif references:
                 thread_id = references.split()[-1] if references.split() else None
-            if reply_to_msg_id:
+            if reply_to_msg_id and _is_real_gmail_id(reply_to_msg_id):
                 message["threadId"] = reply_to_msg_id
-            elif thread_id:
+            elif thread_id and _is_real_gmail_id(thread_id):
                 message["threadId"] = thread_id
+            elif reply_to_msg_id or thread_id:
+                logger.warning(
+                    "[GmailOutbound] dropping non-Gmail thread id %r from message payload",
+                    (reply_to_msg_id or thread_id)[:24],
+                )
 
         return message
 
@@ -164,18 +235,20 @@ class GmailOutboundProvider(OutboundProviderBase):
             references=draft.references,
         )
         payload = {"message": gmail_msg}
-        if draft.thread_id:
+        if draft.thread_id and _is_real_gmail_id(draft.thread_id):
             payload["message"]["threadId"] = draft.thread_id
+        elif draft.thread_id:
+            logger.warning(
+                "[GmailOutbound] dropping non-Gmail thread id %r from draft payload",
+                draft.thread_id[:24],
+            )
 
-        resp = requests.post(
-            f"{GMAIL_API_BASE}/users/me/drafts",
-            headers=self._headers(),
-            json=payload,
-            timeout=30,
+        resp = self._request_with_auth_retry(
+            "POST", f"{GMAIL_API_BASE}/users/me/drafts", json=payload
         )
         self._check_scope_error(resp)
         if resp.status_code != 200:
-            raise Exception(f"Failed to create draft: {resp.text[:500]}")
+            raise Exception(f"Failed to create draft: Gmail API status {resp.status_code}")
         data = resp.json()
         draft.external_draft_id = data.get("id", "")
         logger.info("[GmailOutbound] create_draft OK | external_id=%s", draft.external_draft_id)
@@ -199,18 +272,20 @@ class GmailOutboundProvider(OutboundProviderBase):
             "id": draft.external_draft_id,
             "message": gmail_msg,
         }
-        if draft.thread_id:
+        if draft.thread_id and _is_real_gmail_id(draft.thread_id):
             payload["message"]["threadId"] = draft.thread_id
+        elif draft.thread_id:
+            logger.warning(
+                "[GmailOutbound] dropping non-Gmail thread id %r from update payload",
+                draft.thread_id[:24],
+            )
 
-        resp = requests.put(
-            f"{GMAIL_API_BASE}/users/me/drafts/{draft.external_draft_id}",
-            headers=self._headers(),
-            json=payload,
-            timeout=30,
+        resp = self._request_with_auth_retry(
+            "PUT", f"{GMAIL_API_BASE}/users/me/drafts/{draft.external_draft_id}", json=payload
         )
         self._check_scope_error(resp)
         if resp.status_code != 200:
-            raise Exception(f"Failed to update draft: {resp.text[:500]}")
+            raise Exception(f"Failed to update draft: Gmail API status {resp.status_code}")
         logger.info("[GmailOutbound] update_draft OK")
         return draft
 
@@ -229,13 +304,16 @@ class GmailOutboundProvider(OutboundProviderBase):
 
     def send(self, request: SendRequest) -> SendResult:
         logger.info("[GmailOutbound] send | subj=%s to=%s", request.subject[:60], request.recipient.email)
+        send_path = "persisted_draft" if request.draft_id else "raw_message"
+        logger.info(
+            "[TEST RECIPIENT] final_envelope_recipient=%s gmail_send_path=%s draft_id=%s",
+            request.recipient.email, send_path, request.draft_id or "",
+        )
         result = SendResult(provider_id=request.provider_id, draft_id=request.draft_id)
 
         if request.draft_id:
-            resp = requests.post(
-                f"{GMAIL_API_BASE}/users/me/drafts/{request.draft_id}/send",
-                headers=self._headers(),
-                timeout=30,
+            resp = self._request_with_auth_retry(
+                "POST", f"{GMAIL_API_BASE}/users/me/drafts/{request.draft_id}/send"
             )
         else:
             gmail_msg = self._build_gmail_message(
@@ -247,14 +325,16 @@ class GmailOutboundProvider(OutboundProviderBase):
                 references=request.references,
             )
             payload: dict = {"raw": gmail_msg["raw"]}
-            if request.thread_id:
+            if request.thread_id and _is_real_gmail_id(request.thread_id):
                 payload["threadId"] = request.thread_id
+            elif request.thread_id:
+                logger.warning(
+                    "[GmailOutbound] dropping non-Gmail thread id %r from send payload",
+                    request.thread_id[:24],
+                )
 
-            resp = requests.post(
-                f"{GMAIL_API_BASE}/users/me/messages/send",
-                headers=self._headers(),
-                json=payload,
-                timeout=30,
+            resp = self._request_with_auth_retry(
+                "POST", f"{GMAIL_API_BASE}/users/me/messages/send", json=payload
             )
 
         try:
@@ -265,10 +345,12 @@ class GmailOutboundProvider(OutboundProviderBase):
             return result
 
         if resp.status_code != 200:
-            error_text = resp.text[:500]
-            logger.error("[GmailOutbound] send failed | status=%d body=%s", resp.status_code, error_text)
+            logger.error(
+                "gmail_outbound_send_failed provider_id=%s status=%d",
+                self._provider_id[:12], resp.status_code,
+            )
             result.status = DeliveryStatus.FAILED
-            result.error = error_text
+            result.error = f"Gmail send failed (status={resp.status_code})"
             return result
 
         data = resp.json()
@@ -299,10 +381,8 @@ class GmailOutboundProvider(OutboundProviderBase):
     def get_status(self, message_id: str) -> str:
         logger.info("[GmailOutbound] get_status | msg=%s", message_id)
         try:
-            resp = requests.get(
-                f"{GMAIL_API_BASE}/users/me/messages/{message_id}",
-                headers=self._headers(),
-                timeout=15,
+            resp = self._request_with_auth_retry(
+                "GET", f"{GMAIL_API_BASE}/users/me/messages/{message_id}"
             )
             self._check_scope_error(resp)
             if resp.status_code == 200:
@@ -314,10 +394,8 @@ class GmailOutboundProvider(OutboundProviderBase):
     def fetch_draft(self, draft_id: str) -> Optional[DraftMessage]:
         logger.info("[GmailOutbound] fetch_draft | id=%s", draft_id)
         try:
-            resp = requests.get(
-                f"{GMAIL_API_BASE}/users/me/drafts/{draft_id}",
-                headers=self._headers(),
-                timeout=15,
+            resp = self._request_with_auth_retry(
+                "GET", f"{GMAIL_API_BASE}/users/me/drafts/{draft_id}"
             )
             self._check_scope_error(resp)
             if resp.status_code != 200:

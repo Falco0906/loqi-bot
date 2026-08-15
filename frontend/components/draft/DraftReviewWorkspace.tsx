@@ -17,6 +17,7 @@ import {
 } from "../../lib/api";
 import Icon from "../shared/Icon";
 import { toast } from "../shared/Toast";
+import { draftBucket, DraftBucket } from "../../lib/draft-lifecycle";
 import { usePageContext } from "../../hooks/usePageContext";
 import { useActionHandlers } from "../../hooks/useActionHandlers";
 
@@ -32,9 +33,15 @@ type DraftEntry = {
   length?: string;
   lead_intelligence?: Record<string, unknown> | null;
   company_intelligence?: Record<string, unknown> | null;
+  evidence_trace?: {
+    evidence_used?: string[];
+    strategy_used?: string[];
+    confidence?: string;
+  } | null;
   campaign_id?: string;
   campaign_name?: string;
   created_at?: string;
+  sent_at?: string;
 };
 
 type CampaignInfo = {
@@ -98,7 +105,11 @@ export default function DraftReviewWorkspace() {
   const [scheduleTime, setScheduleTime] = useState("");
   const [schedulingId, setSchedulingId] = useState<string | null>(null);
   const [cancellingScheduleId, setCancellingScheduleId] = useState<string | null>(null);
+  const [testRecipient, setTestRecipient] = useState("");
   const aiEndRef = useRef<HTMLDivElement>(null);
+
+  const testRecipientEnabled =
+    process.env.NEXT_PUBLIC_DEV_MODE === "true" || process.env.NODE_ENV === "development";
 
   useEffect(() => {
     if (campaignParam) {
@@ -132,7 +143,7 @@ export default function DraftReviewWorkspace() {
                 pd.id === d.id ? { ...pd, status: updated.status } : pd,
               ),
             );
-            if (res.campaign_status === "ready_to_send") campaignReady = true;
+            if (res.current_step === "sending") campaignReady = true;
           }
         } catch { /* skip */ }
       }
@@ -225,22 +236,16 @@ export default function DraftReviewWorkspace() {
     setExpandedCampaigns(new Set());
   };
 
-  const sortedDraftsForCampaign = (drafts: DraftEntry[]): { pending: DraftEntry[]; approved: DraftEntry[] } => {
-    const pending = drafts
-      .filter((d) => d.status === "pending" || d.status === "needs_review")
-      .sort((a, b) => {
-        const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
-        const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
-        return bTime - aTime;
-      });
-    const approved = drafts
-      .filter((d) => d.status === "approved" || d.status === "sent" || d.status === "scheduled")
-      .sort((a, b) => {
-        const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
-        const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
-        return bTime - aTime;
-      });
-    return { pending, approved };
+  const sortedDraftsForCampaign = (drafts: DraftEntry[]): { pending: DraftEntry[]; approved: DraftEntry[]; sent: DraftEntry[] } => {
+    const byBucket = (bucket: DraftBucket) =>
+      drafts
+        .filter((d) => draftBucket(d.status) === bucket)
+        .sort((a, b) => {
+          const aTime = a.sent_at || a.created_at ? new Date(a.sent_at || a.created_at || "").getTime() : 0;
+          const bTime = b.sent_at || b.created_at ? new Date(b.sent_at || b.created_at || "").getTime() : 0;
+          return bTime - aTime;
+        });
+    return { pending: byBucket("pending"), approved: byBucket("approved"), sent: byBucket("sent") };
   };
 
   const allSortedDrafts = (() => {
@@ -248,12 +253,14 @@ export default function DraftReviewWorkspace() {
     for (const cid of sortedCampaignIds) {
       if (filterCampaign !== "__all__" && cid !== filterCampaign) continue;
       const drafts = draftsByCampaign.get(cid) || [];
-      const { pending, approved } = sortedDraftsForCampaign(drafts);
+      const { pending, approved, sent } = sortedDraftsForCampaign(drafts);
       for (const d of pending) result.push({ draft: d, campaignId: cid });
       for (const d of approved) result.push({ draft: d, campaignId: cid });
+      for (const d of sent) result.push({ draft: d, campaignId: cid });
     }
-    if (filterStatus === "pending") return result.filter((r) => r.draft.status === "pending" || r.draft.status === "needs_review");
-    if (filterStatus === "approved") return result.filter((r) => r.draft.status === "approved");
+    if (filterStatus === "pending") return result.filter((r) => draftBucket(r.draft.status) === "pending");
+    if (filterStatus === "approved") return result.filter((r) => draftBucket(r.draft.status) === "approved");
+    if (filterStatus === "sent") return result.filter((r) => draftBucket(r.draft.status) === "sent");
     return result;
   })();
 
@@ -264,6 +271,8 @@ export default function DraftReviewWorkspace() {
 
   const selected = allSortedDrafts[selectedIndex]?.draft || null;
   const selectedCampaignId = allSortedDrafts[selectedIndex]?.campaignId || null;
+  const selectedLeadEmail = ((selected?.lead?.email as string) || "").trim();
+  const noRecipientEmail = !!selected && !selectedLeadEmail;
 
   function handleSelectDraft(draftId: string) {
     const idx = globalIndexMap.get(draftId);
@@ -346,6 +355,10 @@ export default function DraftReviewWorkspace() {
 
   async function handleApprove() {
     if (!selected || !sessionToken) return;
+    if (selected.status === "sent" || selected.status === "sending") {
+      setMessage("This draft was already sent");
+      return;
+    }
     try {
       const res = await approveDraft(sessionToken, selected.id);
       if (res.ok) {
@@ -355,7 +368,7 @@ export default function DraftReviewWorkspace() {
             d.id === selected.id ? { ...d, status: updated.status } : d,
           ),
         );
-        if (res.campaign_status === "ready_to_send") {
+        if (res.current_step === "sending") {
           setMessage("Campaign ready to launch!");
         } else {
           setMessage(
@@ -370,9 +383,27 @@ export default function DraftReviewWorkspace() {
 
   async function handleSend() {
     if (!selected || !sessionToken) return;
+    if (selected.status === "sent" || selected.status === "sending") {
+      setMessage("This draft was already sent");
+      return;
+    }
+    if (selected.status !== "approved") {
+      setMessage("Approve this draft before sending");
+      return;
+    }
+    if (noRecipientEmail) {
+      setMessage("This lead has no email address");
+      return;
+    }
     setSendingId(selected.id);
     try {
-      const res = await sendDraft(sessionToken, selected.id);
+      const res = await sendDraft(
+        sessionToken,
+        selected.id,
+        testRecipient.trim()
+          ? { test_recipient: testRecipient.trim(), test_recipient_name: "Test Recipient" }
+          : {},
+      );
       if (res.ok) {
         setDrafts((prev) =>
           prev.map((d) =>
@@ -381,7 +412,8 @@ export default function DraftReviewWorkspace() {
         );
         setMessage("Draft sent successfully");
       } else {
-        setMessage(res.send_result?.error ? `Send failed: ${res.send_result.error as string}` : "Send failed");
+        const err = res.error || res.send_result?.error;
+        setMessage(err ? `Send failed: ${err}` : "Send failed");
       }
     } catch {
       setMessage("Send request failed");
@@ -392,6 +424,10 @@ export default function DraftReviewWorkspace() {
 
   async function handleSchedule() {
     if (!selected || !sessionToken || !scheduleTime) return;
+    if (noRecipientEmail) {
+      setMessage("This lead has no email address");
+      return;
+    }
     setSchedulingId(selected.id);
     try {
       const res = await scheduleDraft(sessionToken, selected.id, new Date(scheduleTime).toISOString());
@@ -692,6 +728,7 @@ export default function DraftReviewWorkspace() {
                 <option value="__all__">All</option>
                 <option value="pending">Pending</option>
                 <option value="approved">Approved</option>
+                <option value="sent">Sent</option>
               </select>
             </div>
             <div className="flex gap-2">
@@ -717,20 +754,20 @@ export default function DraftReviewWorkspace() {
               {(() => {
                 const cid = filterCampaign;
                 const campaignDrafts = draftsByCampaign.get(cid) || [];
-                const { pending, approved } = sortedDraftsForCampaign(campaignDrafts);
+                const { pending, approved, sent } = sortedDraftsForCampaign(campaignDrafts);
                 const label = getCampaignLabel(cid, campaignMap);
                 return (
                   <div key={cid}>
                     <div className="flex items-center gap-2 px-2 py-1.5">
                       <span className="text-xs font-bold text-on-surface truncate">{label}</span>
                       <span className="text-[10px] text-on-surface-variant/40 ml-auto">
-                        {pending.length + approved.length} drafts
+                        {pending.length + approved.length + sent.length} drafts
                       </span>
                     </div>
                     {pending.length > 0 && (
                       <div className="mb-1">
                         <p className="px-2 py-1 text-[10px] text-on-surface-variant/40 uppercase tracking-wider font-medium">
-                          Pending ({pending.length})
+                          Pending Review ({pending.length})
                         </p>
                         <div className="space-y-0.5">
                           {pending.map((d) => (
@@ -740,12 +777,24 @@ export default function DraftReviewWorkspace() {
                       </div>
                     )}
                     {approved.length > 0 && (
-                      <div>
+                      <div className="mb-1">
                         <p className="px-2 py-1 text-[10px] text-on-surface-variant/40 uppercase tracking-wider font-medium">
                           Approved ({approved.length})
                         </p>
                         <div className="space-y-0.5">
                           {approved.map((d) => (
+                            <DraftQueueItem key={d.id} draft={d} selected={d.id === selected?.id} onSelect={handleSelectDraft} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {sent.length > 0 && (
+                      <div>
+                        <p className="px-2 py-1 text-[10px] text-on-surface-variant/40 uppercase tracking-wider font-medium">
+                          Sent ({sent.length})
+                        </p>
+                        <div className="space-y-0.5">
+                          {sent.map((d) => (
                             <DraftQueueItem key={d.id} draft={d} selected={d.id === selected?.id} onSelect={handleSelectDraft} />
                           ))}
                         </div>
@@ -758,10 +807,10 @@ export default function DraftReviewWorkspace() {
           ) : (
             sortedCampaignIds.map((cid) => {
               const campaignDrafts = draftsByCampaign.get(cid) || [];
-              const { pending, approved } = sortedDraftsForCampaign(campaignDrafts);
+              const { pending, approved, sent } = sortedDraftsForCampaign(campaignDrafts);
               const label = getCampaignLabel(cid, campaignMap);
               const isExpanded = expandedCampaigns.has(cid);
-              const totalInCampaign = pending.length + approved.length;
+              const totalInCampaign = pending.length + approved.length + sent.length;
 
               return (
                 <div key={cid}>
@@ -775,7 +824,7 @@ export default function DraftReviewWorkspace() {
                     />
                     <span className="text-xs font-bold text-on-surface truncate flex-1">{label}</span>
                     <span className="text-[10px] text-on-surface-variant/40">
-                      {pending.length} Pending &middot; {approved.length} Approved
+                      {pending.length} Pending &middot; {approved.length} Approved &middot; {sent.length} Sent
                     </span>
                   </button>
 
@@ -784,7 +833,7 @@ export default function DraftReviewWorkspace() {
                       {pending.length > 0 && (
                         <div>
                           <p className="px-2 py-0.5 text-[10px] text-on-surface-variant/40 uppercase tracking-wider">
-                            Pending
+                            Pending Review
                           </p>
                           {pending.map((d) => (
                             <DraftQueueItem key={d.id} draft={d} selected={d.id === selected?.id} onSelect={handleSelectDraft} />
@@ -797,6 +846,16 @@ export default function DraftReviewWorkspace() {
                             Approved
                           </p>
                           {approved.map((d) => (
+                            <DraftQueueItem key={d.id} draft={d} selected={d.id === selected?.id} onSelect={handleSelectDraft} />
+                          ))}
+                        </div>
+                      )}
+                      {sent.length > 0 && (
+                        <div>
+                          <p className="px-2 py-0.5 text-[10px] text-on-surface-variant/40 uppercase tracking-wider">
+                            Sent
+                          </p>
+                          {sent.map((d) => (
                             <DraftQueueItem key={d.id} draft={d} selected={d.id === selected?.id} onSelect={handleSelectDraft} />
                           ))}
                         </div>
@@ -831,17 +890,36 @@ export default function DraftReviewWorkspace() {
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <StatusBadge status={selected.status} />
-              <button
-                onClick={handleApprove}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all duration-150 active:scale-[0.95] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2 ${
-                  selected.status === "approved"
-                    ? "border-outline-variant/20 text-on-surface-variant hover:border-error/40 hover:text-error"
-                    : "border-secondary/30 text-secondary hover:bg-secondary/10"
-                }`}
-              >
-                {selected.status === "approved" ? "Unapprove" : "Approve"}
-              </button>
-              {selected.status === "approved" ? (
+              {selected.status === "sent" && selected.sent_at ? (
+                <span
+                  className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider"
+                  title={`Sent ${new Date(selected.sent_at).toLocaleString()}`}
+                >
+                  Sent {new Date(selected.sent_at).toLocaleString()}
+                </span>
+              ) : null}
+              {(selected.status === "pending" || selected.status === "needs_review" || selected.status === "approved") ? (
+                <button
+                  onClick={handleApprove}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all duration-150 active:scale-[0.95] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2 ${
+                    selected.status === "approved"
+                      ? "border-outline-variant/20 text-on-surface-variant hover:border-error/40 hover:text-error"
+                      : "border-secondary/30 text-secondary hover:bg-secondary/10"
+                  }`}
+                >
+                  {selected.status === "approved" ? "Unapprove" : "Approve"}
+                </button>
+              ) : null}
+              {noRecipientEmail ? (
+                <span
+                  title="This lead has no email address. LinkedIn-only leads can still be researched and refined, but email can't be sent."
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-warning/40 text-warning bg-warning/10"
+                >
+                  <Icon name="warning" className="text-xs shrink-0" />
+                  This lead has no email address
+                </span>
+              ) : null}
+              {selected.status === "approved" && !noRecipientEmail ? (
                 <button
                   onClick={handleSend}
                   disabled={sendingId === selected.id}
@@ -857,13 +935,31 @@ export default function DraftReviewWorkspace() {
                   )}
                 </button>
               ) : null}
-              {selected.status === "approved" && !showSchedulePicker ? (
+              {selected.status === "approved" && !showSchedulePicker && !noRecipientEmail ? (
                 <button
                   onClick={() => { setShowSchedulePicker(true); setScheduleTime(""); }}
                   className="px-3 py-1.5 text-xs font-bold rounded-lg border border-outline-variant/20 text-on-surface hover:border-info/40 hover:text-info transition-all duration-150 active:scale-[0.95]"
                 >
                   Schedule
                 </button>
+              ) : null}
+              {testRecipientEnabled && selected.status === "approved" ? (
+                <label className="inline-flex items-center gap-2 rounded-lg border border-warning/30 bg-warning/5 px-2.5 py-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-warning">Test recipient</span>
+                  <input
+                    type="email"
+                    value={testRecipient}
+                    onChange={(event) => setTestRecipient(event.target.value)}
+                    placeholder="operator-second@gmail.com"
+                    className="w-44 bg-transparent text-xs text-on-surface outline-none placeholder:text-on-surface-variant/40"
+                  />
+                </label>
+              ) : null}
+              {testRecipient.trim() ? (
+                <span className="inline-flex items-center gap-1.5 rounded-lg border border-warning/40 bg-warning/10 px-3 py-1.5 text-xs font-bold text-warning">
+                  <Icon name="warning" className="text-xs shrink-0" />
+                  TEST RECIPIENT
+                </span>
               ) : null}
               {selected.status === "scheduled" ? (
                 <button
@@ -935,9 +1031,9 @@ export default function DraftReviewWorkspace() {
                   <label className="block text-label-md text-on-surface-variant uppercase tracking-wider mb-1">To</label>
                   <input
                     type="text"
-                    value={((selected.lead?.email as string) || (selected.lead?.name as string) || "") as string}
+                    value={noRecipientEmail ? "No email address" : selectedLeadEmail}
                     readOnly
-                    className="w-full rounded-xl border border-outline-variant/10 bg-surface-lowest/50 px-4 py-2.5 text-sm text-on-surface-variant/60 outline-none cursor-not-allowed"
+                    className={`w-full rounded-xl border border-outline-variant/10 bg-surface-lowest/50 px-4 py-2.5 text-sm outline-none cursor-not-allowed ${noRecipientEmail ? "text-error/80" : "text-on-surface-variant/60"}`}
                   />
                 </div>
                 <div>
@@ -1029,6 +1125,64 @@ export default function DraftReviewWorkspace() {
               ) : null}
             </div>
           </div>
+
+          {/* Evidence section — the actual company/lead evidence the draft
+              was grounded on. Only observable facts are rendered; nothing is
+              invented here. */}
+          {(() => {
+            const ci = selected.company_intelligence as Record<string, unknown> | null | undefined;
+            const li = selected.lead_intelligence as Record<string, unknown> | null | undefined;
+            const rows: Array<[string, unknown]> = [];
+            if (ci) {
+              const textish: Array<[string, keyof Record<string, unknown>]> = [
+                ["Business pain", "business_pain_summary"],
+                ["Technology", "technology_summary"],
+                ["Growth", "growth_summary"],
+                ["Buying signals", "buying_signal_summary"],
+                ["Recent events", "recent_events_summary"],
+                ["Qualification", "qualification_reason"],
+                ["Decision context", "decision_context"],
+              ];
+              for (const [label, key] of textish) {
+                const v = ci[key];
+                if (typeof v === "string" && v.trim() && v !== "N/A") rows.push([label, v]);
+              }
+            }
+            if (li) {
+              const textish: Array<[string, keyof Record<string, unknown>]> = [
+                ["Buying stage", "buying_stage"],
+                ["Urgency", "urgency"],
+                ["Business need", "estimated_business_need"],
+                ["Best contact reason", "best_contact_reason"],
+              ];
+              for (const [label, key] of textish) {
+                const v = li[key];
+                if (typeof v === "string" && v.trim() && v !== "N/A") rows.push([label, v]);
+              }
+            }
+            const trace = selected.evidence_trace;
+            const strategyUsed =
+              trace && Array.isArray(trace.strategy_used) ? trace.strategy_used : [];
+            if (rows.length === 0 && strategyUsed.length === 0) return null;
+            return (
+              <div className="border-b border-outline-variant/10">
+                <div className="px-4 py-3">
+                  <h3 className="text-label-md text-on-surface-variant uppercase tracking-wider font-bold">Evidence</h3>
+                </div>
+                <div className="px-4 pb-3 space-y-2 max-h-[220px] overflow-y-auto">
+                  {rows.map(([label, value]) => (
+                    <InspectorRow key={label} label={label} value={String(value)} />
+                  ))}
+                  {strategyUsed.length > 0 && (
+                    <InspectorRow
+                      label="Playbook used"
+                      value={strategyUsed.join(", ")}
+                    />
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* AI Assistant section */}
           <div className="shrink-0 border-b border-outline-variant/10">
@@ -1335,6 +1489,7 @@ function DraftQueueItem({ draft, selected, onSelect }: { draft: DraftEntry; sele
     [draft.lead?.first_name as string, draft.lead?.last_name as string].filter(Boolean).join(" ") ||
     "Unknown";
   const company = (draft.lead?.company as string) || "";
+  const email = ((draft.lead?.email as string) || "").trim();
   const preview = draft.text ? draft.text.slice(0, 70).trim() : "";
   return (
     <button
@@ -1352,6 +1507,11 @@ function DraftQueueItem({ draft, selected, onSelect }: { draft: DraftEntry; sele
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <p className="text-xs font-bold text-on-surface truncate">{name}</p>
+            {!email ? (
+              <span title="This lead has no email address — email can't be sent">
+                <Icon name="warning" className="text-[10px] text-warning shrink-0" />
+              </span>
+            ) : null}
             <StatusDot status={draft.status} />
           </div>
           {company ? <p className="text-[10px] text-on-surface-variant truncate">{company}</p> : null}

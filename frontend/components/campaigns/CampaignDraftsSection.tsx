@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useState } from "react";
 import { approveDraft, listCampaignDrafts } from "../../lib/api";
 
 type CampaignDraft = {
@@ -28,7 +28,7 @@ function leadName(lead: Record<string, unknown> | undefined): string {
  * disappears. Full review/refinement happens in the dedicated Draft Review
  * workspace.
  */
-export default function CampaignDraftsSection({
+function CampaignDraftsSection({
   token,
   campaignId,
   generating,
@@ -45,9 +45,9 @@ export default function CampaignDraftsSection({
   const [loading, setLoading] = useState(true);
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
-  const fetchDrafts = useCallback(async () => {
+  const fetchDrafts = useCallback(async (silent = false) => {
     if (!token) return;
-    setLoading(true);
+    if (!silent) setLoading(true);
     try {
       const res = await listCampaignDrafts(token, campaignId);
       if (res.ok && Array.isArray(res.drafts)) {
@@ -56,7 +56,7 @@ export default function CampaignDraftsSection({
     } catch {
       /* silent */
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [token, campaignId]);
 
@@ -66,7 +66,7 @@ export default function CampaignDraftsSection({
 
   useEffect(() => {
     if (generating) {
-      const id = window.setInterval(() => void fetchDrafts(), 2500);
+      const id = window.setInterval(() => void fetchDrafts(true), 2500);
       return () => window.clearInterval(id);
     }
   }, [generating, fetchDrafts]);
@@ -231,3 +231,5 @@ function DraftRow({
     </div>
   );
 }
+
+export default memo(CampaignDraftsSection);

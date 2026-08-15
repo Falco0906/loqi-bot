@@ -192,7 +192,7 @@ CHAIN_INDICATORS = [
 ]
 
 
-def score_lead(lead: dict, icp: dict) -> dict:
+def score_lead(lead: dict, icp: dict, context: dict | None = None) -> dict:
     """
     Commercial qualification scoring for a single lead.
 
@@ -218,6 +218,14 @@ def score_lead(lead: dict, icp: dict) -> dict:
         "highlights": [],
         "penalties": [],
         "drift_flags": [],
+        "context_provenance": (context or {}).get("provenance", {}),
+        "strategic_observation_ids": [
+            item.get("id") for item in (context or {}).get("strategic_observations") or [] if item.get("id")
+        ],
+        "prospect_evidence": _prospect_evidence(lead),
+        "structured_icp_match": _structured_icp_match(lead, icp),
+        "knowledge_context": _knowledge_qualification_context(context),
+        "strategic_observations": _strategic_qualification_context(context),
     }
 
     title_lower = title.lower()
@@ -529,7 +537,80 @@ def _score_relevance(title_lower: str, company_lower: str, icp: dict) -> int:
     return score
 
 
-def qualify_and_rank_leads(leads: list[dict], icp: dict) -> tuple[list[dict], dict]:
+def _prospect_evidence(lead: dict) -> list[dict[str, str]]:
+    """Describe only facts present on the prospect record."""
+    fields = (
+        ("name", lead.get("name")),
+        ("title", lead.get("title")),
+        ("company", lead.get("company") or lead.get("company_name")),
+        ("industry", lead.get("industry")),
+        ("location", lead.get("location") or lead.get("city") or lead.get("country")),
+        ("technology", lead.get("technology") or lead.get("technologies")),
+        ("linkedin_url", lead.get("linkedin_url")),
+    )
+    evidence: list[dict[str, str]] = []
+    for field, value in fields:
+        if isinstance(value, list):
+            value = ", ".join(str(item) for item in value if str(item).strip())
+        text = str(value or "").strip()
+        if text and text.lower() not in {"unknown", "n/a", "none"}:
+            evidence.append({"field": field, "value": text})
+    return evidence
+
+
+def _structured_icp_match(lead: dict, icp: dict) -> dict:
+    title = str(lead.get("title") or "").lower()
+    company = str(lead.get("company") or lead.get("company_name") or "").lower()
+    matched_roles = [
+        str(role) for role in (icp.get("buyer_roles") or [])
+        if any(word in title for word in str(role).lower().split() if len(word) > 2)
+    ]
+    matched_industries = [
+        str(industry) for industry in (icp.get("buyer_industries") or [])
+        if str(industry).lower() in company
+    ]
+    dimensions = ["relevance_score"] if matched_roles or matched_industries else []
+    return {
+        "matched_roles": matched_roles[:5],
+        "matched_industries": matched_industries[:5],
+        "influenced_dimensions": dimensions,
+    }
+
+
+def _knowledge_qualification_context(context: dict | None) -> dict:
+    context = context or {}
+    knowledge_icp = context.get("knowledge_icp") or {}
+    provenance = context.get("provenance") or {}
+    return {
+        "knowledge_item_ids": list(provenance.get("knowledge_item_ids") or []),
+        "knowledge_source_ids": list(provenance.get("knowledge_source_ids") or []),
+        "retrieval_query": str(provenance.get("query") or ""),
+        "contributed_fields": [key for key, value in knowledge_icp.items() if value],
+        "guidance_only": True,
+    }
+
+
+def _strategic_qualification_context(context: dict | None) -> dict:
+    observations = []
+    for item in (context or {}).get("strategic_observations") or []:
+        if not item.get("id"):
+            continue
+        observations.append({
+            "id": item.get("id"),
+            "title": item.get("title", ""),
+            "observation": item.get("observation", ""),
+            "observation_only": True,
+        })
+    return {
+        "strategic_update_ids": [item["id"] for item in observations],
+        "observations": observations,
+        "guidance_only": True,
+    }
+
+
+def qualify_and_rank_leads(
+    leads: list[dict], icp: dict, context: dict | None = None,
+) -> tuple[list[dict], dict]:
     """
     Apply commercial qualification to all leads and return ranked results.
 
@@ -549,7 +630,7 @@ def qualify_and_rank_leads(leads: list[dict], icp: dict) -> tuple[list[dict], di
     }
 
     for lead in leads:
-        result = score_lead(lead, icp)
+        result = score_lead(lead, icp, context=context)
 
         if result["excluded"]:
             rejected.append({

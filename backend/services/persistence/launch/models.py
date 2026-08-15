@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any
 from uuid import uuid4
 
@@ -241,6 +242,7 @@ class Campaign:
     objective: str = ""
     status: str = "planning"
     search_query: str = ""
+    discovery_id: str = ""
     settings: dict[str, Any] = field(default_factory=dict)
     created_by: str = ""
     updated_by: str = ""
@@ -317,6 +319,125 @@ class Draft:
 
 
 # ─── Knowledge / Notifications / Audit ──────────────────────────────────
+
+class KnowledgeCategory(str, Enum):
+    """User Knowledge sections (PR5)."""
+
+    COMPANY = "company"
+    ICP = "icp"
+    MESSAGING = "messaging"
+    SALES_OFFER = "sales_offer"
+
+
+class KnowledgeItemSourceType(str, Enum):
+    """Provenance of a Knowledge item — agents must not treat generated
+    information as user-provided fact."""
+
+    USER_INPUT = "user_input"
+    UPLOADED_DOCUMENT = "uploaded_document"
+    IMPORTED_SOURCE = "imported_source"
+    SYSTEM_GENERATED = "system_generated"
+
+
+class KnowledgeSourceType(str, Enum):
+    """Provenance of source material."""
+
+    USER_INPUT = "user_input"
+    UPLOADED_DOCUMENT = "uploaded_document"
+    IMPORTED_SOURCE = "imported_source"
+    SYSTEM_GENERATED = "system_generated"
+
+
+@dataclass
+class KnowledgeItem:
+    """User-owned canonical Knowledge entry.
+
+    ``content`` holds structured fields per category (e.g. company:
+    {"products": [...], "competitors": [...]}). ``tags`` aids filtering.
+    """
+
+    id: str = field(default_factory=_new_id)
+    workspace_id: str = ""
+    category: str = ""
+    title: str = ""
+    summary: str = ""
+    content: dict[str, Any] = field(default_factory=dict)
+    tags: list[str] = field(default_factory=list)
+    source_type: str = "user_input"
+    source_id: str = ""
+    created_by: str = ""
+    created_at: datetime = field(default_factory=_now)
+    updated_at: datetime = field(default_factory=_now)
+    deleted_at: datetime | None = None
+
+
+@dataclass
+class KnowledgeSource:
+    """Source material that future agents can retrieve.
+
+    ``content`` holds text/notes directly; ``reference`` preserves a
+    reference to externally stored file bytes rather than duplicating them.
+    """
+
+    id: str = field(default_factory=_new_id)
+    workspace_id: str = ""
+    title: str = ""
+    source_type: str = "user_input"
+    content: str = ""
+    reference: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_by: str = ""
+    created_at: datetime = field(default_factory=_now)
+    updated_at: datetime = field(default_factory=_now)
+    deleted_at: datetime | None = None
+
+
+@dataclass
+class StrategicUpdate:
+    """Durable evidence-backed interpretation of observed workspace activity."""
+
+    id: str = field(default_factory=_new_id)
+    workspace_id: str = ""
+    pattern_key: str = ""
+    title: str = ""
+    summary: str = ""
+    update_type: str = "performance"
+    status: str = "active"
+    confidence: str = "low"
+    observed_at: datetime = field(default_factory=_now)
+    observation: str = ""
+    interpretation: str = ""
+    recommendation: str = ""
+    structured_analysis: dict[str, Any] = field(default_factory=dict)
+    evidence: list[dict[str, Any]] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=_now)
+    updated_at: datetime = field(default_factory=_now)
+    archived_at: datetime | None = None
+    deleted_at: datetime | None = None
+
+
+@dataclass
+class StrategicAction:
+    """Explicitly approved operational action derived from a Strategic Update."""
+
+    id: str = field(default_factory=_new_id)
+    workspace_id: str = ""
+    strategic_update_id: str = ""
+    action_type: str = ""
+    status: str = "proposed"
+    proposal: dict[str, Any] = field(default_factory=dict)
+    created_by: str = ""
+    created_at: datetime = field(default_factory=_now)
+    approved_at: datetime | None = None
+    executed_at: datetime | None = None
+    dismissed_at: datetime | None = None
+    error: str = ""
+    result: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    updated_at: datetime = field(default_factory=_now)
+    deleted_at: datetime | None = None
+
 
 @dataclass
 class Knowledge:

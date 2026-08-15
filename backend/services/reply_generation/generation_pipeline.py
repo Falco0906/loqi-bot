@@ -54,8 +54,20 @@ class GenerationPipeline:
         styles: Optional[list[GenerationStyle]] = None,
         variant_count: int = 1,
         latest_messages: Optional[list[str]] = None,
+        instruction: Optional[str] = None,
+        follow_up: bool = False,
+        knowledge_context: Optional[dict] = None,
     ) -> GenerationResult:
-        """Generate reply drafts for the given intelligence + reasoning."""
+        """Generate reply drafts for the given intelligence + reasoning.
+
+        ``instruction`` is an optional user refinement directive appended to
+        the system prompt (highest priority) so edits/refinements condition
+        the generated reply. Absent by default — behavior unchanged.
+
+        ``follow_up`` switches the task from "reply to the prospect's message"
+        to "write a follow-up to the original outreach" — used when no inbound
+        reply has been received yet.
+        """
         timing: dict[str, int] = {"start": int(time.perf_counter() * 1000)}
 
         if not styles:
@@ -80,13 +92,25 @@ class GenerationPipeline:
 
         for style_idx, style in enumerate(styles):
             t_context = int(time.perf_counter() * 1000)
-            context = build_context(intelligence, reasoning, style, latest_messages)
+            context = build_context(
+                intelligence,
+                reasoning,
+                style,
+                latest_messages,
+                follow_up=follow_up,
+                knowledge_context=knowledge_context,
+            )
             template_used = select_template_name(context)
             context.template_name = template_used
             timing[f"context_built_{style.value}"] = int(time.perf_counter() * 1000) - t_context
 
             t_prompt = int(time.perf_counter() * 1000)
             system_prompt = build_system_prompt(context)
+            if instruction:
+                system_prompt = (
+                    f"{system_prompt}\n\n"
+                    f"User Refinement Instruction (follow exactly, highest priority):\n{instruction}"
+                )
             user_prompt = build_user_prompt(context)
             timing[f"prompt_built_{style.value}"] = int(time.perf_counter() * 1000) - t_prompt
 
@@ -135,6 +159,9 @@ class GenerationPipeline:
                 style_used=style.value,
                 reasoning_version=getattr(reasoning, 'pipeline_version', '1'),
                 prompt_preview=prompt_preview,
+                knowledge_item_ids=context.knowledge_item_ids,
+                knowledge_source_ids=context.knowledge_source_ids,
+                knowledge_query=context.knowledge_query,
             )
 
         timing["total"] = int(time.perf_counter() * 1000) - timing.pop("start")

@@ -7,6 +7,7 @@ export type ActionType =
   | "compare"
   | "plan_campaign"
   | "generate_drafts"
+  | "generate_strategy"
   | "approve"
   | "approve_all"
   | "refine"
@@ -15,7 +16,11 @@ export type ActionType =
   | "export_csv"
   | "launch_campaign"
   | "view_drafts"
-  | "open_campaign";
+  | "open_campaign"
+  | "duplicate_campaign"
+  | "delete_campaign"
+  | "add_leads"
+  | "attach_discovery";
 
 export type CopilotAction = {
   type: "navigate" | "action";
@@ -122,5 +127,35 @@ export const ACTION_REGISTRY: Record<ActionType, ActionDefinition> = {
     id: "open_campaign",
     label: "Open Campaign",
     description: "Open a specific campaign",
+  },
+  generate_strategy: {
+    id: "generate_strategy",
+    label: "Generate Strategy",
+    description: "Generate the outreach strategy for a campaign",
+    page: "Campaign",
+  },
+  duplicate_campaign: {
+    id: "duplicate_campaign",
+    label: "Duplicate Campaign",
+    description: "Duplicate a campaign (strategy and leads only)",
+    page: "Campaign",
+  },
+  delete_campaign: {
+    id: "delete_campaign",
+    label: "Delete Campaign",
+    description: "Delete a campaign",
+    page: "Campaign",
+  },
+  add_leads: {
+    id: "add_leads",
+    label: "Add Leads",
+    description: "Add leads to a campaign",
+    page: "Campaign",
+  },
+  attach_discovery: {
+    id: "attach_discovery",
+    label: "Attach Discovery",
+    description: "Attach a Discovery's leads to a campaign",
+    page: "Campaign",
   },
 };

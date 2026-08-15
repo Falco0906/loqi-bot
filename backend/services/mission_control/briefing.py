@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import datetime
+import logging
+import time
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from services.executive_brief import generate_brief
 from services.intentions.engine import IntentionEngine
@@ -54,15 +58,32 @@ class MissionControlService:
         total_leads: int = 0,
         user_id: str | None = None,
         db_user_id: str | None = None,
+        prebuilt: dict | None = None,
     ) -> BriefingResponse:
-        snapshot = build_snapshot(session_token, campaigns, drafts, total_leads, user_id=db_user_id)
+        def _phase(name: str) -> None:
+            logger.debug(
+                "briefing_phase name=%s elapsed_ms=%.0f",
+                name, (time.monotonic() - _t0) * 1000,
+            )
 
-        analysis = snapshot.get("analysis", {})
+        _t0 = time.monotonic()
+        if prebuilt is not None:
+            snapshot = prebuilt["snapshot"]
+            analysis = prebuilt["analysis"]
+            recommendations = prebuilt["recommendations"]
+            brief = prebuilt["brief"]
+        else:
+            snapshot = build_snapshot(session_token, campaigns, drafts, total_leads, user_id=db_user_id)
+            _phase("snapshot")
+            analysis = snapshot.get("analysis", {})
+            _phase("analysis")
+            recommendations = generate_recommendations(snapshot)
+            _phase("recommendations")
+            brief = generate_brief(snapshot, recommendations)
+            _phase("brief")
+
         health_raw = analysis.get("workspace_health", {})
         delta = snapshot.get("_delta", {})
-
-        recommendations = generate_recommendations(snapshot)
-        brief = generate_brief(snapshot, recommendations)
 
         signals = self._build_signals(snapshot, analysis, health_raw, delta)
 
@@ -72,6 +93,7 @@ class MissionControlService:
             reasoning=analysis,
             delta=delta,
         )
+        _phase("intentions")
         active_intentions = [i for i in intentions if i.status == LifecycleStatus.ACTIVE]
 
         briefing_section = self._build_briefing_section(brief, snapshot, analysis)
@@ -92,6 +114,7 @@ class MissionControlService:
         health = self._build_health_summary(health_raw, snapshot)
 
         timeline = self._build_timeline(session_token, snapshot, active_intentions)
+        _phase("timeline")
 
         return BriefingResponse(
             briefing=briefing_section,
@@ -117,7 +140,7 @@ class MissionControlService:
         jobs = snapshot.get("jobs", {})
 
         ready_count = sum(
-            1 for c in campaigns if c.get("status") in ("ready", "ready_to_send")
+            1 for c in campaigns if c.get("current_step") == "sending"
         )
         review_count = draft_counts.get("pending", 0)
 

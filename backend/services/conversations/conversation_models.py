@@ -142,6 +142,7 @@ class Conversation:
         campaign_id: str = "",
         workflow_id: str = "",
         lead_id: str = "",
+        owner_id: str = "",
         created_at: Optional[datetime] = None,
         updated_at: Optional[datetime] = None,
         last_activity_at: Optional[datetime] = None,
@@ -159,6 +160,7 @@ class Conversation:
         self.campaign_id = campaign_id
         self.workflow_id = workflow_id
         self.lead_id = lead_id
+        self.owner_id = owner_id
         self.created_at = created_at or datetime.now(timezone.utc)
         self.updated_at = updated_at or datetime.now(timezone.utc)
         self.last_activity_at = last_activity_at or datetime.now(timezone.utc)
@@ -179,10 +181,13 @@ class Conversation:
             "campaign_id": self.campaign_id,
             "workflow_id": self.workflow_id,
             "lead_id": self.lead_id,
+            "owner_id": self.owner_id,
             "created_at": self.created_at.isoformat() if self.created_at else now.isoformat(),
             "updated_at": self.updated_at.isoformat() if self.updated_at else now.isoformat(),
             "last_activity_at": self.last_activity_at.isoformat() if self.last_activity_at else now.isoformat(),
             "message_count": self.message_count,
+            "last_message_preview": self.metadata.get("last_message_preview", ""),
+            "company_name": self.summary.company if self.summary else "",
             "metadata": self.metadata,
         }
 
@@ -217,6 +222,7 @@ class Conversation:
             campaign_id=data.get("campaign_id", ""),
             workflow_id=data.get("workflow_id", ""),
             lead_id=data.get("lead_id", ""),
+            owner_id=data.get("owner_id", ""),
             created_at=_parse_dt("created_at"),
             updated_at=_parse_dt("updated_at"),
             last_activity_at=_parse_dt("last_activity_at"),

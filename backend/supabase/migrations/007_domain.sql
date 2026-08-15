@@ -23,10 +23,24 @@
 --                        so new states are added by migration, not ALTER TYPE.
 --
 -- Idempotency contract: on databases where these tables already exist from an
--- older shape (workspace-owned companies/leads, missing canonical_id, duplicate
--- emails/domains across workspaces), `create table if not exists` is a no-op and
--- the ALTER blocks below re-add every column the indexes rely on. The data
--- migration section (DO blocks) then deterministically collapses duplicates:
+-- older shape, `create table if not exists` is a no-op and the ALTER blocks
+-- below re-add EVERY column the indexes/data-migration/application code rely
+-- on — including base columns that normally live only in the CREATE block.
+-- This makes the migration RESUMABLE: if a run aborts partway (e.g. a legacy
+-- column was missing and an index creation errored), the statements that
+-- already committed are all `if not exists` / idempotent, so re-running the
+-- file from the top completes the upgrade with no reset required.
+-- This includes the ORIGINAL legacy leads shape
+-- (id/user_id/name/company/email/linkedin_url/status/created_at), which lacks
+-- first_name/last_name/title/phone/updated_at: first_name & last_name are
+-- backfilled from `name`, updated_at from created_at, and title/phone default
+-- to ''. Any legacy NOT NULL column with no default that is NOT part of the new
+-- schema (e.g. user_id, status, company) has its NOT NULL relaxed so
+-- new-schema inserts (which omit those columns) can never fail. The same
+-- column re-add + orphan relaxation applies to workspace_leads and
+-- workspace_companies so legacy workspace tables are fully upgraded too. The
+-- data migration section (DO blocks) then deterministically collapses
+-- duplicates:
 --   * group by normalized key (lower(email) / lower(domain)),
 --   * keep the OLDEST row per group (created_at asc, id asc as tiebreak),
 --   * repoint every referencing row (workspace_leads, workspace_companies,
@@ -64,14 +78,65 @@ create table if not exists companies (
   deleted_at timestamptz
 );
 
+-- Every column the indexes, dedup blocks, or application code depend on is
+-- re-added idempotently below — including base columns that only exist in the
+-- CREATE block — so an ORIGINAL-schema legacy companies table (which may only
+-- have id/user_id/name/domain/linkedin_url/status/created_at) is upgraded
+-- fully before any index is created.
 alter table companies add column if not exists canonical_id text not null default '';
+alter table companies add column if not exists domain text not null default '';
+alter table companies add column if not exists name text not null default '';
+alter table companies add column if not exists website text not null default '';
+alter table companies add column if not exists linkedin_url text not null default '';
+alter table companies add column if not exists industry text not null default '';
+alter table companies add column if not exists employee_count integer;
+alter table companies add column if not exists revenue_band text not null default '';
+alter table companies add column if not exists country text not null default '';
+alter table companies add column if not exists city text not null default '';
+alter table companies add column if not exists location text not null default '';
+alter table companies add column if not exists description text not null default '';
 alter table companies add column if not exists source_provider text not null default '';
 alter table companies add column if not exists created_by text not null default '';
 alter table companies add column if not exists updated_by text not null default '';
 alter table companies add column if not exists metadata jsonb not null default '{}';
 alter table companies add column if not exists last_synced_at timestamptz;
 alter table companies add column if not exists version integer not null default 1;
+alter table companies add column if not exists created_at timestamptz not null default now();
+alter table companies add column if not exists updated_at timestamptz;
 alter table companies add column if not exists deleted_at timestamptz;
+
+-- Backfill: when updated_at was absent (legacy schema), it arrives NULL;
+-- anchor it to created_at, add the now() default, and tighten to NOT NULL.
+-- No-op on fresh installs (default already present; set default is idempotent).
+do $$
+begin
+  update companies set updated_at = created_at where updated_at is null;
+  alter table companies alter column updated_at set default now();
+  alter table companies alter column updated_at set not null;
+end $$;
+
+-- Relax ANY legacy orphan column (user_id, status, ...) that is NOT NULL
+-- without a default and is not part of the new schema: new-schema inserts omit
+-- those columns, so a legacy NOT NULL would make every future write fail.
+-- Idempotent and schema-agnostic — drop not null simply no-ops a second time.
+do $$
+declare
+  r record;
+begin
+  for r in
+    select c.column_name from information_schema.columns c
+    where c.table_schema = 'public' and c.table_name = 'companies'
+      and c.is_nullable = 'NO'
+      and c.column_name not in (
+        'id', 'canonical_id', 'domain', 'name', 'website', 'linkedin_url',
+        'industry', 'employee_count', 'revenue_band', 'country', 'city',
+        'location', 'description', 'source_provider', 'created_by',
+        'updated_by', 'metadata', 'last_synced_at', 'version', 'created_at',
+        'updated_at', 'deleted_at')
+  loop
+    execute format('alter table companies alter column %I drop not null', r.column_name);
+  end loop;
+end $$;
 
 create index if not exists companies_industry_idx on companies(industry);
 create index if not exists companies_sync_idx on companies(source_provider, last_synced_at)
@@ -94,6 +159,24 @@ create table if not exists workspace_companies (
 
 alter table workspace_companies add column if not exists created_by text not null default '';
 alter table workspace_companies add column if not exists deleted_at timestamptz;
+
+-- Relax ANY legacy orphan NOT NULL column (user_id, status, ...) not part of
+-- the new schema, same rationale as the companies/leads normalizers.
+do $$
+declare
+  r record;
+begin
+  for r in
+    select c.column_name from information_schema.columns c
+    where c.table_schema = 'public' and c.table_name = 'workspace_companies'
+      and c.is_nullable = 'NO'
+      and c.column_name not in (
+        'id', 'workspace_id', 'company_id', 'source', 'created_by',
+        'created_at', 'deleted_at')
+  loop
+    execute format('alter table workspace_companies alter column %I drop not null', r.column_name);
+  end loop;
+end $$;
 
 create index if not exists workspace_companies_company_idx on workspace_companies(company_id);
 create index if not exists workspace_companies_workspace_idx on workspace_companies(workspace_id, created_at desc);
@@ -124,14 +207,76 @@ create table if not exists leads (
   deleted_at timestamptz
 );
 
+-- Every column the indexes, dedup blocks, or application code depend on is
+-- re-added idempotently below — including base columns that only exist in the
+-- CREATE block — so an ORIGINAL-schema legacy leads table (which may only have
+-- id/user_id/name/company/email/linkedin_url/status/created_at) is upgraded
+-- fully before any index is created. first_name/last_name are backfilled from
+-- the legacy single-column `name`; updated_at is backfilled from created_at.
 alter table leads add column if not exists canonical_id text not null default '';
+alter table leads add column if not exists email text not null default '';
+alter table leads add column if not exists first_name text not null default '';
+alter table leads add column if not exists last_name text not null default '';
+alter table leads add column if not exists title text not null default '';
+alter table leads add column if not exists phone text not null default '';
+alter table leads add column if not exists linkedin_url text not null default '';
 alter table leads add column if not exists source_provider text not null default '';
 alter table leads add column if not exists created_by text not null default '';
 alter table leads add column if not exists updated_by text not null default '';
 alter table leads add column if not exists metadata jsonb not null default '{}';
 alter table leads add column if not exists last_synced_at timestamptz;
 alter table leads add column if not exists version integer not null default 1;
+alter table leads add column if not exists created_at timestamptz not null default now();
+alter table leads add column if not exists updated_at timestamptz;
 alter table leads add column if not exists deleted_at timestamptz;
+
+-- Backfill legacy leads:
+--   * split single-column `name` into first_name/last_name (name exists only
+--     on legacy databases — the new schema has no such column, so the block is
+--     guarded and is a no-op on fresh installs);
+--   * updated_at = created_at (updated_at was absent in the legacy schema);
+--   * tighten updated_at to NOT NULL.
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'leads' and column_name = 'name'
+  ) then
+    update leads set first_name = split_part(name, ' ', 1)
+      where coalesce(name, '') <> '' and coalesce(first_name, '') = '';
+    update leads set last_name =
+        case
+          when length(trim(substr(name, length(split_part(name, ' ', 1)) + 1))) > 0
+          then trim(substr(name, length(split_part(name, ' ', 1)) + 1))
+          else '' end
+      where coalesce(name, '') <> '' and coalesce(last_name, '') = '';
+  end if;
+  update leads set updated_at = created_at where updated_at is null;
+  alter table leads alter column updated_at set default now();
+  alter table leads alter column updated_at set not null;
+end $$;
+
+-- Relax ANY legacy orphan column (user_id, status, company, ...) that is NOT
+-- NULL without a default and is not part of the new schema: new-schema inserts
+-- omit those columns, so a legacy NOT NULL would make every future write fail.
+-- Idempotent and schema-agnostic — drop not null simply no-ops a second time.
+do $$
+declare
+  r record;
+begin
+  for r in
+    select c.column_name from information_schema.columns c
+    where c.table_schema = 'public' and c.table_name = 'leads'
+      and c.is_nullable = 'NO'
+      and c.column_name not in (
+        'id', 'canonical_id', 'email', 'first_name', 'last_name', 'title',
+        'phone', 'linkedin_url', 'source_provider', 'created_by',
+        'updated_by', 'metadata', 'last_synced_at', 'version', 'created_at',
+        'updated_at', 'deleted_at')
+  loop
+    execute format('alter table leads alter column %I drop not null', r.column_name);
+  end loop;
+end $$;
 
 create index if not exists leads_name_idx on leads(lower(first_name), lower(last_name));
 create index if not exists leads_sync_idx on leads(source_provider, last_synced_at)
@@ -181,6 +326,51 @@ alter table workspace_leads add column if not exists metadata jsonb not null def
 alter table workspace_leads add column if not exists last_synced_at timestamptz;
 alter table workspace_leads add column if not exists version integer not null default 1;
 alter table workspace_leads add column if not exists deleted_at timestamptz;
+
+-- Re-add every remaining column the indexes, dedup blocks, and application
+-- code depend on (the CREATE block above is a no-op on legacy tables, so
+-- without this the workspace_leads indexes and dedup block 4 would fail).
+alter table workspace_leads add column if not exists email text not null default '';
+alter table workspace_leads add column if not exists first_name text not null default '';
+alter table workspace_leads add column if not exists last_name text not null default '';
+alter table workspace_leads add column if not exists title text not null default '';
+alter table workspace_leads add column if not exists phone text not null default '';
+alter table workspace_leads add column if not exists linkedin_url text not null default '';
+alter table workspace_leads add column if not exists lead_status text not null default 'new';
+alter table workspace_leads add column if not exists research_status text not null default 'not_researched';
+alter table workspace_leads add column if not exists verification_status text not null default 'unverified';
+alter table workspace_leads add column if not exists confidence numeric not null default 0;
+alter table workspace_leads add column if not exists source text not null default '';
+alter table workspace_leads add column if not exists updated_at timestamptz;
+
+-- Backfill: anchor updated_at to created_at and tighten to NOT NULL.
+do $$
+begin
+  update workspace_leads set updated_at = created_at where updated_at is null;
+  alter table workspace_leads alter column updated_at set default now();
+  alter table workspace_leads alter column updated_at set not null;
+end $$;
+
+-- Relax ANY legacy orphan NOT NULL column (status, company, ...) not part of
+-- the new schema, same rationale as the companies/leads normalizers.
+do $$
+declare
+  r record;
+begin
+  for r in
+    select c.column_name from information_schema.columns c
+    where c.table_schema = 'public' and c.table_name = 'workspace_leads'
+      and c.is_nullable = 'NO'
+      and c.column_name not in (
+        'id', 'workspace_id', 'lead_id', 'company_id', 'email', 'first_name',
+        'last_name', 'title', 'phone', 'linkedin_url', 'lead_status',
+        'research_status', 'verification_status', 'confidence', 'source',
+        'created_by', 'updated_by', 'metadata', 'last_synced_at', 'version',
+        'created_at', 'updated_at', 'deleted_at')
+  loop
+    execute format('alter table workspace_leads alter column %I drop not null', r.column_name);
+  end loop;
+end $$;
 
 create index if not exists workspace_leads_workspace_idx on workspace_leads(workspace_id, created_at desc);
 create index if not exists workspace_leads_email_idx on workspace_leads(workspace_id, lower(email))

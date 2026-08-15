@@ -130,6 +130,28 @@ export type DiscoveryRecommendation = {
   funding: string;
   hiring: string;
   alsoConsidered: DiscoveryAlsoConsidered[];
+  qualification?: DiscoveryQualification;
+};
+
+export type DiscoveryQualification = {
+  prospect_evidence?: Array<{ field: string; value: string }>;
+  structured_icp_match?: {
+    matched_roles?: string[];
+    matched_industries?: string[];
+    influenced_dimensions?: string[];
+  };
+  knowledge_context?: {
+    knowledge_item_ids?: string[];
+    knowledge_source_ids?: string[];
+    retrieval_query?: string;
+    contributed_fields?: string[];
+    guidance_only?: boolean;
+  };
+  strategic_observations?: {
+    strategic_update_ids?: string[];
+    observations?: Array<{ id: string; title: string; observation: string; observation_only?: boolean }>;
+    guidance_only?: boolean;
+  };
 };
 
 export type DiscoveryFilter = {
@@ -137,11 +159,84 @@ export type DiscoveryFilter = {
   label: string;
 };
 
+export type DiscoveryStatus = "queued" | "searching" | "completed" | "failed" | "cancelled";
+
+/**
+ * Live execution tick persisted on the discovery (metadata.progress) by the
+ * job runner: the current stage label + a 0-100 percent.
+ */
+export type DiscoveryProgress = {
+  stage?: string;
+  progress?: number;
+};
+
+/**
+ * The structured Discovery Plan derived from the raw objective before any
+ * search is run. The provider only ever consumes these structured terms —
+ * never the raw objective sentence.
+ */
+export type DiscoveryPlan = {
+  offering: string;
+  primaryServices: string[];
+  targetAudience: string;
+  industries: string[];
+  subIndustries: string[];
+  icpSummary: string;
+  buyerPersonas: string[];
+  companyKeywords: string[];
+  decisionMakerRoles: string[];
+  negativeKeywords: string[];
+  painPoints: string[];
+  buyingSignals: string[];
+  technologies: string[];
+  businessCharacteristics: string[];
+  exclusions: string[];
+  geography: string[];
+  companySize: string[];
+  messagingAngle: string;
+  successCriteria: string;
+};
+
+export type DiscoveryListItem = {
+  id: string;
+  query: string;
+  status: DiscoveryStatus;
+  companyCount: number;
+  leadCount: number;
+  createdAt: string;
+  completedAt: string | null;
+  summary: Record<string, unknown>;
+  title?: string | null;
+  description?: string | null;
+  favorite?: boolean;
+  archivedAt?: string | null;
+  lastViewedAt?: string | null;
+  lastRefreshedAt?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
 export type DiscoveryData = {
+  id: string;
+  query: string;
+  status: DiscoveryStatus;
+  createdAt: string;
+  completedAt: string | null;
+  companyCount: number;
+  leadCount: number;
+  providers: Record<string, number>;
   narrativeTitle: string;
   narrativeLines: string[];
   filters: DiscoveryFilter[];
   recommendations: DiscoveryRecommendation[];
+  title?: string | null;
+  description?: string | null;
+  favorite?: boolean;
+  archivedAt?: string | null;
+  lastViewedAt?: string | null;
+  lastRefreshedAt?: string | null;
+  metadata?: Record<string, unknown>;
+  progress?: DiscoveryProgress;
+  plan?: DiscoveryPlan;
 };
 
 /* ─── Campaigns ─── */
@@ -188,6 +283,7 @@ export type CampaignData = {
   };
   createdAt: string;
   objective: string;
+  discoveryId?: string;
   leadCount?: number;
   pendingDrafts?: number;
   approvedDrafts?: number;
@@ -206,49 +302,22 @@ export type CampaignData = {
 
 /* ─── Inbox ─── */
 
-export type InboxDecisionAction = {
-  label: string;
-};
-
-export type InboxDecisionDetail = {
-  aiSummary: string;
-  timeline: { time: string; label: string; event: string }[];
-  concerns: { type: "warning" | "info"; text: string }[];
-  recommendedReply: string;
-  originalConversation: { name: string; role: string; text: string }[];
-};
-
-export type InboxDecision = {
+export type InboxConversationRow = {
   id: string;
-  title: string;
+  name: string;
+  email: string;
   company: string;
-  icon: string;
-  badge: string;
-  summary: string;
-  recommendedDecision: string;
-  actions: {
-    primary: InboxDecisionAction;
-    secondary: InboxDecisionAction;
-  };
-  footerLink: { label: string };
-  detail: InboxDecisionDetail;
-};
-
-export type InboxAutoAction = {
-  text: string;
-  time: string;
-};
-
-export type InboxInsight = {
-  icon: string;
-  title: string;
-  description: string;
+  status: string;
+  /** Loqi reply classification (metadata.last_reply_category from backend). */
+  classification: string;
+  interest: string;
+  preview: string;
+  lastActivityAt: string;
+  messageCount: number;
 };
 
 export type InboxData = {
-  decisions: InboxDecision[];
-  autoActions: InboxAutoAction[];
-  insights: InboxInsight[];
+  rows: InboxConversationRow[];
 };
 
 /* ─── Knowledge ─── */

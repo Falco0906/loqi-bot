@@ -995,20 +995,20 @@ class TestConcurrentCredentialRefresh:
         refresh_done = threading.Event()
 
         initial_user = {
-            "google_access_token": "expired_token",
-            "google_refresh_token": "rt1",
+            "access_token": "expired_token",
+            "refresh_token": "rt1",
             "token_expiry": "2020-01-01T00:00:00",
         }
         refreshed_user = {
-            "google_access_token": "new_token",
-            "google_refresh_token": "rt1",
+            "access_token": "new_token",
+            "refresh_token": "rt1",
             "token_expiry": "2099-01-01T00:00:00",
         }
 
-        # Track which version of the user each call sees.
+        # Track which version of the credentials each call sees.
         _user_db = {"user_A": dict(initial_user)}
 
-        def fake_get_user(uid):
+        def fake_get_google_credentials(uid):
             return _user_db.get(uid)
 
         def fake_is_token_expired(expiry):
@@ -1023,7 +1023,7 @@ class TestConcurrentCredentialRefresh:
             return {"access_token": "new_token", "token_expiry": "2099-01-01T00:00:00"}
 
         def fake_update_google_access_token(uid, **kw):
-            _user_db[uid]["google_access_token"] = kw["access_token"]
+            _user_db[uid]["access_token"] = kw["access_token"]
             _user_db[uid]["token_expiry"] = kw["token_expiry"]
             return dict(_user_db[uid])
 
@@ -1051,7 +1051,7 @@ class TestConcurrentCredentialRefresh:
                 with results_lock:
                     errors.append(e)
 
-        monkeypatch.setattr("services.supabase.get_user", fake_get_user)
+        monkeypatch.setattr("services.supabase.get_google_credentials", fake_get_google_credentials)
         monkeypatch.setattr("services.supabase.update_google_access_token", fake_update_google_access_token)
         monkeypatch.setattr("services.google_auth.refresh_access_token", fake_refresh_access_token)
 
@@ -1097,10 +1097,10 @@ class TestConcurrentCredentialRefresh:
         user_b_unblocked = threading.Event()
         proceed = threading.Event()
 
-        def fake_get_user(uid):
+        def fake_get_google_credentials(uid):
             return {
-                "google_access_token": "expired_token",
-                "google_refresh_token": "rt_" + uid,
+                "access_token": "expired_token",
+                "refresh_token": "rt_" + uid,
                 "token_expiry": "2020-01-01T00:00:00",
             }
 
@@ -1149,7 +1149,7 @@ class TestConcurrentCredentialRefresh:
         task_b = ExecutionTask(id="b1", plan_task=plan_b, max_attempts=1)
         ctx_b = ExecutionContext(session_id="s_b")
 
-        monkeypatch.setattr("services.supabase.get_user", fake_get_user)
+        monkeypatch.setattr("services.supabase.get_google_credentials", fake_get_google_credentials)
         monkeypatch.setattr("services.supabase.is_token_expired", fake_is_token_expired)
         monkeypatch.setattr("services.google_auth.refresh_access_token", counting_refresh)
         monkeypatch.setattr("services.supabase.update_google_access_token", fake_update)
@@ -1205,10 +1205,10 @@ class TestConcurrentCredentialRefresh:
 
         refresh_called = False
 
-        def fake_get_user(uid):
+        def fake_get_google_credentials(uid):
             return {
-                "google_access_token": "fresh_token",
-                "google_refresh_token": "rt1",
+                "access_token": "fresh_token",
+                "refresh_token": "rt1",
                 "token_expiry": "2099-01-01T00:00:00",
             }
 
@@ -1220,7 +1220,7 @@ class TestConcurrentCredentialRefresh:
             refresh_called = True
             return {}
 
-        monkeypatch.setattr("services.supabase.get_user", fake_get_user)
+        monkeypatch.setattr("services.supabase.get_google_credentials", fake_get_google_credentials)
         monkeypatch.setattr("services.supabase.is_token_expired", fake_is_token_expired)
         monkeypatch.setattr("services.google_auth.refresh_access_token", fake_refresh)
 

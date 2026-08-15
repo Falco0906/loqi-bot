@@ -38,8 +38,14 @@ def create_conversation_from_send(
     campaign_id: str = "",
     workflow_id: str = "",
     lead_id: str = "",
+    owner_id: str = "",
 ) -> Conversation:
-    """Create a conversation after an outbound email is sent."""
+    """Create a conversation after an outbound email is sent.
+
+    ``owner_id`` is the trusted, server-derived workspace owner that the
+    conversation belongs to (PR10.8.3.1 fail-closed tenant isolation). It is
+    used for ownership checks; it is never supplied by the request body.
+    """
     existing = conversation_store.find_by_external_thread(external_thread_id)
     if existing:
         logger.info("[conversations] Conversation already exists for thread %s: %s",
@@ -59,10 +65,25 @@ def create_conversation_from_send(
         campaign_id=campaign_id,
         workflow_id=workflow_id,
         lead_id=lead_id,
+        owner_id=owner_id,
         summary=None,
     )
 
     conversation_store.create_conversation(convo)
+
+    # Map the external thread in the communication store too, so a real
+    # Gmail reply (sync/webhook) resolves this conversation instead of
+    # falling back to a thread-id-keyed orphan.
+    try:
+        from services.communication.communication_store import store as communication_store
+        communication_store.map_thread(
+            external_thread_id=external_thread_id,
+            conversation_id=convo.conversation_id,
+            provider_id=provider_id,
+            subject=subject,
+        )
+    except Exception as e:
+        logger.warning("[conversations] Thread mapping failed for %s: %s", external_thread_id[:12], e)
 
     thread = ConversationThread(
         conversation_id=convo.conversation_id,
@@ -113,20 +134,45 @@ def handle_reply(
     to_name: str,
     subject: str,
     body: str,
-) -> ConversationMessage:
-    """Process an incoming reply to a conversation."""
+    timestamp: Optional[datetime] = None,
+) -> Optional[ConversationMessage]:
+    """Process an incoming reply to a conversation.
+
+    ``timestamp`` preserves the original message time (e.g. synthetic
+    replies replayed with their recorded arrival time); defaults to now.
+
+    Idempotent by ``external_message_id``: re-processing the same provider
+    message (e.g. sync and simulator firing on the same thread) never adds
+    a second message or duplicate timeline events.
+
+    Returns None when the conversation does not exist — the reply is
+    dropped rather than creating orphan thread/message state.
+    """
     convo = conversation_store.get_conversation(conversation_id)
-    if not convo:
-        logger.warning("[conversations] No conversation found for reply: %s", conversation_id[:12])
-        thread = ConversationThread(conversation_id=conversation_id, subject=subject)
-        conversation_store.add_thread(thread)
-    else:
-        threads = conversation_store.get_threads_for_conversation(conversation_id)
-        thread = threads[0] if threads else ConversationThread(
-            conversation_id=conversation_id, subject=subject
+    if external_message_id:
+        already = next(
+            (m for m in conversation_store.get_messages_for_conversation(conversation_id)
+             if m.external_message_id == external_message_id),
+            None,
         )
-        if thread.thread_id not in [t.thread_id for t in [thread]]:
-            conversation_store.add_thread(thread)
+        if already is not None:
+            logger.info(
+                "[conversations] Reply %s already processed for %s — skipping",
+                external_message_id[:12], conversation_id[:12],
+            )
+            return already
+    if not convo:
+        logger.warning(
+            "[conversations] Reply dropped: conversation %s not found "
+            "(no orphan thread/message state created)",
+            conversation_id[:12],
+        )
+        return None
+
+    threads = conversation_store.get_threads_for_conversation(conversation_id)
+    thread = threads[0] if threads else ConversationThread(
+        conversation_id=conversation_id, subject=subject
+    )
 
     msg = ConversationMessage(
         conversation_id=conversation_id,
@@ -139,6 +185,7 @@ def handle_reply(
         to_name=to_name,
         subject=subject,
         body=body,
+        sent_at=timestamp or datetime.now(timezone.utc),
     )
     conversation_store.add_message(msg)
 
@@ -151,18 +198,21 @@ def handle_reply(
 
     if convo:
         convo.metadata["last_reply_category"] = classification.category.value
-        if classification.category in (ReplyCategory.INTERESTED, ReplyCategory.MEETING_REQUEST):
-            state_transition(convo.status, ConversationStatus.INTERESTED)
-            convo.status = ConversationStatus.INTERESTED
-        elif classification.category == ReplyCategory.BOUNCE:
-            state_transition(convo.status, ConversationStatus.BOUNCED)
-            convo.status = ConversationStatus.BOUNCED
-        elif classification.category == ReplyCategory.NOT_INTERESTED:
-            state_transition(convo.status, ConversationStatus.CLOSED_LOST)
-            convo.status = ConversationStatus.CLOSED_LOST
-        else:
-            state_transition(convo.status, ConversationStatus.REPLIED)
-            convo.status = ConversationStatus.REPLIED
+        try:
+            if classification.category in (ReplyCategory.INTERESTED, ReplyCategory.MEETING_REQUEST):
+                convo.status = state_transition(convo.status, ConversationStatus.INTERESTED)
+            elif classification.category == ReplyCategory.BOUNCE:
+                convo.status = state_transition(convo.status, ConversationStatus.BOUNCED)
+            elif classification.category == ReplyCategory.NOT_INTERESTED:
+                convo.status = state_transition(convo.status, ConversationStatus.CLOSED_LOST)
+            elif classification.category == ReplyCategory.OUT_OF_OFFICE:
+                # Auto-archive: OOO auto-replies need no judgment. Terminal
+                # state stands in for archiving until an ARCHIVED status exists.
+                convo.status = state_transition(convo.status, ConversationStatus.CLOSED_LOST)
+            else:
+                convo.status = state_transition(convo.status, ConversationStatus.REPLIED)
+        except ValueError:
+            pass
         conversation_store.update_conversation(convo)
 
     conversation_store.add_timeline_event(build_timeline_event(

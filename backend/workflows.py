@@ -31,7 +31,7 @@ from services.google_auth import refresh_access_token
 from services.lead_provider import format_leads_message
 from services.ai import generate_outreach_email, rewrite_message, analyze_draft, answer_draft_question, OpenAIError
 from services.lead_provider import get_leads, search_with_expansion
-from services.supabase import get_user, is_token_expired, store_leads, update_google_access_token
+from services.supabase import get_user, get_google_credentials, is_token_expired, store_leads, update_google_access_token
 from services.conversation_store import record_workflow_event
 from services.enrichment.enrichment_factory import get_enricher
 from services.intelligence.lead_intelligence import generate_lead_intelligence
@@ -105,6 +105,42 @@ def _normalize_edit_request(edit_request: str) -> str:
     return normalized
 
 
+def _workflow_knowledge_context(
+    owner_id: str,
+    lead: dict | None = None,
+    strategy: dict | None = None,
+) -> dict:
+    """Synchronously bridge the canonical Knowledge adapter for legacy flows."""
+    if not owner_id:
+        return {}
+    lead = lead or {}
+    strategy = strategy or {}
+    query = " ".join(
+        str(value).strip()
+        for value in (
+            lead.get("company"),
+            lead.get("title"),
+            strategy.get("icp"),
+            strategy.get("messaging_angle"),
+            strategy.get("value_proposition"),
+        )
+        if str(value).strip()
+    )
+    try:
+        from services.knowledge.context_adapter import retrieve_knowledge_context
+        return _run_async(
+            retrieve_knowledge_context(
+                owner_id,
+                query=query,
+                categories=["company", "icp", "messaging", "sales_offer"],
+                limit=8,
+            )
+        ).to_dict()
+    except Exception as error:
+        print(f"[workflows] Knowledge retrieval skipped: {error}")
+        return {}
+
+
 def _clean_lead_title(lead_title: str) -> str:
     return lead_title.replace("|", "").replace("  ", " ").strip()
 
@@ -134,7 +170,17 @@ def generate_leads(input: dict) -> dict:
     workflow_session_id = input.get("workflow_session_id")
     print(f"[TRACE] 5b | ENTERED workflows.generate_leads | +0ms")
 
-    result = search_with_expansion(service, target)
+    discovery_context = {}
+    if user_id:
+        try:
+            from services.discovery_context import retrieve_discovery_context
+            discovery_context = _run_async(
+                retrieve_discovery_context(user_id, query=f"{service} {target}".strip())
+            )
+        except Exception as error:
+            print(f"[workflows] Discovery context retrieval skipped: {error}")
+
+    result = search_with_expansion(service, target, context=discovery_context)
     print(f"[TRACE] 7 | search_with_expansion DONE | +{int((time.time()-_t0)*1000)}ms | {len(result.get('leads',[]))} leads | ok={result.get('ok')}")
     leads = result.get("leads", [])
     icp = result.get("icp")
@@ -197,6 +243,10 @@ def draft_message(input: dict) -> dict:
     length = _infer_length(input)
     previous_message = input.get("previous_message") or ""
     context = input.get("context") or {}
+    trusted_knowledge = input.get("knowledge_context") if input.get("_knowledge_context_trusted") else None
+    knowledge_context = trusted_knowledge or _workflow_knowledge_context(
+        str(input.get("user_id") or ""), lead, input.get("campaign_strategy")
+    )
 
     company_intelligence = None
     lead_intelligence = None
@@ -215,7 +265,10 @@ def draft_message(input: dict) -> dict:
     subject = ""
     if edit_request and previous_message:
         try:
-            llm_message = rewrite_message(edit_request, previous_message, context)
+            rewrite_context = dict(context)
+            if knowledge_context:
+                rewrite_context["knowledge_context"] = knowledge_context
+            llm_message = rewrite_message(edit_request, previous_message, rewrite_context)
             message = f"Draft ready:\n\n---\n{llm_message}\n---"
         except OpenAIError as e:
             return {
@@ -232,7 +285,13 @@ def draft_message(input: dict) -> dict:
             }
     else:
         try:
-            draft = generate_outreach_email(lead, company_intelligence, lead_intelligence)
+            draft = generate_outreach_email(
+                lead,
+                company_intelligence,
+                lead_intelligence,
+                strategy=input.get("campaign_strategy"),
+                knowledge_context=knowledge_context,
+            )
             message = f"Draft ready:\n\n---\n{draft.get('body', '')}\n---"
             subject = draft.get("subject", "")
         except OpenAIError as e:
@@ -296,22 +355,27 @@ def draft_question_workflow(input: dict) -> dict:
         return {"ok": False, "type": "draft_question", "answer": str(e)}
 
 
-def _resolve_gmail_credentials(user: dict, user_id: str) -> dict | None:
-    access_token = user.get("google_access_token") or ""
-    if is_token_expired(user.get("token_expiry")):
+def _resolve_gmail_credentials(user_id: str) -> dict | None:
+    """Resolve Gmail OAuth credentials from connected_accounts, refreshing if expired."""
+    creds = get_google_credentials(user_id)
+    if not creds:
+        return None
+    access_token = creds.get("access_token") or ""
+    if is_token_expired(creds.get("token_expiry")):
+        refresh_token = creds.get("refresh_token") or ""
+        if not refresh_token:
+            return None
         try:
-            refreshed = refresh_access_token(user["google_refresh_token"])
+            refreshed = refresh_access_token(refresh_token)
             access_token = refreshed.get("access_token", "")
-            updated_user = update_google_access_token(
+            update_google_access_token(
                 user_id,
                 access_token=access_token,
                 token_expiry=refreshed.get("token_expiry"),
             )
-            if updated_user:
-                user = updated_user
         except Exception:
             return None
-    return {"access_token": access_token, "_user": user}
+    return {"access_token": access_token}
 
 
 def send_outreach(input: dict) -> dict:
@@ -327,23 +391,21 @@ def send_outreach(input: dict) -> dict:
             "error": "missing_user",
         }
 
-    if not user.get("google_refresh_token"):
-        return {
-            "ok": False,
-            "type": "send_outreach",
-            "message": "Gmail isn't connected yet. Connect it once and I'll be able to send outreach directly from Loqi.",
-            "error": "missing_google_tokens",
-        }
-
-    creds = _resolve_gmail_credentials(user, user_id)
+    creds = _resolve_gmail_credentials(user_id)
     if creds is None:
+        if not get_google_credentials(user_id):
+            return {
+                "ok": False,
+                "type": "send_outreach",
+                "message": "Gmail isn't connected yet. Connect it once and I'll be able to send outreach directly from Loqi.",
+                "error": "missing_google_tokens",
+            }
         return {
             "ok": False,
             "type": "send_outreach",
             "message": "Your Gmail connection expired. Connect it again with /connect and I'll be ready to send.",
             "error": "token_refresh_failed",
         }
-    user = creds.get("_user", user)
 
     company_intelligence = None
     lead_intelligence = None
@@ -360,7 +422,15 @@ def send_outreach(input: dict) -> dict:
         print(f"[workflows] Lead intelligence failed during send (proceeding without): {e}")
 
     try:
-        draft = generate_outreach_email(lead, company_intelligence, lead_intelligence)
+        knowledge_context = _workflow_knowledge_context(
+            str(input.get("user_id") or ""), lead, input.get("campaign_strategy")
+        )
+        draft = generate_outreach_email(
+            lead,
+            company_intelligence,
+            lead_intelligence,
+            knowledge_context=knowledge_context,
+        )
 
         # Route through Execution Engine via single-task Plan.
         # The globally registered Gmail BridgeAdapter (with its

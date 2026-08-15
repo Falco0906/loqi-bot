@@ -1,5 +1,5 @@
-import DiscoveryWorkspace from "../../../components/dashboard/DiscoveryWorkspace";
+import DiscoveryHistory from "../../../components/dashboard/DiscoveryHistory";
 
 export default function DiscoveryPage() {
-  return <DiscoveryWorkspace />;
+  return <DiscoveryHistory />;
 }

@@ -5,7 +5,7 @@ def _log(message: str) -> None:
     print(f"[lead_provider] {message}")
 
 
-def _filter_and_rank_leads(leads: list, icp: dict) -> tuple[list, dict]:
+def _filter_and_rank_leads(leads: list, icp: dict, context: dict | None = None) -> tuple[list, dict]:
     """
     Filter excluded leads and rank remaining by commercial qualification.
     Uses commercial_qualifier for multi-dimensional scoring.
@@ -13,7 +13,7 @@ def _filter_and_rank_leads(leads: list, icp: dict) -> tuple[list, dict]:
     """
     from services.commercial_qualifier import qualify_and_rank_leads
 
-    qualified_leads, qual_stats = qualify_and_rank_leads(leads, icp)
+    qualified_leads, qual_stats = qualify_and_rank_leads(leads, icp, context=context)
 
     filter_stats = {
         "total_found": qual_stats["total"],
@@ -29,7 +29,7 @@ def _filter_and_rank_leads(leads: list, icp: dict) -> tuple[list, dict]:
     return qualified_leads, filter_stats
 
 
-def _filter_and_rank_leads_soft(leads: list, icp: dict) -> tuple[list, dict]:
+def _filter_and_rank_leads_soft(leads: list, icp: dict, context: dict | None = None) -> tuple[list, dict]:
     """
     Softer filtering — only hard-exclude obvious junk and vendors, keep everything else.
     Used as fallback when strict filtering removes all leads.
@@ -43,7 +43,7 @@ def _filter_and_rank_leads_soft(leads: list, icp: dict) -> tuple[list, dict]:
             if r in ["developer", "designer", "freelancer"]
         ]
 
-    qualified_leads, qual_stats = qualify_and_rank_leads(leads, soft_icp)
+    qualified_leads, qual_stats = qualify_and_rank_leads(leads, soft_icp, context=context)
 
     filter_stats = {
         "total_found": qual_stats["total"],
@@ -105,33 +105,45 @@ def _build_fallback_queries(service: str, target: str, icp: dict) -> list[str]:
     return queries[:5]
 
 
-def search_with_expansion(service: str, target: str) -> dict:
+def search_with_expansion(service: str, target: str, plan=None, context: dict | None = None) -> dict:
     """AI-enhanced lead search with buyer-intent expansion and filtering.
 
-    Keeps ICP extraction, search expansion, and commercial qualification
-    exactly as they were. Only the lead retrieval is delegated to the provider.
+    ``plan`` is the structured Discovery Plan (``discoveries.metadata.plan``).
+    When present, the provider consumes ONLY structured plan terms — the raw
+    objective is never used in provider inputs. Without a plan the legacy
+    free-text pipeline runs unchanged.
     """
     import time; _t0 = time.time()
     provider = get_provider()
 
     _log(f"Using {type(provider).__name__}")
-    _log(f"BUYER-INTENT search: service='{service}', target='{target}'")
+    _log(f"BUYER-INTENT search: service='{service}', target='{target}'"
+         + (" (structured plan)" if plan else ""))
 
-    combined_input = f"{service} {target}".strip() if target else service
+    icp = None
+    if plan:
+        from services.discovery_plan import icp_from_plan
+        icp = icp_from_plan(plan)
+        _log(f"ICP from plan: industries={icp['buyer_industries']}, "
+             f"roles={icp['buyer_roles'][:3]}...")
+    else:
+        combined_input = f"{service} {target}".strip() if target else service
 
-    try:
-        from services.icp_extractor import extract_structured_icp
-        icp = extract_structured_icp(combined_input)
-        print(f"[TRACE] 6a | ICP EXTRACTION DONE | extract_structured_icp | +{int((time.time()-_t0)*1000)}ms | mode={icp.get('mode')}")
+        try:
+            from services.icp_extractor import extract_structured_icp
+            icp = extract_structured_icp(combined_input)
+            print(f"[TRACE] 6a | ICP EXTRACTION DONE | extract_structured_icp | +{int((time.time()-_t0)*1000)}ms | mode={icp.get('mode')}")
 
-        _log(f"ICP extracted: mode={icp.get('mode')}, offer='{icp.get('offer')}")
-        _log(f"buyer_industries: {icp.get('buyer_industries', [])}")
-        _log(f"buyer_roles: {icp.get('buyer_roles', [])[:3]}...")
-        _log(f"excluded_roles: {icp.get('excluded_roles', [])}")
-    except Exception as e:
-        _log(f"ICP extraction failed: {e}, using fallback")
-        print(f"[TRACE] 6a | ICP EXTRACTION FAILED | extract_structured_icp | +{int((time.time()-_t0)*1000)}ms | error={e}")
-        icp = None
+            _log(f"ICP extracted: mode={icp.get('mode')}, offer='{icp.get('offer')}")
+            _log(f"buyer_industries: {icp.get('buyer_industries', [])}")
+            _log(f"buyer_roles: {icp.get('buyer_roles', [])[:3]}...")
+            _log(f"excluded_roles: {icp.get('excluded_roles', [])}")
+        except Exception as e:
+            _log(f"ICP extraction failed: {e}, using fallback")
+            print(f"[TRACE] 6a | ICP EXTRACTION FAILED | extract_structured_icp | +{int((time.time()-_t0)*1000)}ms | error={e}")
+            icp = None
+
+    icp = _apply_discovery_context(icp, context)
 
     try:
         from services.search_expansion import expand_search_intent
@@ -156,6 +168,7 @@ def search_with_expansion(service: str, target: str) -> dict:
                 "leads": [],
                 "error": result.get("error", "Provider search failed"),
                 "icp": icp,
+                "context_provenance": (context or {}).get("provenance", {}),
             }
 
         all_leads = result.get("leads", [])
@@ -167,6 +180,7 @@ def search_with_expansion(service: str, target: str) -> dict:
                 "leads": [],
                 "error": "No leads found. Try a broader target.",
                 "icp": icp,
+                "context_provenance": (context or {}).get("provenance", {}),
             }
 
         filtered_leads = all_leads
@@ -179,11 +193,11 @@ def search_with_expansion(service: str, target: str) -> dict:
 
         if icp and (icp.get("buyer_roles") or icp.get("excluded_roles")):
             _log("Applying buyer-intent filtering and ranking...")
-            filtered_leads, filter_stats = _filter_and_rank_leads(all_leads, icp)
+            filtered_leads, filter_stats = _filter_and_rank_leads(all_leads, icp, context=context)
 
         if not filtered_leads and len(all_leads) >= 3:
             _log("Qualification filtered ALL leads — retrying with relaxed filtering...")
-            filtered_leads, filter_stats = _filter_and_rank_leads_soft(all_leads, icp)
+            filtered_leads, filter_stats = _filter_and_rank_leads_soft(all_leads, icp, context=context)
 
         if not filtered_leads and all_leads:
             _log("No qualified leads after filtering — returning raw leads as fallback")
@@ -206,6 +220,7 @@ def search_with_expansion(service: str, target: str) -> dict:
             "expansion": expansion,
             "icp": icp,
             "filter_stats": filter_stats,
+            "context_provenance": (context or {}).get("provenance", {}),
         }
 
     except Exception as error:
@@ -216,7 +231,39 @@ def search_with_expansion(service: str, target: str) -> dict:
             "leads": [],
             "error": str(error),
             "icp": icp,
+            "context_provenance": (context or {}).get("provenance", {}),
         }
+
+
+def _apply_discovery_context(icp: dict | None, context: dict | None) -> dict | None:
+    """Supplement ICP fields without changing the provider contract."""
+    if not isinstance(icp, dict) and not context:
+        return icp
+    merged = dict(icp or {})
+    knowledge_icp = (context or {}).get("knowledge_icp") or {}
+    for key, limit in (
+        ("buyer_industries", 4),
+        ("buyer_roles", 10),
+        ("company_types", 4),
+        ("pain_points", 6),
+        ("excluded_roles", 10),
+        ("keywords", 10),
+    ):
+        values = list(merged.get(key) or []) + list(knowledge_icp.get(key) or [])
+        seen: set[str] = set()
+        merged_values = []
+        for value in values:
+            normalized = str(value).strip().lower()
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                merged_values.append(value)
+        merged[key] = merged_values[:limit]
+    merged["context_provenance"] = (context or {}).get("provenance", {})
+    # Strategic observations remain attribution-only context, never ICP rules.
+    merged["strategic_observation_ids"] = [
+        item.get("id") for item in (context or {}).get("strategic_observations") or [] if item.get("id")
+    ]
+    return merged
 
 
 def _format_lead(index: int, lead: dict) -> str:

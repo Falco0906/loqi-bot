@@ -48,6 +48,52 @@ def _first_row(result) -> dict | None:
     return data[0] if data else None
 
 
+def _run_blocking(coro_or_fn, timeout: float = 30.0):
+    """Run a coroutine to completion from sync code; blocks.
+
+    Safe both outside and inside a running event loop (a dedicated thread
+    runs the coroutine and the caller joins it). A failure in the runner
+    thread is re-raised on the caller thread so errors are never silently
+    swallowed (PR10.8.2.1).
+    """
+    import asyncio
+    import inspect
+
+    coro = coro_or_fn if inspect.iscoroutine(coro_or_fn) else coro_or_fn()
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    holder: dict[str, object] = {}
+
+    def runner():
+        try:
+            holder["value"] = asyncio.run(coro)
+        except BaseException as error:  # noqa: BLE001
+            holder["error"] = error
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout)
+    if "error" in holder:
+        raise holder["error"]
+    return holder.get("value")
+
+
+def _dt_iso(value) -> str | None:
+    """Normalize a datetime (or iso string) to an ISO-8601 string."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    try:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.isoformat()
+    except Exception:
+        return None
+
+
 def test_supabase_connection() -> bool:
     _log("test_supabase_connection called")
     client = get_supabase_client()
@@ -243,16 +289,6 @@ def get_user(user_id: str) -> dict | None:
         return None
 
 
-def _run_coro(coro):
-    """Run an async persistence call from sync code; safe inside a running loop."""
-    import asyncio
-    try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(coro())
-    except RuntimeError:
-        threading.Thread(target=lambda: asyncio.run(coro()), daemon=True).start()
-
-
 def _parse_dt(value):
     from datetime import datetime
     if not value:
@@ -261,6 +297,106 @@ def _parse_dt(value):
         return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except Exception:
         return None
+
+
+def _encrypt_credential_field(value: str) -> str:
+    """Encrypt a persisted credential value; plaintext only when no key is
+    configured (development). Production validation requires the key."""
+    if not value:
+        return value
+    from services.credential_crypto import encrypt_token, encryption_key_configured
+    if not encryption_key_configured():
+        return value
+    return encrypt_token(value)
+
+
+def _decrypt_credential_field(value: str) -> str:
+    """Decrypt a stored credential value. Legacy plaintext passes through."""
+    if not value:
+        return value
+    from services.credential_crypto import decrypt_token, is_encrypted
+    if not is_encrypted(value):
+        return value
+    try:
+        return decrypt_token(value)
+    except Exception:
+        _log("credential decryption failed for a connected account (token skipped)")
+        return ""
+
+
+def _migrate_legacy_credentials(user_id: str, provider: str, access_token: str, refresh_token: str) -> None:
+    """Encrypt-on-write for legacy plaintext credentials once a key is set."""
+    from services.credential_crypto import encryption_key_configured, is_encrypted
+    if not encryption_key_configured():
+        return
+    if (is_encrypted(access_token) or not access_token) and (is_encrypted(refresh_token) or not refresh_token):
+        return
+    try:
+        _run_blocking(_upsert_connected_account(
+            user_id=user_id,
+            provider=provider,
+            access_token=_encrypt_credential_field(access_token),
+            refresh_token=_encrypt_credential_field(refresh_token),
+        ))
+        _log(f"legacy provider credentials migrated to encrypted form (user={user_id}, provider={provider})")
+    except Exception as error:
+        _log(f"legacy credential migration failed: {error}")
+
+
+async def _upsert_connected_account(
+    *,
+    user_id: str,
+    provider: str,
+    account_id: str = "",
+    email: str = "",
+    access_token: str = "",
+    refresh_token: str = "",
+    token_expiry: str | None = None,
+) -> bool:
+    """Upsert a connected_account row; canonical store for OAuth credentials.
+
+    Idempotent by ``(user_id, provider)``, so transient network failures are
+    retried with bounded backoff (PR10.8); the caller still receives the
+    failure if the budget is exhausted.
+    """
+    from services.persistence.launch import ConnectedAccount, ConnectedAccountRepository
+    from services.persistence.retry import retry_async
+
+    async def _perform() -> bool:
+        repo = ConnectedAccountRepository()
+        resolved_account_id = account_id or email
+        enc_access = _encrypt_credential_field(access_token)
+        enc_refresh = _encrypt_credential_field(refresh_token)
+        existing = await repo.find_for_user(user_id, provider)
+        if existing:
+            if email:
+                existing.email = email
+            if resolved_account_id:
+                existing.account_id = resolved_account_id
+            if enc_access:
+                existing.access_token = enc_access
+            if enc_refresh:
+                existing.refresh_token = enc_refresh
+            if token_expiry:
+                existing.token_expires_at = _parse_dt(token_expiry)
+            existing.status = "active"
+            existing.deleted_at = None
+            await repo.save(existing)
+        else:
+            await repo.save(ConnectedAccount(
+                user_id=user_id,
+                provider=provider,
+                account_id=resolved_account_id,
+                display_name=email,
+                email=email,
+                access_token=enc_access,
+                refresh_token=enc_refresh,
+                token_expires_at=_parse_dt(token_expiry),
+                status="active",
+            ))
+        return True
+
+    return await retry_async(_perform, category="connected_accounts")
 
 
 def sync_connected_account(
@@ -275,42 +411,171 @@ def sync_connected_account(
 ) -> bool:
     """Mirror OAuth tokens into the canonical connected_accounts table.
 
-    The legacy users google_* columns remain the compatibility bridge; this is
-    the canonical dual-write so tokens never live in only one place.
+    connected_accounts is the exclusive source of truth for provider
+    credentials; the legacy ``users`` google_* columns are no longer read or
+    written by the application.
+
+    Idempotent by ``(user_id, provider)``: reconnecting the same Google
+    account updates the existing row in place (new credentials, ``account_id``
+    identity, status back to ``active``) instead of creating a duplicate.
     """
-    from services.persistence.launch import ConnectedAccount, ConnectedAccountRepository
     try:
-        repo = ConnectedAccountRepository()
-        if not account_id:
-            account_id = email
-
-        async def _upsert():
-            existing = await repo.find_for_user(user_id, provider)
-            if existing:
-                existing.email = email or existing.email
-                existing.access_token = access_token or existing.access_token
-                existing.refresh_token = refresh_token or existing.refresh_token
-                if token_expiry:
-                    existing.token_expires_at = _parse_dt(token_expiry)
-                existing.status = "active"
-                await repo.save(existing)
-            else:
-                await repo.save(ConnectedAccount(
-                    user_id=user_id,
-                    provider=provider,
-                    account_id=account_id,
-                    display_name=email,
-                    email=email,
-                    access_token=access_token,
-                    refresh_token=refresh_token,
-                    token_expires_at=_parse_dt(token_expiry),
-                    status="active",
-                ))
-
-        _run_coro(_upsert)
-        return True
+        return bool(_run_blocking(_upsert_connected_account(
+            user_id=user_id,
+            provider=provider,
+            account_id=account_id,
+            email=email,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_expiry=token_expiry,
+        )))
     except Exception as error:
         _log(f"sync_connected_account error: {error}")
+        return False
+
+
+def get_google_credentials(user_id: str) -> dict | None:
+    """Return OAuth credentials for the user's google connected account.
+
+    Canonical source: ``connected_accounts``. Returns
+    ``{access_token, refresh_token, token_expiry}`` or None when the user has
+    no google account connected.
+    """
+    from services.persistence.launch import ConnectedAccountRepository
+
+    def _read():
+        async def fetch():
+            repo = ConnectedAccountRepository()
+            account = await repo.find_for_user(user_id, "google")
+            if account is None:
+                return None
+            raw_access = account.access_token or ""
+            raw_refresh = account.refresh_token or ""
+            _migrate_legacy_credentials(user_id, "google", raw_access, raw_refresh)
+            return {
+                "access_token": _decrypt_credential_field(raw_access),
+                "refresh_token": _decrypt_credential_field(raw_refresh),
+                "token_expiry": _dt_iso(account.token_expires_at),
+            }
+        return _run_blocking(fetch())
+
+    try:
+        return _read()
+    except Exception as error:
+        _log(f"get_google_credentials error: {error}")
+        return None
+
+
+def has_connected_account(user_id: str, provider: str = "google") -> bool:
+    """Return True when the user has a live connected account for ``provider``."""
+    from services.persistence.launch import ConnectedAccountRepository
+
+    def _check():
+        async def fetch():
+            repo = ConnectedAccountRepository()
+            account = await repo.find_for_user(user_id, provider)
+            return account is not None and bool(
+                account.refresh_token or account.access_token
+            )
+        return _run_blocking(fetch())
+
+    try:
+        return bool(_check())
+    except Exception as error:
+        _log(f"has_connected_account error: {error}")
+        return False
+
+
+def is_connected_account_reauth_required(user_id: str, provider: str = "google") -> bool:
+    """Return True when the stored account is in the reauth-required state.
+
+    Re-auth-required means Google rejected the refresh credential
+    (``invalid_grant``); the account stays persisted but is skipped by sync
+    until the user reconnects. Safe metadata only — never logs tokens.
+    """
+    from services.persistence.launch import ConnectedAccountRepository
+
+    def _check():
+        async def fetch():
+            repo = ConnectedAccountRepository()
+            account = await repo.find_for_user(user_id, provider)
+            if account is None:
+                return False
+            return str(getattr(account, "status", "") or "") == "auth_failed"
+        return _run_blocking(fetch())
+
+    try:
+        return bool(_check())
+    except Exception as error:
+        _log(f"is_connected_account_reauth_required error: {error}")
+        return False
+
+
+def mark_connected_account_auth_failed(user_id: str, provider: str = "google") -> bool:
+    """Persist the reauth-required condition on the connected_accounts row.
+
+    Uses the existing repository write path (no new persistence model). The
+    status field is cleared back to ``active`` automatically when the user
+    reconnects via ``sync_connected_account``. Never touches tokens.
+    """
+    from services.persistence.launch import ConnectedAccountRepository
+
+    def _run():
+        async def fetch():
+            repo = ConnectedAccountRepository()
+            account = await repo.find_for_user(user_id, provider)
+            if account is None:
+                return False
+            account.status = "auth_failed"
+            await repo.save(account)
+            return True
+        return _run_blocking(fetch())
+
+    try:
+        ok = bool(_run())
+        if ok:
+            _log(f"connected account marked auth_failed (user={user_id}, provider={provider})")
+        return ok
+    except Exception as error:
+        _log(f"mark_connected_account_auth_failed error: {error}")
+        return False
+
+
+def _ensure_identity_user(user_id: str, display_name: str = "") -> bool:
+    """Ensure a durable ``identity_users`` row exists for ``user_id``.
+
+    ``connected_accounts.user_id`` has a foreign key onto
+    ``identity_users``. The web flow resolves users-table ids, so the
+    canonical write must be mirrored into ``identity_users`` first or the
+    insert fails with 23503 (which sync_connected_account swallows).
+    """
+    _log(f"_ensure_identity_user called: user_id={user_id}")
+    client = get_supabase_client()
+    if client is None:
+        _log("_ensure_identity_user aborted: no client")
+        return False
+    try:
+        found = (
+            client.table("identity_users")
+            .select("id")
+            .eq("id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if getattr(found, "data", None):
+            return True
+        client.table("identity_users").insert({
+            "id": user_id,
+            "display_name": display_name or "web-user",
+            "locale": "en",
+            "email": "",
+            "metadata": {},
+            "version": 1,
+        }).execute()
+        _log(f"_ensure_identity_user created row for {user_id}")
+        return True
+    except Exception as error:
+        _log(f"_ensure_identity_user error: {error}")
         return False
 
 
@@ -322,7 +587,14 @@ def save_google_tokens(
     access_token: str,
     refresh_token: str,
     token_expiry: str | None,
+    account_id: str = "",
 ) -> dict | None:
+    """Persist OAuth tokens in connected_accounts (the canonical store).
+
+    Credentials live exclusively in connected_accounts; the users table only
+    records the optional telegram_chat_id routing field. Returns a truthy
+    dict so callers can treat None as failure.
+    """
     _log(
         "save_google_tokens called: "
         f"user_id={user_id}, email={email}, telegram_chat_id={telegram_chat_id}, token_expiry={token_expiry}"
@@ -332,56 +604,43 @@ def save_google_tokens(
         _log("save_google_tokens aborted: no client")
         return None
 
-    payload = {
-        "google_access_token": access_token,
-        "google_refresh_token": refresh_token,
-        "token_expiry": token_expiry,
-    }
+    user_payload = {}
     if telegram_chat_id is not None:
-        payload["telegram_chat_id"] = str(telegram_chat_id)
+        user_payload["telegram_chat_id"] = str(telegram_chat_id)
 
     user = None
-    try:
-        result = (
-            client.table("users")
-            .update(payload)
-            .eq("id", user_id)
-            .execute()
-        )
-        user = _first_row(result)
-        _log(f"save_google_tokens success: {user}")
-    except Exception as error:
-        _log(f"save_google_tokens error: {error}")
-        # The current legacy schema has no users.email column. Tokens are
-        # still durable in the Google-specific columns, so retry without the
-        # optional email field instead of reporting a false connection error.
-        if "email" in str(error):
-            try:
-                result = (
-                    client.table("users")
-                    .update({
-                        "google_access_token": access_token,
-                        "google_refresh_token": refresh_token,
-                        "token_expiry": token_expiry,
-                        **({"telegram_chat_id": str(telegram_chat_id)} if telegram_chat_id is not None else {}),
-                    })
-                    .eq("id", user_id)
-                    .execute()
-                )
-                user = _first_row(result)
-            except Exception as retry_error:
-                _log(f"save_google_tokens compatibility retry error: {retry_error}")
+    if user_payload:
+        try:
+            result = (
+                client.table("users")
+                .update(user_payload)
+                .eq("id", user_id)
+                .execute()
+            )
+            user = _first_row(result)
+            _log(f"save_google_tokens success: {user}")
+        except Exception as error:
+            _log(f"save_google_tokens error: {error}")
+    else:
+        user = get_user(user_id)
 
-    if user is not None:
-        sync_connected_account(
-            user_id,
-            provider="google",
-            email=email,
-            access_token=access_token,
-            refresh_token=refresh_token,
-            token_expiry=token_expiry,
-        )
-    return user
+    if not _ensure_identity_user(user_id, display_name=(user or {}).get("username", "")):
+        _log(f"save_google_tokens: identity_users row missing or uncreatable for {user_id}")
+        return None
+
+    ok = sync_connected_account(
+        user_id,
+        provider="google",
+        account_id=account_id,
+        email=email,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_expiry=token_expiry,
+    )
+    if not ok:
+        _log("save_google_tokens: connected_account write failed")
+        return None
+    return user or {"user_id": user_id}
 
 
 def update_google_access_token(
@@ -390,37 +649,27 @@ def update_google_access_token(
     access_token: str,
     token_expiry: str | None,
 ) -> dict | None:
+    """Persist a refreshed Google access token in connected_accounts.
+
+    This is the canonical write for refreshed tokens; credentials live
+    exclusively in connected_accounts, never in the legacy users google_*
+    columns. Returns a truthy dict with the persisted values so callers can
+    treat None as failure.
+    """
     _log(
         "update_google_access_token called: "
         f"user_id={user_id}, token_expiry={token_expiry}"
     )
-    client = get_supabase_client()
-    if client is None:
-        _log("update_google_access_token aborted: no client")
-        return None
-
     try:
-        result = (
-            client.table("users")
-            .update(
-                {
-                    "google_access_token": access_token,
-                    "token_expiry": token_expiry,
-                }
-            )
-            .eq("id", user_id)
-            .execute()
+        ok = sync_connected_account(
+            user_id,
+            provider="google",
+            access_token=access_token,
+            token_expiry=token_expiry,
         )
-        user = _first_row(result)
-        _log(f"update_google_access_token success: {user}")
-        if user is not None:
-            sync_connected_account(
-                user_id,
-                provider="google",
-                access_token=access_token,
-                token_expiry=token_expiry,
-            )
-        return user
+        if not ok:
+            return None
+        return {"access_token": access_token, "token_expiry": token_expiry}
     except Exception as error:
         _log(f"update_google_access_token error: {error}")
         return None
@@ -787,6 +1036,7 @@ def save_provider_credentials(
     email: str,
     client_id: str = "",
     client_secret: str = "",
+    account_id: str = "",
 ) -> bool:
     """Persist provider credentials on the authenticated user's row."""
     _log(f"save_provider_credentials: user_id={user_id}, provider_id={provider_id}, email={email}")
@@ -806,27 +1056,76 @@ def save_provider_credentials(
         access_token=access_token,
         refresh_token=refresh_token,
         token_expiry=token_expiry,
+        account_id=account_id,
     )
-    if result:
-        try:
-            client = get_supabase_client()
-            if client:
-                client.table("users").update({
-                    "google_client_id": client_id,
-                    "google_client_secret": client_secret,
-                    "google_provider_id": provider_id,
-                }).eq("id", user["id"]).execute()
-        except Exception as e:
-            _log(f"save_provider_credentials: extra fields update error: {e}")
     return result is not None
+
+
+def reconcile_connected_account_duplicates(user_id: str | None = None) -> int:
+    """Soft-delete obsolete duplicate connected_account rows (safe, reversible).
+
+    Canonical rule: one active row per ``(user_id, provider)``. For each
+    duplicate group the newest row that still has a refresh token is the
+    canonical row; obsolete duplicates are soft-deleted (``deleted_at``) —
+    credentials are never decrypted/logged here.
+
+    Returns the number of rows deactivated. Safe to run at any time; the
+    DB-level unique index (020 migration) enforces the invariant going forward.
+    """
+    from services.persistence.launch import ConnectedAccountRepository
+    from services.persistence.launch.models import ConnectedAccount
+
+    def _run():
+        async def fetch():
+            repo = ConnectedAccountRepository()
+            if user_id:
+                accounts = await repo.list_for_user(user_id)
+            else:
+                accounts = await repo._list(
+                    [("deleted_at", "is", "null")],
+                    order="created_at", desc=True, limit=5000,
+                )
+            by_key: dict[tuple[str, str], list[ConnectedAccount]] = {}
+            for account in accounts:
+                by_key.setdefault((account.user_id, account.provider), []).append(account)
+
+            deactivated = 0
+            for group in by_key.values():
+                if len(group) <= 1:
+                    continue
+                # Prefer a row with a real refresh token, then newest created.
+                canonical = max(
+                    group,
+                    key=lambda a: (
+                        bool(a.refresh_token and len(a.refresh_token) >= 20),
+                        a.created_at or datetime.min.replace(tzinfo=timezone.utc),
+                    ),
+                )
+                for other in group:
+                    if other.id == canonical.id:
+                        continue
+                    other.deleted_at = datetime.now(timezone.utc)
+                    await repo.save(other)
+                    deactivated += 1
+            return deactivated
+        return _run_blocking(fetch())
+
+    try:
+        count = _run()
+        if count:
+            _log(f"reconcile_connected_account_duplicates deactivated {count} obsolete row(s)")
+        return count
+    except Exception as error:
+        _log(f"reconcile_connected_account_duplicates error: {error}")
+        return 0
 
 
 def load_all_provider_credentials() -> list[dict]:
     """Load all persisted provider credentials.
 
-    Prefers the canonical connected_accounts table; falls back to the legacy
-    users google_* columns for compatibility. Returns legacy-shaped rows with:
-    id, google_provider_id, access_token, refresh_token, token_expiry, email.
+    Sole source of truth is the canonical connected_accounts table. Returns
+    legacy-shaped rows (id, google_provider_id, access_token, refresh_token,
+    token_expiry, email) for backward compatibility with existing callers.
     """
     _log("load_all_provider_credentials called")
     client = get_supabase_client()
@@ -834,55 +1133,59 @@ def load_all_provider_credentials() -> list[dict]:
         _log("load_all_provider_credentials: no client")
         return []
 
-    # Canonical read: connected_accounts first.
     canonical_rows = []
     try:
         result = (
             client.table("connected_accounts")
-            .select("user_id, provider, email, display_name, access_token, refresh_token, token_expires_at, status")
+            .select("user_id, provider, email, display_name, account_id, access_token, refresh_token, token_expires_at, status, created_at")
             .neq("refresh_token", "")
             .neq("refresh_token", None)
+            .is_("deleted_at", "null")
+            .order("created_at", desc=True)
             .execute()
         )
         rows = getattr(result, "data", None) or []
+        seen: dict[tuple[str, str], dict] = {}
         for r in rows:
-            if not r.get("refresh_token"):
+            access_token = _decrypt_credential_field((r.get("access_token") or "").strip())
+            refresh_token = _decrypt_credential_field((r.get("refresh_token") or "").strip())
+            if refresh_token:
+                _migrate_legacy_credentials(
+                    str(r.get("user_id") or ""), str(r.get("provider") or "google"),
+                    access_token, refresh_token,
+                )
+            if len(refresh_token) < 20:
+                _log(
+                    f"load_all_provider_credentials: skipping row without a real refresh token "
+                    f"(email={r.get('email')}, len={len(refresh_token)})"
+                )
                 continue
+            key = (str(r.get("user_id") or ""), str(r.get("provider") or "google"))
+            # Canonical row per (user_id, provider): rows are ordered newest
+            # first, so the first seen wins. Obsolete duplicates are skipped.
+            if key in seen:
+                _log(
+                    f"load_all_provider_credentials: skipping duplicate row "
+                    f"(user={key[0]}, provider={key[1]}) — canonical already selected"
+                )
+                continue
+            seen[key] = r
             canonical_rows.append({
                 "id": r.get("user_id", ""),
                 "google_provider_id": r.get("provider", "google") + "-" + (r.get("email") or r.get("display_name") or ""),
-                "google_refresh_token": r.get("refresh_token", ""),
-                "google_access_token": r.get("access_token", ""),
+                "google_refresh_token": refresh_token,
+                "google_access_token": access_token,
                 "email": r.get("email") or r.get("display_name") or "",
                 "google_client_id": "",
                 "google_client_secret": "",
                 "token_expiry": r.get("token_expires_at") or "",
                 "telegram_id": "",
+                "account_id": r.get("account_id") or r.get("email") or r.get("display_name") or "",
+                "status": r.get("status") or "active",
                 "_canonical": True,
             })
     except Exception as canonical_error:
         _log(f"load_all_provider_credentials canonical read error: {canonical_error}")
-    if canonical_rows:
-        _log(f"load_all_provider_credentials: found {len(canonical_rows)} canonical credential records")
-        return canonical_rows
-
-    # Legacy fallback: users table google_* columns.
-    try:
-        result = (
-            client.table("users")
-            .select("id, google_access_token, google_refresh_token, token_expiry, google_client_id, google_client_secret, google_provider_id, telegram_id")
-            .neq("google_refresh_token", "")
-            .neq("google_refresh_token", None)
-            .execute()
-        )
-        rows = getattr(result, "data", None) or []
-        for r in rows:
-            r["email"] = ""
-        # Include authenticated users as well as legacy provider:* rows. The
-        # old filter made stable-account credentials invisible on restart.
-        rows = [r for r in rows if r.get("google_refresh_token")]
-        _log(f"load_all_provider_credentials: found {len(rows)} legacy credential records")
-        return rows
-    except Exception as e:
-        _log(f"load_all_provider_credentials legacy error: {e}")
         return []
+    _log(f"load_all_provider_credentials: found {len(canonical_rows)} canonical credential records")
+    return canonical_rows

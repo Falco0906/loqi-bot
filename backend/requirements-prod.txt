@@ -1,0 +1,11 @@
+argon2-cffi==25.1.0
+cryptography==48.0.0
+fastapi==0.136.1
+psycopg2-binary==2.9.12
+python-dotenv==1.2.2
+requests==2.33.1
+resend==2.34.0
+serpapi==1.0.2
+stripe==15.3.1
+supabase==2.30.0
+uvicorn==0.46.0

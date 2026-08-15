@@ -63,10 +63,30 @@ async function fetchWithRetry<T>(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
 
+    // PR10.8.3.1: session credentials are sent ONLY via the Authorization
+    // header — never interpolated into URLs. For /api/web/session/* calls,
+    // attach the active web-session token as Bearer unless a caller already
+    // supplied an Authorization header (e.g. identity Bearer).
+    let headers = options.headers;
+    if (url.includes("/api/web/session/")) {
+      const hasAuth = Object.entries((options.headers as Record<string, string>) || {})
+        .some(([k]) => k.toLowerCase() === "authorization");
+      if (!hasAuth) {
+        try {
+          const token = localStorage.getItem("loqi_active_session_token");
+          if (token) {
+            headers = { ...(options.headers || {}), Authorization: `Bearer ${token}` };
+          }
+        } catch {
+          /* no token available */
+        }
+      }
+    }
+
     try {
       const response = await fetch(url, {
         method: options.method || "GET",
-        headers: options.headers,
+        headers,
         body: options.body,
         cache: options.cache,
         signal: options.signal || controller.signal,
@@ -76,10 +96,16 @@ async function fetchWithRetry<T>(
 
       if (!response.ok) {
         const text = await response.text();
-        throw new ApiError(
-          text || `Request failed with ${response.status}`,
-          response.status,
-        );
+        let message = text || `Request failed with ${response.status}`;
+        try {
+          const parsed: unknown = JSON.parse(text);
+          if (parsed && typeof parsed === "object" && "detail" in parsed) {
+            message = String((parsed as { detail: unknown }).detail || message);
+          }
+        } catch {
+          /* keep raw text */
+        }
+        throw new ApiError(message, response.status);
       }
 
       return (await response.json()) as T;
@@ -137,14 +163,14 @@ export async function createSession(displayName?: string) {
 
 export async function getSession(sessionToken: string) {
   return fetchWithRetry<LoqiSessionSummary>(
-    `${API_BASE}/api/web/session/${sessionToken}`,
+    `${API_BASE}/api/web/session/_`,
     { cache: "no-store", headers: authHeaders() },
   );
 }
 
 export async function sendMessage(sessionToken: string, text: string) {
   return fetchWithRetry<{ ok: boolean; messages: LoqiMessage[] }>(
-    `${API_BASE}/api/web/session/${sessionToken}/messages`,
+    `${API_BASE}/api/web/session/_/messages`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -169,7 +195,7 @@ export async function copilotMessage(
     events: unknown[];
     session_token?: string;
   }>(
-    `${API_BASE}/api/web/session/${sessionToken}/messages`,
+    `${API_BASE}/api/web/session/_/messages`,
     {
       method: "POST",
       timeout: 20000,
@@ -190,7 +216,7 @@ export async function copilotMessage(
 
 export async function selectLead(sessionToken: string, index: number) {
   return fetchWithRetry<{ ok: boolean; messages: LoqiMessage[] }>(
-    `${API_BASE}/api/web/session/${sessionToken}/select-lead`,
+    `${API_BASE}/api/web/session/_/select-lead`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -201,7 +227,7 @@ export async function selectLead(sessionToken: string, index: number) {
 
 export async function previewLead(sessionToken: string, index: number) {
   return fetchWithRetry<{ ok: boolean; lead_intelligence: LeadIntelligence }>(
-    `${API_BASE}/api/web/session/${sessionToken}/preview-lead`,
+    `${API_BASE}/api/web/session/_/preview-lead`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -216,7 +242,7 @@ export async function getGmailStatus(sessionToken: string) {
     ok: boolean;
     gmail_connected: boolean;
     connect_url: string;
-  }>(`${API_BASE}/api/web/session/${sessionToken}/gmail`, {
+  }>(`${API_BASE}/api/web/session/_/gmail`, {
     cache: "no-store",
     headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
   });
@@ -241,7 +267,7 @@ export async function analyzeCampaigns(sessionToken: string, leads: unknown[]) {
     }>;
     overall_recommendation: string;
     total_leads: number;
-  }>(`${API_BASE}/api/web/session/${sessionToken}/analyze-campaigns`, {
+  }>(`${API_BASE}/api/web/session/_/analyze-campaigns`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ leads }),
@@ -252,7 +278,7 @@ export async function analyzeCampaigns(sessionToken: string, leads: unknown[]) {
 
 export async function batchDraft(sessionToken: string, leads: unknown[], campaignId?: string) {
   return fetchWithRetry<{ ok: boolean; batch_id: string; total: number }>(
-    `${API_BASE}/api/web/session/${sessionToken}/batch-draft`,
+    `${API_BASE}/api/web/session/_/batch-draft`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -279,21 +305,21 @@ export async function batchStatus(sessionToken: string, batchId: string) {
       company_intelligence?: unknown;
       lead_intelligence?: unknown;
     }>;
-  }>(`${API_BASE}/api/web/session/${sessionToken}/batch-status/${batchId}`);
+  }>(`${API_BASE}/api/web/session/_/batch-status/${batchId}`);
 }
 
 /* ─── Draft CRUD ─── */
 
 export async function listDrafts(sessionToken: string) {
   return fetchWithRetry<{ ok: boolean; drafts: unknown[] }>(
-    `${API_BASE}/api/web/session/${sessionToken}/drafts`,
+    `${API_BASE}/api/web/session/_/drafts`,
     { headers: authHeaders() },
   );
 }
 
 export async function updateDraft(sessionToken: string, draftId: string, text: string) {
   return fetchWithRetry<{ ok: boolean; draft: unknown }>(
-    `${API_BASE}/api/web/session/${sessionToken}/drafts/${draftId}`,
+    `${API_BASE}/api/web/session/_/drafts/${draftId}`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -326,7 +352,7 @@ export async function refineDraft(
     }
   }
   return fetchWithRetry<{ ok: boolean; draft: { id: string; text: string; status: string }; rewritten_text?: string; change_summary?: string[]; draft_intelligence?: DraftIntelligence | null; version?: number; confidence?: string; comparison?: { improvements: Array<{ category: string; description: string }>; regressions: Array<{ category: string; description: string }>; added: string[]; removed: string[]; length_change_pct: number } }>(
-    `${API_BASE}/api/web/session/${sessionToken}/drafts/${draftId}/refine`,
+    `${API_BASE}/api/web/session/_/drafts/${draftId}/refine`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -398,7 +424,7 @@ export async function analyzeDraft(
     }
   }
   return fetchWithRetry<{ ok: boolean; analysis: DraftAnalysis | null; draft_intelligence?: DraftIntelligence | null; error?: string }>(
-    `${API_BASE}/api/web/session/${sessionToken}/drafts/analyze`,
+    `${API_BASE}/api/web/session/_/drafts/analyze`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -409,7 +435,7 @@ export async function analyzeDraft(
 
 export async function undoDraft(sessionToken: string, draftId: string) {
   return fetchWithRetry<{ ok: boolean; draft: { id: string; text: string; status: string }; undo?: { previous_text: string; reason: string; strategy: string; change_summary: string[]; version: number; timestamp: string } }>(
-    `${API_BASE}/api/web/session/${sessionToken}/drafts/${draftId}/undo`,
+    `${API_BASE}/api/web/session/_/drafts/${draftId}/undo`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -419,7 +445,7 @@ export async function undoDraft(sessionToken: string, draftId: string) {
 
 export async function getDraftHistory(sessionToken: string, draftId: string) {
   return fetchWithRetry<{ ok: boolean; history: Array<{ previous_text: string; reason: string; strategy: string; change_summary: string[]; version: number; timestamp: string }>; current_version?: number }>(
-    `${API_BASE}/api/web/session/${sessionToken}/drafts/${draftId}/history`,
+    `${API_BASE}/api/web/session/_/drafts/${draftId}/history`,
     { cache: "no-store" },
   );
 }
@@ -431,7 +457,7 @@ export async function compareDraftVersions(
   changeSummary?: string[],
 ) {
   return fetchWithRetry<{ ok: boolean; comparison: { improvements: Array<{ category: string; description: string }>; regressions: Array<{ category: string; description: string }>; added: string[]; removed: string[]; length_change_pct: number } }>(
-    `${API_BASE}/api/web/session/${sessionToken}/drafts/compare`,
+    `${API_BASE}/api/web/session/_/drafts/compare`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -463,7 +489,7 @@ export async function askDraftQuestion(
     }
   }
   return fetchWithRetry<{ ok: boolean; answer?: string; error?: string }>(
-    `${API_BASE}/api/web/session/${sessionToken}/drafts/ask`,
+    `${API_BASE}/api/web/session/_/drafts/ask`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -492,28 +518,41 @@ export async function approveDraft(sessionToken: string, draftId: string) {
     current_step?: string | null;
     pending_drafts?: number;
   }>(
-    `${API_BASE}/api/web/session/${sessionToken}/drafts/${draftId}/approve`,
+    `${API_BASE}/api/web/session/_/drafts/${draftId}/approve`,
     { method: "POST", headers: authHeaders() },
   );
 }
 
-export async function sendDraft(sessionToken: string, draftId: string) {
-  return fetchWithRetry<{ ok: boolean; send_result?: Record<string, unknown> }>(
-    `${API_BASE}/api/web/session/${sessionToken}/drafts/${draftId}/send`,
-    { method: "POST" },
+export async function sendDraft(
+  sessionToken: string,
+  draftId: string,
+  options: { test_recipient?: string; test_recipient_name?: string } = {},
+) {
+  const body = options.test_recipient
+    ? JSON.stringify({
+        test_recipient: options.test_recipient,
+        test_recipient_name: options.test_recipient_name || "Test Recipient",
+      })
+    : undefined;
+  return fetchWithRetry<{ ok: boolean; error?: string; send_result?: Record<string, unknown> }>(
+    `${API_BASE}/api/web/session/_/drafts/${draftId}/send`,
+    {
+      method: "POST",
+      ...(body ? { headers: { "Content-Type": "application/json" }, body } : {}),
+    },
   );
 }
 
 export async function scheduleDraft(sessionToken: string, draftId: string, sendAt: string) {
   return fetchWithRetry<{ ok: boolean; schedule_id?: string; error?: string }>(
-    `${API_BASE}/api/web/session/${sessionToken}/drafts/${draftId}/schedule`,
+    `${API_BASE}/api/web/session/_/drafts/${draftId}/schedule`,
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ send_at: sendAt }) },
   );
 }
 
 export async function cancelScheduleDraft(sessionToken: string, draftId: string) {
   return fetchWithRetry<{ ok: boolean; error?: string }>(
-    `${API_BASE}/api/web/session/${sessionToken}/drafts/${draftId}/cancel-schedule`,
+    `${API_BASE}/api/web/session/_/drafts/${draftId}/cancel-schedule`,
     { method: "POST" },
   );
 }
@@ -529,9 +568,10 @@ export async function saveCampaign(
   strategy?: unknown,
   status?: string,
   leads?: unknown[],
+  discoveryId?: string,
 ) {
   return fetchWithRetry<{ ok: boolean; campaign: unknown }>(
-    `${API_BASE}/api/web/session/${sessionToken}/campaigns`,
+    `${API_BASE}/api/web/session/_/campaigns`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -543,25 +583,65 @@ export async function saveCampaign(
         strategy,
         status: status || "planning",
         leads,
+        discovery_id: discoveryId,
       }),
     },
   );
 }
 
-export async function generateCampaignStrategy(sessionToken: string, campaignId: string) {
-  return fetchWithRetry<{ ok: boolean; campaign: Record<string, unknown> }>(
-    `${API_BASE}/api/web/session/${sessionToken}/campaigns/${campaignId}/generate-strategy`,
-    { method: "POST", headers: authHeaders() },
+export async function generateCampaignStrategy(
+  sessionToken: string,
+  campaignId: string,
+  force = false,
+) {
+  return fetchWithRetry<
+    {
+      ok: boolean;
+      job_id: string | null;
+      status: string;
+      reused?: boolean;
+      strategy?: Record<string, unknown> | null;
+    }
+  >(
+    `${API_BASE}/api/web/session/_/campaigns/${campaignId}/generate-strategy`,
+    {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ force }),
+      timeout: 15000,
+      retries: 1,
+    },
   );
 }
 
-export async function addLeadToCampaign(sessionToken: string, campaignId: string, lead: Record<string, unknown>) {
+export async function getStrategyGenerationStatus(
+  sessionToken: string,
+  campaignId: string,
+  jobId: string,
+) {
+  return fetchWithRetry<{
+    job_id: string;
+    status: "queued" | "running" | "completed" | "failed";
+    strategy?: Record<string, unknown> | null;
+    error?: string | null;
+  }>(
+    `${API_BASE}/api/web/session/_/campaigns/${campaignId}/strategy-jobs/${jobId}`,
+    { timeout: 8000, retries: 1 },
+  );
+}
+
+export async function addLeadToCampaign(
+  sessionToken: string,
+  campaignId: string,
+  lead: Record<string, unknown>,
+  discoveryId?: string,
+) {
   return fetchWithRetry<{ ok: boolean; added: boolean; campaign: Record<string, unknown> }>(
-    `${API_BASE}/api/web/session/${sessionToken}/campaigns/${campaignId}/leads`,
+    `${API_BASE}/api/web/session/_/campaigns/${campaignId}/leads`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ lead }),
+      body: JSON.stringify({ lead, discovery_id: discoveryId || undefined }),
     },
   );
 }
@@ -572,7 +652,7 @@ export async function decideLead(
   approved: boolean,
 ) {
   return fetchWithRetry<{ ok: boolean; lead: Record<string, unknown>; approved: boolean }>(
-    `${API_BASE}/api/web/session/${sessionToken}/leads/decision`,
+    `${API_BASE}/api/web/session/_/leads/decision`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -583,14 +663,14 @@ export async function decideLead(
 
 export async function listCampaigns(sessionToken: string) {
   return fetchWithRetry<{ ok: boolean; campaigns: Array<Record<string, unknown>> }>(
-    `${API_BASE}/api/web/session/${sessionToken}/campaigns`,
+    `${API_BASE}/api/web/session/_/campaigns`,
     { headers: authHeaders() },
   );
 }
 
 export async function getCampaign(sessionToken: string, campaignId: string) {
   return fetchWithRetry<{ ok: boolean; campaign: Record<string, unknown> }>(
-    `${API_BASE}/api/web/session/${sessionToken}/campaigns/${campaignId}`,
+    `${API_BASE}/api/web/session/_/campaigns/${campaignId}`,
     { headers: authHeaders() },
   );
 }
@@ -601,7 +681,7 @@ export async function updateCampaign(
   updates: { name?: string; objective?: string; strategy?: unknown; status?: string },
 ) {
   return fetchWithRetry<{ ok: boolean; campaign: Record<string, unknown> }>(
-    `${API_BASE}/api/web/session/${sessionToken}/campaigns/${campaignId}`,
+    `${API_BASE}/api/web/session/_/campaigns/${campaignId}`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -611,15 +691,41 @@ export async function updateCampaign(
 }
 
 export async function archiveCampaign(sessionToken: string, campaignId: string) {
+  return updateCampaign(sessionToken, campaignId, { status: "archived" });
+}
+
+export async function deleteCampaign(sessionToken: string, campaignId: string) {
   return fetchWithRetry<{ ok: boolean; campaign: Record<string, unknown> }>(
-    `${API_BASE}/api/web/session/${sessionToken}/campaigns/${campaignId}`,
+    `${API_BASE}/api/web/session/_/campaigns/${campaignId}`,
     { method: "DELETE", headers: authHeaders() },
+  );
+}
+
+export async function duplicateCampaign(sessionToken: string, campaignId: string) {
+  return fetchWithRetry<{ ok: boolean; campaign: Record<string, unknown> }>(
+    `${API_BASE}/api/web/session/_/campaigns/${campaignId}/duplicate`,
+    { method: "POST", headers: authHeaders() },
+  );
+}
+
+export async function attachDiscoveryToCampaign(
+  sessionToken: string,
+  campaignId: string,
+  discoveryId: string,
+) {
+  return fetchWithRetry<{ ok: boolean; added: number; campaign: Record<string, unknown> }>(
+    `${API_BASE}/api/web/session/_/campaigns/${campaignId}/attach-discovery`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ discovery_id: discoveryId }),
+    },
   );
 }
 
 export async function listCampaignDrafts(sessionToken: string, campaignId: string) {
   return fetchWithRetry<{ ok: boolean; drafts: unknown[] }>(
-    `${API_BASE}/api/web/session/${sessionToken}/campaigns/${campaignId}/drafts`,
+    `${API_BASE}/api/web/session/_/campaigns/${campaignId}/drafts`,
     { headers: authHeaders() },
   );
 }
@@ -633,7 +739,7 @@ export async function getCampaignSummary(sessionToken: string) {
     pending_drafts: number;
     updated_at: string;
   }> }>(
-    `${API_BASE}/api/web/session/${sessionToken}/campaigns/summary`,
+    `${API_BASE}/api/web/session/_/campaigns/summary`,
     { headers: authHeaders() },
   );
 }
@@ -712,7 +818,7 @@ export type MCSummary = {
 
 export async function getMissionControl(sessionToken: string, onboardingUserId = "") {
   return fetchWithRetry<MCSummary>(
-    `${API_BASE}/api/web/session/${sessionToken}/mission-control?onboarding_user_id=${encodeURIComponent(onboardingUserId)}`,
+    `${API_BASE}/api/web/session/_/mission-control?onboarding_user_id=${encodeURIComponent(onboardingUserId)}`,
     { headers: authHeaders() },
   );
 }
@@ -721,8 +827,8 @@ export async function getMissionControl(sessionToken: string, onboardingUserId =
 
 export async function generateCampaignDrafts(sessionToken: string, campaignId: string) {
   return fetchWithRetry<{ ok: boolean; batch_id: string; total: number }>(
-    `${API_BASE}/api/web/session/${sessionToken}/campaigns/${campaignId}/generate-drafts`,
-    { method: "POST", headers: authHeaders() },
+    `${API_BASE}/api/web/session/_/campaigns/${campaignId}/generate-drafts`,
+    { method: "POST", headers: authHeaders(), timeout: DRAFT_BATCH_START_TIMEOUT_MS, retries: 0 },
   );
 }
 
@@ -735,15 +841,15 @@ export async function getCampaignGenerationStatus(sessionToken: string, campaign
     completed?: number;
     batch_id?: string;
   }>(
-    `${API_BASE}/api/web/session/${sessionToken}/campaigns/${campaignId}/generation-status`,
-    { headers: authHeaders() },
+    `${API_BASE}/api/web/session/_/campaigns/${campaignId}/generation-status`,
+    { headers: authHeaders(), timeout: 20000, retries: 1 },
   );
 }
 
 /* ─── Export ─── */
 
 export function getExportCsvUrl(sessionToken: string) {
-  return `${API_BASE}/api/web/session/${sessionToken}/export-csv`;
+  return `${API_BASE}/api/web/session/_/export-csv`;
 }
 
 /* ─── Job Engine ─── */
@@ -765,16 +871,121 @@ export type JobResponse = {
   completed_at: string | null;
 };
 
+/**
+ * Budget for creating a Discovery search job. Job creation resolves the web
+ * session and inserts a row before returning a job_id, so it can exceed the
+ * standard 5s API timeout under load. It intentionally covers ONLY
+ * /api/jobs/search — subsequent progress/results polling keeps the standard
+ * short timeouts.
+ */
+export const DISCOVERY_SEARCH_START_TIMEOUT_MS = 20000;
+
+/**
+ * Budget for POSTing a draft-batch request. The endpoint starts the batch and
+ * returns quickly, but starting it can exceed the standard timeout under load.
+ * Retries must stay at 0: the backend treats a completed generation as
+ * idempotent, and a retried POST would otherwise race batch completion.
+ */
+export const DRAFT_BATCH_START_TIMEOUT_MS = 30000;
+
 export async function startSearchJob(sessionToken: string, query: string) {
-  return fetchWithRetry<{ job_id: string; status: string }>(
+  return fetchWithRetry<{ job_id: string; status: string; discovery_id: string }>(
     `${API_BASE}/api/jobs/search`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-session-token": sessionToken },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}` },
       body: JSON.stringify({ query }),
-      timeout: 5000,
+      timeout: DISCOVERY_SEARCH_START_TIMEOUT_MS,
       retries: 0,
     },
+  );
+}
+
+export async function startDiscoveryJob(sessionToken: string, query: string) {
+  console.log("[kickoff] startDiscoveryJob: firing POST /api/discoveries", {
+    tokenPrefix: sessionToken?.slice(0, 8),
+    query,
+    url: `${API_BASE}/api/discoveries`,
+  });
+  try {
+    const res = await fetchWithRetry<{ ok: boolean; job_id: string; discovery_id: string; status: string }>(
+      `${API_BASE}/api/discoveries`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}` },
+        body: JSON.stringify({ query }),
+        timeout: DISCOVERY_SEARCH_START_TIMEOUT_MS,
+        retries: 0,
+      },
+    );
+    console.log("[kickoff] startDiscoveryJob: response", res);
+    return res;
+  } catch (err) {
+    console.error("[kickoff] startDiscoveryJob: REJECTED/THREW", err);
+    throw err;
+  }
+}
+
+export type DiscoveryListItemResponse = {
+  id: string;
+  query: string;
+  status: string;
+  company_count: number;
+  lead_count: number;
+  created_at: string;
+  completed_at: string | null;
+  summary: Record<string, unknown>;
+  title?: string | null;
+  description?: string | null;
+  favorite?: boolean;
+  archived_at?: string | null;
+  last_viewed_at?: string | null;
+  last_refreshed_at?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+export async function listDiscoveries(sessionToken: string) {
+  return fetchWithRetry<{ ok: boolean; discoveries: DiscoveryListItemResponse[] }>(
+    `${API_BASE}/api/discoveries`,
+    { headers: { Authorization: `Bearer ${sessionToken}` }, timeout: 8000, retries: 0 },
+  );
+}
+
+export type DiscoveryDetailResponse = {
+  id: string;
+  query: string;
+  status: string;
+  summary: Record<string, unknown>;
+  filters: unknown[];
+  provider_provenance: Record<string, number>;
+  created_at: string;
+  completed_at: string | null;
+  title?: string | null;
+  description?: string | null;
+  favorite?: boolean;
+  archived_at?: string | null;
+  last_viewed_at?: string | null;
+  last_refreshed_at?: string | null;
+  metadata?: Record<string, unknown>;
+  discovery_companies: Array<{
+    rank: number;
+    match_score: number;
+    company_id: string;
+    company: Record<string, unknown>;
+  }>;
+  discovery_leads: Array<{
+    rank: number;
+    match_score: number;
+    status: string;
+    lead_id: string;
+    workspace_lead: Record<string, unknown>;
+  }>;
+};
+
+export async function getDiscovery(sessionToken: string, discoveryId: string) {
+  return fetchWithRetry<{ ok: boolean; discovery: DiscoveryDetailResponse }>(
+    `${API_BASE}/api/discoveries/${discoveryId}`,
+    { headers: { Authorization: `Bearer ${sessionToken}` }, timeout: 8000, retries: 0 },
   );
 }
 
@@ -814,13 +1025,13 @@ export async function listProviders(sessionToken: string) {
     id: string; provider_type: string; status: string;
     email: string; last_sync: string; sync_cursor: string; created_at: string;
   }> }>(
-    `${API_BASE}/api/web/session/${sessionToken}/providers`,
+    `${API_BASE}/api/web/session/_/providers`,
   );
 }
 
 export async function connectProvider(sessionToken: string, providerType: string, authToken: string, email?: string) {
   return fetchWithRetry<{ ok: boolean; provider: Record<string, unknown> }>(
-    `${API_BASE}/api/web/session/${sessionToken}/providers/connect`,
+    `${API_BASE}/api/web/session/_/providers/connect`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -831,14 +1042,14 @@ export async function connectProvider(sessionToken: string, providerType: string
 
 export async function disconnectProvider(sessionToken: string, providerId: string) {
   return fetchWithRetry<{ ok: boolean }>(
-    `${API_BASE}/api/web/session/${sessionToken}/providers/${providerId}/disconnect`,
+    `${API_BASE}/api/web/session/_/providers/${providerId}/disconnect`,
     { method: "POST" },
   );
 }
 
 export async function getProviderHealth(sessionToken: string, providerId: string) {
   return fetchWithRetry<{ ok: boolean; provider_id: string; status: string; last_sync: string }>(
-    `${API_BASE}/api/web/session/${sessionToken}/providers/${providerId}/health`,
+    `${API_BASE}/api/web/session/_/providers/${providerId}/health`,
   );
 }
 
@@ -848,7 +1059,7 @@ export async function syncProvider(sessionToken: string, providerId: string, cur
     provider_id: string; threads_synced: number; messages_synced: number;
     new_conversations: number; errors: string[]; cursor: string; duration_ms: number;
   } }>(
-    `${API_BASE}/api/web/session/${sessionToken}/providers/${providerId}/sync${params}`,
+    `${API_BASE}/api/web/session/_/providers/${providerId}/sync${params}`,
     { method: "POST", timeout: 30000 },
   );
 }
@@ -856,18 +1067,18 @@ export async function syncProvider(sessionToken: string, providerId: string, cur
 export async function getProviderStatus(sessionToken: string, providerId: string) {
   return fetchWithRetry<{ ok: boolean; provider_id: string; provider_type: string; status: string;
     connected: boolean; last_sync: string; sync_cursor: string; watching: boolean;
-  }>(`${API_BASE}/api/web/session/${sessionToken}/providers/${providerId}/status`);
+  }>(`${API_BASE}/api/web/session/_/providers/${providerId}/status`);
 }
 
 export async function getProviderThreads(sessionToken: string, providerId: string) {
   return fetchWithRetry<{ ok: boolean; provider_id: string; threads: Array<Record<string, unknown>>; total: number }>(
-    `${API_BASE}/api/web/session/${sessionToken}/providers/${providerId}/threads`,
+    `${API_BASE}/api/web/session/_/providers/${providerId}/threads`,
   );
 }
 
 export async function getProviderMessages(sessionToken: string, providerId: string) {
   return fetchWithRetry<{ ok: boolean; provider_id: string; total_messages_seen: number; recent_messages?: Record<string, unknown>[]; mailbox_email?: string }>(
-    `${API_BASE}/api/web/session/${sessionToken}/providers/${providerId}/messages`,
+    `${API_BASE}/api/web/session/_/providers/${providerId}/messages`,
   );
 }
 
@@ -880,19 +1091,19 @@ export async function getProviderEvents(sessionToken: string, providerId?: strin
     id: string; event_type: string; provider_id: string;
     message: string; timestamp: string; sequence: number; metadata: Record<string, unknown>;
   }>; latest_sequence: number }>(
-    `${API_BASE}/api/web/session/${sessionToken}/providers/events${qs ? '?' + qs : ''}`,
+    `${API_BASE}/api/web/session/_/providers/events${qs ? '?' + qs : ''}`,
   );
 }
 
 export async function getRegisteredProviderTypes(sessionToken: string) {
   return fetchWithRetry<{ ok: boolean; types: string[] }>(
-    `${API_BASE}/api/web/session/${sessionToken}/providers/registered`,
+    `${API_BASE}/api/web/session/_/providers/registered`,
   );
 }
 
 export async function analyzeConversationMessage(sessionToken: string, text: string, conversationId?: string, sender?: string) {
   return fetchWithRetry<{ ok: boolean; intelligence: Record<string, unknown>; memory: Record<string, unknown> }>(
-    `${API_BASE}/api/web/session/${sessionToken}/communication/analyze`,
+    `${API_BASE}/api/web/session/_/communication/analyze`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -903,13 +1114,13 @@ export async function analyzeConversationMessage(sessionToken: string, text: str
 
 export async function getConversationTimeline(sessionToken: string, conversationId: string) {
   return fetchWithRetry<{ ok: boolean; events: Array<Record<string, unknown>>; total: number }>(
-    `${API_BASE}/api/web/session/${sessionToken}/communication/${conversationId}/timeline`,
+    `${API_BASE}/api/web/session/_/communication/${conversationId}/timeline`,
   );
 }
 
 export async function planWorkflow(sessionToken: string, objective: string) {
   return fetchWithRetry<{ ok: boolean; plan: Record<string, unknown>; alternative_plan: Record<string, unknown>; recommendation: string; confidence: string }>(
-    `${API_BASE}/api/web/session/${sessionToken}/plan`,
+    `${API_BASE}/api/web/session/_/plan`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -929,13 +1140,13 @@ export async function getWorkspaceContext(sessionToken: string, conversationId?:
   if (conversationId) params.set("conversation_id", conversationId);
   const qs = params.toString();
   return fetchWithRetry<Record<string, unknown>>(
-    `${API_BASE}/api/web/session/${sessionToken}/workspace-context${qs ? '?' + qs : ''}`,
+    `${API_BASE}/api/web/session/_/workspace-context${qs ? '?' + qs : ''}`,
   );
 }
 
 export async function getCommunicationSummary(sessionToken: string, text: string) {
   return fetchWithRetry<{ ok: boolean; summary: string }>(
-    `${API_BASE}/api/web/session/${sessionToken}/communication/summary`,
+    `${API_BASE}/api/web/session/_/communication/summary`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -946,7 +1157,7 @@ export async function getCommunicationSummary(sessionToken: string, text: string
 
 export async function getCommunicationRecommend(sessionToken: string, text: string) {
   return fetchWithRetry<{ ok: boolean; recommendation: Record<string, unknown> }>(
-    `${API_BASE}/api/web/session/${sessionToken}/communication/recommend`,
+    `${API_BASE}/api/web/session/_/communication/recommend`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -966,7 +1177,7 @@ export async function listActiveJobs(sessionToken: string, userId = "") {
     `${API_BASE}/api/jobs${query}`,
     {
       headers: {
-        "x-session-token": sessionToken,
+        Authorization: `Bearer ${sessionToken}`,
         ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       },
       timeout: 5000,
@@ -979,42 +1190,42 @@ export async function listActiveJobs(sessionToken: string, userId = "") {
 
 export async function outboundCreateDraft(sessionToken: string, payload: Record<string, unknown>) {
   return fetchWithRetry<{ ok: boolean; draft: Record<string, unknown> }>(
-    `${API_BASE}/api/web/session/${sessionToken}/outbound/drafts`,
+    `${API_BASE}/api/web/session/_/outbound/drafts`,
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
   );
 }
 
 export async function outboundUpdateDraft(sessionToken: string, draftId: string, payload: Record<string, unknown>) {
   return fetchWithRetry<{ ok: boolean; draft: Record<string, unknown> }>(
-    `${API_BASE}/api/web/session/${sessionToken}/outbound/drafts/${draftId}`,
+    `${API_BASE}/api/web/session/_/outbound/drafts/${draftId}`,
     { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
   );
 }
 
 export async function outboundDeleteDraft(sessionToken: string, draftId: string, providerId: string) {
   return fetchWithRetry<{ ok: boolean }>(
-    `${API_BASE}/api/web/session/${sessionToken}/outbound/drafts/${draftId}?provider_id=${encodeURIComponent(providerId)}`,
+    `${API_BASE}/api/web/session/_/outbound/drafts/${draftId}?provider_id=${encodeURIComponent(providerId)}`,
     { method: "DELETE" },
   );
 }
 
 export async function outboundSend(sessionToken: string, payload: Record<string, unknown>) {
   return fetchWithRetry<{ ok: boolean; send_result?: Record<string, unknown>; error?: string }>(
-    `${API_BASE}/api/web/session/${sessionToken}/outbound/send`,
+    `${API_BASE}/api/web/session/_/outbound/send`,
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
   );
 }
 
 export async function outboundSchedule(sessionToken: string, payload: Record<string, unknown>) {
   return fetchWithRetry<{ ok: boolean; schedule_id?: string; error?: string }>(
-    `${API_BASE}/api/web/session/${sessionToken}/outbound/schedule`,
+    `${API_BASE}/api/web/session/_/outbound/schedule`,
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
   );
 }
 
 export async function outboundCancelSchedule(sessionToken: string, scheduleId: string, providerId: string) {
   return fetchWithRetry<{ ok: boolean }>(
-    `${API_BASE}/api/web/session/${sessionToken}/outbound/schedule/${scheduleId}?provider_id=${encodeURIComponent(providerId)}`,
+    `${API_BASE}/api/web/session/_/outbound/schedule/${scheduleId}?provider_id=${encodeURIComponent(providerId)}`,
     { method: "DELETE" },
   );
 }
@@ -1022,27 +1233,27 @@ export async function outboundCancelSchedule(sessionToken: string, scheduleId: s
 export async function outboundListDrafts(sessionToken: string, providerId?: string) {
   const params = providerId ? `?provider_id=${encodeURIComponent(providerId)}` : '';
   return fetchWithRetry<{ ok: boolean; drafts: Record<string, unknown>[]; total: number }>(
-    `${API_BASE}/api/web/session/${sessionToken}/outbound/drafts${params}`,
+    `${API_BASE}/api/web/session/_/outbound/drafts${params}`,
   );
 }
 
 export async function outboundGetDraft(sessionToken: string, draftId: string) {
   return fetchWithRetry<{ ok: boolean; draft: Record<string, unknown> }>(
-    `${API_BASE}/api/web/session/${sessionToken}/outbound/drafts/${draftId}`,
+    `${API_BASE}/api/web/session/_/outbound/drafts/${draftId}`,
   );
 }
 
 export async function outboundApproveDraft(sessionToken: string, draftId: string, auto = false) {
   const params = auto ? '?auto=true' : '';
   return fetchWithRetry<{ ok: boolean; draft: Record<string, unknown> }>(
-    `${API_BASE}/api/web/session/${sessionToken}/outbound/drafts/${draftId}/approve${params}`,
+    `${API_BASE}/api/web/session/_/outbound/drafts/${draftId}/approve${params}`,
     { method: "POST" },
   );
 }
 
 export async function outboundRejectDraft(sessionToken: string, draftId: string) {
   return fetchWithRetry<{ ok: boolean; draft: Record<string, unknown> }>(
-    `${API_BASE}/api/web/session/${sessionToken}/outbound/drafts/${draftId}/reject`,
+    `${API_BASE}/api/web/session/_/outbound/drafts/${draftId}/reject`,
     { method: "POST" },
   );
 }
@@ -1050,7 +1261,7 @@ export async function outboundRejectDraft(sessionToken: string, draftId: string)
 export async function outboundGetHistory(sessionToken: string, providerId?: string) {
   const params = providerId ? `?provider_id=${encodeURIComponent(providerId)}` : '';
   return fetchWithRetry<{ ok: boolean; history: Record<string, unknown>[] }>(
-    `${API_BASE}/api/web/session/${sessionToken}/outbound/history${params}`,
+    `${API_BASE}/api/web/session/_/outbound/history${params}`,
   );
 }
 
@@ -1060,26 +1271,26 @@ export async function outboundGetEvents(sessionToken: string, providerId?: strin
   if (after !== undefined) params.set("after", String(after));
   const qs = params.toString();
   return fetchWithRetry<{ ok: boolean; events: Record<string, unknown>[]; latest_sequence: number }>(
-    `${API_BASE}/api/web/session/${sessionToken}/outbound/events${qs ? '?' + qs : ''}`,
+    `${API_BASE}/api/web/session/_/outbound/events${qs ? '?' + qs : ''}`,
   );
 }
 
 export async function outboundGetDraftVersions(sessionToken: string, draftId: string) {
   return fetchWithRetry<{ ok: boolean; versions: Record<string, unknown>[] }>(
-    `${API_BASE}/api/web/session/${sessionToken}/outbound/drafts/${draftId}/versions`,
+    `${API_BASE}/api/web/session/_/outbound/drafts/${draftId}/versions`,
   );
 }
 
 export async function outboundApproveAll(sessionToken: string, auto = false) {
   return fetchWithRetry<{ ok: boolean; total: number; created: number; failed: number; results: Record<string, unknown>[] }>(
-    `${API_BASE}/api/web/session/${sessionToken}/outbound/approve-all`,
+    `${API_BASE}/api/web/session/_/outbound/approve-all`,
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ auto }) },
   );
 }
 
 export async function getCampaignLaunchProgress(sessionToken: string, campaignId: string) {
   return fetchWithRetry<{ ok: boolean; launch_sent: number; launch_total: number; launch_complete: boolean }>(
-    `${API_BASE}/api/web/session/${sessionToken}/campaigns/${campaignId}/launch-progress`,
+    `${API_BASE}/api/web/session/_/campaigns/${campaignId}/launch-progress`,
   );
 }
 
@@ -1094,7 +1305,7 @@ export type CampaignTimelineEvent = {
 
 export async function getCampaignTimeline(sessionToken: string, campaignId: string) {
   return fetchWithRetry<{ ok: boolean; events: CampaignTimelineEvent[] }>(
-    `${API_BASE}/api/web/session/${sessionToken}/campaigns/${campaignId}/timeline`,
+    `${API_BASE}/api/web/session/_/campaigns/${campaignId}/timeline`,
   );
 }
 
@@ -1102,31 +1313,31 @@ export async function getCampaignTimeline(sessionToken: string, campaignId: stri
 
 export async function listConversations(sessionToken: string) {
   return fetchWithRetry<{ ok: boolean; conversations: Record<string, unknown>[] }>(
-    `${API_BASE}/api/web/session/${sessionToken}/conversations`,
+    `${API_BASE}/api/web/session/_/conversations`,
   );
 }
 
 export async function getConversation(sessionToken: string, conversationId: string) {
   return fetchWithRetry<{ ok: boolean; conversation: Record<string, unknown> }>(
-    `${API_BASE}/api/web/session/${sessionToken}/conversations/${conversationId}`,
+    `${API_BASE}/api/web/session/_/conversations/${conversationId}`,
   );
 }
 
 export async function getConversationEvents(sessionToken: string, conversationId: string) {
   return fetchWithRetry<{ ok: boolean; events: Record<string, unknown>[] }>(
-    `${API_BASE}/api/web/session/${sessionToken}/conversations/${conversationId}/timeline`,
+    `${API_BASE}/api/web/session/_/conversations/${conversationId}/timeline`,
   );
 }
 
 export async function getConversationMessages(sessionToken: string, conversationId: string) {
   return fetchWithRetry<{ ok: boolean; messages: Record<string, unknown>[] }>(
-    `${API_BASE}/api/web/session/${sessionToken}/conversations/${conversationId}/messages`,
+    `${API_BASE}/api/web/session/_/conversations/${conversationId}/messages`,
   );
 }
 
 export async function getConversationReasoning(sessionToken: string, conversationId: string) {
   return fetchWithRetry<{ ok: boolean; reasoning: Record<string, unknown> | null }>(
-    `${API_BASE}/api/web/session/${sessionToken}/conversations/${conversationId}/reasoning`,
+    `${API_BASE}/api/web/session/_/conversations/${conversationId}/reasoning`,
   );
 }
 
@@ -1145,7 +1356,7 @@ export async function getConversationPlan(sessionToken: string, conversationId: 
       warnings: Array<{ severity: string; code: string; message: string; task_id: string }>;
     } | null;
   }>(
-    `${API_BASE}/api/web/session/${sessionToken}/conversations/${conversationId}/plan`,
+    `${API_BASE}/api/web/session/_/conversations/${conversationId}/plan`,
     { method: "POST", cache: "no-store" },
   );
 }
@@ -1153,15 +1364,394 @@ export async function getConversationPlan(sessionToken: string, conversationId: 
 export async function generateConversationReply(
   sessionToken: string,
   conversationId: string,
-  payload: { styles?: string[]; variant_count?: number },
+  payload: { styles?: string[]; variant_count?: number; instruction?: string; follow_up?: boolean },
 ) {
   return fetchWithRetry<{ ok: boolean; generation: Record<string, unknown> | null; reasoning: Record<string, unknown> }>(
-    `${API_BASE}/api/web/session/${sessionToken}/conversations/${conversationId}/generate-reply`,
+    `${API_BASE}/api/web/session/_/conversations/${conversationId}/generate-reply`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     },
+  );
+}
+
+export async function sendConversationReply(
+  sessionToken: string,
+  conversationId: string,
+  payload: {
+    body: string;
+    thread_id?: string;
+    reply_to_message_id?: string;
+    test_recipient?: string;
+    test_recipient_name?: string;
+  },
+) {
+  return fetchWithRetry<{
+    ok: boolean;
+    conversation_id?: string;
+    status?: string;
+    message_id?: string;
+    external_message_id?: string;
+  }>(
+    `${API_BASE}/api/web/session/_/conversations/${conversationId}/reply`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function sendConversationFollowUp(
+  sessionToken: string,
+  conversationId: string,
+  payload: {
+    body: string;
+    thread_id?: string;
+    test_recipient?: string;
+    test_recipient_name?: string;
+  },
+) {
+  return fetchWithRetry<{
+    ok: boolean;
+    conversation_id?: string;
+    status?: string;
+    message_id?: string;
+    external_message_id?: string;
+  }>(
+    `${API_BASE}/api/web/session/_/conversations/${conversationId}/follow-up`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+/* ─── Knowledge Foundation ─── */
+
+export type KnowledgeCategory = "company" | "icp" | "messaging" | "sales_offer";
+export type KnowledgeItemSourceType =
+  | "user_input"
+  | "uploaded_document"
+  | "imported_source"
+  | "system_generated";
+export type KnowledgeSourceType =
+  | "user_input"
+  | "uploaded_document"
+  | "imported_source"
+  | "system_generated";
+
+export type KnowledgeItem = {
+  id: string;
+  workspace_id: string;
+  category: KnowledgeCategory;
+  title: string;
+  summary: string;
+  content: Record<string, unknown>;
+  tags: string[];
+  source_type: KnowledgeItemSourceType;
+  source_id: string;
+  created_by: string;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type KnowledgeSource = {
+  id: string;
+  workspace_id: string;
+  title: string;
+  source_type: KnowledgeSourceType;
+  content: string;
+  reference: string;
+  metadata: Record<string, unknown>;
+  created_by: string;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type KnowledgeItemPayload = {
+  category: KnowledgeCategory;
+  title: string;
+  summary?: string;
+  content?: Record<string, unknown>;
+  tags?: string[];
+  source_type?: KnowledgeItemSourceType;
+  source_id?: string;
+};
+
+export type KnowledgeItemUpdate = Partial<Omit<KnowledgeItemPayload, "category">>;
+
+export type KnowledgeSourcePayload = {
+  title: string;
+  source_type?: KnowledgeSourceType;
+  content?: string;
+  reference?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type KnowledgeSourceUpdate = Partial<KnowledgeSourcePayload>;
+
+export async function listKnowledge(
+  sessionToken: string,
+  params: { category?: KnowledgeCategory; q?: string } = {},
+) {
+  const query = new URLSearchParams();
+  if (params.category) query.set("category", params.category);
+  if (params.q) query.set("q", params.q);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return fetchWithRetry<{ ok: boolean; items: KnowledgeItem[] }>(
+    `${API_BASE}/api/web/session/_/knowledge${suffix}`,
+    { cache: "no-store", headers: authHeaders() },
+  );
+}
+
+export async function getKnowledgeItem(sessionToken: string, itemId: string) {
+  return fetchWithRetry<{ ok: boolean; item: KnowledgeItem }>(
+    `${API_BASE}/api/web/session/_/knowledge/${itemId}`,
+    { cache: "no-store", headers: authHeaders() },
+  );
+}
+
+export async function createKnowledgeItem(
+  sessionToken: string,
+  payload: KnowledgeItemPayload,
+) {
+  return fetchWithRetry<{ ok: boolean; item: KnowledgeItem }>(
+    `${API_BASE}/api/web/session/_/knowledge`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function updateKnowledgeItem(
+  sessionToken: string,
+  itemId: string,
+  payload: KnowledgeItemUpdate,
+) {
+  return fetchWithRetry<{ ok: boolean; item: KnowledgeItem }>(
+    `${API_BASE}/api/web/session/_/knowledge/${itemId}`,
+    {
+      method: "PUT",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function archiveKnowledgeItem(sessionToken: string, itemId: string) {
+  return fetchWithRetry<{ ok: boolean; item: KnowledgeItem }>(
+    `${API_BASE}/api/web/session/_/knowledge/${itemId}`,
+    { method: "DELETE", headers: authHeaders() },
+  );
+}
+
+export async function listKnowledgeSources(sessionToken: string, q = "") {
+  const suffix = q ? `?q=${encodeURIComponent(q)}` : "";
+  return fetchWithRetry<{ ok: boolean; sources: KnowledgeSource[] }>(
+    `${API_BASE}/api/web/session/_/knowledge/sources${suffix}`,
+    { cache: "no-store", headers: authHeaders() },
+  );
+}
+
+export async function createKnowledgeSource(
+  sessionToken: string,
+  payload: KnowledgeSourcePayload,
+) {
+  return fetchWithRetry<{ ok: boolean; source: KnowledgeSource }>(
+    `${API_BASE}/api/web/session/_/knowledge/sources`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function updateKnowledgeSource(
+  sessionToken: string,
+  sourceId: string,
+  payload: KnowledgeSourceUpdate,
+) {
+  return fetchWithRetry<{ ok: boolean; source: KnowledgeSource }>(
+    `${API_BASE}/api/web/session/_/knowledge/sources/${sourceId}`,
+    {
+      method: "PUT",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function archiveKnowledgeSource(sessionToken: string, sourceId: string) {
+  return fetchWithRetry<{ ok: boolean; source: KnowledgeSource }>(
+    `${API_BASE}/api/web/session/_/knowledge/sources/${sourceId}`,
+    {
+      method: "DELETE",
+      headers: authHeaders(),
+    },
+  );
+}
+
+/* ─── Strategic Intelligence ─── */
+
+export type StrategicEvidence = {
+  signal_id: string;
+  signal_type: string;
+  source_type: string;
+  entity_type: string;
+  entity_id: string;
+  campaign_id: string;
+  lead_id: string;
+  conversation_id: string;
+  message_id: string;
+  observed_at: string;
+  value: unknown;
+  metadata: Record<string, unknown>;
+};
+
+export type StrategicUpdate = {
+  id: string;
+  workspace_id: string;
+  pattern_key: string;
+  title: string;
+  summary: string;
+  update_type: string;
+  status: string;
+  confidence: string;
+  observed_at: string;
+  observation: string;
+  interpretation: string;
+  recommendation: string;
+  structured_analysis: Record<string, unknown>;
+  evidence: StrategicEvidence[];
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  archived_at: string | null;
+};
+
+export async function listStrategicUpdates(
+  sessionToken: string,
+  params: { update_type?: string; confidence?: string; q?: string } = {},
+) {
+  const query = new URLSearchParams();
+  if (params.update_type) query.set("update_type", params.update_type);
+  if (params.confidence) query.set("confidence", params.confidence);
+  if (params.q) query.set("q", params.q);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return fetchWithRetry<{ ok: boolean; updates: StrategicUpdate[]; last_analyzed: string | null }>(
+    `${API_BASE}/api/web/session/_/strategic-updates${suffix}`,
+    { cache: "no-store", headers: authHeaders() },
+  );
+}
+
+export async function refreshStrategicUpdates(sessionToken: string) {
+  return fetchWithRetry<{
+    ok: boolean;
+    updates: StrategicUpdate[];
+    new_updates: number;
+    refreshed_updates: number;
+    patterns_found: number;
+    last_analyzed: string;
+    activity_summary: Record<string, unknown>;
+  }>(
+    `${API_BASE}/api/web/session/_/strategic-updates/refresh`,
+    { method: "POST", headers: authHeaders() },
+  );
+}
+
+export async function getStrategicUpdate(sessionToken: string, updateId: string) {
+  return fetchWithRetry<{ ok: boolean; update: StrategicUpdate }>(
+    `${API_BASE}/api/web/session/_/strategic-updates/${updateId}`,
+    { cache: "no-store", headers: authHeaders() },
+  );
+}
+
+export async function archiveStrategicUpdate(sessionToken: string, updateId: string) {
+  return fetchWithRetry<{ ok: boolean; update: StrategicUpdate }>(
+    `${API_BASE}/api/web/session/_/strategic-updates/${updateId}`,
+    { method: "DELETE", headers: authHeaders() },
+  );
+}
+
+export type StrategicAction = {
+  id: string;
+  workspace_id: string;
+  strategic_update_id: string;
+  action_type: "update_messaging" | "refine_icp" | "create_campaign" | string;
+  status: "proposed" | "approved" | "executing" | "completed" | "failed" | "dismissed" | string;
+  proposal: Record<string, unknown>;
+  created_by: string;
+  created_at: string;
+  approved_at: string | null;
+  executed_at: string | null;
+  dismissed_at: string | null;
+  error: string;
+  result: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  updated_at: string;
+};
+
+export async function listStrategicActions(sessionToken: string, updateId: string) {
+  return fetchWithRetry<{ ok: boolean; actions: StrategicAction[] }>(
+    `${API_BASE}/api/web/session/_/strategic-updates/${updateId}/actions`,
+    { cache: "no-store", headers: authHeaders() },
+  );
+}
+
+export async function proposeStrategicAction(
+  sessionToken: string,
+  updateId: string,
+  actionType: StrategicAction["action_type"],
+) {
+  return fetchWithRetry<{ ok: boolean; action: StrategicAction }>(
+    `${API_BASE}/api/web/session/_/strategic-updates/${updateId}/actions`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ action_type: actionType }),
+    },
+  );
+}
+
+export async function approveStrategicAction(sessionToken: string, actionId: string) {
+  return fetchWithRetry<{ ok: boolean; action: StrategicAction }>(
+    `${API_BASE}/api/web/session/_/strategic-actions/${actionId}/approve`,
+    { method: "POST", headers: authHeaders() },
+  );
+}
+
+export async function dismissStrategicAction(sessionToken: string, actionId: string) {
+  return fetchWithRetry<{ ok: boolean; action: StrategicAction }>(
+    `${API_BASE}/api/web/session/_/strategic-actions/${actionId}/dismiss`,
+    { method: "POST", headers: authHeaders() },
+  );
+}
+
+export async function refineStrategicAction(
+  sessionToken: string,
+  actionId: string,
+  changes: Record<string, unknown>,
+) {
+  return fetchWithRetry<{ ok: boolean; action: StrategicAction }>(
+    `${API_BASE}/api/web/session/_/strategic-actions/${actionId}/refine`,
+    {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ changes }),
+    },
+  );
+}
+
+export async function executeStrategicAction(sessionToken: string, actionId: string) {
+  return fetchWithRetry<{ ok: boolean; action: StrategicAction }>(
+    `${API_BASE}/api/web/session/_/strategic-actions/${actionId}/execute`,
+    { method: "POST", headers: authHeaders() },
   );
 }
 
@@ -1225,7 +1815,7 @@ export type BriefingResponse = {
 
 export async function getBriefing(sessionToken: string, onboardingUserId = "") {
   return fetchWithRetry<BriefingResponse>(
-    `${API_BASE}/api/web/session/${sessionToken}/briefing?onboarding_user_id=${encodeURIComponent(onboardingUserId)}`,
+    `${API_BASE}/api/web/session/_/briefing?onboarding_user_id=${encodeURIComponent(onboardingUserId)}`,
     { headers: authHeaders() },
   );
 }

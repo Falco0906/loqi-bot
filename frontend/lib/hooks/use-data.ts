@@ -7,6 +7,11 @@ export type AsyncState<T> = {
   loading: boolean;
   error: string | null;
   retry: () => void;
+  /**
+   * Patch the cached data in place so mutations never need a full page
+   * reload. Accepts a value or an updater over the previous data.
+   */
+  mutate: (next: T | null | ((prev: T | null) => T | null)) => void;
 };
 
 /**
@@ -14,6 +19,10 @@ export type AsyncState<T> = {
  * When `initial` is provided the page renders that data immediately —
  * Copilot-navigated destinations appear fully formed instead of flashing
  * skeletons on arrival.
+ *
+ * `mutate` lets callers patch data after a mutation (no `location.reload`),
+ * which preserves scroll position, keeps the sidebar mounted and avoids
+ * skeleton flicker.
  */
 export function useData<T>(
   fetcher: () => Promise<T | null>,
@@ -27,6 +36,12 @@ export function useData<T>(
 
   const retry = useCallback(() => {
     setRetryCount((n) => n + 1);
+  }, []);
+
+  const mutate = useCallback((updater: T | null | ((prev: T | null) => T | null)) => {
+    setData((prev) =>
+      typeof updater === "function" ? (updater as (p: T | null) => T | null)(prev) : updater,
+    );
   }, []);
 
   useEffect(() => {
@@ -49,5 +64,5 @@ export function useData<T>(
     return () => { cancelled = true; };
   }, [fetcher, retryCount]);
 
-  return { data, loading, error, retry };
+  return { data, loading, error, retry, mutate };
 }

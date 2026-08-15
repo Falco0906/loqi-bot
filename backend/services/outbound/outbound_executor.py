@@ -129,22 +129,50 @@ class OutboundExecutor:
             draft = draft_store.get(draft_id)
             if not draft:
                 return {"ok": False, "error": f"Draft {draft_id} not found"}
-            request = SendRequest(
-                provider_id=provider_id,
-                conversation_id=draft.conversation_id,
-                thread_id=draft.thread_id,
-                workflow_id=draft.workflow_id,
-                subject=draft.subject,
-                body=draft.body,
-                recipient=draft.recipient,
-                sender=draft.sender,
-                cc=draft.cc,
-                bcc=draft.bcc,
-                reply_to_message_id=draft.reply_to_message_id,
-                in_reply_to=draft.in_reply_to,
-                references=draft.references,
-                draft_id=draft.external_draft_id,
+            request_recipient = Recipient(**params["recipient"]) if "recipient" in params else draft.recipient
+            envelope_changed = (
+                "recipient" in params
+                and (request_recipient.email != draft.recipient.email
+                     or request_recipient.name != draft.recipient.name)
             )
+            if envelope_changed:
+                # The live request wants a different envelope recipient (e.g.
+                # the test-only recipient override). Rebuild the SendRequest
+                # from the request params so the provider uses the requested
+                # To envelope instead of the persisted Gmail draft's To.
+                request = SendRequest(
+                    provider_id=provider_id,
+                    conversation_id=params.get("conversation_id", draft.conversation_id),
+                    thread_id=params.get("thread_id", draft.thread_id),
+                    workflow_id=params.get("workflow_id", draft.workflow_id),
+                    subject=params.get("subject", draft.subject),
+                    body=params.get("body", draft.body),
+                    recipient=request_recipient,
+                    sender=Recipient(**params["sender"]) if "sender" in params else draft.sender,
+                    cc=draft.cc,
+                    bcc=draft.bcc,
+                    reply_to_message_id=params.get("reply_to_message_id", draft.reply_to_message_id),
+                    in_reply_to=params.get("in_reply_to", draft.in_reply_to),
+                    references=params.get("references", draft.references),
+                    draft_id="",
+                )
+            else:
+                request = SendRequest(
+                    provider_id=provider_id,
+                    conversation_id=draft.conversation_id,
+                    thread_id=draft.thread_id,
+                    workflow_id=draft.workflow_id,
+                    subject=draft.subject,
+                    body=draft.body,
+                    recipient=draft.recipient,
+                    sender=draft.sender,
+                    cc=draft.cc,
+                    bcc=draft.bcc,
+                    reply_to_message_id=draft.reply_to_message_id,
+                    in_reply_to=draft.in_reply_to,
+                    references=draft.references,
+                    draft_id=draft.external_draft_id,
+                )
         else:
             request = SendRequest(
                 provider_id=provider_id,
@@ -156,6 +184,13 @@ class OutboundExecutor:
                 recipient=Recipient(**params["recipient"]),
                 sender=Recipient(**params["sender"]),
             )
+
+        logger.info(
+            "[TEST RECIPIENT] original_recipient=%s effective_recipient=%s gmail_send_path=%s",
+            (draft.recipient.email if draft_id and "draft" in locals() and draft else ""),
+            request.recipient.email,
+            "raw_message" if not request.draft_id else "persisted_draft",
+        )
 
         send_result = registry_send(provider_id, request)
         if not send_result:

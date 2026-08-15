@@ -75,44 +75,38 @@ class TestHealthEndpoint:
 
 class TestReadinessEndpoint:
 
-    def test_ready_with_no_db(self, client):
-        # No credentials configured → the manager cannot build a client.
-        cm = SupabaseConnectionManager(url="", key="")
-        set_connection_manager(cm)
+    def test_ready_returns_503_before_startup(self, client):
+        from services import lifecycle
+        lifecycle.set_starting()
         resp = client.get("/ready")
         assert resp.status_code == 503
-        data = resp.json()
-        assert data["status"] == "unready"
-        assert len(data["failures"]) > 0
-        assert any("database" in f for f in data["failures"])
-        reset_connection_manager()
+        assert resp.json() == {"status": "starting"}
 
-    def test_ready_with_mock_db(self, client):
-        cm = SupabaseConnectionManager(url="http://test", key="test-key")
-        mock_client = MagicMock()
-        cm._client = mock_client
-        set_connection_manager(cm)
-        mock_client.table.return_value = mock_client
-        mock_client.select.return_value = mock_client
-        mock_client.limit.return_value = mock_client
-        mock_client.execute.return_value = MagicMock(data=[])
+    def test_ready_returns_200_after_startup(self, client):
+        from services import lifecycle
+        lifecycle.set_ready()
         resp = client.get("/ready")
         assert resp.status_code == 200
         assert resp.json() == {"status": "ready"}
-        reset_connection_manager()
 
-    def test_ready_with_db_failure(self, client):
-        cm = SupabaseConnectionManager(url="http://test", key="test-key")
-        mock_client = MagicMock()
-        cm._client = mock_client
-        set_connection_manager(cm)
-        mock_client.table.side_effect = Exception("connection refused")
+    def test_ready_returns_503_during_shutdown(self, client):
+        from services import lifecycle
+        lifecycle.set_shutting_down()
         resp = client.get("/ready")
         assert resp.status_code == 503
-        data = resp.json()
-        assert data["status"] == "unready"
-        assert any("connection refused" in f for f in data["failures"])
-        reset_connection_manager()
+        assert resp.json() == {"status": "shutting_down"}
+
+    def test_ready_does_not_depend_on_optional_integrations(self, client, monkeypatch):
+        # Readiness is lifecycle-driven: no Supabase/DB probe, no external call.
+        from services import lifecycle
+        lifecycle.set_ready()
+        calls = []
+        import services.persistence.database as db_module
+        monkeypatch.setattr(db_module, "get_connection_manager", lambda: calls.append("db") or None)
+        resp = client.get("/ready")
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "ready"}
+        assert calls == []
 
 
 # ═══════════════════════════════════════════════════════════════════════════

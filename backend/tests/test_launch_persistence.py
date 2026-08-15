@@ -40,6 +40,9 @@ def _reset():
     reset_repository_provider()
     reset_connection_manager()
     set_repository_provider(RepositoryProvider.SUPABASE)
+    yield
+    reset_repository_provider()
+    reset_connection_manager()
 
 
 def _mock_client():
@@ -52,6 +55,7 @@ def _mock_client():
     client.eq.return_value = client
     client.neq.return_value = client
     client.in_.return_value = client
+    client.is_.return_value = client
     client.limit.return_value = client
     client.order.return_value = client
     client.execute.return_value = MagicMock(data=[])

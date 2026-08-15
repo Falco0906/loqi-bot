@@ -116,7 +116,7 @@ def expand_search_intent(
     
     _log(f"Expanding BUYER-INTENT: service='{service}', target='{target}'")
     
-    has_icp = icp and icp.get("mode") == "ai"
+    has_icp = bool(icp and "buyer_roles" in icp)
     use_new_schema = icp and "buyer_roles" in icp
     
     if has_icp:

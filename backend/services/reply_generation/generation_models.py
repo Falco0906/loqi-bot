@@ -75,6 +75,11 @@ class GenerationContext:
     risk_level: str = ""
     health_score: int = 0
     target_action: str = ""
+    follow_up: bool = False
+    knowledge_context: dict = field(default_factory=dict)
+    knowledge_item_ids: list[str] = field(default_factory=list)
+    knowledge_source_ids: list[str] = field(default_factory=list)
+    knowledge_query: str = ""
 
 
 @dataclass
@@ -112,6 +117,9 @@ class GenerationMetadata:
     pipeline_version: str = PIPELINE_VERSION
     reasoning_version: str = REASONING_VERSION
     prompt_preview: str = ""
+    knowledge_item_ids: list[str] = field(default_factory=list)
+    knowledge_source_ids: list[str] = field(default_factory=list)
+    knowledge_query: str = ""
 
 
 @dataclass
@@ -155,6 +163,9 @@ class GenerationResult:
                 "context_builder_version": self.metadata.context_builder_version,
                 "pipeline_version": self.metadata.pipeline_version,
                 "reasoning_version": self.metadata.reasoning_version,
+                "knowledge_item_ids": self.metadata.knowledge_item_ids,
+                "knowledge_source_ids": self.metadata.knowledge_source_ids,
+                "knowledge_query": self.metadata.knowledge_query,
             },
             "validation_results": [
                 {"severity": v.severity.value, "code": v.code, "message": v.message, "field": v.field}

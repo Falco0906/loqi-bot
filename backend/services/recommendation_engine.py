@@ -84,9 +84,10 @@ def _build_structured_recommendations(snapshot: dict) -> list[dict]:
                 continue
 
             status = c.get("status", "")
+            step = c.get("current_step", "")
             rec = None
 
-            if status in ("ready", "ready_to_send"):
+            if step == "sending":
                 rec = {
                     "type": "launch_campaign",
                     "observation": f"You're ready to launch {c.get('name', '')}.",
@@ -96,7 +97,7 @@ def _build_structured_recommendations(snapshot: dict) -> list[dict]:
                     "link": f"/campaigns/{c.get('id', '')}",
                     "why_details": ["All drafts approved", "Highest priority campaign", "No blockers remaining"],
                 }
-            elif status == "draft_review":
+            elif step == "review":
                 pd = c.get("pending_drafts", 0)
                 if pd > 0:
                     rec = {

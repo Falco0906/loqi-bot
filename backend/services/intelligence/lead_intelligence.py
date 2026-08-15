@@ -220,9 +220,10 @@ def _recommend_pitch(lead: dict, enrichment: dict | None) -> str:
             return f"Position your solution as a way for {title} at {company or 'their company'} to solve '{top_pain}' in the {industry or 'current'} market"
         return f"Lead with how your solution directly addresses '{top_pain}', a critical challenge for {company or industry or 'this company'}"
 
-    if industry:
-        return f"Present your solution as a growth enabler for {company or 'companies'} in the {industry} sector"
-    return f"Position as a way to help {company or 'this company'} modernize operations and drive growth"
+    if buying_signals := lead.get("buying_signals") or []:
+        return f"Reference '{buying_signals[0]}' — a visible change at {company or 'the company'} worth connecting on"
+
+    return ""
 
 
 # ---------------------------------------------------------------------------

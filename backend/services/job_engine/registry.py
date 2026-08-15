@@ -11,11 +11,11 @@ class WorkflowRegistration:
 
 
 STAGES_SEARCH = [
-    "Analyzing your target audience...",
-    "Extracting buyer profile...",
-    "Finding similar companies...",
-    "Ranking opportunities...",
-    "Preparing results...",
+    "Initializing research...",
+    "Understanding target market...",
+    "Finding matching companies...",
+    "Ranking prospects...",
+    "Preparing recommendations...",
 ]
 
 

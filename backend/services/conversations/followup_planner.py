@@ -60,7 +60,7 @@ class DefaultFollowUpPlanner(BaseFollowUpPlanner):
         now = datetime.now(timezone.utc)
         days_since_activity = (now - conversation.last_activity_at).days if conversation.last_activity_at else 0
 
-        if status == ConversationStatus.SENT:
+        if status in (ConversationStatus.SENT, ConversationStatus.DELIVERED):
             if days_since_activity >= 3:
                 return FollowUpPlan(
                     should_follow_up=True,

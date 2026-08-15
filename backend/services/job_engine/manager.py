@@ -15,7 +15,7 @@ class JobManager:
         self._storage = JobStorage()
         self._runner = BackgroundRunner(self._storage)
 
-    async def create_search_job(self, user_id: str, query: str, on_update=None) -> Optional[dict]:
+    async def create_search_job(self, user_id: str, query: str, on_update=None, on_complete=None, discovery_id: str = "") -> Optional[dict]:
         import asyncio
         from services.job_engine.registry import STAGES_SEARCH
 
@@ -23,16 +23,24 @@ class JobManager:
             user_id=user_id,
             type="search",
             query=query,
+            discovery_id=discovery_id,
             stage=STAGES_SEARCH[0],
             progress=0,
         )
+        _log(
+            f"[kickoff] create_search_job: inserting job row discovery_id={discovery_id or '(none)'}"
+        )
         created = await asyncio.to_thread(self._storage.create_job, job)
+        _log(f"[kickoff] create_search_job: job row created={bool(created)} job_id={job.id}")
         if not created:
             return None
 
+        _log(f"[kickoff] create_search_job: importing run_search_workflow")
         from workflow_dispatcher import run_search_workflow
+        _log(f"[kickoff] create_search_job: import OK, spawning worker")
 
-        self._runner.start_job(job, run_search_workflow, on_update=on_update)
+        self._runner.start_job(job, run_search_workflow, on_update=on_update, on_complete=on_complete)
+        _log(f"[kickoff] create_search_job: start_job returned for job_id={job.id}")
         return {"job_id": job.id, "status": job.status.value}
 
     def get_job(self, job_id: str) -> Optional[dict]:

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { getCampaign, getCampaignTimeline } from "../../lib/api";
 import type { CampaignLaunchProgress } from "../../lib/domain";
 
@@ -84,7 +84,7 @@ function formatClock(iso: string): string {
  * Open Inbox + Return to Campaign. Every campaigned section below stays fully
  * visible; nothing is hidden, nothing reloads.
  */
-export default function ExecutionWorkspace({
+export default memo(function ExecutionWorkspace({
   token,
   campaignId,
   campaignName,
@@ -365,7 +365,7 @@ export default function ExecutionWorkspace({
       </div>
     </div>
   );
-}
+});
 
 function StatCard({
   label,

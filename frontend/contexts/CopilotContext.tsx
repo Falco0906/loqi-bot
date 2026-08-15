@@ -16,14 +16,16 @@ import {
   fetchBriefing,
   startDiscoverySearch,
   prefetchDiscovery,
+  prefetchDiscoveryList,
   prefetchMissionControl,
 } from "../lib/repositories";
 import {
-  classifyInstruction,
+  resolveTaskKind,
   nextState,
   TASKS,
   CLARIFICATION_REPLIES,
   completionActions,
+  campaignStepActions,
   taskTitle,
   researchFirstStep,
   KIND_FIRST_STEPS,
@@ -72,7 +74,7 @@ type CopilotActions = {
   executeAction: (action: CopilotAction) => void;
   registerHandler: (action: ActionType, handler: ActionHandler) => void;
   unregisterHandler: (action: ActionType) => void;
-  startTask: (text: string) => void;
+  startTask: (text: string) => boolean;
   answerClarification: (replyId: string) => void;
   acknowledge: () => void;
 };
@@ -145,7 +147,7 @@ export function CopilotProvider({
   pathnameRef.current = usePathname();
 
   const [open, setOpen] = useState(false);
-  const [pageContext, setPageContext] = useState<PageContext | null>(null);
+  const [pageContext, setPageContextState] = useState<PageContext | null>(null);
   const handlersRef = useRef<Map<ActionType, ActionHandler>>(new Map());
 
   const [conversationState, setConversationState] = useState<ConversationState>("idle");
@@ -154,7 +156,13 @@ export function CopilotProvider({
   const [recentTask, setRecentTask] = useState<RecentTask | null>(null);
 
   const pageContextRef = useRef<PageContext | null>(null);
-  pageContextRef.current = pageContext;
+
+  const setPageContext = useCallback((ctx: PageContext | null) => {
+    // Keep the ref in sync synchronously so startTask() — called immediately
+    // after setPageContext() in the same handler — sees the fresh page.
+    pageContextRef.current = ctx;
+    setPageContextState(ctx);
+  }, []);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const busyRef = useRef(false);
@@ -266,14 +274,14 @@ export function CopilotProvider({
   }, []);
 
   const completeWork = useCallback(
-    (groupId: string, taskKind: TaskKind, summary: string) => {
+    (groupId: string, taskKind: TaskKind, summary: string, primaryPath?: string, extraActions?: CopilotAction[]) => {
       busyRef.current = false;
       finishGroup(groupId, summary, "complete");
       const task = TASKS[taskKind];
       setRecentTask({
         title: activeGroupTitleRef.current || task.label,
         summary,
-        actions: completionActions(task),
+        actions: completionActions(task, primaryPath, extraActions ?? null),
       });
       setGroups((prev) =>
         prev.map((g) => (g.id === groupId ? g : { ...g, collapsed: true })),
@@ -302,29 +310,43 @@ export function CopilotProvider({
     [router],
   );
 
-  const prepareDestination = useCallback(async (kind: TaskKind) => {
+  const prepareDestination = useCallback(async (kind: TaskKind, discoveryId?: string) => {
     const task = TASKS[kind];
     router.prefetch(task.workspacePath);
-    if (kind === "research") await prefetchDiscovery();
-    else await prefetchMissionControl();
+    if (kind === "research") {
+      if (discoveryId) {
+        router.prefetch(`/discovery/${discoveryId}`);
+        await prefetchDiscovery(discoveryId);
+      } else {
+        await prefetchDiscoveryList();
+      }
+    } else {
+      await prefetchMissionControl();
+    }
   }, [router]);
 
   const runResearch = useCallback(
     async (groupId: string, instruction: string) => {
       const task = TASKS.research;
       const mySession = sessionRef.current;
+      let discoveryId: string | null = null;
       let jobId: string | null = null;
       try {
-        jobId = await startDiscoverySearch(instruction);
+        const started = await startDiscoverySearch(instruction);
+        if (started) {
+          discoveryId = started.discoveryId;
+          jobId = started.jobId;
+        }
       } catch {
         failWork(groupId, "Research couldn't start. Please try again.");
         return;
       }
       if (sessionRef.current !== mySession) return;
-      if (!jobId) {
+      if (!discoveryId || !jobId) {
         failWork(groupId, "Research couldn't start. Please try again.");
         return;
       }
+      const discoveryPath = `/discovery/${discoveryId}`;
 
       let lastStage = "";
       let completed = false;
@@ -333,7 +355,7 @@ export function CopilotProvider({
         completed = true;
         stopPolling();
         try {
-          const results = await getJobResults(jobId!);
+          const results = await getJobResults(jobId);
           if (sessionRef.current !== mySession) return;
           const leads = Array.isArray(results.leads) ? results.leads : [];
           const found = leads.length;
@@ -347,11 +369,11 @@ export function CopilotProvider({
 
           markCurrentStep(groupId, "done");
           addStep(groupId, `Preparing ${task.workspaceLabel}…`, "active");
-          await prepareDestination("research");
+          await prepareDestination("research", discoveryId!);
           if (sessionRef.current !== mySession) return;
           markCurrentStep(groupId, "done");
           addStep(groupId, `Opening ${task.workspaceLabel}…`, "active");
-          navigateTo(task.workspacePath);
+          navigateTo(discoveryPath);
           markCurrentStep(groupId, "done");
           addStep(groupId, "Ready for review.", "done");
           completeWork(
@@ -360,6 +382,7 @@ export function CopilotProvider({
             found > 0
               ? `Found ${found} compan${found === 1 ? "y" : "ies"} worth reviewing.`
               : "No new prospects matched your ICP this time.",
+            discoveryPath,
           );
         } catch {
           failWork(groupId, "Research stopped early — nothing was changed.");
@@ -372,7 +395,7 @@ export function CopilotProvider({
           return;
         }
         try {
-          const job = await getJob(jobId!);
+          const job = await getJob(jobId);
           const stage = job.stage ?? "";
           if (stage && stage !== lastStage) {
             lastStage = stage;
@@ -457,6 +480,8 @@ export function CopilotProvider({
     async (groupId: string) => {
       const task = TASKS.campaign;
       const mySession = sessionRef.current;
+      const page = pageContextRef.current;
+      const campaignId = page?.data?.campaignId as string | undefined;
       let briefing: MCBriefingData | null = null;
       try {
         briefing = await fetchBriefing();
@@ -471,10 +496,23 @@ export function CopilotProvider({
       }
       const ready = briefing.topPriorities.filter((c) => c.reasonCode === "campaign_ready").length;
       const drafts = briefing.waitingOnYou.filter((c) => c.reasonCode === "draft_review_required").length;
-      if (ready > 0) addStep(groupId, `${ready} campaign${ready === 1 ? "" : "s"} ready to review.`, "done");
+      if (ready > 0) addStep(groupId, `${ready} campaign${ready === 1 ? "" : "s"} ready to launch.`, "done");
       if (drafts > 0) addStep(groupId, `${drafts} draft${drafts === 1 ? "" : "s"} waiting for your review.`, "done");
       if (ready === 0 && drafts === 0) addStep(groupId, "No campaign work waiting right now.", "done");
       markCurrentStep(groupId, "done");
+      if (campaignId) {
+        const step = page?.data?.step as string | undefined;
+        addStep(groupId, step ? `Next step for this campaign: ${step}.` : "Opening the campaign…", "active");
+        markCurrentStep(groupId, "done");
+        completeWork(
+          groupId,
+          "campaign",
+          "Here's where this campaign stands.",
+          `/campaigns/${campaignId}`,
+          campaignStepActions(campaignId, step),
+        );
+        return;
+      }
       addStep(groupId, `Preparing ${task.workspaceLabel}…`, "active");
       await prepareDestination("campaign");
       if (sessionRef.current !== mySession) return;
@@ -557,19 +595,24 @@ export function CopilotProvider({
   );
 
   const startTask = useCallback(
-    (text: string) => {
+    (text: string): boolean => {
       const trimmed = text.trim();
-      if (!trimmed || busyRef.current) return;
+      if (!trimmed) return false;
+      if (busyRef.current) return false;
 
-      const kind = classifyInstruction(trimmed);
+      const kind = resolveTaskKind(trimmed, pageContextRef.current?.page);
       if (kind === "unknown") {
+        // Never drop an instruction silently: route unclassified input into
+        // the clarification UI (prompt + quick replies) so the user can pick
+        // a task. Discovery never reaches this branch — it always searches.
         setRecentTask(null);
         transition({ type: "instruction", kind });
-        return;
+        return true;
       }
       sessionRef.current += 1;
       transition({ type: "instruction", kind });
       beginTask(kind, trimmed);
+      return true;
     },
     [transition, beginTask],
   );
@@ -578,7 +621,7 @@ export function CopilotProvider({
     (replyId: string) => {
       const reply = CLARIFICATION_REPLIES.find((r) => r.id === replyId);
       if (!reply || busyRef.current) return;
-      const kind = classifyInstruction(reply.instruction);
+      const kind = resolveTaskKind(reply.instruction, pageContextRef.current?.page);
       if (kind === "unknown") return;
       sessionRef.current += 1;
       transition({ type: "answer" });

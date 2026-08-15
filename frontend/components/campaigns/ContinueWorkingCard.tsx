@@ -6,6 +6,7 @@ type Props = {
   id: string;
   name: string;
   status: string;
+  step?: string;
   pendingDrafts: number;
   leadCount: number;
 };
@@ -20,10 +21,22 @@ const statusLabels: Record<string, string> = {
   archived: "Archived",
 };
 
-export default function ContinueWorkingCard({ id, name, status, pendingDrafts, leadCount }: Props) {
-  const label = status === "draft_review"
-    ? `${pendingDrafts} ${statusLabels[status]}`
-    : (statusLabels[status] || status);
+const stepLabels: Record<string, string> = {
+  strategy: "Strategy next",
+  leads: "Add leads next",
+  drafts: "Drafts next",
+  review: "drafts pending review",
+  sending: "Ready to launch",
+};
+
+export default function ContinueWorkingCard({ id, name, status, step, pendingDrafts, leadCount }: Props) {
+  const label = step
+    ? step === "review"
+      ? `${pendingDrafts} ${stepLabels[step]}`
+      : stepLabels[step]
+    : status === "draft_review"
+      ? `${pendingDrafts} ${statusLabels[status]}`
+      : (statusLabels[status] || status);
 
   return (
     <Link

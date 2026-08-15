@@ -26,6 +26,7 @@ class ProviderStatus(str, Enum):
     EXPIRED_TOKEN = "expired_token"
     DISCONNECTED = "disconnected"
     SCOPE_INSUFFICIENT = "scope_insufficient"
+    AUTH_FAILED = "auth_failed"  # re-auth required; Google rejected the credential
 
 
 class ProviderHealth(str, Enum):

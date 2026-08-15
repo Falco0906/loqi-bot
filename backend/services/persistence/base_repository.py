@@ -7,6 +7,7 @@ from typing import Any, Generic, TypeVar
 T = TypeVar("T")
 
 
+
 class SupabaseRepository(ABC, Generic[T]):
 
     def __init__(self) -> None:
@@ -36,6 +37,11 @@ class SupabaseRepository(ABC, Generic[T]):
         data = getattr(result, "data", None) or []
         return data[0] if data else None
 
+    def _retry(self, factory, category: str = ""):
+        """Bounded retry for idempotent-safe persistence operations."""
+        from services.persistence.retry import retry_async
+        return retry_async(factory, category=category or self._table_name)
+
     async def save(self, entity: T) -> T:
         import asyncio
         client = self._client()
@@ -43,31 +49,36 @@ class SupabaseRepository(ABC, Generic[T]):
             return entity
         row = self._to_row(entity)
         row_id = row.get("id", "")
-        existing = await asyncio.to_thread(
-            lambda: self._first(
-                client.table(self._table_name)
+
+        async def _perform() -> None:
+            existing = self._first(await asyncio.to_thread(
+                lambda: client.table(self._table_name)
                 .select("id")
                 .eq("id", row_id)
                 .limit(1)
-                .execute()
-            )
-        )
-        if existing:
-            row["updated_at"] = datetime.now(timezone.utc).isoformat()
-            await asyncio.to_thread(
-                lambda: client.table(self._table_name)
-                .update(row)
-                .eq("id", row_id)
-                .execute()
-            )
-        else:
-            row["created_at"] = row.get("created_at") or datetime.now(timezone.utc).isoformat()
-            row["updated_at"] = row.get("updated_at") or datetime.now(timezone.utc).isoformat()
-            await asyncio.to_thread(
-                lambda: client.table(self._table_name)
-                .insert(row)
-                .execute()
-            )
+                .execute(),
+            ))
+            if existing:
+                if hasattr(entity, "updated_at"):
+                    row["updated_at"] = datetime.now(timezone.utc).isoformat()
+                await asyncio.to_thread(
+                    lambda: client.table(self._table_name)
+                    .update(row)
+                    .eq("id", row_id)
+                    .execute(),
+                )
+            else:
+                if hasattr(entity, "created_at"):
+                    row["created_at"] = row.get("created_at") or datetime.now(timezone.utc).isoformat()
+                if hasattr(entity, "updated_at"):
+                    row["updated_at"] = row.get("updated_at") or datetime.now(timezone.utc).isoformat()
+                await asyncio.to_thread(
+                    lambda: client.table(self._table_name)
+                    .insert(row)
+                    .execute(),
+                )
+
+        await self._retry(_perform)
         return entity
 
     async def get(self, entity_id: str) -> T | None:
@@ -75,30 +86,38 @@ class SupabaseRepository(ABC, Generic[T]):
         client = self._client()
         if client is None:
             return None
-        result = await asyncio.to_thread(
-            lambda: client.table(self._table_name)
-            .select("*")
-            .eq("id", entity_id)
-            .limit(1)
-            .execute()
-        )
-        row = self._first(result)
-        if row is None:
-            return None
-        return self._from_row(row)
+
+        async def _perform() -> T | None:
+            result = await asyncio.to_thread(
+                lambda: client.table(self._table_name)
+                .select("*")
+                .eq("id", entity_id)
+                .limit(1)
+                .execute(),
+            )
+            row = self._first(result)
+            if row is None:
+                return None
+            return self._from_row(row)
+
+        return await self._retry(_perform)
 
     async def delete(self, entity_id: str) -> bool:
         import asyncio
         client = self._client()
         if client is None:
             return False
-        result = await asyncio.to_thread(
-            lambda: client.table(self._table_name)
-            .delete()
-            .eq("id", entity_id)
-            .execute()
-        )
-        return len(getattr(result, "data", None) or []) > 0
+
+        async def _perform() -> bool:
+            result = await asyncio.to_thread(
+                lambda: client.table(self._table_name)
+                .delete()
+                .eq("id", entity_id)
+                .execute(),
+            )
+            return len(getattr(result, "data", None) or []) > 0
+
+        return await self._retry(_perform)
 
 
 def _serialize(entity: Any) -> dict[str, Any]:

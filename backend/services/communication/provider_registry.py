@@ -67,12 +67,30 @@ def sync_provider(provider_id: str, cursor: str = "") -> Optional[SyncResult]:
 
 
 def disconnect_provider(provider_id: str) -> bool:
-    """Disconnect a provider and remove its instance."""
+    """Disconnect a provider and remove it from EVERY runtime store/registry.
+
+    Removes the communication-store record, the provider_registry instance,
+    and any outbound provider instance so the Settings API (which aggregates
+    from the communication store) never surfaces a disconnected ghost account.
+    """
     instance = get_provider(provider_id)
     if not instance:
         return False
-    instance.disconnect()
+    try:
+        instance.disconnect()
+    except Exception:
+        pass
     remove_instance(provider_id)
+    try:
+        from services.communication.communication_store import store as comm_store
+        comm_store.remove_provider(provider_id)
+    except Exception:
+        pass
+    try:
+        from services.outbound.outbound_registry import remove_instance as outbound_remove
+        outbound_remove(provider_id)
+    except Exception:
+        pass
     return True
 
 

@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:discovery": "node tests/discovery-routing.test.mts",
+    "test:draft-lifecycle": "node tests/draft-lifecycle.test.mts"
   },
   "dependencies": {
     "next": "^15.3.8",

@@ -404,7 +404,17 @@ class TestCommunicationStore:
         self.store.save_provider(p1)
         self.store.save_provider(p2)
         providers = self.store.get_user_providers("u1")
-        assert len(providers) == 2
+        # PR10.8.2 invariant: one active provider record per (user, provider
+        # type) — a reconnect replaces, never stacks a second Gmail account.
+        assert len(providers) == 1
+        assert providers[0].id == p2.id
+
+    def test_user_providers_distinct_types_coexist(self):
+        p1 = CommunicationProvider(provider_type=ProviderType.GMAIL, user_id="u1")
+        p2 = CommunicationProvider(provider_type=ProviderType.MANUAL, user_id="u1")
+        self.store.save_provider(p1)
+        self.store.save_provider(p2)
+        assert len(self.store.get_user_providers("u1")) == 2
 
     def test_remove_provider(self):
         p = CommunicationProvider(provider_type=ProviderType.GMAIL, user_id="u1")
@@ -659,12 +669,34 @@ class TestIntegration:
         from services.conversation_timeline import clear_all
         clear_all()
 
+    def _establish_loqi_relationship(self, provider, thread_id: str, ext_id: str = "out_1"):
+        """Create a trusted Loqi conversation for the thread, as the outbound
+        send path does (PR8.1 requires a real relationship before ingestion)."""
+        from services.conversations.integration import create_conversation_from_send
+        return create_conversation_from_send(
+            provider_id=provider._provider_id,
+            provider_type="gmail",
+            external_thread_id=thread_id,
+            external_message_id=ext_id,
+            subject="Outreach",
+            from_email="me@gmail.com",
+            from_name="Me",
+            to_email="lead@example.com",
+            to_name="Lead",
+            body="Hello",
+            campaign_id="campaign-1",
+            workflow_id="campaign-1",
+            lead_id="lead-1",
+        )
+
     def test_full_pipeline(self):
         """Sync → Normalize → Conversation Intelligence pipeline."""
         register_provider(GmailProvider)
         provider = GmailProvider()
         provider.connect("token", user_id="u1", email="me@gmail.com")
         register_instance(provider._provider_id, provider)
+
+        self._establish_loqi_relationship(provider, "int_thread_1")
 
         from services.communication.gmail_sync import _process_provider_message
         pmsg = _make_gmail_provider_msg(
@@ -689,6 +721,8 @@ class TestIntegration:
         provider.connect("token", user_id="u1")
         register_instance(provider._provider_id, provider)
 
+        self._establish_loqi_relationship(provider, "t1")
+
         from services.communication.gmail_sync import _process_provider_message
         pmsg = _make_gmail_provider_msg(ext_id="dup_test", thread_id="t1", body="Hello")
         cid1 = _process_provider_message(provider, pmsg)
@@ -701,6 +735,8 @@ class TestIntegration:
         provider = GmailProvider()
         provider.connect("token", user_id="u1")
         register_instance(provider._provider_id, provider)
+
+        self._establish_loqi_relationship(provider, "shared_t")
 
         from services.communication.gmail_sync import _process_provider_message
         from services.conversation_memory import memory_store

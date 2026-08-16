@@ -16,10 +16,15 @@ else:
     # The identity User aggregate (identity_users) is always persisted
     # through Supabase regardless of this provider. The remaining identity
     # repositories follow this selection until their tables are applied.
+    # Match config_validation.is_production: ENVIRONMENT OR APP_ENV decides
+    # production, so a deployment that only sets ENVIRONMENT=production still
+    # gets the Supabase-backed provider (not a silent in-memory fallback).
+    _production = (
+        os.getenv("ENVIRONMENT", "").strip().lower() == "production"
+        or os.getenv("APP_ENV", "").strip().lower() == "production"
+    )
     REPOSITORY_PROVIDER = (
-        RepositoryProvider.SUPABASE
-        if os.getenv("APP_ENV", "development").lower() == "production"
-        else RepositoryProvider.IN_MEMORY
+        RepositoryProvider.SUPABASE if _production else RepositoryProvider.IN_MEMORY
     )
 
 

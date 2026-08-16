@@ -3,8 +3,9 @@ from __future__ import annotations
 import logging
 import os
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from services.identity.dependencies import AuthContext, get_current_auth
 from services.identity.metrics import get_metrics
 from services.identity.models import RegistrationSessionStatus
 from services.identity.models.oauth_session import OAuthSession
@@ -38,6 +39,9 @@ from services.persistence.repositories import (
     SupabaseRefreshTokenRepository,
     SupabaseVerificationTokenRepository,
     SupabasePasswordResetRepository,
+    SupabaseEmailIdentityRepository,
+    SupabasePasswordCredentialRepository,
+    SupabaseRegistrationSessionRepository,
 )
 from services.identity.services import (
     AuthService,
@@ -63,6 +67,9 @@ from services.identity.schemas import (
     MeResponse,
     OAuthCallbackResponse,
     OAuthRedirectResponse,
+    PasswordChangeRequest,
+    PasswordResetConfirmRequest,
+    PasswordResetRequestPayload,
     RefreshRequest,
     SessionInfo,
     SessionListResponse,
@@ -82,24 +89,33 @@ log = logging.getLogger("loqi.auth")
 
 def _make_identity_repositories():
     # The User aggregate is the account of record and is always durable
-    # through Supabase (identity_users). The remaining identity repositories
-    # follow the repository provider selection until their tables are applied.
+    # through Supabase (identity_users). In production every authentication
+    # lifecycle repository is Supabase-backed so signup/verification/login
+    # state survives restarts and multi-instance operation. The identity-side
+    # org/membership and OAuth-state repositories remain in-memory (their
+    # durable platform lives in the organizations workspace schema).
     if REPOSITORY_PROVIDER == RepositoryProvider.SUPABASE:
         vt_repo = SupabaseVerificationTokenRepository()
         session_repo = SupabaseSessionRepository()
         rt_repo = SupabaseRefreshTokenRepository()
         pr_repo = SupabasePasswordResetRepository()
+        ei_repo = SupabaseEmailIdentityRepository()
+        pc_repo = SupabasePasswordCredentialRepository()
+        reg_session_repo = SupabaseRegistrationSessionRepository()
     else:
         vt_repo = InMemoryVerificationTokenRepository()
         session_repo = InMemorySessionRepository()
         rt_repo = InMemoryRefreshTokenRepository()
         pr_repo = InMemoryPasswordResetRepository()
+        ei_repo = InMemoryEmailIdentityRepository()
+        pc_repo = InMemoryPasswordCredentialRepository()
+        reg_session_repo = InMemoryRegistrationSessionRepository()
     return {
-        "reg_session_repo": InMemoryRegistrationSessionRepository(),
+        "reg_session_repo": reg_session_repo,
         "vt_repo": vt_repo,
-        "ei_repo": InMemoryEmailIdentityRepository(),
+        "ei_repo": ei_repo,
         "user_repo": SupabaseUserRepository(),
-        "pc_repo": InMemoryPasswordCredentialRepository(),
+        "pc_repo": pc_repo,
         "org_repo": InMemoryOrganizationRepository(),
         "mem_repo": InMemoryMembershipRepository(),
         "session_repo": session_repo,
@@ -171,6 +187,7 @@ def _build_auth_service() -> AuthService:
         token_svc=tok_svc,
         app_url=email_config.app_url,
         external_identity_repo=r["ext_id_repo"],
+        password_reset_repo=r["pr_repo"],
     )
 
 
@@ -185,16 +202,9 @@ def _get_service() -> AuthService:
 
 
 async def get_authenticated_user_id(request: Request) -> str:
-    """Resolve the authenticated user from the opaque session access token."""
-    authorization = request.headers.get("authorization", "")
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token.strip():
-        raise HTTPException(status_code=401, detail="Authentication required")
-    try:
-        session = await _get_service().validate_access_token(token.strip())
-    except Exception as exc:
-        raise HTTPException(status_code=401, detail="Invalid or expired session") from exc
-    return session.user_id
+    """Resolve the authenticated user id via the canonical auth dependency."""
+    from services.identity.dependencies import get_current_user_id
+    return await get_current_user_id(request)
 
 
 def get_auth_user_service() -> UserService | None:
@@ -213,21 +223,31 @@ def reset_auth_service() -> None:
 
 # ─── Endpoints ─────────────────────────────────────────────────────────
 
-_oauth_session_repo: InMemoryOAuthSessionRepository | None = None
-_oauth_callback_results: dict[str, tuple[str, OAuthCallbackResponse]] = {}
+_oauth_session_repo = None
 
 
-def _get_oauth_session_repo() -> InMemoryOAuthSessionRepository:
+def _get_oauth_session_repo():
+    """Provider-aware OAuth session repository.
+
+    In production (SUPABASE provider) state is persisted in ``oauth_sessions``
+    (migration 023) so callbacks arriving on another instance/after restart
+    can be validated; otherwise the in-memory repository is used.
+    """
     global _oauth_session_repo
-    if _oauth_session_repo is None:
+    from services.persistence.config import get_repository_provider, RepositoryProvider
+    if get_repository_provider() == RepositoryProvider.SUPABASE:
+        from services.persistence.repositories import SupabaseOAuthSessionRepository
+        if not isinstance(_oauth_session_repo, SupabaseOAuthSessionRepository):
+            _oauth_session_repo = SupabaseOAuthSessionRepository()
+        return _oauth_session_repo
+    if not isinstance(_oauth_session_repo, InMemoryOAuthSessionRepository):
         _oauth_session_repo = InMemoryOAuthSessionRepository()
     return _oauth_session_repo
 
 
 def reset_oauth_session_repo() -> None:
-    global _oauth_session_repo, _oauth_callback_results
+    global _oauth_session_repo
     _oauth_session_repo = None
-    _oauth_callback_results = {}
 
 
 @router.get(
@@ -275,12 +295,10 @@ async def oauth_google_callback(code: str = "", state: str = ""):
         await repo.delete(oauth_session.id)
         raise HTTPException(status_code=401, detail="OAuth session expired")
     if oauth_session.is_used:
-        cached = _oauth_callback_results.get(state)
-        if cached is not None and cached[0] == code:
-            # Browsers/dev-mode React can replay the callback URL after the
-            # first request has already succeeded. Return the same issued
-            # session rather than presenting a successful login as a failure.
-            return cached[1]
+        # SaaS-1.6: no token-bearing replay cache. A consumed state is
+        # single-use — a second callback with the same state (browser replay
+        # or theft) is rejected. The first callback already delivered the
+        # tokens to the browser; there is nothing safe to re-return.
         raise HTTPException(status_code=401, detail="OAuth state already used — possible replay attack")
 
     oauth_session.mark_used()
@@ -298,7 +316,7 @@ async def oauth_google_callback(code: str = "", state: str = ""):
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
     get_metrics().login_total["ok"] += 1
-    response = OAuthCallbackResponse(
+    return OAuthCallbackResponse(
         access_token=result.session.id,
         refresh_token=result.refresh_token,
         session_id=result.session.id,
@@ -307,11 +325,6 @@ async def oauth_google_callback(code: str = "", state: str = ""):
         expires_at=result.session.expires_at,
         is_new_user=result.is_new_user,
     )
-    _oauth_callback_results[state] = (code, response)
-    if len(_oauth_callback_results) > 1000:
-        oldest = next(iter(_oauth_callback_results))
-        del _oauth_callback_results[oldest]
-    return response
 
 
 @router.post(
@@ -463,28 +476,27 @@ async def logout(payload: LogoutRequest):
     "/me",
     response_model=MeResponse,
     summary="Get current user info",
-    description="Returns the current user's profile and organization membership information.",
+    description="Returns the authenticated caller's profile and organization "
+    "membership information. The user is derived from the Authorization "
+    "header; any client-supplied user_id is ignored.",
 )
-async def get_me(user_id: str = ""):
-    if not user_id:
-        raise HTTPException(status_code=400, detail="user_id query parameter required")
+async def get_me(auth: AuthContext = Depends(get_current_auth)):
     svc = _get_service()
-    return await svc.get_current_user_info(user_id)
+    return await svc.get_current_user_info(auth.user_id)
 
 
 @router.get(
     "/sessions",
     response_model=SessionListResponse,
     summary="List active sessions",
-    description="List all active sessions for a user. Used for session "
-    "management and visibility into active devices.",
+    description="List all active sessions for the authenticated caller. The "
+    "user is derived from the Authorization header; a client-supplied user_id "
+    "is never trusted (cross-user reads are rejected).",
     response_description="List of active sessions",
 )
-async def list_sessions(user_id: str = ""):
-    if not user_id:
-        raise HTTPException(status_code=400, detail="user_id query parameter required")
+async def list_sessions(auth: AuthContext = Depends(get_current_auth)):
     svc = _get_service()
-    sessions = await svc.list_sessions(user_id)
+    sessions = await svc.list_sessions(auth.user_id)
     return SessionListResponse(
         sessions=[
             SessionInfo(
@@ -503,12 +515,71 @@ async def list_sessions(user_id: str = ""):
     "/sessions/{session_id}",
     response_model=SessionRevokeResponse,
     summary="Revoke a session",
-    description="Revoke a specific session by its ID. The session and all "
-    "its refresh tokens are invalidated.",
+    description="Revoke one of the authenticated caller's sessions by its ID. "
+    "Only the session owner may revoke it; revoking another user's session is "
+    "rejected. The session and all its refresh tokens are invalidated.",
     response_description="Session revocation confirmation",
 )
-async def revoke_session(session_id: str):
+async def revoke_session(
+    session_id: str,
+    auth: AuthContext = Depends(get_current_auth),
+):
     svc = _get_service()
+    session = await svc.get_session(session_id)
+    if session.user_id != auth.user_id:
+        raise HTTPException(status_code=404, detail="Session not found")
     await svc.revoke_session(session_id)
     get_metrics().session_revoked_total["ok"] += 1
     return SessionRevokeResponse()
+
+
+@router.post(
+    "/password/change",
+    response_model=LogoutResponse,
+    summary="Change password",
+    description="Change the authenticated user's password. All other sessions "
+    "and refresh-token families are revoked so a leaked credential cannot "
+    "outlive the change; the current session remains active.",
+    response_description="Password changed confirmation",
+)
+async def change_password(
+    payload: PasswordChangeRequest,
+    auth: AuthContext = Depends(get_current_auth),
+):
+    svc = _get_service()
+    await svc.change_password(
+        auth.user_id, payload.current_password, payload.new_password,
+        keep_session_id=auth.session_id,
+    )
+    return LogoutResponse(message="Password changed successfully")
+
+
+@router.post(
+    "/password-reset/request",
+    response_model=LogoutResponse,
+    summary="Request password reset",
+    description="Send a single-use, expiring password-reset link to an email "
+    "address. The response is identical whether or not the account exists "
+    "(no account enumeration).",
+    response_description="Password reset requested",
+)
+async def request_password_reset(payload: PasswordResetRequestPayload):
+    svc = _get_service()
+    await svc.request_password_reset(payload.email)
+    return LogoutResponse(message="If that email is registered, a reset link has been sent")
+
+
+@router.post(
+    "/password-reset/confirm",
+    response_model=LogoutResponse,
+    summary="Confirm password reset",
+    description="Validate the single-use reset token and set a new password. "
+    "All sessions and refresh tokens for the user are revoked on success.",
+    response_description="Password reset confirmation",
+)
+async def confirm_password_reset(payload: PasswordResetConfirmRequest):
+    svc = _get_service()
+    await svc.confirm_password_reset(
+        payload.email, payload.token, payload.new_password,
+    )
+    return LogoutResponse(message="Password reset successfully. Please log in again.")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timezone, timedelta
 from unittest.mock import patch, MagicMock
@@ -1115,6 +1116,45 @@ def billing_api_client() -> TestClient:
         webhook_service=_webhook_svc,
     ))
     _register_billing_provider_config(_provider, _config)
+
+    # SaaS-1.4: billing operations are bound to the actor's organization
+    # membership. Register in-memory org deps and grant the billing actor an
+    # OWNER membership in every organization the API tests target.
+    from services.organizations.api import register_deps as _register_org_deps
+    from services.organizations.api import OrgDeps as _OrgDeps
+    from services.organizations.repositories import (
+        InMemoryInvitationRepository as _InMemoryInvitationRepository,
+        InMemoryMembershipRepository as _InMemoryMembershipRepository,
+        InMemoryOrganizationRepository as _InMemoryOrganizationRepository,
+    )
+    from services.organizations.resolver import CurrentOrganizationResolver as _CurrentOrganizationResolver
+    from services.organizations.services import (
+        InvitationService as _InvitationService,
+        MembershipService as _MembershipService,
+        OrganizationService as _OrganizationService,
+    )
+    from services.organizations.models import Membership, MembershipRole, MembershipStatus
+
+    _org_repo = _InMemoryOrganizationRepository()
+    _membership_repo = _InMemoryMembershipRepository()
+    _invitation_repo = _InMemoryInvitationRepository()
+    _org_svc = _OrganizationService(_org_repo, _membership_repo)
+    _membership_svc = _MembershipService(_membership_repo, _org_repo)
+    _invitation_svc = _InvitationService(_invitation_repo, _membership_repo, _membership_svc)
+    _register_org_deps(_OrgDeps(
+        org_service=_org_svc,
+        membership_service=_membership_svc,
+        invitation_service=_invitation_svc,
+        resolver=_CurrentOrganizationResolver(_org_repo, _membership_repo),
+    ))
+    for _org_id in ("org-api-1", "org-no-sub", "org-portal", "org-1"):
+        asyncio.run(_membership_repo.save(Membership(
+            organization_id=_org_id,
+            user_id="billing-user",
+            role=MembershipRole.OWNER,
+            status=MembershipStatus.ACTIVE,
+        )))
+
     client = TestClient(app)
     return client
 

@@ -499,15 +499,18 @@ class TestLoggingSanitization:
 class TestOAuthStateStillValidated:
     def test_state_single_use_and_validated(self):
         from services.oauth_state import issue_state, consume_state
-        state = issue_state("user-1")
-        assert consume_state(state) == "user-1"
-        assert consume_state(state) is None  # single-use — already consumed
+        import asyncio
+        state = asyncio.run(issue_state("user-1"))
+        user_id, _ = asyncio.run(consume_state(state))
+        assert user_id == "user-1"
+        assert asyncio.run(consume_state(state)) == (None, None)  # single-use
 
     def test_invalid_state_rejected(self):
         from services.oauth_state import consume_state
-        assert consume_state("dev_providers:user-1") is None
-        assert consume_state("forged-state") is None
-        assert consume_state("") is None
+        import asyncio
+        assert asyncio.run(consume_state("dev_providers:user-1")) == (None, None)
+        assert asyncio.run(consume_state("forged-state")) == (None, None)
+        assert asyncio.run(consume_state("")) == (None, None)
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -35,6 +35,21 @@ class LogoutRequest(BaseModel):
     refresh_token: str
 
 
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class PasswordResetRequestPayload(BaseModel):
+    email: str
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    email: str
+    token: str
+    new_password: str
+
+
 # ─── Response models ───────────────────────────────────────────────────
 
 class SignupResponse(BaseModel):

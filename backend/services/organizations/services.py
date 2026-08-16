@@ -225,9 +225,33 @@ class MembershipService:
         self._events.append(OrgEvent.member_joined(organization_id, user_id))
         return membership
 
+    async def require_actor_role(
+        self,
+        organization_id: str,
+        actor_id: str,
+        allowed_roles: set[MembershipRole],
+    ) -> Membership:
+        """Require that ``actor_id`` is an active member with one of the
+        allowed roles in ``organization_id``. Raises ``InsufficientRole``
+        otherwise (defense-in-depth beyond the API boundary)."""
+        membership = await self._membership_repo.find_by_user_and_org(
+            actor_id, organization_id,
+        )
+        if (
+            membership is None
+            or membership.status != MembershipStatus.ACTIVE
+            or membership.role not in allowed_roles
+        ):
+            raise InsufficientRole("Insufficient permissions")
+        return membership
+
     async def remove_member(self, organization_id: str, user_id: str, removed_by: str) -> None:
         if user_id == removed_by:
             raise LastOwnerCannotLeave("Cannot self-remove; use leave_organization")
+
+        await self.require_actor_role(
+            organization_id, removed_by, {MembershipRole.OWNER, MembershipRole.ADMIN},
+        )
 
         membership = await self._membership_repo.find_by_user_and_org(user_id, organization_id)
         if membership is None:
@@ -265,6 +289,10 @@ class MembershipService:
         new_role: MembershipRole,
         changed_by: str,
     ) -> Membership:
+        await self.require_actor_role(
+            organization_id, changed_by, {MembershipRole.OWNER, MembershipRole.ADMIN},
+        )
+
         membership = await self._membership_repo.find_by_user_and_org(target_user_id, organization_id)
         if membership is None:
             raise MembershipNotFound()
@@ -358,6 +386,10 @@ class InvitationService:
         role: MembershipRole = MembershipRole.MEMBER,
         created_by: str = "",
     ) -> Invitation:
+        if created_by:
+            await self._membership_service.require_actor_role(
+                organization_id, created_by, {MembershipRole.OWNER, MembershipRole.ADMIN},
+            )
         token = secrets.token_urlsafe(32)
         expires_at = datetime.now(timezone.utc) + timedelta(days=self.INVITATION_EXPIRY_DAYS)
 
@@ -401,6 +433,10 @@ class InvitationService:
         invitation = await self._invitation_repo.get(invitation_id)
         if invitation is None:
             raise InvitationNotFound()
+
+        await self._membership_service.require_actor_role(
+            invitation.organization_id, revoked_by, {MembershipRole.OWNER, MembershipRole.ADMIN},
+        )
 
         invitation.revoke()
         await self._invitation_repo.save(invitation)

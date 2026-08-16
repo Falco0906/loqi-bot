@@ -30,6 +30,12 @@ PRODUCTION_REQUIRED = (
     "OPENAI_API_KEY",
     "GOOGLE_CLIENT_ID",
     "GOOGLE_CLIENT_SECRET",
+    "GOOGLE_REDIRECT_URI",
+    # SaaS-1.7: the identity crypto service reads these (with DEVELOPMENT
+    # fallbacks when unset). Production must never silently fall back to
+    # development secrets — require explicit production values.
+    "IDENTITY_PEPPER",
+    "IDENTITY_SIGNING_KEY_DEFAULT",
 )
 
 # Production must never enable development/test behavior.

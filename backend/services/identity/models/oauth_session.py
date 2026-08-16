@@ -13,6 +13,8 @@ class OAuthSession:
     code_verifier: str = ""
     nonce: str = ""
     redirect_uri: str = ""
+    user_id: str = ""
+    context: str = ""
     used_at: datetime | None = None
     expires_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))

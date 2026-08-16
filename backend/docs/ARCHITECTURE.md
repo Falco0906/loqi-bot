@@ -734,7 +734,7 @@ DraftBuilder()
 
 | Repository | Table | Methods |
 |---|---|---|
-| `SupabaseUserRepository` | `users` | save, get, delete |
+| `SupabaseUserRepository` | `identity_users` | save, get, delete |
 | `SupabaseSessionRepository` | `sessions` | save, get, delete, find_by_user_id, find_active_by_user_id, revoke_all_for_user, revoke_all_for_org, count_active_by_user_id |
 | `SupabaseRefreshTokenRepository` | `refresh_tokens` | save, get, delete, find_active_by_session_id, find_by_family, find_by_hash, revoke_all_for_session, revoke_all_for_user, revoke_family |
 | `SupabaseVerificationTokenRepository` | `verification_tokens` | save, get, delete, find_valid_by_target_and_purpose, find_by_target, find_by_hash, invalidate_all_for_target |
@@ -760,13 +760,19 @@ set_repository_provider(RepositoryProvider.IN_MEMORY)  # → use InMemory repos 
 
 `services/identity/api.py`, `services/organizations/api.py`, and `services/billing/api.py` are aware of this switch — no service code changes required.
 
-**Migrations:**
+**Migrations (as present in the repo):**
 
 | File | Module | Tables |
 |---|---|---|
-| `001_identity_platform.sql` | Identity | users, email_identities, password_credentials, sessions, refresh_tokens, verification_tokens, password_reset_requests |
-| `002_organizations.sql` | Organizations | organizations, memberships, invitations |
-| `003_billing.sql` | Billing | billing_plans, billing_customers, billing_subscriptions, billing_checkout_sessions, billing_invoices, billing_events |
+| `004_identity_platform.sql` | Identity | identity_users |
+| `021_identity_sessions.sql` | Identity | sessions, refresh_tokens, verification_tokens, password_reset_requests |
+| `022_identity_auth_persistence.sql` | Identity | email_identities, password_credentials, registration_sessions, refresh_tokens(family) active uniqueness |
+| `023_oauth_sessions.sql` | Identity/OAuth | oauth_sessions (single-use, expiring, identity-bound OAuth state) |
+| `024_web_session_bindings.sql` | Session | web_session_bindings (web-session → canonical identity/session binding) |
+| `025_organization_persistence.sql` | Organizations | memberships, invitations |
+| `026_billing_persistence.sql` | Billing | billing_plans, billing_customers, billing_subscriptions, billing_checkout_sessions, billing_invoices, billing_events |
+| `005_external_identity.sql` | Identity | external_identities, connected_accounts |
+| `006_workspaces.sql` | Organizations | organizations, workspaces, workspace_members |
 
 ### Legacy Workflow System (`workflows.py`, `workflow_*` — 15+ files)
 

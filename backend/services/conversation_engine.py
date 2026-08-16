@@ -251,7 +251,16 @@ class ConversationEngine:
         if user is None:
             raise ValueError("Session not found")
 
-        state = f"{channel}:{user['id']}:{external_user_id}"
+        # Server-issued, single-use, expiring OAuth state bound to the user and
+        # flow context (channel + transport id). The callback consumes it and
+        # derives ownership from the state — never from a client-constructed
+        # user_id (SaaS-1.5).
+        from services.oauth_state import issue_state
+        from services.supabase import _run_blocking
+        state = _run_blocking(issue_state(
+            str(user["id"]),
+            {"channel": channel, "transport_id": str(external_user_id)},
+        ))
         return get_google_auth_url(state=state)
 
     def _get_dynamic_prompt(

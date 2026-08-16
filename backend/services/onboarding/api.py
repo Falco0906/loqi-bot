@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -98,8 +97,15 @@ def _onboarding_status(exc: OnboardingException) -> int:
 
 
 async def _resolve_user_id(request: Request, requested_user_id: str) -> str:
-    """Use the session identity in production; reject mismatched identities."""
-    if os.getenv("APP_ENV", "development").lower() == "production":
+    """Use the session identity in production; reject mismatched identities.
+
+    The production indicator matches the rest of the application
+    (``config_validation.is_production`` — ``ENVIRONMENT`` OR ``APP_ENV``), so
+    a production deployment that sets ``ENVIRONMENT=production`` cannot fall
+    back to the unauthenticated development contract.
+    """
+    from services.config_validation import is_production
+    if is_production():
         authenticated_user_id = await get_authenticated_user_id(request)
         if requested_user_id and requested_user_id != authenticated_user_id:
             raise HTTPException(status_code=403, detail="User identity mismatch")

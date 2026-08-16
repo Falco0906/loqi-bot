@@ -18,6 +18,15 @@ from services.identity.repositories import (
 from services.security.crypto.crypto_service import CryptoService
 
 
+def _is_unique_violation(exc: Exception) -> bool:
+    """True when ``exc`` is a PostgREST unique-constraint violation (SQLSTATE
+    23505 / duplicate key). Supabase exposes ``code`` and ``message`` on the
+    APIError; string matching covers wrapped errors."""
+    text = str(exc).lower()
+    code = getattr(exc, "code", None)
+    return code in ("23505", "PGRST301") or "duplicate key" in text or "duplicate" in text
+
+
 class TokenService:
 
     def __init__(
@@ -84,6 +93,21 @@ class TokenService:
         current_token.revoke()
         await self._refresh_token_repo.save(current_token)
 
+        # Concurrent-rotation guard (replay race): if another ACTIVE token in
+        # this family already exists after the presented token was revoked, a
+        # second refresh with the same token is racing us. Treat it as theft —
+        # revoke the family and the session. For the Supabase provider the
+        # refresh_tokens_family_active_uidx unique index (migration 022)
+        # enforces this at the database; this check is defense in depth and
+        # the deterministic path for the in-memory provider.
+        siblings = await self._refresh_token_repo.find_by_family(current_token.family)
+        if any(rt.is_active for rt in siblings if rt.id != current_token.id):
+            await self._revoke_family_and_session(current_token.family, current_token.session_id)
+            raise RefreshTokenRevokedException(
+                "Concurrent refresh detected. Possible token theft. "
+                "Session and family have been revoked.",
+            )
+
         now = datetime.now(timezone.utc)
         raw_token = self._crypto.random_token(
             IDENTITY_CONFIG.tokens.refresh_token_bytes,
@@ -97,12 +121,33 @@ class TokenService:
                 seconds=IDENTITY_CONFIG.tokens.refresh_token_ttl_seconds,
             ),
         )
-        saved = await self._refresh_token_repo.save(new_token)
+        try:
+            saved = await self._refresh_token_repo.save(new_token)
+        except Exception as exc:  # noqa: BLE001
+            # The family-active unique index rejected the insert because a
+            # concurrent rotation already minted an active token in this
+            # family. That is a replay race — revoke the family and session.
+            if _is_unique_violation(exc):
+                await self._revoke_family_and_session(
+                    current_token.family, current_token.session_id,
+                )
+                raise RefreshTokenRevokedException(
+                    "Concurrent refresh detected. Possible token theft. "
+                    "Session and family have been revoked.",
+                ) from exc
+            raise
 
         session.touch()
         await self._session_repo.save(session)
 
         return saved, raw_token
+
+    async def _revoke_family_and_session(self, family: str, session_id: str) -> None:
+        await self._refresh_token_repo.revoke_family(family)
+        session = await self._session_repo.get(session_id)
+        if session is not None:
+            session.revoke()
+            await self._session_repo.save(session)
 
     async def revoke_all_for_session(self, session_id: str) -> int:
         return await self._refresh_token_repo.revoke_all_for_session(session_id)

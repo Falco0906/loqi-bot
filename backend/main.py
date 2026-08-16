@@ -45,6 +45,7 @@ from services.identity.exceptions import (
     RegistrationSessionExpiredException,
     RegistrationSessionNotFoundException,
     RegistrationSessionWrongStatusException,
+    SessionNotFoundException,
     SessionRevokedException,
 )
 from services.identity.metrics import get_metrics
@@ -459,6 +460,7 @@ _IDENTITY_STATUS: dict[type, int] = {
     RegistrationSessionNotFoundException: 404,
     RegistrationSessionExpiredException: 410,
     RegistrationSessionWrongStatusException: 400,
+    SessionNotFoundException: 404,
     SessionRevokedException: 401,
     IdentityException: 400,
 }
@@ -530,6 +532,32 @@ def _record_auth_metric(request: Request, exc: IdentityException) -> None:
         m.session_revoked_total[label] += 1
 
 
+_SAFE_IDENTITY_MESSAGES: dict[str, str] = {
+    "EmailAlreadyExistsException": "An account with this email already exists",
+    "UserNotFoundException": "User not found",
+    "SessionNotFoundException": "Session not found",
+    "OrganizationNotFoundException": "Organization not found",
+    "EmailIdentityNotFoundException": "Email identity not found",
+}
+
+
+def _safe_identity_message(exc: IdentityException) -> str:
+    """Client-safe message that never echoes or discloses internals.
+
+    Identity exceptions may embed an email, user id, or session id in their
+    message (used for server-side diagnostics). These are stripped from the
+    client response to avoid resource enumeration and identifier leakage;
+    the full detail is still logged server-side by the exception handler.
+    """
+    safe = _SAFE_IDENTITY_MESSAGES.get(type(exc).__name__)
+    if safe is not None:
+        return safe
+    message = str(exc) or "Authentication failed"
+    if "registered: " in message or "not found: " in message:
+        return message.split(":")[0].strip()
+    return message
+
+
 @app.exception_handler(IdentityException)
 async def identity_exception_handler(request: Request, exc: IdentityException):
     req_id = request_id_var.get("")
@@ -544,7 +572,7 @@ async def identity_exception_handler(request: Request, exc: IdentityException):
         status_code=_identity_status(exc),
         content=ErrorResponse(
             code=type(exc).__name__,
-            message=str(exc),
+            message=_safe_identity_message(exc),
             request_id=req_id,
         ).model_dump(),
     )
@@ -2225,8 +2253,9 @@ async def gmail_auth_url(request: Request, session_token: str = ""):
             user_id = await get_authenticated_user_id(request)
         state_subject = user_id or session_token
         # Single-use server-side state token: the callback verifies it before
-        # exchanging the authorization code (CSRF protection).
-        state = issue_state(state_subject or "gmail_user")
+        # exchanging the authorization code (CSRF protection). Durable so a
+        # callback landing on another instance/after restart still validates.
+        state = await issue_state(state_subject or "gmail_user")
         url = get_google_auth_url(state=state)
         return {"ok": True, "url": url}
     except Exception as e:
@@ -2294,15 +2323,15 @@ def _frontend_postmessage_origin() -> str:
     return os.getenv("FRONTEND_ORIGIN") or os.getenv("FRONTEND_URL") or ""
 
 
-def _resolve_oauth_state_user(state: str) -> str:
+async def _resolve_oauth_state_user(state: str) -> str:
     """Resolve the OAuth callback state to the durable Loqi user id.
 
-    Only server-issued state tokens are accepted (issued by
-    ``services.oauth_state.issue_state``). Missing/invalid/expired state is
-    rejected — there is no unverified fallback identity.
+    Only server-issued, single-use state tokens are accepted (issued by
+    ``services.oauth_state.issue_state``). Missing/invalid/expired/used state
+    is rejected — there is no unverified fallback identity.
     """
     from services.oauth_state import consume_state
-    user_id = consume_state(state)
+    user_id, _context = await consume_state(state)
     if not user_id or user_id == "gmail_user":
         return ""
     from services.supabase import get_user
@@ -2312,7 +2341,7 @@ def _resolve_oauth_state_user(state: str) -> str:
 
 
 @app.get("/api/auth/gmail/callback")
-def gmail_auth_callback(code: str = "", state: str = "", error: str = ""):
+async def gmail_auth_callback(code: str = "", state: str = "", error: str = ""):
     import json
     from services.google_auth import exchange_code_for_tokens, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
     from fastapi.responses import HTMLResponse
@@ -2325,14 +2354,14 @@ def gmail_auth_callback(code: str = "", state: str = "", error: str = ""):
             raise Exception(f"Google OAuth error: {error}")
         if not code:
             raise Exception("No authorization code provided")
+        _user_id = await _resolve_oauth_state_user(state)
+        if not _user_id:
+            raise Exception("Invalid or expired OAuth state")
         tokens = exchange_code_for_tokens(code)
         access_token = tokens.get("access_token", "")
         refresh_token = tokens.get("refresh_token", "")
         email_val = tokens.get("email", "")
         account_id = tokens.get("account_id", "") or email_val
-        _user_id = _resolve_oauth_state_user(state)
-        if not _user_id:
-            raise Exception("Invalid or expired OAuth state")
         from services.communication.gmail_provider import GmailProvider
         with _GMAIL_PROVIDER_CONNECT_LOCK:
             # Replace any existing (possibly reauth-required) provider for this
@@ -2436,20 +2465,33 @@ async def create_web_session(payload: CreateWebSessionRequest, request: Request)
         # session token stays the transport key; the workflow_sessions
         # mapping keeps it resolvable to that single user id.
         user_id = None
+        canonical_session_id = ""
         if request.headers.get("authorization", ""):
-            from services.identity.api import get_authenticated_user_id
+            from services.identity.dependencies import get_current_auth
             try:
-                user_id = await get_authenticated_user_id(request)
+                # SaaS-1.6: an authenticated bootstrap binds the web-session
+                # token to the canonical identity session so the web-session
+                # cannot outlive (or diverge from) the canonical session.
+                _auth = await get_current_auth(request)
+                user_id = _auth.user_id
+                canonical_session_id = _auth.session_id
             except HTTPException:
                 # Failed authentication falls back to an anonymous web
                 # session rather than failing the whole bootstrap request.
                 user_id = None
+                canonical_session_id = ""
         result = await asyncio.to_thread(
             engine.create_web_session,
             display_name=payload.display_name,
             user_id=user_id,
         )
-        if user_id:
+        if user_id and canonical_session_id:
+            from services.web_session_binding import bind_web_session
+            await bind_web_session(
+                result.get("session_token", ""),
+                user_id,
+                canonical_session_id,
+            )
             from services.workspace_state import ensure_workspace
             await asyncio.to_thread(ensure_workspace, user_id)
         return result
@@ -4451,6 +4493,13 @@ async def _resolve_session_context(request: Request) -> tuple[str, str]:
     Supports both the identity access token and the legacy web-session token.
     Never trusts client-supplied path params or user_ids. Raises 401 when the
     request is not authenticated (PR10.8.3.1 — fail closed, no URL fallback).
+
+    SaaS-1.6 authority rule: when the web-session token is bound to a
+    canonical identity session (web_session_bindings), the actor is the
+    canonical user and the request is authorized ONLY while that canonical
+    session remains valid (not revoked / not expired). A canonical-session
+    revocation (logout, password change, password reset) therefore
+    invalidates the bound web-session bearer.
     """
     token = _session_token_from_request(request)
     if not token:
@@ -4464,8 +4513,25 @@ async def _resolve_session_context(request: Request) -> tuple[str, str]:
         pass
     summary = engine.get_web_session_summary(token)
     if summary and summary.get("user_id"):
+        binding = await _web_session_binding(token)
+        if binding is not None:
+            # The web-session is bound to a canonical session: require that
+            # session to be valid before authorizing (sliding activity).
+            from services.identity.api import _get_service
+            try:
+                await _get_service()._session_svc.touch_session(binding.canonical_session_id)
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(
+                    status_code=401, detail="Invalid or expired session",
+                ) from exc
+            return binding.canonical_user_id, token
         return str(summary["user_id"]), token
     raise HTTPException(status_code=401, detail="Invalid or expired session")
+
+
+async def _web_session_binding(token: str):
+    from services.web_session_binding import find_binding
+    return await find_binding(token)
 
 
 async def _workspace_owner_and_summary(request: Request, session_token: str = "") -> tuple[str, dict | None]:
@@ -5869,15 +5935,21 @@ async def get_web_gmail_status(session_token: str, request: Request = None):
 
 @app.get("/google/callback")
 async def google_callback(code: str, state: str):
-    state_parts = state.split(":")
+    """Legacy Telegram Gmail-connect callback.
 
-    if len(state_parts) == 2:
-        channel = "telegram"
-        user_id, transport_id = state_parts
-    elif len(state_parts) == 3:
-        channel, user_id, transport_id = state_parts
-    else:
-        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+    Harden (SaaS-1.5): the ``state`` must be a server-issued, single-use,
+    expiring token bound to the initiating user/context (issued by
+    ``conversation_engine.get_gmail_connect_url``). The callback never trusts a
+    client-constructed ``user_id``; a state that was not server-issued, was
+    already consumed, or has expired is rejected with 401.
+    """
+    from services.oauth_state import consume_state
+    user_id, context = await consume_state(state)
+    if not user_id or user_id == "gmail_user":
+        raise HTTPException(status_code=401, detail="Invalid or expired OAuth state")
+    context = context or {}
+    channel = context.get("channel", "telegram")
+    transport_id = str(context.get("transport_id", "") or "")
 
     try:
         tokens = exchange_code_for_tokens(code)

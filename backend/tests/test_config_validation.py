@@ -27,6 +27,9 @@ VALID_PRODUCTION = {
     "OPENAI_API_KEY": "sk-test",
     "GOOGLE_CLIENT_ID": "client",
     "GOOGLE_CLIENT_SECRET": "secret",
+    "GOOGLE_REDIRECT_URI": "https://app.tryloqi.com/api/auth/gmail/callback",
+    "IDENTITY_PEPPER": "a" * 32,
+    "IDENTITY_SIGNING_KEY_DEFAULT": "b" * 32,
     "PORT": "10000",
     "LOQI_CREDENTIAL_ENCRYPTION_KEY": "ab" * 32,
 }
@@ -53,6 +56,43 @@ class TestProductionRequired:
         for error in errors:
             assert "super-secret-value" not in error
             assert "sk-test" not in error
+
+    def test_missing_identity_pepper_fails_in_production(self):
+        env = {**VALID_PRODUCTION}
+        del env["IDENTITY_PEPPER"]
+        errors = _errors(env)
+        assert any("IDENTITY_PEPPER" in error for error in errors)
+
+    def test_missing_identity_signing_key_fails_in_production(self):
+        env = {**VALID_PRODUCTION}
+        del env["IDENTITY_SIGNING_KEY_DEFAULT"]
+        errors = _errors(env)
+        assert any("IDENTITY_SIGNING_KEY_DEFAULT" in error for error in errors)
+
+    def test_missing_google_redirect_uri_fails_in_production(self):
+        env = {**VALID_PRODUCTION}
+        del env["GOOGLE_REDIRECT_URI"]
+        errors = _errors(env)
+        assert any("GOOGLE_REDIRECT_URI" in error for error in errors)
+
+    def test_identity_secret_values_never_appear_in_errors(self):
+        env = {**VALID_PRODUCTION}
+        # Simulate a stray secret present in the environment; errors must
+        # reference key names only, never values.
+        env["IDENTITY_PEPPER"] = ""
+        env["IDENTITY_SIGNING_KEY_DEFAULT"] = ""
+        env["STRAY_SECRET"] = "pepper-value-abc123"
+        errors = _errors(env)
+        for error in errors:
+            assert "pepper-value-abc123" not in error
+
+    def test_development_without_identity_secrets_preserved(self):
+        env = {**VALID_PRODUCTION, "ENVIRONMENT": "development"}
+        del env["IDENTITY_PEPPER"]
+        del env["IDENTITY_SIGNING_KEY_DEFAULT"]
+        errors = _errors(env)
+        assert not any("IDENTITY_PEPPER" in e for e in errors)
+        assert not any("IDENTITY_SIGNING_KEY_DEFAULT" in e for e in errors)
 
 
 class TestFormatValidation:

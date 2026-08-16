@@ -392,3 +392,68 @@ incident:
 - DR/multi-region deployment.
 - Mapping Railway's `RAILWAY_GIT_COMMIT_SHA` into `GIT_COMMIT` (currently
   optional) so `/version` is always accurate in-container.
+
+---
+
+## 9. SaaS-1.7 production-closure rollback/recovery (APPLY-GATED)
+
+This section is only relevant during/after the human-controlled SaaS-1.7
+migration application. Distinguish the three recovery classes explicitly.
+
+### 9.1 Application rollback vs database schema rollback vs data reconciliation
+
+- **APPLICATION ROLLBACK**: Railway → Deployments → roll back to the previous
+  known-good image (section 1). This **preserves the schema** — the migrated
+  database stays migrated, and the older application image must tolerate the
+  newer schema (all SaaS-1.7 migrations are additive and additive-only, so a
+  previous image reading the new tables/columns is safe).
+- **DATABASE SCHEMA ROLLBACK**: all SaaS-1.7 migrations are **additive and
+  irreversible-by-rollback** (they create tables/indexes only; no destructive
+  operations, no data alteration). There is **no supported schema rollback** —
+  "rollback" means restore the previous application deployment while the
+  schema remains applied. Do not drop the new tables to "roll back": that is
+  an irreversible, manual action with no repo-level tooling.
+- **DATA RECONCILIATION RECOVERY**: the synthetic-user reconciliation
+  (`scripts/reconcile_web_sessions.py`) is idempotent and re-keying is the
+  only mutation (UPDATE of owner/user ids). It never deletes. Recovery from a
+  bad reconciliation is a **manual data fix** (restore the original ids from
+  the dry-run report); it is not reversible by the script.
+
+### 9.2 Migration failure response
+
+1. Stop applying further migrations.
+2. `NOTIFY pgrst, 'reload schema';` only if PostgREST reports stale tables.
+3. Re-run the same migration file (all are `IF NOT EXISTS`/idempotent — safe
+   to re-run after a partial failure).
+4. If an index build is expensive on large tables (e.g. `memberships`,
+   `billing_*`), it completes asynchronously on Postgres; verify via
+   `pg_indexes` before proceeding.
+5. Confirm with the read-only table probe; then continue the operator
+   checklist (section 9.3).
+
+### 9.3 Operator execution checklist (mirrors the SaaS-1.7 report)
+
+1. Verify Supabase backup/PITR is enabled and take a manual backup.
+2. Apply migrations **021 → 022 → 023 → 024 → 025 → 026** in order (each
+   additive/idempotent; re-run safe).
+3. `NOTIFY pgrst, 'reload schema';`.
+4. Run the read-only table probe (all required tables EXIST).
+5. Run `python -m scripts.reconcile_web_sessions --dry-run` → review the plan
+   and orphan report.
+6. Run `python -m scripts.reconcile_web_sessions` (apply) if the plan is clean.
+7. Re-run the dry-run → must report zero remaining re-keyable rows.
+8. Set production env (ENVIRONMENT=production, identity secrets, redirect URI)
+   and deploy the image.
+9. Verify `/version` (commit), `/health`, `/ready`.
+10. Run `python -m scripts.saas_smoke_test` with a pre-provisioned test account.
+11. On any smoke failure: application rollback (9.1) first; if schema-related,
+    verify migrations + schema reload, then re-run smoke.
+12. Escalate to manual data recovery only if reconciliation orphaned rows need
+    attention (documented in the dry-run report).
+
+### 9.4 Known-good deployment identification
+
+The last deployment whose `/version` `commit` matches the pre-migration image
+and whose `/ready` returned 200 is the known-good application deployment.
+Migrations 021–026 are backward-compatible with the pre-SaaS-1.7 image (all
+additive), so the known-good image can be restored without schema reverts.

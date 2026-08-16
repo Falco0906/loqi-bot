@@ -97,10 +97,36 @@ HTTP_ERROR_MAP: dict[type[Exception], int] = {
 
 
 async def _get_current_user(request: Request) -> str:
-    user_id = getattr(request.state, "user_id", None)
-    if user_id is None:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return user_id
+    """Resolve the authenticated caller via the canonical identity dependency.
+
+    The user is always derived from the ``Authorization: Bearer`` header;
+    never from client-supplied input or ``request.state``.
+    """
+    from services.identity.dependencies import get_current_user_id
+    return await get_current_user_id(request)
+
+
+async def _assert_actor_org_access(current_user: str, organization_id: str) -> None:
+    """Require the authenticated actor to be an active member of the target
+    organization before any billing operation can target it.
+
+    Prevents cross-tenant billing targeting (reading/modifying another
+    organization's subscription, checkout, portal, cancel, resume) via a
+    client-supplied ``organization_id``. Returns 404 (not 403) so non-member
+    lookups cannot distinguish existing organizations.
+    """
+    if not organization_id:
+        raise HTTPException(status_code=400, detail="organization_id required")
+    from services.organizations.api import _get_membership_service
+    from services.organizations.exceptions import MembershipNotFound
+    membership_service = await _get_membership_service()
+    try:
+        membership = await membership_service.get_user_membership(current_user, organization_id)
+    except MembershipNotFound:
+        raise HTTPException(status_code=404, detail="Organization not found") from None
+    status = getattr(membership.status, "value", membership.status)
+    if status != "active":
+        raise HTTPException(status_code=404, detail="Organization not found")
 
 
 # ─── Dependency Functions ───────────────────────────────────────────
@@ -184,6 +210,7 @@ async def get_subscription(
 ):
     if not organization_id:
         raise HTTPException(status_code=400, detail="organization_id required")
+    await _assert_actor_org_access(current_user, organization_id)
     try:
         sub = await sub_service.get_active_subscription(organization_id)
     except NoActiveSubscription as exc:
@@ -203,6 +230,7 @@ async def create_checkout(
     current_user: str = Depends(_get_current_user),
 ):
     try:
+        await _assert_actor_org_access(current_user, body.organization_id)
         session = await checkout_service.create_checkout(
             organization_id=body.organization_id,
             plan_id=body.plan_id,
@@ -235,6 +263,7 @@ async def customer_portal(
     subscription_service: SubscriptionService = Depends(_get_subscription_service),
     current_user: str = Depends(_get_current_user),
 ):
+    await _assert_actor_org_access(current_user, body.organization_id)
     try:
         customer = await customer_service.get_customer_by_organization(
             body.organization_id,
@@ -311,6 +340,7 @@ async def cancel_subscription(
     current_user: str = Depends(_get_current_user),
 ):
     try:
+        await _assert_actor_org_access(current_user, body.organization_id)
         sub = await sub_service.cancel_subscription(
             body.organization_id,
             at_period_end=body.at_period_end,
@@ -336,6 +366,7 @@ async def resume_subscription(
 ):
     if not organization_id:
         raise HTTPException(status_code=400, detail="organization_id required")
+    await _assert_actor_org_access(current_user, organization_id)
     try:
         sub = await sub_service.resume_subscription(organization_id)
     except SubscriptionNotFound as exc:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from services.identity.config import IDENTITY_CONFIG
 from services.identity.events import IdentityEvent
 from services.identity.exceptions import (
@@ -59,6 +61,29 @@ class PasswordService:
 
         new_hash = self._crypto.hash_password(new_password)
         credential.update_hash(new_hash)
+        saved = await self._credential_repo.save(credential)
+        event = IdentityEvent.password_changed(user_id)
+        return saved, event
+
+    async def reset_password(
+        self, user_id: str, new_password: str,
+    ) -> tuple[PasswordCredential, IdentityEvent]:
+        """Set a new password without requiring the current one (reset flow).
+
+        Callers must first validate the one-time password-reset token; this
+        method only enforces the password policy and persists the new hash.
+        """
+        self._validate_password_policy(new_password)
+        user = await self._user_repo.get(user_id)
+        if user is None:
+            raise UserNotFoundException(user_id)
+
+        credential = await self._credential_repo.find_by_user_id(user_id)
+        if credential is None:
+            credential = PasswordCredential(user_id=user_id)
+        new_hash = self._crypto.hash_password(new_password)
+        credential.password_hash = new_hash
+        credential.last_changed_at = datetime.now(timezone.utc)
         saved = await self._credential_repo.save(credential)
         event = IdentityEvent.password_changed(user_id)
         return saved, event

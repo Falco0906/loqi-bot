@@ -19,6 +19,8 @@ from services.capabilities.schemas import (
     OrganizationCapabilityResponse,
 )
 from services.capabilities.services import CapabilityService
+from services.identity.dependencies import get_current_user_id
+from services.organizations.models import MembershipRole, MembershipStatus
 
 router = APIRouter(prefix="/api/v1", tags=["Capabilities"])
 
@@ -54,6 +56,50 @@ async def _get_capability_service() -> CapabilityService:
     if _deps_registry is None:
         raise HTTPException(status_code=500, detail="Capability services not initialized")
     return _deps_registry.capability_service
+
+
+# ─── Organization-boundary authorization (SaaS-1.4) ─────────────────
+
+
+async def _get_org_membership_service():
+    """Reuse the organization platform's membership service (canonical actor
+    resolution + org membership)."""
+    from services.organizations.api import _get_membership_service
+    return await _get_membership_service()
+
+
+async def _get_actor_membership(
+    organization_id: str,
+    membership_service,
+    current_user: str,
+):
+    from services.organizations.exceptions import MembershipNotFound
+    try:
+        return await membership_service.get_user_membership(current_user, organization_id)
+    except MembershipNotFound:
+        # 404 hides whether the organization exists (BOLA enumeration guard).
+        raise HTTPException(status_code=404, detail="Organization not found") from None
+
+
+async def _require_org_member(
+    organization_id: str = Path(...),
+    membership_service=Depends(_get_org_membership_service),
+    current_user: str = Depends(get_current_user_id),
+):
+    await _get_actor_membership(organization_id, membership_service, current_user)
+
+
+async def _require_org_admin(
+    organization_id: str = Path(...),
+    membership_service=Depends(_get_org_membership_service),
+    current_user: str = Depends(get_current_user_id),
+):
+    membership = await _get_actor_membership(organization_id, membership_service, current_user)
+    if (
+        membership.status != MembershipStatus.ACTIVE
+        or membership.role not in (MembershipRole.OWNER, MembershipRole.ADMIN)
+    ):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────
@@ -114,6 +160,7 @@ async def list_capabilities(
 async def list_organization_capabilities(
     organization_id: str = Path(...),
     capability_service: CapabilityService = Depends(_get_capability_service),
+    _boundary: None = Depends(_require_org_member),
 ):
     org_caps = await capability_service.get_organization_capabilities(organization_id)
     return OrganizationCapabilitiesListResponse(
@@ -129,9 +176,13 @@ async def enable_organization_capability(
     organization_id: str = Path(...),
     slug: str = Path(...),
     capability_service: CapabilityService = Depends(_get_capability_service),
+    current_user: str = Depends(get_current_user_id),
+    _boundary: None = Depends(_require_org_admin),
 ):
     try:
-        org_cap = await capability_service.enable_capability(organization_id, slug)
+        org_cap = await capability_service.enable_capability(
+            organization_id, slug, activated_by=current_user,
+        )
     except CapabilityException as exc:
         raise HTTPException(
             status_code=HTTP_ERROR_MAP.get(type(exc), 500),
@@ -153,6 +204,8 @@ async def disable_organization_capability(
     organization_id: str = Path(...),
     slug: str = Path(...),
     capability_service: CapabilityService = Depends(_get_capability_service),
+    current_user: str = Depends(get_current_user_id),
+    _boundary: None = Depends(_require_org_admin),
 ):
     try:
         org_cap = await capability_service.disable_capability(organization_id, slug)
@@ -176,6 +229,7 @@ async def get_capability_usage(
     organization_id: str = Path(...),
     slug: str = Path(...),
     capability_service: CapabilityService = Depends(_get_capability_service),
+    _boundary: None = Depends(_require_org_member),
 ):
     try:
         usage = await capability_service.get_usage(organization_id, slug)

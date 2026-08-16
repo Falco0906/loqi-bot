@@ -512,7 +512,9 @@ class TestReconciliation:
 class TestOAuthState:
     def test_state_single_use(self):
         from services.oauth_state import issue_state, consume_state
-        state = issue_state("user-1")
-        assert consume_state(state) == "user-1"
-        assert consume_state(state) is None
-        assert consume_state("forged") is None
+        import asyncio
+        state = asyncio.run(issue_state("user-1"))
+        user_id, _ = asyncio.run(consume_state(state))
+        assert user_id == "user-1"
+        assert asyncio.run(consume_state(state)) == (None, None)
+        assert asyncio.run(consume_state("forged")) == (None, None)

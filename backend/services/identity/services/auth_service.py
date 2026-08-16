@@ -19,6 +19,7 @@ from services.identity.contracts import ExternalIdentity as ExternalIdentityDTO
 from services.identity.models import (
     EmailIdentity,
     ExternalIdentity as ExternalIdentityModel,
+    PasswordResetRequest,
     RegistrationSession,
     RegistrationSessionStatus,
     Session,
@@ -30,6 +31,7 @@ from services.identity.providers.registry import IdentityProviderRegistry, get_p
 from services.identity.repositories import (
     EmailIdentityRepository,
     ExternalIdentityRepository,
+    PasswordResetRepository,
     RefreshTokenRepository,
     RegistrationSessionRepository,
     SessionRepository,
@@ -102,6 +104,7 @@ class AuthService:
         token_svc: TokenService,
         app_url: str = "http://localhost:3000",
         external_identity_repo: ExternalIdentityRepository | None = None,
+        password_reset_repo: PasswordResetRepository | None = None,
         provider_registry: IdentityProviderRegistry | None = None,
     ) -> None:
         self._email = email_provider
@@ -119,11 +122,26 @@ class AuthService:
         self._session_svc = session_svc
         self._token = token_svc
         self._external_identity_repo = external_identity_repo
+        if password_reset_repo is None:
+            from services.identity.repositories import InMemoryPasswordResetRepository
+            password_reset_repo = InMemoryPasswordResetRepository()
+        self._pr_repo = password_reset_repo
         self._provider_registry = provider_registry or get_provider_registry()
+
+    @staticmethod
+    def _normalize_email(email: str) -> str:
+        """Canonicalize an email before lookup/storage.
+
+        Emails are compared and stored in lowercase so ``User@Example.com``
+        and ``user@example.com`` resolve to the same identity (prevents
+        duplicate-account creation via case variants).
+        """
+        return (email or "").strip().lower()
 
     async def begin_registration(
         self, email: str,
     ) -> RegistrationResult:
+        email = self._normalize_email(email)
         if "@" not in email or "." not in email.split("@")[-1]:
             from services.identity.exceptions import InvalidCredentialsException
             raise InvalidCredentialsException("Invalid email format")
@@ -178,14 +196,22 @@ class AuthService:
             raise RegistrationSessionNotFoundException()
         reg_session = reg_sessions[0]
 
-        email_identity = EmailIdentity(
-            user_id="",
-            email=matching.target,
-            is_verified=True,
-            is_primary=True,
-            verified_at=datetime.now(timezone.utc),
-        )
-        saved_ei = await self._email_identity_repo.save(email_identity)
+        # Reuse an existing verified-but-unlinked email identity for the same
+        # address (e.g. a second signup session created before the first was
+        # completed) instead of inserting a duplicate — the email_identities
+        # unique index (migration 022) would otherwise reject the second row.
+        existing_ei = await self._email_identity_repo.find_by_email(matching.target)
+        if existing_ei is not None and not existing_ei.user_id:
+            saved_ei = existing_ei
+        else:
+            email_identity = EmailIdentity(
+                user_id="",
+                email=matching.target,
+                is_verified=True,
+                is_primary=True,
+                verified_at=datetime.now(timezone.utc),
+            )
+            saved_ei = await self._email_identity_repo.save(email_identity)
 
         reg_session.mark_verified(saved_ei.id)
         await self._reg_session_repo.save(reg_session)
@@ -256,6 +282,7 @@ class AuthService:
         return result
 
     async def login(self, email: str, password: str) -> LoginResult:
+        email = self._normalize_email(email)
         email_identity = await self._email_identity_repo.find_by_email(email)
         if email_identity is None:
             raise InvalidCredentialsException("Invalid email or password")
@@ -304,6 +331,7 @@ class AuthService:
     ) -> LoginResult:
         provider = self._provider_registry.get(provider_type)
         external_dto = await provider.handle_callback(code, state, code_verifier)
+        external_dto.email = self._normalize_email(external_dto.email)
 
         legacy_user = await self._resolve_legacy_oauth_user(external_dto)
         if legacy_user is not None:
@@ -450,10 +478,35 @@ class AuthService:
     async def _resolve_external_identity(
         self, external_dto: ExternalIdentityDTO,
     ) -> ExternalIdentityModel | None:
-        if self._external_identity_repo is None:
+        if self._external_identity_repo is not None:
+            ei = await self._external_identity_repo.find_by_provider(
+                external_dto.provider.value, external_dto.provider_user_id,
+            )
+            if ei is not None:
+                return ei
+        # Durable fallback: the identity-provider repo is in-memory in the
+        # current wiring. Consult the durable external_identities store (005)
+        # so a Google identity survives restarts / multi-instance and is
+        # reused rather than duplicated.
+        try:
+            from services.persistence.launch import ExternalIdentityRepository
+            row = await ExternalIdentityRepository().find_by_provider_subject(
+                external_dto.provider.value, external_dto.provider_user_id,
+            )
+        except Exception:
             return None
-        return await self._external_identity_repo.find_by_provider(
-            external_dto.provider.value, external_dto.provider_user_id,
+        if row is None:
+            return None
+        return ExternalIdentityModel(
+            user_id=row.user_id,
+            provider_type=row.provider,
+            provider_subject=row.provider_subject,
+            email=row.email,
+            display_name=row.username,
+            avatar_url="",
+            provider_metadata=row.metadata or {},
+            linked_at=datetime.now(timezone.utc),
+            last_login_at=datetime.now(timezone.utc),
         )
 
     async def _link_external(
@@ -528,6 +581,96 @@ class AuthService:
         result.session = session
         result.event = refresh_event
         return result
+
+    async def get_session(self, session_id: str) -> Session:
+        """Fetch a session by id (raises SessionNotFoundException if absent)."""
+        return await self._session_svc.get_session(session_id)
+
+    async def change_password(
+        self, user_id: str, current_password: str, new_password: str,
+        keep_session_id: str = "",
+    ) -> IdentityEvent:
+        """Change the user's password and invalidate all other sessions/tokens.
+
+        ``keep_session_id`` (when provided) survives the change; every other
+        session and refresh-token family for the user is revoked so a leaked
+        credential cannot outlive the change.
+        """
+        _, event = await self._password.change_password(
+            user_id, current_password, new_password,
+        )
+        await self._revoke_other_sessions(user_id, keep_session_id=keep_session_id)
+        return event
+
+    async def request_password_reset(self, email: str) -> None:
+        """Issue a single-use password-reset token and email it to the user.
+
+        Uniform response whether or not the account exists (no enumeration).
+        """
+        email = self._normalize_email(email)
+        email_identity = await self._email_identity_repo.find_by_email(email)
+        if email_identity is None or not email_identity.user_id:
+            return
+
+        user_id = email_identity.user_id
+        raw_token = self._crypto.random_token(
+            IDENTITY_CONFIG.tokens.password_reset_token_bytes,
+        )
+        token_hash = self._crypto.hash_token(raw_token)
+
+        await self._pr_repo.invalidate_all_for_user(user_id)
+
+        pr = PasswordResetRequest(
+            user_id=user_id,
+            token_hash=token_hash,
+            expires_at=datetime.now(timezone.utc) + timedelta(
+                seconds=IDENTITY_CONFIG.tokens.password_reset_ttl_seconds,
+            ),
+        )
+        await self._pr_repo.save(pr)
+
+        reset_url = (
+            f"{self._app_url}/reset-password?token={raw_token}&email={email}"
+        )
+        await self._email.send_password_reset_email(email, reset_url)
+
+    async def confirm_password_reset(
+        self, email: str, raw_token: str, new_password: str,
+    ) -> IdentityEvent:
+        """Validate the single-use reset token, set the new password, and
+        invalidate every session/token for the user."""
+        email = self._normalize_email(email)
+        email_identity = await self._email_identity_repo.find_by_email(email)
+        if email_identity is None or not email_identity.user_id:
+            raise InvalidCredentialsException("Invalid or expired reset token")
+
+        user_id = email_identity.user_id
+        token_hash = self._crypto.hash_token(raw_token)
+        pr = await self._pr_repo.find_valid_by_user_id(user_id)
+        if pr is None or str(pr.token_hash) != str(token_hash):
+            raise InvalidCredentialsException("Invalid or expired reset token")
+        if pr.is_expired:
+            raise InvalidCredentialsException("Invalid or expired reset token")
+
+        pr.mark_used()
+        await self._pr_repo.save(pr)
+        await self._pr_repo.invalidate_all_for_user(user_id)
+
+        _, event = await self._password.reset_password(user_id, new_password)
+
+        await self._session_svc.revoke_all_user_sessions(user_id)
+        return event
+
+    async def _revoke_other_sessions(
+        self, user_id: str, keep_session_id: str,
+    ) -> None:
+        """Revoke all of a user's sessions except ``keep_session_id`` (when
+        given) along with their refresh tokens."""
+        sessions = await self._session_svc.list_active_sessions(user_id)
+        for session in sessions:
+            if keep_session_id and session.id == keep_session_id:
+                continue
+            await self._session_svc.revoke_session(session.id)
 
     async def logout(self, raw_refresh_token: str) -> IdentityEvent:
         token_hash = self._crypto.hash_token(raw_refresh_token)

@@ -28,6 +28,9 @@ VALID_PRODUCTION = {
     "OPENAI_API_KEY": SENTINEL,
     "GOOGLE_CLIENT_ID": "client",
     "GOOGLE_CLIENT_SECRET": SENTINEL,
+    "GOOGLE_REDIRECT_URI": "https://app.tryloqi.com/api/auth/gmail/callback",
+    "IDENTITY_PEPPER": "p" * 32,
+    "IDENTITY_SIGNING_KEY_DEFAULT": "k" * 32,
     "PORT": "10000",
     "LOQI_CREDENTIAL_ENCRYPTION_KEY": "ab" * 32,
 }

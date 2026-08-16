@@ -255,8 +255,17 @@ class TestMembershipService:
 
     async def test_remove_last_owner_fails(self, org_service, membership_service) -> None:
         org = await org_service.create_organization(name="Last Owner", created_by="user-owner")
+        await membership_service.add_member(
+            org.id, "user-admin", role=MembershipRole.ADMIN,
+        )
         with pytest.raises(LastOwnerCannotBeRemoved):
             await membership_service.remove_member(org.id, "user-owner", "user-admin")
+
+    async def test_non_member_cannot_remove_member(self, org_service, membership_service) -> None:
+        from services.organizations.exceptions import InsufficientRole
+        org = await org_service.create_organization(name="Intruder Org", created_by="user-owner")
+        with pytest.raises(InsufficientRole):
+            await membership_service.remove_member(org.id, "user-owner", "intruder")
 
     async def test_self_remove_fails(self, org_service, membership_service) -> None:
         org = await org_service.create_organization(name="Self Remove", created_by="user-owner")

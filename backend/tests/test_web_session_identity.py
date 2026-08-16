@@ -221,9 +221,6 @@ def test_engine_create_web_session_binds_authenticated_user(monkeypatch):
 def test_create_web_session_endpoint_binds_authenticated_identity(monkeypatch, client):
     captured = {}
 
-    async def fake_auth_user(request):
-        return OAUTH_USER_ID
-
     def fake_engine_create(display_name=None, *, user_id=None):
         captured["user_id"] = user_id
         return {
@@ -239,8 +236,13 @@ def test_create_web_session_endpoint_binds_authenticated_identity(monkeypatch, c
     monkeypatch.setattr(
         main_module.engine, "create_web_session", fake_engine_create
     )
+
+    async def fake_current_auth(request):
+        from services.identity.dependencies import AuthContext
+        return AuthContext(user_id=OAUTH_USER_ID, session_id="sess-1", organization_id="org-1")
+
     monkeypatch.setattr(
-        "services.identity.api.get_authenticated_user_id", fake_auth_user
+        "services.identity.dependencies.get_current_auth", fake_current_auth
     )
 
     resp = client.post(

@@ -4,6 +4,7 @@ Uses a deterministic sentinel; never real credentials.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 
@@ -17,6 +18,10 @@ from services import credential_crypto
 from services import oauth_state
 
 SENTINEL = "PR10_7_SENTINEL_SECRET_DO_NOT_LEAK"
+
+
+def asyncio_run(coro):
+    return asyncio.run(coro)
 
 
 def _key() -> str:
@@ -196,30 +201,32 @@ class TestPersistenceIntegration:
 
 class TestOAuthState:
     def test_issue_and_consume(self):
-        token = oauth_state.issue_state("user-1")
+        token = asyncio_run(oauth_state.issue_state("user-1"))
         assert token and "user-1" not in token
-        assert oauth_state.consume_state(token) == "user-1"
+        user_id, _ = asyncio_run(oauth_state.consume_state(token))
+        assert user_id == "user-1"
 
     def test_missing_state_rejected(self):
-        assert oauth_state.consume_state("") is None
+        assert asyncio_run(oauth_state.consume_state("")) == (None, None)
 
     def test_invalid_state_rejected(self):
-        assert oauth_state.consume_state("not-a-real-state") is None
+        assert asyncio_run(oauth_state.consume_state("not-a-real-state")) == (None, None)
 
     def test_state_is_single_use(self):
-        token = oauth_state.issue_state("user-1")
-        assert oauth_state.consume_state(token) == "user-1"
-        assert oauth_state.consume_state(token) is None
+        token = asyncio_run(oauth_state.issue_state("user-1"))
+        user_id, _ = asyncio_run(oauth_state.consume_state(token))
+        assert user_id == "user-1"
+        assert asyncio_run(oauth_state.consume_state(token)) == (None, None)
 
     def test_resolve_requires_issued_state(self):
         import main as main_module
-        assert main_module._resolve_oauth_state_user("dev_providers:user-1") == ""
-        assert main_module._resolve_oauth_state_user("") == ""
+        assert asyncio_run(main_module._resolve_oauth_state_user("dev_providers:user-1")) == ""
+        assert asyncio_run(main_module._resolve_oauth_state_user("")) == ""
 
     def test_callback_state_flow(self):
-        token = oauth_state.issue_state("user-1")
+        token = asyncio_run(oauth_state.issue_state("user-1"))
         import main as main_module
-        assert main_module._resolve_oauth_state_user(token) == "user-1"
+        assert asyncio_run(main_module._resolve_oauth_state_user(token)) == "user-1"
 
 
 class TestNoSecretLeakage:
@@ -243,5 +250,5 @@ class TestNoSecretLeakage:
         assert "token" not in caplog.text.lower() or "credential" in caplog.text.lower()
 
     def test_oauth_state_never_contains_subject(self):
-        token = oauth_state.issue_state("user-1")
+        token = asyncio_run(oauth_state.issue_state("user-1"))
         assert "user-1" not in token

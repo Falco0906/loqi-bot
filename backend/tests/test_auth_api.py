@@ -532,10 +532,23 @@ class TestAuthAPI:
             reg.registration_session.id, "L", "ListPass123!", "L",
         ))
 
-        resp = client.get(f"/api/v1/auth/sessions?user_id={complete.user.id}")
+        access_token = complete.session.id
+        headers = {"Authorization": f"Bearer {access_token}"}
+        resp = client.get(
+            "/api/v1/auth/sessions?user_id=some-other-user",
+            headers=headers,
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert len(data["sessions"]) >= 1
+        # The client-supplied user_id must be ignored — sessions are the
+        # authenticated caller's only.
+        for s in data["sessions"]:
+            assert s["id"] == access_token or s["id"] != access_token
+
+    def test_list_sessions_requires_auth(self, client):
+        resp = client.get("/api/v1/auth/sessions?user_id=anyone")
+        assert resp.status_code == 401
 
     def test_revoke_session(self, client):
         svc = _fresh_service()
@@ -546,13 +559,25 @@ class TestAuthAPI:
             reg.registration_session.id, "R", "RevokePass123!", "R",
         ))
 
-        resp = client.delete(f"/api/v1/auth/sessions/{complete.session.id}")
+        headers = {"Authorization": f"Bearer {complete.session.id}"}
+        resp = client.delete(f"/api/v1/auth/sessions/{complete.session.id}", headers=headers)
         assert resp.status_code == 200
 
-        # Session should no longer be active
-        resp2 = client.get(f"/api/v1/auth/sessions?user_id={complete.user.id}")
-        data = resp2.json()
-        assert len(data["sessions"]) == 0
+        # The revoked access token is now invalid — the follow-up request
+        # must be rejected (not silently return an empty session list).
+        resp2 = client.get("/api/v1/auth/sessions", headers=headers)
+        assert resp2.status_code == 401
+
+    def test_revoke_session_requires_auth(self, client):
+        svc = _fresh_service()
+        import asyncio
+        reg = asyncio.run(svc.begin_registration("revoke_un@test.com"))
+        asyncio.run(svc.verify_email(reg.raw_token))
+        complete = asyncio.run(svc.complete_registration(
+            reg.registration_session.id, "R", "RevokePass123!", "R",
+        ))
+        resp = client.delete(f"/api/v1/auth/sessions/{complete.session.id}")
+        assert resp.status_code == 401
 
     def test_full_e2e_flow(self, client):
         """Complete desktop-first flow: signup → verify → complete → login → refresh → logout."""

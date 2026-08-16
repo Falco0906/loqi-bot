@@ -61,10 +61,13 @@ HTTP_ERROR_MAP: dict[type[Exception], int] = {
 
 
 async def _get_current_user(request: Request) -> str:
-    user_id = getattr(request.state, "user_id", None)
-    if user_id is None:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return user_id
+    """Resolve the authenticated caller via the canonical identity dependency.
+
+    The user is always derived from the ``Authorization: Bearer`` header;
+    never from a client-supplied query/body user_id.
+    """
+    from services.identity.dependencies import get_current_user_id
+    return await get_current_user_id(request)
 
 
 def _enrich_request(request: Request) -> None:
@@ -164,6 +167,66 @@ async def _get_resolver() -> CurrentOrganizationResolver:
     return _deps_registry.resolver
 
 
+# ─── Org-boundary authorization (SaaS-1) ─────────────────────────────
+
+
+async def _ensure_org_membership(
+    organization_id: str,
+    membership_service: MembershipService,
+    current_user: str,
+) -> None:
+    """Raise 404 (not 403) when the caller is not a member of the org.
+
+    404 avoids disclosing whether a given organization id exists to a
+    non-member (BOLA / cross-tenant enumeration defence).
+    """
+    from services.organizations.exceptions import MembershipNotFound
+    try:
+        await membership_service.get_user_membership(current_user, organization_id)
+    except MembershipNotFound:
+        raise HTTPException(status_code=404, detail="Organization not found") from None
+
+
+async def _get_actor_membership(
+    organization_id: str,
+    membership_service: MembershipService,
+    current_user: str,
+):
+    await _ensure_org_membership(organization_id, membership_service, current_user)
+    membership = await membership_service.get_user_membership(current_user, organization_id)
+    if membership.status != MembershipStatus.ACTIVE:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+    return membership
+
+
+async def _require_org_member(
+    organization_id: str = Path(...),
+    membership_service: MembershipService = Depends(_get_membership_service),
+    current_user: str = Depends(_get_current_user),
+):
+    await _ensure_org_membership(organization_id, membership_service, current_user)
+
+
+async def _require_org_admin(
+    organization_id: str = Path(...),
+    membership_service: MembershipService = Depends(_get_membership_service),
+    current_user: str = Depends(_get_current_user),
+):
+    membership = await _get_actor_membership(organization_id, membership_service, current_user)
+    if membership.role not in (MembershipRole.OWNER, MembershipRole.ADMIN):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+
+async def _require_org_owner(
+    organization_id: str = Path(...),
+    membership_service: MembershipService = Depends(_get_membership_service),
+    current_user: str = Depends(_get_current_user),
+):
+    membership = await _get_actor_membership(organization_id, membership_service, current_user)
+    if membership.role != MembershipRole.OWNER:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+
 # ─── Organiation CRUD ────────────────────────────────────────────────
 
 
@@ -208,6 +271,7 @@ async def get_organization(
     request: Request = None,
     org_service: OrganizationService = Depends(_get_org_service),
     current_user: str = Depends(_get_current_user),
+    _boundary: None = Depends(_require_org_member),
 ):
     _enrich_request(request)
     try:
@@ -224,6 +288,7 @@ async def update_organization(
     request: Request = None,
     org_service: OrganizationService = Depends(_get_org_service),
     current_user: str = Depends(_get_current_user),
+    _boundary: None = Depends(_require_org_admin),
 ):
     _enrich_request(request)
     try:
@@ -247,6 +312,7 @@ async def delete_organization(
     request: Request = None,
     org_service: OrganizationService = Depends(_get_org_service),
     current_user: str = Depends(_get_current_user),
+    _boundary: None = Depends(_require_org_owner),
 ):
     _enrich_request(request)
     try:
@@ -265,6 +331,7 @@ async def list_members(
     request: Request = None,
     membership_service: MembershipService = Depends(_get_membership_service),
     current_user: str = Depends(_get_current_user),
+    _boundary: None = Depends(_require_org_member),
 ):
     _enrich_request(request)
     members = await membership_service.get_memberships(organization_id, status=status)
@@ -293,6 +360,7 @@ async def change_role(
     request: Request = None,
     membership_service: MembershipService = Depends(_get_membership_service),
     current_user: str = Depends(_get_current_user),
+    _boundary: None = Depends(_require_org_admin),
 ):
     _enrich_request(request)
     try:
@@ -317,6 +385,7 @@ async def transfer_ownership(
     request: Request = None,
     membership_service: MembershipService = Depends(_get_membership_service),
     current_user: str = Depends(_get_current_user),
+    _boundary: None = Depends(_require_org_owner),
 ):
     _enrich_request(request)
     try:
@@ -358,6 +427,7 @@ async def remove_member(
     request: Request = None,
     membership_service: MembershipService = Depends(_get_membership_service),
     current_user: str = Depends(_get_current_user),
+    _boundary: None = Depends(_require_org_admin),
 ):
     _enrich_request(request)
     try:
@@ -380,6 +450,7 @@ async def invite_member(
     request: Request = None,
     invitation_service: InvitationService = Depends(_get_invitation_service),
     current_user: str = Depends(_get_current_user),
+    _boundary: None = Depends(_require_org_admin),
 ):
     _enrich_request(request)
     try:
@@ -403,10 +474,16 @@ async def list_invitations(
     request: Request = None,
     invitation_service: InvitationService = Depends(_get_invitation_service),
     current_user: str = Depends(_get_current_user),
+    _boundary: None = Depends(_require_org_member),
 ):
     _enrich_request(request)
     invitations = await invitation_service.get_organization_invitations(organization_id)
-    return [_invitation_to_response(i) for i in invitations]
+    responses = [_invitation_to_response(i) for i in invitations]
+    # The invitation token is a bearer-like secret delivered by email; it must
+    # not be harvested by org members through the list endpoint.
+    for resp in responses:
+        resp.token = ""
+    return responses
 
 
 @router.post("/invitations/accept", response_model=AcceptInvitationResponse)

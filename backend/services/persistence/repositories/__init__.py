@@ -9,6 +9,12 @@ from services.persistence.repositories.token_repositories import (
     SupabaseVerificationTokenRepository,
     SupabasePasswordResetRepository,
 )
+from services.persistence.repositories.identity_auth_repositories import (
+    SupabaseEmailIdentityRepository,
+    SupabaseOAuthSessionRepository,
+    SupabasePasswordCredentialRepository,
+    SupabaseRegistrationSessionRepository,
+)
 from services.persistence.repositories.organization_repositories import (
     SupabaseInvitationRepository,
     SupabaseMembershipRepository,
@@ -29,6 +35,10 @@ __all__ = [
     "SupabaseRefreshTokenRepository",
     "SupabaseVerificationTokenRepository",
     "SupabasePasswordResetRepository",
+    "SupabaseEmailIdentityRepository",
+    "SupabaseOAuthSessionRepository",
+    "SupabasePasswordCredentialRepository",
+    "SupabaseRegistrationSessionRepository",
     "SupabaseOrganizationRepository",
     "SupabaseMembershipRepository",
     "SupabaseInvitationRepository",

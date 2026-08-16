@@ -255,12 +255,15 @@ class _AsyncJson:
 class TestOAuthFinal:
     def test_state_single_use_and_user_bound(self):
         from services.oauth_state import issue_state, consume_state
-        state = issue_state("user-a")
-        assert consume_state(state) == "user-a"
-        assert consume_state(state) is None
-        state_b = issue_state("user-b")
-        assert consume_state(state_b) == "user-b"
-        assert consume_state(state_b) is None
+        import asyncio
+        state = asyncio.run(issue_state("user-a"))
+        user_a, _ = asyncio.run(consume_state(state))
+        assert user_a == "user-a"
+        assert asyncio.run(consume_state(state)) == (None, None)
+        state_b = asyncio.run(issue_state("user-b"))
+        user_b, _ = asyncio.run(consume_state(state_b))
+        assert user_b == "user-b"
+        assert asyncio.run(consume_state(state_b)) == (None, None)
 
 
 # ═══════════════════════════════════════════════════════════════════════

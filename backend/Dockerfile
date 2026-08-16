@@ -38,7 +38,7 @@ RUN pip install --no-cache-dir /wheels/*.whl \
     && rm -rf /wheels
 
 # Application code only (no tests, no venv, no local state).
-COPY main.py workflows.py workflow_dispatcher.py ./
+COPY main.py workflows.py workflow_dispatcher.py entrypoint.py ./
 COPY services ./services
 
 # Non-root runtime user + writable data dir for persisted conversation state.
@@ -46,10 +46,16 @@ RUN useradd --create-home --uid 10001 appuser \
     && mkdir -p /data \
     && chown -R appuser:appuser /app /data
 
-USER appuser
+# The container starts as root ONLY so the entrypoint can fix the ownership of
+# the Railway runtime-mounted /data volume (the mount does not inherit the
+# image-layer chown above). The entrypoint then permanently drops privileges
+# to appuser and execs the application — uvicorn always runs as appuser.
+USER root
 
 EXPOSE 10000
-# shit causes a failed railway deploy VOLUME ["/data"]
+# NOTE: VOLUME ["/data"] intentionally commented out (caused a failed Railway
+# deploy); Railway's persistent volume is configured on the platform.
 
 # Production startup (matches render.yaml); never a reload server.
+ENTRYPOINT ["python", "/app/entrypoint.py"]
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000}"]

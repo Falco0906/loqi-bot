@@ -325,6 +325,14 @@ async def lifespan(app: FastAPI):
         log.warning("Canonical backfill startup task failed: %s", e)
 
     set_ready()
+    try:
+        import pwd
+        log.info(
+            "runtime_user uid=%d gid=%d name=%s",
+            os.geteuid(), os.getgid(), pwd.getpwuid(os.geteuid()).pw_name,
+        )
+    except Exception:
+        pass
     log.info("application_ready duration_ms=%d", int((time.time() - startup_started) * 1000))
 
     yield

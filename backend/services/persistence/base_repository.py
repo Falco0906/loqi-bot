@@ -188,10 +188,14 @@ def _deserialize(cls: type[T], row: dict[str, Any]) -> T:
             kwargs[f.name] = datetime.fromisoformat(normalized)
         elif ftype is datetime and isinstance(val, datetime):
             kwargs[f.name] = val
+        elif issubclass(ftype, Enum) and (isinstance(val, str) or isinstance(val, int)):
+            # Must precede the plain-str branch: str-based Enums subclass str,
+            # so without this ordering a value like RegistrationSessionStatus
+            # would be left as a raw string and `.value` access would fail
+            # (e.g. /api/v1/auth/signup/email/status → 500).
+            kwargs[f.name] = ftype(val)
         elif issubclass(ftype, str) and isinstance(val, str):
             kwargs[f.name] = val
-        elif issubclass(ftype, Enum):
-            kwargs[f.name] = ftype(val)
         elif isinstance(val, str):
             kwargs[f.name] = val
         else:

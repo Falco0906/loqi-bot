@@ -85,6 +85,109 @@ class RefreshResult:
         self.event: IdentityEvent | None = None
 
 
+class _CompletionTracker:
+    """App-layer transaction for email registration completion.
+
+    PostgREST has no multi-statement transactions, so completion is made
+    atomic by tracking every row it creates and, on failure, compensating:
+    the created rows are hard-deleted (reverse creation order), the existing
+    verified email identity's user link is reverted, and the registration
+    session is restored to its pre-completion state. This prevents failed or
+    partial completions from leaving orphaned identity_users (or any other
+    half-created identity/org/credential/session rows).
+    """
+
+    def __init__(self, svc: "AuthService") -> None:
+        self._svc = svc
+        self._user_ids: list[str] = []
+        self._credential_ids: list[str] = []
+        self._org_ids: list[str] = []
+        self._membership_ids: list[str] = []
+        self._session_ids: list[str] = []
+        self._refresh_ids: list[str] = []
+        self._email_link: tuple[str, str] | None = None
+        self._reg_session_snapshot: tuple[str, object, str, str] | None = None
+
+    def record_user(self, user_id: str) -> None:
+        self._user_ids.append(user_id)
+
+    def record_credential(self, credential_id: str) -> None:
+        self._credential_ids.append(credential_id)
+
+    def record_org(self, org_id: str) -> None:
+        self._org_ids.append(org_id)
+
+    def record_membership(self, membership_id: str) -> None:
+        self._membership_ids.append(membership_id)
+
+    def record_session(self, session_id: str) -> None:
+        self._session_ids.append(session_id)
+
+    def record_refresh(self, refresh_id: str) -> None:
+        self._refresh_ids.append(refresh_id)
+
+    def record_email_link(self, email_identity_id: str, prev_user_id: str) -> None:
+        self._email_link = (email_identity_id, prev_user_id)
+
+    def snapshot_reg_session(self, reg_session: RegistrationSession) -> None:
+        self._reg_session_snapshot = (
+            reg_session.id, reg_session.status, reg_session.user_id, reg_session.organization_id,
+        )
+
+    async def rollback(self) -> None:
+        svc = self._svc
+        for rid in reversed(self._refresh_ids):
+            try:
+                await svc._token._refresh_token_repo.delete(rid)
+            except Exception:  # noqa: BLE001 — best-effort compensation
+                pass
+        for sid in reversed(self._session_ids):
+            try:
+                await svc._session_svc._session_repo.delete(sid)
+            except Exception:  # noqa: BLE001
+                pass
+        for mid in reversed(self._membership_ids):
+            try:
+                await svc._org._membership_repo.delete(mid)
+            except Exception:  # noqa: BLE001
+                pass
+        for oid in reversed(self._org_ids):
+            try:
+                await svc._org._org_repo.delete(oid)
+            except Exception:  # noqa: BLE001
+                pass
+        for cid in reversed(self._credential_ids):
+            try:
+                await svc._password._credential_repo.delete(cid)
+            except Exception:  # noqa: BLE001
+                pass
+        if self._email_link:
+            ei_id, prev_user_id = self._email_link
+            try:
+                ei = await svc._email_identity_repo.get(ei_id)
+                if ei is not None:
+                    ei.user_id = prev_user_id
+                    await svc._email_identity_repo.save(ei)
+            except Exception:  # noqa: BLE001
+                pass
+        for uid in reversed(self._user_ids):
+            try:
+                await svc._user._user_repo.delete(uid)
+            except Exception:  # noqa: BLE001
+                pass
+        if self._reg_session_snapshot:
+            rs_id, status, user_id, org_id = self._reg_session_snapshot
+            try:
+                rs = await svc._reg_session_repo.get(rs_id)
+                if rs is not None:
+                    rs.status = status
+                    rs.user_id = user_id
+                    rs.organization_id = org_id
+                    await svc._reg_session_repo.save(rs)
+            except Exception:  # noqa: BLE001
+                pass
+
+
 class AuthService:
 
     def __init__(
@@ -232,6 +335,11 @@ class AuthService:
         reg_session = await self._reg_session_repo.get(registration_session_id)
         if reg_session is None:
             raise RegistrationSessionNotFoundException()
+        if reg_session.status == RegistrationSessionStatus.COMPLETED:
+            # Idempotent retry of an already-completed registration: recover
+            # the canonical user and issue a fresh auth session rather than
+            # creating a second user/identity.
+            return await self._recover_completed(reg_session)
         if reg_session.status != RegistrationSessionStatus.VERIFIED:
             raise RegistrationSessionWrongStatusException(
                 f"Expected VERIFIED, got {reg_session.status.value}",
@@ -245,40 +353,106 @@ class AuthService:
         if email_identity is None:
             raise EmailNotVerifiedException("Verified email identity not found")
 
-        email_str = str(email_identity.email)
+        tracker = _CompletionTracker(self)
+        events: list[IdentityEvent] = []
+        try:
+            # 1. Canonical user. Reuse a user already created for this session
+            # (e.g. an interrupted attempt) so we never create multiple
+            # identity_users per registration session.
+            if reg_session.user_id:
+                user = await self._user.get_user(reg_session.user_id)
+            else:
+                tracker.record_email_link(email_identity.id, prev_user_id=email_identity.user_id)
+                user, linked_ei, user_event = await self._user.create_user(
+                    display_name, str(email_identity.email),
+                    email_identity_id=email_identity.id,
+                )
+                tracker.record_user(user.id)
+                email_identity = linked_ei
+                events.append(user_event)
 
-        user, _, user_event = await self._user.create_user(
-            display_name, email_str,
-        )
+            # 2. Ensure the verified email identity is linked to this user
+            # (UPDATE, never INSERT — no duplicate email identity).
+            if email_identity.user_id != user.id:
+                tracker.record_email_link(email_identity.id, prev_user_id=email_identity.user_id)
+                email_identity.user_id = user.id
+                email_identity.is_verified = True
+                email_identity.is_primary = True
+                email_identity.verified_at = email_identity.verified_at or datetime.now(timezone.utc)
+                await self._email_identity_repo.save(email_identity)
 
-        email_identity.user_id = user.id
-        await self._email_identity_repo.save(email_identity)
+            # 3. Password credential (skip if already set by a partial attempt).
+            if await self._password.has_password(user.id):
+                events.append(IdentityEvent.password_set(user.id))
+            else:
+                cred, password_event = await self._password.set_password(user.id, password)
+                tracker.record_credential(cred.id)
+                events.append(password_event)
 
-        cred, password_event = await self._password.set_password(user.id, password)
+            # 4. Organization (reuse one already created for this session).
+            if reg_session.organization_id:
+                org = await self._org.get_organization(reg_session.organization_id)
+            else:
+                org, membership, org_event = await self._org.create_organization(
+                    organization_name, user.id,
+                )
+                tracker.record_org(org.id)
+                tracker.record_membership(membership.id)
+                events.append(org_event)
 
-        org, membership, org_event = await self._org.create_organization(
-            organization_name, user.id,
-        )
+            # 5. Auth session + refresh token.
+            session, session_event = await self._session_svc.create_session(
+                user_id=user.id,
+                organization_id=org.id,
+                provider_type="email",
+            )
+            tracker.record_session(session.id)
+            events.append(session_event)
+            refresh_token, raw_refresh = await self._token.create_refresh_token(
+                session.id,
+            )
+            tracker.record_refresh(refresh_token.id)
 
-        session, session_event = await self._session_svc.create_session(
-            user_id=user.id,
-            organization_id=org.id,
-            provider_type="email",
-        )
-
-        refresh_token, raw_refresh = await self._token.create_refresh_token(
-            session.id,
-        )
-
-        reg_session.mark_completed(user.id, org.id)
-        await self._reg_session_repo.save(reg_session)
+            # 6. Finalize: mark the registration session completed.
+            tracker.snapshot_reg_session(reg_session)
+            reg_session.mark_completed(user.id, org.id)
+            await self._reg_session_repo.save(reg_session)
+        except Exception:
+            await tracker.rollback()
+            raise
 
         result = CompletionResult()
         result.user = user
         result.organization = org
         result.session = session
         result.refresh_token = raw_refresh
-        result.events = [user_event, password_event, org_event, session_event]
+        result.events = events
+        return result
+
+    async def _recover_completed(self, reg_session: RegistrationSession) -> CompletionResult:
+        """Issue a fresh session for an already-completed registration.
+
+        Called when completion is retried after the canonical user was already
+        created and the session marked COMPLETED. No second user or email
+        identity is created; the existing user simply receives a new auth
+        session (equivalent to a login) so the client can continue.
+        """
+        user = await self._user.get_user(reg_session.user_id)
+        org = await self._org.get_organization(reg_session.organization_id)
+
+        session, session_event = await self._session_svc.create_session(
+            user_id=user.id,
+            organization_id=org.id,
+            provider_type="email",
+        )
+        refresh_token, raw_refresh = await self._token.create_refresh_token(session.id)
+
+        result = CompletionResult()
+        result.user = user
+        result.organization = org
+        result.session = session
+        result.refresh_token = raw_refresh
+        result.events = [session_event]
         return result
 
     async def login(self, email: str, password: str) -> LoginResult:

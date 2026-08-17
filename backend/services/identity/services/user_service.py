@@ -25,6 +25,7 @@ class UserService:
 
     async def create_user(
         self, display_name: str, email: str, locale: str = "en",
+        email_identity_id: str = "",
     ) -> tuple[User, EmailIdentity, IdentityEvent]:
         user = User(
             id=str(uuid4()),
@@ -32,6 +33,21 @@ class UserService:
             locale=locale,
         )
         saved = await self._user_repo.save(user)
+
+        if email_identity_id:
+            # Registration-completion path: link the existing verified email
+            # identity (created during verification and referenced by
+            # registration_sessions.email_identity_id) instead of inserting a
+            # duplicate row (email_identities_email_uidx would reject it).
+            existing = await self._email_identity_repo.get(email_identity_id)
+            if existing is not None:
+                existing.user_id = saved.id
+                existing.is_verified = True
+                existing.is_primary = True
+                existing.verified_at = existing.verified_at or datetime.now(timezone.utc)
+                saved_email = await self._email_identity_repo.save(existing)
+                event = IdentityEvent.user_created(saved.id, email)
+                return saved, saved_email, event
 
         email_identity = EmailIdentity(
             user_id=saved.id,

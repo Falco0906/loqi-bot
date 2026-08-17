@@ -29,9 +29,24 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from dataclasses import dataclass, field
 from typing import Any
+
+# Make `services` importable regardless of CWD (matches the convention in
+# scripts/backfill_diagnose.py and scripts/mission_control_diag.py), so this
+# script can be run reliably from the repository root:
+#   python3 backend/scripts/reconcile_web_sessions.py
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _BACKEND_DIR not in sys.path:
+    sys.path.insert(0, _BACKEND_DIR)
+
+from dotenv import load_dotenv
+
+# Load backend/.env when present so a repo-root run reaches Supabase without
+# relying on ambient env (existing environment variables are never overridden).
+load_dotenv(os.path.join(_BACKEND_DIR, ".env"))
 
 
 def _web_token(telegram_id: str) -> str:
@@ -92,9 +107,11 @@ def build_reconciliation_plan(
     }
 
     def _target_key(table: str, row: dict[str, Any]) -> tuple[str, ...]:
+        # NOTE: connected_accounts has no organization_id column (migration
+        # 005); its stable unique key is (provider, account_id).
         fields = {
             "workspaces": ("organization_id",),
-            "connected_accounts": ("organization_id", "provider", "account_id"),
+            "connected_accounts": ("provider", "account_id"),
             "external_identities": ("provider", "provider_subject"),
         }[table]
         return tuple(sorted((row.get(k) or "") for k in fields))
@@ -213,7 +230,7 @@ def _load_snapshot():
     workspaces = _rows("workspaces", "id, owner_user_id, organization_id")
     connected_accounts = _rows(
         "connected_accounts",
-        "id, user_id, organization_id, provider, account_id",
+        "id, user_id, provider, account_id",
     )
     external_identities = _rows(
         "external_identities",
@@ -228,7 +245,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     snapshot = _load_snapshot()
-    plan = build_reconciliation_plan(*snapshot)
+    plan = build_reconciliation_plan(
+        web_users=snapshot[0],
+        bindings=snapshot[1],
+        identity_user_ids=snapshot[2],
+        workspaces=snapshot[3],
+        connected_accounts=snapshot[4],
+        external_identities=snapshot[5],
+    )
     summary = apply_reconciliation_plan(plan, dry_run=not args.apply)
 
     print("SaaS-1.7 web-session reconciliation —", "DRY RUN" if not args.apply else "APPLIED")

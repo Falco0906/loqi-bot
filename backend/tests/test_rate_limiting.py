@@ -131,6 +131,7 @@ class TestConfigValidation:
             "GOOGLE_CLIENT_ID": "c",
             "GOOGLE_CLIENT_SECRET": "s",
             "GOOGLE_REDIRECT_URI": "https://app.tryloqi.com/api/auth/gmail/callback",
+            "FRONTEND_URL": "https://app.tryloqi.com",
             "IDENTITY_PEPPER": "p" * 32,
             "IDENTITY_SIGNING_KEY_DEFAULT": "k" * 32,
             "LOQI_CREDENTIAL_ENCRYPTION_KEY": "ab" * 32,

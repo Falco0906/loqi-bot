@@ -28,6 +28,7 @@ VALID_PRODUCTION = {
     "GOOGLE_CLIENT_ID": "client",
     "GOOGLE_CLIENT_SECRET": "secret",
     "GOOGLE_REDIRECT_URI": "https://app.tryloqi.com/api/auth/gmail/callback",
+    "FRONTEND_URL": "https://app.tryloqi.com",
     "IDENTITY_PEPPER": "a" * 32,
     "IDENTITY_SIGNING_KEY_DEFAULT": "b" * 32,
     "PORT": "10000",
@@ -74,6 +75,14 @@ class TestProductionRequired:
         del env["GOOGLE_REDIRECT_URI"]
         errors = _errors(env)
         assert any("GOOGLE_REDIRECT_URI" in error for error in errors)
+
+    def test_missing_frontend_url_fails_in_production(self):
+        """FRONTEND_URL builds the transactional email verification links; a
+        missing value would silently default to http://localhost:3000."""
+        env = {**VALID_PRODUCTION}
+        del env["FRONTEND_URL"]
+        errors = _errors(env)
+        assert any("FRONTEND_URL" in error for error in errors)
 
     def test_identity_secret_values_never_appear_in_errors(self):
         env = {**VALID_PRODUCTION}

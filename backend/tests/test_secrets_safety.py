@@ -29,6 +29,7 @@ VALID_PRODUCTION = {
     "GOOGLE_CLIENT_ID": "client",
     "GOOGLE_CLIENT_SECRET": SENTINEL,
     "GOOGLE_REDIRECT_URI": "https://app.tryloqi.com/api/auth/gmail/callback",
+    "FRONTEND_URL": "https://app.tryloqi.com",
     "IDENTITY_PEPPER": "p" * 32,
     "IDENTITY_SIGNING_KEY_DEFAULT": "k" * 32,
     "PORT": "10000",

@@ -31,6 +31,9 @@ PRODUCTION_REQUIRED = (
     "GOOGLE_CLIENT_ID",
     "GOOGLE_CLIENT_SECRET",
     "GOOGLE_REDIRECT_URI",
+    # Transactional email verification links are built from FRONTEND_URL;
+    # without it they silently default to http://localhost:3000 in production.
+    "FRONTEND_URL",
     # SaaS-1.7: the identity crypto service reads these (with DEVELOPMENT
     # fallbacks when unset). Production must never silently fall back to
     # development secrets — require explicit production values.

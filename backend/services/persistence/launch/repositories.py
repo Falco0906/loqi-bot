@@ -172,6 +172,35 @@ class WorkspaceRepository(LaunchRepository[Workspace]):
     async def list_for_owner(self, user_id: str) -> list[Workspace]:
         return await self._list([("owner_user_id", "eq", user_id)])
 
+    async def find_active_by_owner(self, user_id: str) -> Workspace | None:
+        """Resolve the user's canonical active workspace by durable ownership.
+
+        This is the tenant-resolution key for SaaS-2.1: the workspace identity
+        is discovered from the durable owner relationship, never from a
+        workflow/web-session id.
+        """
+        return await self._first_where(
+            [
+                ("owner_user_id", "eq", user_id),
+                ("deleted_at", "is", "null"),
+            ],
+            order="created_at",
+            desc=True,
+        )
+
+    async def find_active_by_owner_and_org(
+        self, user_id: str, organization_id: str,
+    ) -> Workspace | None:
+        return await self._first_where(
+            [
+                ("owner_user_id", "eq", user_id),
+                ("organization_id", "eq", organization_id),
+                ("deleted_at", "is", "null"),
+            ],
+            order="created_at",
+            desc=True,
+        )
+
 
 class WorkspaceMemberRepository(LaunchRepository[WorkspaceMember]):
     _table_name = "workspace_members"

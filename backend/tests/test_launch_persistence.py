@@ -239,6 +239,10 @@ class _ScriptedClient:
         self._filters.append((col, val))
         return self
 
+    def is_(self, col, val):
+        self._filters.append((col, val))
+        return self
+
     def limit(self, *_):
         return self
 
@@ -255,7 +259,10 @@ class _ScriptedClient:
     def execute(self):
         rows = self._tables.get(self._table, [])
         for col, val in self._filters:
-            rows = [r for r in rows if r.get(col) == val]
+            if val == "null":
+                rows = [r for r in rows if r.get(col) is None]
+            else:
+                rows = [r for r in rows if r.get(col) == val]
         result = MagicMock()
         result.data = [dict(r) for r in rows]
         return result
@@ -275,6 +282,7 @@ class TestWorkspaceStateCanonicalFlip:
         t = "2026-01-01T00:00:00+00:00"
         client = self._shared_client({
             "workflow_sessions": [{"id": "ws1", "user_id": "u1", "channel": "workspace", "session_key": "u1"}],
+            "workspaces": [{"id": "ws1", "owner_user_id": "u1", "organization_id": "", "status": "active"}],
             "campaigns": [{
                 "id": "c1", "workspace_id": "ws1", "organization_id": "",
                 "name": "Q3 Outreach", "objective": "Book demos",
@@ -344,6 +352,7 @@ class TestWorkspaceStateCanonicalFlip:
         t = "2026-01-01T00:00:00+00:00"
         client = self._shared_client({
             "workflow_sessions": [{"id": "ws1", "user_id": "u1", "channel": "workspace", "session_key": "u1"}],
+            "workspaces": [{"id": "ws1", "owner_user_id": "u1", "organization_id": "", "status": "active"}],
             "campaigns": [{
                 "id": "c1", "workspace_id": "ws1", "name": "Q3 Outreach",
                 "objective": "", "status": "running", "search_query": "",
@@ -405,6 +414,7 @@ class TestWorkspaceStateCanonicalFlip:
         from services.workspace_state import load_workspace_state
         client = self._shared_client({
             "workflow_sessions": [{"id": "ws1", "user_id": "u1", "channel": "workspace", "session_key": "u1"}],
+            "workspaces": [{"id": "ws1", "owner_user_id": "u1", "organization_id": "", "status": "active"}],
             "campaigns": [],
             "workflow_events": [
                 {"workflow_session_id": "ws1", "event_type": "campaign.created", "payload": {
@@ -458,6 +468,7 @@ class TestEnsureWorkspace:
         return client, cm
 
     def test_creates_workspace_and_owner_member(self):
+        from uuid import UUID
         from services.workspace_state import ensure_workspace
         tables = {
             "workflow_sessions": [{"id": "ws1", "user_id": "u1", "channel": "workspace", "session_key": "u1"}],
@@ -466,16 +477,38 @@ class TestEnsureWorkspace:
         }
         client, cm = self._shared_client(tables)
         set_connection_manager(cm)
-        with patch("services.conversation_store.get_supabase_client", return_value=client), \
-             patch("services.workspace_state.get_supabase_client", return_value=client):
+        with patch("services.workspace_state.get_supabase_client", return_value=client):
             ws_id = ensure_workspace("u1", name="Personal Workspace")
-        assert ws_id == "ws1"
+        # SaaS-2.1: the workspace owns its own durable uuid — NOT the workflow
+        # session id, even though a workflow_sessions row exists.
+        UUID(ws_id)  # raises if not a real uuid
+        assert ws_id != "ws1"
         assert len(tables["workspaces"]) == 1
-        assert tables["workspaces"][0]["id"] == "ws1"
+        assert tables["workspaces"][0]["id"] == ws_id
         assert tables["workspaces"][0]["owner_user_id"] == "u1"
         assert len(tables["workspace_members"]) == 1
         assert tables["workspace_members"][0]["user_id"] == "u1"
         assert tables["workspace_members"][0]["role"] == "owner"
+
+    def test_workspace_id_survives_workflow_session_recreation(self):
+        from services.workspace_state import ensure_workspace
+        tables = {
+            "workflow_sessions": [{"id": "ws1", "user_id": "u1", "channel": "workspace", "session_key": "u1"}],
+            "workspaces": [{"id": "w-0001", "owner_user_id": "u1", "status": "active"}],
+            "workspace_members": [{"workspace_id": "w-0001", "user_id": "u1"}],
+        }
+        client, cm = self._shared_client(tables)
+        set_connection_manager(cm)
+        with patch("services.workspace_state.get_supabase_client", return_value=client):
+            ws_id = ensure_workspace("u1")
+        # Existing durable workspace resolved by owner — not the workflow session id.
+        assert ws_id == "w-0001"
+        assert len(tables["workspaces"]) == 1
+        # A recreated workflow session must not change the workspace identity.
+        tables["workflow_sessions"] = [{"id": "ws-NEW", "user_id": "u1", "channel": "workspace", "session_key": "u1"}]
+        with patch("services.workspace_state.get_supabase_client", return_value=client):
+            ws_id2 = ensure_workspace("u1")
+        assert ws_id2 == "w-0001"
 
     def test_does_not_duplicate_on_second_call(self):
         from services.workspace_state import ensure_workspace
@@ -486,8 +519,7 @@ class TestEnsureWorkspace:
         }
         client, cm = self._shared_client(tables)
         set_connection_manager(cm)
-        with patch("services.conversation_store.get_supabase_client", return_value=client), \
-             patch("services.workspace_state.get_supabase_client", return_value=client):
+        with patch("services.workspace_state.get_supabase_client", return_value=client):
             ws_id = ensure_workspace("u1")
         assert ws_id == "ws1"
         assert len(tables["workspaces"]) == 1

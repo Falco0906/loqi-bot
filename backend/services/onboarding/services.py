@@ -545,12 +545,22 @@ class OnboardingService:
         if self._user_service is not None:
             user = await self._user_service.get_user(user_id)
 
-        org = await self._org_service.create_organization(
-            name=workspace_name,
-            created_by=user_id,
-            slug=slug or None,
-            display_name=workspace_name,
-        )
+        # SaaS-2.1: never create a second organization for a user. The
+        # canonical organization comes from the user's active membership
+        # (created by signup completion or an earlier onboarding run); reuse it
+        # so a completed account owns exactly ONE organization. A new
+        # organization is created only when none exists yet (e.g. a recovered
+        # legacy account).
+        orgs = await self._org_service.list_user_organizations(user_id)
+        if orgs:
+            org = orgs[0]
+        else:
+            org = await self._org_service.create_organization(
+                name=workspace_name,
+                created_by=user_id,
+                slug=slug or None,
+                display_name=workspace_name,
+            )
 
         # Every user auto-owns a Personal Workspace within the org so the
         # canonical ownership chain (Org → Workspace → campaigns) holds.

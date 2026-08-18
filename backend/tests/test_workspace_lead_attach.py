@@ -174,11 +174,11 @@ def env(monkeypatch):
     async def fake_async_workspace(user_id: str) -> str:
         return "ws-1"
 
-    def fake_session_id(user_id: str) -> str:
+    def fake_workflow_session_id(user_id: str) -> str:
         return "ws-1"
 
     monkeypatch.setattr(workspace_state, "_async_workspace", fake_async_workspace)
-    monkeypatch.setattr(workspace_state, "_session_id", fake_session_id)
+    monkeypatch.setattr(workspace_state, "_workflow_session_id", fake_workflow_session_id)
     monkeypatch.setattr(workspace_state, "LeadRepository", lambda: _FakeLeadRepo(lead_profiles))
     monkeypatch.setattr(workspace_state, "CompanyRepository", lambda: _FakeCompanyRepo(companies))
     monkeypatch.setattr(workspace_state, "WorkspaceCompanyRepository", lambda: _FakeWorkspaceCompanyRepo(ws_companies))

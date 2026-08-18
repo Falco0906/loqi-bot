@@ -16,7 +16,7 @@ import asyncio
 import os
 import sys
 import uuid
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 os.chdir(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ".")
@@ -133,7 +133,7 @@ class TestDurableSentStatus:
                 rows[entity.id] = entity
 
         monkeypatch.setattr(workspace_state, "DraftRepository", FakeRepo)
-        monkeypatch.setattr(workspace_state, "_session_id", lambda user_id: "ws-1")
+        monkeypatch.setattr(workspace_state, "_async_workspace", AsyncMock(return_value="ws-1"))
         monkeypatch.setattr("services.supabase.get_supabase_client", lambda: MagicMock())
 
         ok = asyncio.run(workspace_state.persist_draft_update_awaited(

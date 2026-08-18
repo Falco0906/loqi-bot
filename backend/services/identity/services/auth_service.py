@@ -443,6 +443,26 @@ class AuthService:
                 tracker.record_membership(membership.id)
                 events.append(org_event)
 
+            # 4b. Canonical workspace under the canonical organization
+            # (SaaS-2.1). Best-effort and idempotent: the workspace is minted
+            # once with its own durable uuid and reused by onboarding/web
+            # bootstrap afterwards. Gated to the durable (Supabase) provider so
+            # in-memory/dev/test paths never touch a real workspace table.
+            try:
+                from services.persistence.config import (
+                    RepositoryProvider,
+                    get_repository_provider,
+                )
+                if get_repository_provider() == RepositoryProvider.SUPABASE:
+                    from services.workspace_state import ensure_workspace
+                    await asyncio.to_thread(
+                        ensure_workspace,
+                        user.id,
+                        organization_id=org.id,
+                    )
+            except Exception:  # noqa: BLE001 — completion must never fail on workspace bootstrap
+                pass
+
             # 5. Auth session + refresh token.
             session, session_event = await self._session_svc.create_session(
                 user_id=user.id,

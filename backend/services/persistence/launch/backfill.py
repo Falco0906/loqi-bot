@@ -155,9 +155,19 @@ async def _backfill_session_async(user_id: str, session_id: str) -> None:
 
     # Safety net for sessions backfilled before the marker column existed:
     # canonical campaign rows already seeded → nothing left to replay.
+    # SaaS-2.1: the durable workspace id is independent of the workflow session
+    # id, so the "already seeded" guard must key on the durable workspace, not
+    # the session id. Falls back to the session id (legacy workspaces where the
+    # two are the same row).
+    from services.workspace_state import _async_workspace
+
+    try:
+        workspace_id = await _async_workspace(user_id) or session_id
+    except BaseException:
+        workspace_id = session_id
     campaign_repo = CampaignRepository()
     try:
-        existing = await campaign_repo.list_for_workspace(session_id)
+        existing = await campaign_repo.list_for_workspace(workspace_id)
     except BaseException:
         raise
     if existing:

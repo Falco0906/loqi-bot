@@ -113,12 +113,43 @@ def _run_sync(coro_or_fn, timeout: float = 30.0):
     return holder.get("value")
 
 
-def _session_id(user_id: str) -> str:
+def _workflow_session_id(user_id: str) -> str:
+    """The channel='workspace' workflow session id (chat/log object only).
+
+    SaaS-2.1: this is deliberately NOT the workspace identity. It keys the
+    legacy workflow_events log/replay path; a workflow session may be
+    recreated without changing the durable workspace id.
+    """
     return ensure_workflow_session(
         user_id=user_id,
         channel="workspace",
         session_key=user_id,
     )
+
+
+async def _canonical_organization_id(user_id: str) -> str:
+    """Resolve the user's canonical organization from their active membership.
+
+    Server-side authority only: never trusts client-supplied organization ids.
+    The canonical org is the active organization membership on the durable
+    memberships table (written by signup completion / onboarding / recovery).
+    """
+    client = get_supabase_client()
+    if client is None or not user_id:
+        return ""
+    try:
+        result = await asyncio.to_thread(
+            lambda: client.table("memberships")
+            .select("organization_id")
+            .eq("user_id", user_id)
+            .eq("status", "active")
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(result, "data", None) or []
+        return str(rows[0].get("organization_id") or "") if rows else ""
+    except Exception:
+        return ""
 
 
 # ─── Workspaces ─────────────────────────────────────────────────────────
@@ -142,24 +173,24 @@ def ensure_workspace(
     organization_id: str = "",
     slug: str = "",
 ) -> str | None:
-    """Return the workspace id (= its workflow_sessions.id), creating the
-    canonical workspaces + workspace_members rows on first touch."""
-    try:
-        workspace_id = _session_id(user_id)
-        if not workspace_id:
-            return None
-        client = get_supabase_client()
-        if client is None:
-            return workspace_id
+    """Return the canonical durable workspace id for the user (create if needed).
 
-        async def _upsert():
-            await _ensure_workspace_row(user_id, workspace_id, name=name,
-                                        organization_id=organization_id, slug=slug)
-        _run_sync(_upsert())
-        return workspace_id
+    SaaS-2.1: the workspace owns a real durable uuid minted for itself and is
+    resolved by the durable owner relationship (owner_user_id), independent of
+    workflow_sessions.id, web-session ids and access tokens. Repeated calls
+    return the same workspace; a recreated workflow session never changes it.
+    Creates the workspaces + workspace_members rows on first touch.
+    """
+    try:
+        return _run_sync(_async_workspace(
+            user_id,
+            name=name,
+            organization_id=organization_id,
+            slug=slug,
+        ))
     except Exception as error:
         print(f"[workspace_state] ensure_workspace failed: {error}")
-        return _session_id(user_id) or None
+        return None
 
 
 # ─── Events (compatibility log) ────────────────────────────────────────
@@ -169,7 +200,7 @@ def append_event(user_id: str, event_type: str, payload: dict[str, Any]) -> bool
     if client is None or not user_id:
         return False
     try:
-        session_id = _session_id(user_id)
+        session_id = _workflow_session_id(user_id)
         result = client.table("workflow_events").insert({
             "workflow_session_id": session_id,
             "event_type": event_type,
@@ -339,15 +370,60 @@ async def _write_campaign_row(user_id: str, campaign: dict[str, Any]) -> None:
         await _write_strategy(campaign_id=entity.id, strategy=strategy)
 
 
-async def _async_workspace(user_id: str) -> str | None:
-    client = get_supabase_client()
-    if client is None:
-        return _session_id(user_id) or None
-    ws_id = _session_id(user_id)
-    if not ws_id:
-        return None
-    await _ensure_workspace_row(user_id, ws_id)
-    return ws_id
+async def _async_workspace(
+    user_id: str,
+    *,
+    name: str = "Personal Workspace",
+    organization_id: str = "",
+    slug: str = "",
+) -> str | None:
+    """Resolve the user's canonical durable workspace id (find or create).
+
+    The workspace is keyed by the durable owner relationship
+    (``owner_user_id``) and its id is a uuid minted for the workspace itself —
+    never derived from workflow_sessions.id, web-session ids, access tokens or
+    client-supplied ids. The ``organization_id`` is server-derived from the
+    canonical active membership when not supplied.
+    """
+    repo = WorkspaceRepository()
+    existing = await repo.find_active_by_owner(user_id)
+    if existing is not None:
+        await _attach_canonical_org(existing, organization_id)
+        return existing.id
+
+    org_id = organization_id or await _canonical_organization_id(user_id)
+    workspace_id = str(uuid4())
+    await _ensure_workspace_row(
+        user_id, workspace_id,
+        name=name, organization_id=org_id, slug=slug,
+    )
+    # Re-resolve after create so a concurrent first-touch converges on one
+    # workspace even without a DB-level unique constraint (added in a later
+    # phase once legacy duplicates are reconciled).
+    found = await repo.find_active_by_owner(user_id)
+    return found.id if found is not None else workspace_id
+
+
+async def _attach_canonical_org(workspace: Workspace, organization_id: str) -> None:
+    """Converge a workspace to its canonical organization.
+
+    Attaches the server-derived org when a canonical organization is now known
+    (e.g. a workspace minted by an anonymous web-session bootstrap before
+    signup completion). No-op on the hot read path when no org is supplied and
+    the workspace is already org-attached.
+    """
+    if organization_id:
+        if workspace.organization_id == organization_id:
+            return
+        workspace.organization_id = organization_id
+    elif workspace.organization_id:
+        return
+    else:
+        org_id = await _canonical_organization_id(workspace.owner_user_id)
+        if not org_id or workspace.organization_id == org_id:
+            return
+        workspace.organization_id = org_id
+    await WorkspaceRepository().save(workspace)
 
 
 async def _ensure_workspace_row(
@@ -1030,7 +1106,7 @@ def load_drafts_only(user_id: str) -> list[dict[str, Any]]:
     strategies.
     """
     client = get_supabase_client()
-    workspace_id = _session_id(user_id)
+    workspace_id = _run_sync(_async_workspace(user_id))
     if client is not None and workspace_id:
         try:
             rows = _run_sync(DraftRepository().list_for_workspace(workspace_id))
@@ -1065,7 +1141,7 @@ async def _load_canonical_state(
     campaign_id: str | None = None,
     include_details: bool = True,
 ) -> Any:
-    workspace_id = _session_id(user_id)
+    workspace_id = await _async_workspace(user_id)
     if not workspace_id:
         return None
     campaign_repo = CampaignRepository()

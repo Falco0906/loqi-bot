@@ -60,6 +60,7 @@ class ConnectedAccount:
 class Workspace:
     id: str = field(default_factory=_new_id)
     organization_id: str = ""
+    workflow_session_id: str = ""
     name: str = ""
     slug: str = ""
     owner_user_id: str = ""

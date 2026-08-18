@@ -166,6 +166,17 @@ class WorkspaceRepository(LaunchRepository[Workspace]):
     def _entity_type(cls) -> type[Workspace]:
         return Workspace
 
+    def _to_row(self, entity: Workspace) -> dict[str, Any]:
+        row = super()._to_row(entity)
+        # ``workflow_session_id`` is provenance only (SaaS-2.3). Omit it when
+        # empty so writes stay schema-cache compatible with deployments that
+        # have not yet applied migration 028 (a write of a column absent from
+        # the PostgREST schema cache would otherwise raise PGRST204). When set,
+        # it is a valid workflow-session reference, never the workspace id.
+        if not row.get("workflow_session_id"):
+            row.pop("workflow_session_id", None)
+        return row
+
     async def find_by_owner(self, user_id: str) -> Workspace | None:
         return await self._first_where([("owner_user_id", "eq", user_id)])
 

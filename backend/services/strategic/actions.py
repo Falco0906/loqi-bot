@@ -296,8 +296,8 @@ class StrategicActionService:
         return await _async_workspace(owner_id) if owner_id else None
 
     async def _owned_update(self, workspace_id: str, update_id: str):
-        update = await StrategicUpdateRepository().get(update_id)
-        if update is None or update.workspace_id != workspace_id:
+        update = await StrategicUpdateRepository().get_for_workspace(update_id, workspace_id)
+        if update is None:
             return None
         return update
 
@@ -305,8 +305,8 @@ class StrategicActionService:
         workspace_id = await self._workspace(owner_id)
         if not workspace_id:
             return None, None
-        action = await StrategicActionRepository().get(action_id)
-        if action is None or action.workspace_id != workspace_id or action.deleted_at is not None:
+        action = await StrategicActionRepository().get_for_workspace(action_id, workspace_id)
+        if action is None or action.deleted_at is not None:
             return None, workspace_id
         return action, workspace_id
 

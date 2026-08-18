@@ -119,8 +119,8 @@ class StrategicIntelligenceService:
         workspace_id = await self._workspace_for_owner(owner_id)
         if not workspace_id:
             return None
-        update = await StrategicUpdateRepository().get(update_id)
-        if update is None or update.workspace_id != workspace_id or update.deleted_at is not None:
+        update = await StrategicUpdateRepository().get_for_workspace(update_id, workspace_id)
+        if update is None or update.deleted_at is not None:
             return None
         return strategic_update_to_dict(update)
 
@@ -129,8 +129,8 @@ class StrategicIntelligenceService:
         if not workspace_id:
             return None
         repo = StrategicUpdateRepository()
-        update = await repo.get(update_id)
-        if update is None or update.workspace_id != workspace_id or update.deleted_at is not None:
+        update = await repo.get_for_workspace(update_id, workspace_id)
+        if update is None or update.deleted_at is not None:
             return None
         now = datetime.now(timezone.utc)
         before = strategic_update_to_dict(update)

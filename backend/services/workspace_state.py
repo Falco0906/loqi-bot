@@ -233,13 +233,16 @@ async def duplicate_campaign(user_id: str, campaign_id: str) -> dict[str, Any] |
         return None
     campaign_repo = CampaignRepository()
     source = await campaign_repo.get(campaign_id)
-    if source is None or source.status == "deleted":
+    # SaaS-2.4: a campaign may only be duplicated within the caller's own
+    # workspace. Fetching by id alone is not enough — verify ownership before
+    # reading/copying (cross-tenant IDOR guard). Same safe 404 as not-found.
+    if source is None or source.status == "deleted" or source.workspace_id != workspace_id:
         return None
 
     new_id = str(uuid4())
     entity = Campaign(
         id=new_id,
-        workspace_id=source.workspace_id,
+        workspace_id=workspace_id,
         organization_id=source.organization_id,
         name=f"{source.name} (Copy)",
         objective=source.objective,
@@ -570,6 +573,11 @@ async def _update_campaign_row(user_id: str, campaign_id: str, updates: dict[str
     repo = CampaignRepository()
     entity = await repo.get(campaign_id)
     if entity is None:
+        return
+    # SaaS-2.4: never update a campaign outside the caller's workspace (defense
+    # in depth below the endpoint-level gate). Same safe silent no-op.
+    workspace_id = await _async_workspace(user_id)
+    if not workspace_id or entity.workspace_id != workspace_id:
         return
     for key in ("name", "objective", "status", "search_query", "discovery_id"):
         if updates.get(key) is not None:
@@ -978,6 +986,11 @@ async def _update_draft_row(user_id: str, draft_id: str, updates: dict[str, Any]
     repo = DraftRepository()
     entity = await repo.get(draft_id)
     if entity is None:
+        return
+    # SaaS-2.4: never update a draft outside the caller's workspace (defense in
+    # depth below the endpoint-level gate). Same safe silent no-op.
+    workspace_id = await _async_workspace(user_id)
+    if not workspace_id or entity.workspace_id != workspace_id:
         return
     for key in ("subject", "status", "tone", "length", "body"):
         if updates.get(key) is not None:

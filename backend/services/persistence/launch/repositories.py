@@ -262,6 +262,13 @@ class WorkspaceCompanyRepository(LaunchRepository[WorkspaceCompany]):
             ("company_id", "eq", company_id),
         ])
 
+    async def get_for_workspace(self, entity_id: str, workspace_id: str) -> WorkspaceCompany | None:
+        """Fetch by id constrained to a workspace (tenant-scoped lookup)."""
+        return await self._first_where([
+            ("id", "eq", entity_id),
+            ("workspace_id", "eq", workspace_id),
+        ])
+
     async def list_for_workspace(self, workspace_id: str) -> list[WorkspaceCompany]:
         return await self._list([("workspace_id", "eq", workspace_id)])
 
@@ -294,6 +301,13 @@ class WorkspaceLeadRepository(LaunchRepository[WorkspaceLead]):
         return await self._first_where([
             ("workspace_id", "eq", workspace_id),
             ("lead_id", "eq", lead_id),
+        ])
+
+    async def get_for_workspace(self, entity_id: str, workspace_id: str) -> WorkspaceLead | None:
+        """Fetch by id constrained to a workspace (tenant-scoped lookup)."""
+        return await self._first_where([
+            ("id", "eq", entity_id),
+            ("workspace_id", "eq", workspace_id),
         ])
 
     async def list_for_workspace(self, workspace_id: str) -> list[WorkspaceLead]:
@@ -374,6 +388,13 @@ class CampaignRepository(LaunchRepository[Campaign]):
     async def list_for_workspace(self, workspace_id: str) -> list[Campaign]:
         return await self._list([("workspace_id", "eq", workspace_id)], order="created_at", desc=True)
 
+    async def get_for_workspace(self, entity_id: str, workspace_id: str) -> Campaign | None:
+        """Fetch by id constrained to a workspace (tenant-scoped lookup)."""
+        return await self._first_where([
+            ("id", "eq", entity_id),
+            ("workspace_id", "eq", workspace_id),
+        ])
+
 
 class CampaignLeadRepository(LaunchRepository[CampaignLead]):
     _table_name = "campaign_leads"
@@ -418,6 +439,13 @@ class DraftRepository(LaunchRepository[Draft]):
     async def list_for_workspace(self, workspace_id: str) -> list[Draft]:
         return await self._list([("workspace_id", "eq", workspace_id)])
 
+    async def get_for_workspace(self, entity_id: str, workspace_id: str) -> Draft | None:
+        """Fetch by id constrained to a workspace (tenant-scoped lookup)."""
+        return await self._first_where([
+            ("id", "eq", entity_id),
+            ("workspace_id", "eq", workspace_id),
+        ])
+
     async def list_for_campaign(self, campaign_id: str) -> list[Draft]:
         return await self._list([("campaign_id", "eq", campaign_id)])
 
@@ -460,6 +488,13 @@ class KnowledgeItemRepository(LaunchRepository[KnowledgeItem]):
             where.append(("category", "eq", category))
         return await self._list(where, order="updated_at", desc=True)
 
+    async def get_for_workspace(self, entity_id: str, workspace_id: str) -> KnowledgeItem | None:
+        """Fetch by id constrained to a workspace (tenant-scoped lookup)."""
+        return await self._first_where([
+            ("id", "eq", entity_id),
+            ("workspace_id", "eq", workspace_id),
+        ])
+
 
 class KnowledgeSourceRepository(LaunchRepository[KnowledgeSource]):
     """User-owned source material (PR5)."""
@@ -473,6 +508,13 @@ class KnowledgeSourceRepository(LaunchRepository[KnowledgeSource]):
 
     async def list_for_workspace(self, workspace_id: str) -> list[KnowledgeSource]:
         return await self._list([("workspace_id", "eq", workspace_id)])
+
+    async def get_for_workspace(self, entity_id: str, workspace_id: str) -> KnowledgeSource | None:
+        """Fetch by id constrained to a workspace (tenant-scoped lookup)."""
+        return await self._first_where([
+            ("id", "eq", entity_id),
+            ("workspace_id", "eq", workspace_id),
+        ])
 
 
 class StrategicUpdateRepository(LaunchRepository[StrategicUpdate]):
@@ -494,6 +536,13 @@ class StrategicUpdateRepository(LaunchRepository[StrategicUpdate]):
             ("pattern_key", "eq", pattern_key),
         ])
 
+    async def get_for_workspace(self, entity_id: str, workspace_id: str) -> StrategicUpdate | None:
+        """Fetch by id constrained to a workspace (tenant-scoped lookup)."""
+        return await self._first_where([
+            ("id", "eq", entity_id),
+            ("workspace_id", "eq", workspace_id),
+        ])
+
 
 class StrategicActionRepository(LaunchRepository[StrategicAction]):
     """Supabase persistence for explicit Strategic Action approvals."""
@@ -510,6 +559,13 @@ class StrategicActionRepository(LaunchRepository[StrategicAction]):
             ("workspace_id", "eq", workspace_id),
             ("strategic_update_id", "eq", update_id),
         ], order="created_at", desc=True)
+
+    async def get_for_workspace(self, entity_id: str, workspace_id: str) -> StrategicAction | None:
+        """Fetch by id constrained to a workspace (tenant-scoped lookup)."""
+        return await self._first_where([
+            ("id", "eq", entity_id),
+            ("workspace_id", "eq", workspace_id),
+        ])
 
 
 class NotificationRepository(LaunchRepository[Notification]):

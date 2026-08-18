@@ -2309,17 +2309,37 @@ async def gmail_auth_url(request: Request, session_token: str = ""):
     from services.google_auth import get_google_auth_url
     from services.oauth_state import issue_state
     try:
+        # SaaS-2.4: the OAuth state subject must be a provable identity. The
+        # caller may provide a canonical bearer token OR their own web-session
+        # token; a bare client-supplied user_id must NEVER become the subject
+        # (otherwise an unauthenticated caller could mint state bound to a
+        # victim's user id and plant their own Gmail credentials on the
+        # victim's connected_accounts row).
         user_id = ""
         if request.headers.get("authorization", ""):
             from services.identity.api import get_authenticated_user_id
             user_id = await get_authenticated_user_id(request)
-        state_subject = user_id or session_token
+        if not user_id and session_token:
+            # Only accept a web-session token that actually resolves to a user.
+            try:
+                summary = await asyncio.to_thread(engine.get_web_session_summary, session_token)
+            except Exception:
+                summary = None
+            if summary and summary.get("user_id"):
+                user_id = str(summary["user_id"])
+        if not user_id:
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication required to connect a provider",
+            )
         # Single-use server-side state token: the callback verifies it before
         # exchanging the authorization code (CSRF protection). Durable so a
         # callback landing on another instance/after restart still validates.
-        state = await issue_state(state_subject or "gmail_user")
+        state = await issue_state(user_id)
         url = get_google_auth_url(state=state)
         return {"ok": True, "url": url}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -5752,9 +5772,10 @@ async def mission_control_summary(session_token: str, request: Request, onboardi
     reply_rate_heuristic = round((approved_drafts / total_drafts * 100) if total_drafts else 0)
 
     try:
-        if onboarding_user_id:
-            current_jobs = job_manager.list_active_jobs(onboarding_user_id)
-        elif db_user_id:
+        # SaaS-2.4: never trust the client-supplied onboarding_user_id query
+        # param as a target identity. Jobs/wizard data are always read for the
+        # authenticated caller (db_user_id) only.
+        if db_user_id:
             current_jobs = job_manager.list_active_jobs(db_user_id)
         else:
             current_jobs = []
@@ -5763,13 +5784,13 @@ async def mission_control_summary(session_token: str, request: Request, onboardi
 
     initial_research = None
     initial_research_result_count = None
-    if onboarding_user_id:
+    if db_user_id:
         try:
-            wizard = await _onboarding_svc.get_wizard_data(onboarding_user_id)
+            wizard = await _onboarding_svc.get_wizard_data(db_user_id)
             job_id = str(wizard.get("initial_research_job_id") or "")
             if not job_id:
                 recent_searches = [
-                    job for job in job_manager.list_recent_jobs(onboarding_user_id)
+                    job for job in job_manager.list_recent_jobs(db_user_id)
                     if job.get("type") == "search"
                 ]
                 if recent_searches:
@@ -5853,7 +5874,7 @@ async def briefing_endpoint(session_token: str, request: Request, onboarding_use
         campaigns=payload["campaigns"],
         drafts=payload["drafts"],
         total_leads=payload["total_leads"],
-        db_user_id=onboarding_user_id or db_user_id,
+        db_user_id=db_user_id,
         prebuilt=payload,
     )
     _mc_phase("handler total", _mc_t)

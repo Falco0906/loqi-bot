@@ -197,8 +197,8 @@ class KnowledgeService:
         return results[:limit]
 
     async def get_item(self, workspace_id: str, item_id: str) -> dict[str, Any] | None:
-        item = await self._items.get(item_id)
-        if item is None or item.workspace_id != workspace_id or item.deleted_at is not None:
+        item = await self._items.get_for_workspace(item_id, workspace_id)
+        if item is None or item.deleted_at is not None:
             return None
         return item_to_dict(item)
 
@@ -248,8 +248,8 @@ class KnowledgeService:
         source_type: str | None = None,
         source_id: str | None = None,
     ) -> dict[str, Any] | None:
-        item = await self._items.get(item_id)
-        if item is None or item.workspace_id != workspace_id or item.deleted_at is not None:
+        item = await self._items.get_for_workspace(item_id, workspace_id)
+        if item is None or item.deleted_at is not None:
             return None
         self.validate_item_fields(
             title=title, summary=summary, content=content,
@@ -276,8 +276,8 @@ class KnowledgeService:
         return after
 
     async def archive_item(self, owner_id: str, workspace_id: str, item_id: str) -> dict[str, Any] | None:
-        item = await self._items.get(item_id)
-        if item is None or item.workspace_id != workspace_id or item.deleted_at is not None:
+        item = await self._items.get_for_workspace(item_id, workspace_id)
+        if item is None or item.deleted_at is not None:
             return None
         before = item_to_dict(item)
         item.deleted_at = datetime.now(timezone.utc)
@@ -342,8 +342,8 @@ class KnowledgeService:
         return results[:limit]
 
     async def get_source(self, workspace_id: str, source_id: str) -> dict[str, Any] | None:
-        source = await self._sources.get(source_id)
-        if source is None or source.workspace_id != workspace_id or source.deleted_at is not None:
+        source = await self._sources.get_for_workspace(source_id, workspace_id)
+        if source is None or source.deleted_at is not None:
             return None
         return source_to_dict(source)
 
@@ -388,8 +388,8 @@ class KnowledgeService:
         reference: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        source = await self._sources.get(source_id)
-        if source is None or source.workspace_id != workspace_id or source.deleted_at is not None:
+        source = await self._sources.get_for_workspace(source_id, workspace_id)
+        if source is None or source.deleted_at is not None:
             return None
         self.validate_source_fields(
             title=title, source_type=source_type, content=content,
@@ -414,8 +414,8 @@ class KnowledgeService:
         return after
 
     async def archive_source(self, owner_id: str, workspace_id: str, source_id: str) -> dict[str, Any] | None:
-        source = await self._sources.get(source_id)
-        if source is None or source.workspace_id != workspace_id or source.deleted_at is not None:
+        source = await self._sources.get_for_workspace(source_id, workspace_id)
+        if source is None or source.deleted_at is not None:
             return None
         before = source_to_dict(source)
         source.deleted_at = datetime.now(timezone.utc)

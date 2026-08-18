@@ -48,7 +48,8 @@ class SupabaseEmailIdentityRepository(
             .limit(1)
             .execute()
         )
-        return self._first(result)
+        row = self._first(result)
+        return None if row is None else self._from_row(row)
 
     async def find_by_user_id(self, user_id: str) -> list[EmailIdentity]:
         client = self._client()
@@ -75,7 +76,8 @@ class SupabaseEmailIdentityRepository(
             .limit(1)
             .execute()
         )
-        return self._first(result)
+        row = self._first(result)
+        return None if row is None else self._from_row(row)
 
 
 class SupabasePasswordCredentialRepository(
@@ -101,7 +103,8 @@ class SupabasePasswordCredentialRepository(
             .limit(1)
             .execute()
         )
-        return self._first(result)
+        row = self._first(result)
+        return None if row is None else self._from_row(row)
 
 
 class SupabaseRegistrationSessionRepository(
@@ -176,4 +179,5 @@ class SupabaseOAuthSessionRepository(
             .limit(1)
             .execute()
         )
-        return self._first(result)
+        row = self._first(result)
+        return None if row is None else self._from_row(row)

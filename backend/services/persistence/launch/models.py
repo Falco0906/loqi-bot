@@ -555,3 +555,40 @@ class UsageRecord:
     metadata: dict[str, Any] = field(default_factory=dict)
     occurred_at: datetime = field(default_factory=_now)
     created_at: datetime = field(default_factory=_now)
+
+
+# ─── Outbound communication + provider events (SaaS-2.6) ────────────────
+
+@dataclass
+class OutboundMessage:
+    """Durable outbound send history / delivery state (workspace-owned)."""
+
+    id: str = field(default_factory=_new_id)
+    workspace_id: str = ""
+    provider_id: str = ""
+    draft_id: str = ""
+    conversation_id: str = ""
+    thread_id: str = ""
+    subject: str = ""
+    recipient_email: str = ""
+    recipient_name: str = ""
+    status: str = "sent"
+    error: str = ""
+    external_message_id: str = ""
+    sent_at: datetime | None = field(default_factory=_now)
+    created_at: datetime = field(default_factory=_now)
+    updated_at: datetime = field(default_factory=_now)
+
+
+@dataclass
+class ProviderEvent:
+    """Durable provider lifecycle/communication event (workspace-owned)."""
+
+    id: str = field(default_factory=_new_id)
+    workspace_id: str = ""
+    provider_id: str = ""
+    event_type: str = ""
+    message: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+    event_timestamp: datetime = field(default_factory=_now)
+    created_at: datetime = field(default_factory=_now)

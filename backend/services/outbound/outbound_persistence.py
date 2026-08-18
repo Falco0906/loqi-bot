@@ -46,6 +46,15 @@ class OutboundPersistence:
             emit_event(OutboundEventType.MESSAGE_SENT, result.provider_id,
                        f"Message sent: {subject[:60]}",
                        {"send_id": result.id, "external_id": result.external_message_id})
+        # SaaS-2.6: best-effort durable write of user-visible send history
+        # (workspace-owned). Never blocks/fails the live in-memory path.
+        try:
+            from services.persistence.launch.communication_persistence import (
+                persist_outbound_message,
+            )
+            persist_outbound_message(item)
+        except Exception:  # noqa: BLE001
+            pass
         return item
 
     def record_delivery_update(self, send_id: str, status: DeliveryStatus) -> bool:

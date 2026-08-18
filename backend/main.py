@@ -3603,22 +3603,50 @@ async def provider_messages(session_token: str, provider_id: str, request: Reque
 
 
 @app.get("/api/web/session/{session_token}/providers/events")
-async def provider_events_endpoint(session_token: str, provider_id: str = "", after: int = 0):
+async def provider_events_endpoint(session_token: str, request: Request, provider_id: str = "", after: int = 0):
     events = get_provider_events(provider_id=provider_id, after_sequence=after)
+    # SaaS-2.6: also surface the caller's durable, tenant-scoped provider events.
+    durable = []
+    try:
+        owner_id = await _workspace_owner(request, session_token)
+        from services.workspace_state import ensure_workspace
+        ws = await asyncio.to_thread(ensure_workspace, owner_id)
+        if ws:
+            from services.persistence.launch.communication_persistence import list_provider_events
+            durable = await asyncio.to_thread(list_provider_events, ws, provider_id, 100)
+    except HTTPException:
+        durable = []
+    except Exception:  # noqa: BLE001
+        durable = []
+    seen = {e.id for e in events}
+    durable_dicts = []
+    for d in durable:
+        if getattr(d, "id", "") in seen:
+            continue
+        durable_dicts.append({
+            "id": getattr(d, "id", ""),
+            "event_type": getattr(d, "event_type", ""),
+            "provider_id": getattr(d, "provider_id", ""),
+            "message": getattr(d, "message", ""),
+            "timestamp": getattr(d, "event_timestamp", None).isoformat() if getattr(d, "event_timestamp", None) else "",
+            "sequence": 0,
+            "metadata": getattr(d, "metadata", {}) or {},
+        })
+    in_mem = [
+        {
+            "id": e.id,
+            "event_type": e.event_type.value,
+            "provider_id": e.provider_id,
+            "message": e.message,
+            "timestamp": e.timestamp,
+            "sequence": e.sequence,
+            "metadata": e.metadata,
+        }
+        for e in events
+    ]
     return {
         "ok": True,
-        "events": [
-            {
-                "id": e.id,
-                "event_type": e.event_type.value,
-                "provider_id": e.provider_id,
-                "message": e.message,
-                "timestamp": e.timestamp,
-                "sequence": e.sequence,
-                "metadata": e.metadata,
-            }
-            for e in events
-        ],
+        "events": durable_dicts + in_mem,
         "latest_sequence": latest_sequence(),
     }
 
@@ -4210,9 +4238,48 @@ async def outbound_approve_all(session_token: str, payload: ApproveAllRequest, r
 
 
 @app.get("/api/web/session/{session_token}/outbound/history")
-async def outbound_history(session_token: str, provider_id: str = ""):
+async def outbound_history(session_token: str, request: Request, provider_id: str = ""):
+    session_token = _session_token_from_request(request)
     history = outbound_persistence.get_history(provider_id=provider_id)
-    return {"ok": True, "history": [h.model_dump() for h in history]}
+    # SaaS-2.6: also surface the caller's durable, tenant-scoped send history.
+    durable = []
+    try:
+        owner_id = await _workspace_owner(request, session_token)
+        from services.workspace_state import ensure_workspace
+        ws = await asyncio.to_thread(ensure_workspace, owner_id)
+        if ws:
+            from services.persistence.launch.communication_persistence import list_outbound_history
+            durable = await asyncio.to_thread(list_outbound_history, ws, provider_id, 100)
+    except HTTPException:
+        durable = []
+    except Exception:  # noqa: BLE001
+        durable = []
+    merged = list(history)
+    seen = {h.id for h in merged}
+    for d in durable:
+        if getattr(d, "id", "") not in seen:
+            merged.append(d)
+    merged.sort(key=lambda h: getattr(h, "sent_at", "") or "", reverse=True)
+
+    def _hist_dict(h):
+        if hasattr(h, "model_dump"):
+            return h.model_dump()
+        return {
+            "id": getattr(h, "id", ""),
+            "provider_id": getattr(h, "provider_id", ""),
+            "external_message_id": getattr(h, "external_message_id", ""),
+            "conversation_id": getattr(h, "conversation_id", ""),
+            "thread_id": getattr(h, "thread_id", ""),
+            "workflow_id": "",
+            "subject": getattr(h, "subject", ""),
+            "recipient": {"email": getattr(h, "recipient_email", ""), "name": getattr(h, "recipient_name", "")},
+            "status": getattr(h, "status", "sent"),
+            "sent_at": getattr(h, "sent_at", "").isoformat() if getattr(h, "sent_at", None) else "",
+            "draft_id": getattr(h, "draft_id", ""),
+            "error": getattr(h, "error", ""),
+        }
+
+    return {"ok": True, "history": [_hist_dict(h) for h in merged]}
 
 
 @app.get("/api/web/session/{session_token}/outbound/events")

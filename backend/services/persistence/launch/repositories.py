@@ -33,6 +33,8 @@ from .models import (
     WorkspaceCompany,
     WorkspaceLead,
     WorkspaceMember,
+    OutboundMessage,
+    ProviderEvent,
 )
 
 T = TypeVar("T")
@@ -668,3 +670,53 @@ class UsageRecordRepository(LaunchRepository[UsageRecord]):
             metadata=metadata or {},
         )
         return await self.save(entry)
+
+
+class OutboundMessageRepository(LaunchRepository[OutboundMessage]):
+    """Durable outbound send history / delivery state (workspace-owned)."""
+
+    _table_name = "outbound_messages"
+    _json_columns = ()
+
+    @classmethod
+    def _entity_type(cls) -> type[OutboundMessage]:
+        return OutboundMessage
+
+    async def list_for_workspace(self, workspace_id: str, provider_id: str = "",
+                                 limit: int = 100) -> list[OutboundMessage]:
+        where = [("workspace_id", "eq", workspace_id)]
+        if provider_id:
+            where.append(("provider_id", "eq", provider_id))
+        return await self._list(where, order="sent_at", desc=True, limit=limit)
+
+    async def get_for_workspace(self, entity_id: str, workspace_id: str) -> OutboundMessage | None:
+        """Fetch by id constrained to a workspace (tenant-scoped lookup)."""
+        return await self._first_where([
+            ("id", "eq", entity_id),
+            ("workspace_id", "eq", workspace_id),
+        ])
+
+
+class ProviderEventRepository(LaunchRepository[ProviderEvent]):
+    """Durable provider lifecycle/communication events (workspace-owned)."""
+
+    _table_name = "provider_events"
+    _json_columns = ("metadata",)
+
+    @classmethod
+    def _entity_type(cls) -> type[ProviderEvent]:
+        return ProviderEvent
+
+    async def list_for_workspace(self, workspace_id: str, provider_id: str = "",
+                                 limit: int = 100) -> list[ProviderEvent]:
+        where = [("workspace_id", "eq", workspace_id)]
+        if provider_id:
+            where.append(("provider_id", "eq", provider_id))
+        return await self._list(where, order="event_timestamp", desc=True, limit=limit)
+
+    async def get_for_workspace(self, entity_id: str, workspace_id: str) -> ProviderEvent | None:
+        """Fetch by id constrained to a workspace (tenant-scoped lookup)."""
+        return await self._first_where([
+            ("id", "eq", entity_id),
+            ("workspace_id", "eq", workspace_id),
+        ])

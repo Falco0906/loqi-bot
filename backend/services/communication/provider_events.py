@@ -57,6 +57,18 @@ def emit_event(
         metadata=metadata,
     )
     _events.append(event)
+    # SaaS-2.6: best-effort durable write of user-visible provider events
+    # (workspace-owned). Never blocks/fails the live in-memory path.
+    try:
+        from services.persistence.launch.communication_persistence import persist_provider_event
+        persist_provider_event(
+            provider_id,
+            event_type.value if hasattr(event_type, "value") else str(event_type),
+            message,
+            metadata,
+        )
+    except Exception:  # noqa: BLE001
+        pass
     return event
 
 

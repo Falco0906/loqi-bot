@@ -496,3 +496,221 @@ class TestCrossUserIsolation:
         assert [m.organization_id for m in mems_a] == [orgs["user-a"]]
         mems_b = await durable["mem_repo"].find_by_user_id("user-b")
         assert [m.organization_id for m in mems_b] == [orgs["user-b"]]
+
+
+# ─── Operator account recovery (missing durable org + membership) ───────────
+
+def _seed_legacy_completed_account(db, user_id="legacy-user", step=None):
+    """Durable account state exactly as produced by a pre-c6aa780 completion:
+    canonical user + verified email identity + password credential, but NO
+    durable organization or membership."""
+    import json
+
+    db.tables.setdefault("identity_users", []).append({
+        "id": user_id, "display_name": "Legacy", "email": "",
+        "onboarding_completed_at": None,
+        "onboarding_data": json.dumps({"onboarding_step": step}) if step else None,
+        "created_at": _FUTURE, "updated_at": _FUTURE,
+    })
+    db.tables.setdefault("email_identities", []).append({
+        "id": "00000000-0000-4000-8000-0000000000f1", "user_id": user_id,
+        "email": EMAIL, "is_verified": True, "is_primary": True,
+        "verified_at": _FUTURE, "created_at": _FUTURE,
+    })
+    db.tables.setdefault("password_credentials", []).append({
+        "id": "00000000-0000-4000-8000-0000000000f2", "user_id": user_id,
+        "password_hash": str(get_crypto_service().hash_password(PASSWORD)),
+        "created_at": _FUTURE, "last_changed_at": _FUTURE,
+    })
+    return user_id
+
+
+class TestOperatorAccountRecovery:
+
+    @pytest.mark.asyncio
+    async def test_legacy_account_identified_as_needing_recovery(self):
+        from services.identity.account_recovery import build_recovery_plan
+        db = FakeClient()
+        _seed_legacy_completed_account(db)
+
+        plan = build_recovery_plan(EMAIL, client=db)
+        assert plan.ready is True
+        assert plan.blockers == []
+        assert plan.email_verified is True
+        assert plan.email_linked is True
+        assert plan.password_credential_exists is True
+        assert plan.existing_memberships == []
+        assert plan.existing_organizations == []
+        assert plan.org_name == "Legacy's Organization"
+
+    @pytest.mark.asyncio
+    async def test_dry_run_performs_no_writes(self):
+        from services.identity.account_recovery import apply_recovery_plan, build_recovery_plan
+        db = FakeClient()
+        _seed_legacy_completed_account(db)
+
+        plan = build_recovery_plan(EMAIL, client=db)
+        result = apply_recovery_plan(plan, dry_run=True)
+        assert result["applied"] is False
+        assert result["dry_run"] is True
+        assert db.tables.get("organizations", []) == []
+        assert db.tables.get("memberships", []) == []
+
+    @pytest.mark.asyncio
+    async def test_apply_creates_exactly_one_org_and_owner_membership(self):
+        from services.identity.account_recovery import apply_recovery_plan, build_recovery_plan
+        db = FakeClient()
+        user_id = _seed_legacy_completed_account(db)
+        durable = _durable_repos(db)
+
+        plan = build_recovery_plan(EMAIL, client=db)
+        result = apply_recovery_plan(
+            plan, dry_run=False,
+            org_repo=durable["org_repo"], mem_repo=durable["mem_repo"],
+        )
+        assert result["applied"] is True
+        assert result["membership_role"] == "owner"
+        assert result["membership_status"] == "active"
+
+        orgs = db.tables["organizations"]
+        mems = db.tables["memberships"]
+        assert len(orgs) == 1
+        assert len(mems) == 1
+        assert orgs[0]["created_by"] == user_id
+        assert orgs[0]["slug"] == "legacys-organization"
+        assert mems[0]["user_id"] == user_id
+        assert mems[0]["organization_id"] == orgs[0]["id"]
+        assert mems[0]["role"] == "owner"
+        assert mems[0]["status"] == "active"
+        assert mems[0]["id"] == result["membership_id"]
+
+        # Recovery never creates another identity_users row.
+        assert len(db.tables["identity_users"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_apply_is_idempotent_after_first_recovery(self):
+        from services.identity.account_recovery import apply_recovery_plan, build_recovery_plan
+        db = FakeClient()
+        _seed_legacy_completed_account(db)
+        durable = _durable_repos(db)
+
+        plan = build_recovery_plan(EMAIL, client=db)
+        first = apply_recovery_plan(
+            plan, dry_run=False,
+            org_repo=durable["org_repo"], mem_repo=durable["mem_repo"],
+        )
+        assert first["applied"] is True
+
+        second_plan = build_recovery_plan(EMAIL, client=db)
+        assert second_plan.ready is False
+        assert any("membership already exists" in b for b in second_plan.blockers)
+        second = apply_recovery_plan(
+            second_plan, dry_run=False,
+            org_repo=durable["org_repo"], mem_repo=durable["mem_repo"],
+        )
+        assert second["applied"] is False
+        assert second["reason"] == "not ready"
+
+        # Still exactly one org + one membership after the refused retry.
+        assert len(db.tables["organizations"]) == 1
+        assert len(db.tables["memberships"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_refuses_if_membership_already_exists(self):
+        from services.identity.account_recovery import apply_recovery_plan, build_recovery_plan
+        db = FakeClient()
+        user_id = _seed_legacy_completed_account(db)
+        durable = _durable_repos(db)
+        org = Organization(name="Existing", slug="existing", owner_id=user_id)
+        org = await durable["org_repo"].save(org)
+        membership = Membership(user_id=user_id, organization_id=org.id, role="owner")
+        membership.activate()
+        await durable["mem_repo"].save(membership)
+
+        plan = build_recovery_plan(EMAIL, client=db)
+        assert plan.ready is False
+        assert any("membership already exists" in b for b in plan.blockers)
+        assert any("organization already exists" in b for b in plan.blockers)
+        result = apply_recovery_plan(
+            plan, dry_run=False,
+            org_repo=durable["org_repo"], mem_repo=durable["mem_repo"],
+        )
+        assert result["applied"] is False
+        assert len(db.tables["organizations"]) == 1
+        assert len(db.tables["memberships"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_refuses_unverified_or_unlinked_identity(self):
+        from services.identity.account_recovery import apply_recovery_plan, build_recovery_plan
+        db = FakeClient()
+        db.tables.setdefault("email_identities", []).append({
+            "id": "00000000-0000-4000-8000-0000000000f3",
+            "user_id": "", "email": EMAIL, "is_verified": False,
+            "is_primary": False, "verified_at": None, "created_at": _FUTURE,
+        })
+        plan = build_recovery_plan(EMAIL, client=db)
+        assert plan.ready is False
+        result = apply_recovery_plan(plan, dry_run=False)
+        assert result["applied"] is False
+        assert db.tables.get("organizations", []) == []
+        assert db.tables.get("memberships", []) == []
+
+    @pytest.mark.asyncio
+    async def test_refuses_when_pinned_user_id_does_not_own_email(self):
+        from services.identity.account_recovery import apply_recovery_plan, build_recovery_plan
+        db = FakeClient()
+        _seed_legacy_completed_account(db)
+
+        plan = build_recovery_plan(EMAIL, user_id="someone-else", client=db)
+        assert plan.ready is False
+        assert any("does not own the email identity" in b for b in plan.blockers)
+        result = apply_recovery_plan(plan, dry_run=False)
+        assert result["applied"] is False
+
+    @pytest.mark.asyncio
+    async def test_after_recovery_login_resolves_active_membership(self):
+        from services.identity.account_recovery import apply_recovery_plan, build_recovery_plan
+        db = FakeClient()
+        user_id = _seed_legacy_completed_account(db)
+        durable = _durable_repos(db)
+
+        plan = build_recovery_plan(EMAIL, client=db)
+        apply_recovery_plan(
+            plan, dry_run=False,
+            org_repo=durable["org_repo"], mem_repo=durable["mem_repo"],
+        )
+
+        svc = _build_auth_service(db=db)
+        login = await svc.login(EMAIL, PASSWORD)
+        assert login.session.user_id == user_id
+        assert login.session.organization_id == db.tables["organizations"][0]["id"]
+
+    @pytest.mark.asyncio
+    async def test_onboarding_resumes_after_recovery(self):
+        from services.identity.account_recovery import apply_recovery_plan, build_recovery_plan
+        db = FakeClient()
+        user_id = _seed_legacy_completed_account(db, step="workspace-connection")
+        durable = _durable_repos(db)
+
+        plan = build_recovery_plan(EMAIL, client=db)
+        assert apply_recovery_plan(
+            plan, dry_run=False,
+            org_repo=durable["org_repo"], mem_repo=durable["mem_repo"],
+        )["applied"] is True
+
+        svc = _build_auth_service(db=db)
+        await svc.login(EMAIL, PASSWORD)
+
+        from services.identity.repositories import InMemoryEmailIdentityRepository
+        user_svc = UserService(durable["user_repo"], InMemoryEmailIdentityRepository())
+        onboarding = OnboardingService(
+            lifecycle_service=LifecycleService(InMemoryLifecycleRepository()),
+            session_repo=InMemoryOnboardingSessionRepository(),
+            user_service=user_svc,
+        )
+        progress = await onboarding.get_progress(user_id)
+        assert progress["onboarding_complete"] is False
+        assert progress["current_step"] == "ONBOARDING_WIZARD"
+        assert progress["next_route"] == "/onboarding"
+        wizard = await onboarding.get_wizard_data(user_id)
+        assert wizard.get("onboarding_step") == "workspace-connection"

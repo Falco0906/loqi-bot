@@ -61,11 +61,19 @@ def main() -> int:
     refresh = refreshed.json()["refresh_token"]
 
     # C. Session security (safe: operate on our own session only)
-    revoke_self = client.delete(f"/api/v1/auth/sessions/{access}", headers=headers)
-    # Access token is the session id; revoking it would kill this session —
-    # skip destructive self-revocation; instead verify an unknown session is rejected.
+    # NOTE: never revoke our own session here — the access token IS the session
+    # id, so `DELETE /sessions/{access}` would invalidate the bearer token for
+    # every later check and the unknown-session call below would return 401 from
+    # authentication instead of the endpoint's intended 404. Verify instead that
+    # an unknown / foreign session id is rejected with the safe 404.
     unknown = client.delete("/api/v1/auth/sessions/00000000-0000-4000-8000-000000000000", headers=headers)
     _check("cross-user session revoke rejected", unknown.status_code == 404, str(unknown.status_code))
+
+    # Regression guard: the bearer token must still be valid here. If a future
+    # edit reintroduces a self-revocation above, this fails loudly instead of
+    # silently poisoning every check that follows.
+    still_valid = client.get("/api/v1/auth/me", headers=headers)
+    _check("session still active after revoke-rejection check", still_valid.status_code == 200, str(still_valid.status_code))
 
     # D. OAuth initiation (public entry — no token exchange)
     oauth = client.get("/api/v1/auth/oauth/google")
@@ -75,10 +83,20 @@ def main() -> int:
     ws = client.post("/api/web/session", json={"display_name": LABEL}, headers=headers)
     _check("authenticated web bootstrap", ws.status_code == 200, str(ws.status_code))
     ws_token = ws.json().get("session_token", "")
+    ws_headers = {"Authorization": f"Bearer {ws_token}"}
+
+    # The bound web-session must resolve to the canonical user while the
+    # canonical session is valid (SaaS-1.6 session-authority check).
+    ws_check = client.get("/api/web/session/_", headers=ws_headers)
+    _check("bound web-session resolves to canonical user", ws_check.status_code == 200, str(ws_check.status_code))
 
     # F. Organization: read own org from /me; list own organizations
     orgs = client.get("/api/v1/organizations", headers=headers)
     _check("list own organizations", orgs.status_code == 200)
+
+    # Non-member / cross-org read must be rejected with the safe 404 (BOLA).
+    org_x = client.get("/api/v1/organizations/00000000-0000-4000-8000-000000000000", headers=headers)
+    _check("cross-org read rejected (404)", org_x.status_code == 404, str(org_x.status_code))
 
     # G. Capabilities catalog (public) + org capabilities (member)
     caps = client.get("/api/v1/capabilities")
@@ -88,11 +106,14 @@ def main() -> int:
     plans = client.get("/api/v1/billing/plans")
     _check("billing plans public", plans.status_code == 200)
 
-    # E2. Logout, then the canonical access token must be rejected.
+    # E2. Logout, then the canonical access token must be rejected, and the
+    # bound web-session must be invalidated by the canonical-session revocation.
     logout = client.post("/api/v1/auth/logout", json={"refresh_token": refresh})
     _check("logout", logout.status_code == 200)
     me_after = client.get("/api/v1/auth/me", headers=headers)
     _check("access token rejected after logout", me_after.status_code == 401, str(me_after.status_code))
+    ws_after = client.get("/api/web/session/_", headers=ws_headers)
+    _check("bound web-session rejected after canonical revocation", ws_after.status_code == 401, str(ws_after.status_code))
 
     print("\nSaaS-1.7 smoke test: ALL CHECKS PASSED")
     return 0

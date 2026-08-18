@@ -169,13 +169,18 @@ def list_discoveries(workspace_id: str, limit: int = 100) -> list[dict]:
         return []
 
 
-def get_discovery(discovery_id: str) -> Optional[dict]:
-    """Full discovery detail: row + surfaced companies + leads (joined)."""
+def get_discovery(discovery_id: str, workspace_id: str = "") -> Optional[dict]:
+    """Full discovery detail: row + surfaced companies + leads (joined).
+
+    When ``workspace_id`` is supplied (request path), the lookup is constrained
+    to that workspace so a foreign discovery id cannot return another tenant's
+    PII. Internal/worker callers may omit it (trusted, server-derived ids).
+    """
     client = get_supabase_client()
     if not client:
         return None
     try:
-        result = (
+        query = (
             client.table("discoveries")
             .select(
                 f"{_DISCOVERY_SELECT}, "
@@ -188,10 +193,10 @@ def get_discovery(discovery_id: str) -> Optional[dict]:
                 "lead:leads(*)))"
             )
             .eq("id", discovery_id)
-            .is_("deleted_at", "null")
-            .limit(1)
-            .execute()
         )
+        if workspace_id:
+            query = query.eq("workspace_id", workspace_id)
+        result = query.is_("deleted_at", "null").limit(1).execute()
         rows = getattr(result, "data", None) or []
         return rows[0] if rows else None
     except Exception as e:

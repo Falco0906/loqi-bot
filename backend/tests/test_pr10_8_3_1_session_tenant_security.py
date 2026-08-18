@@ -282,7 +282,8 @@ class TestFailClosedConversationOwnership:
             asyncio.run(main_module.send_conversation_reply_route(
                 "_", convo.conversation_id, payload, _request_with_header(),
             ))
-        assert exc.value.status_code == 403
+        # Safe not-found (no existence leak): foreign conversation is 404.
+        assert exc.value.status_code == 404
 
     def test_cannot_bypass_by_supplying_user_id(self):
         """Supplying another user_id in the request must not grant access."""

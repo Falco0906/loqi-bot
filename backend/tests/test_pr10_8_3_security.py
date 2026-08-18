@@ -272,7 +272,8 @@ class TestSendDraftOwnership:
         request = MagicMock()
         with pytest.raises(Exception) as exc:
             asyncio.run(main_module.send_draft("tok", "draft-b-1", request))
-        assert exc.value.status_code == 403
+        # Safe not-found (no existence leak): a foreign draft is 404, not 403.
+        assert exc.value.status_code == 404
         draft_store.delete("draft-b-1")
 
 
@@ -309,7 +310,8 @@ class TestConversationSendOwnership:
             asyncio.run(main_module.send_conversation_reply_route(
                 "tok", convo.conversation_id, payload, request,
             ))
-        assert exc.value.status_code == 403
+        # Safe not-found (no existence leak): foreign conversation is 404.
+        assert exc.value.status_code == 404
 
     def test_followup_denied_for_another_users_conversation(self, monkeypatch):
         import main as main_module
@@ -324,7 +326,8 @@ class TestConversationSendOwnership:
             asyncio.run(main_module.send_conversation_followup_route(
                 "tok", convo.conversation_id, payload, request,
             ))
-        assert exc.value.status_code == 403
+        # Safe not-found (no existence leak): foreign conversation is 404.
+        assert exc.value.status_code == 404
 
     def test_timeline_denied_for_another_users_conversation(self, monkeypatch):
         import main as main_module
@@ -333,7 +336,8 @@ class TestConversationSendOwnership:
         request = MagicMock()
         with pytest.raises(Exception) as exc:
             asyncio.run(main_module.communication_timeline("tok", convo.conversation_id, request))
-        assert exc.value.status_code == 403
+        # Safe not-found (no existence leak): foreign conversation is 404.
+        assert exc.value.status_code == 404
 
 
 # ═══════════════════════════════════════════════════════════════════════

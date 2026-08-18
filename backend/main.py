@@ -1164,7 +1164,13 @@ def _build_copilot_workspace_context(session_token: str, current_page: str | Non
             except (ValueError, IndexError):
                 pass
 
-    providers = communication_store.list_providers()
+    # SaaS-2.5: only surface the authenticated owner's own providers. The
+    # provider records are durable (rehydrated from connected_accounts), so a
+    # cross-tenant read here would leak emails/ids/health across tenants.
+    providers = [
+        p for p in communication_store.list_providers()
+        if not user_id or str(getattr(p, "user_id", "")) == str(user_id)
+    ]
     if providers:
         provider_list = []
         for p in providers:
@@ -1185,32 +1191,38 @@ def _build_copilot_workspace_context(session_token: str, current_page: str | Non
             "last_sync": max((p["last_sync"] for p in provider_list if p["last_sync"]), default=""),
         }
 
-    if conversation_id:
-        mem = memory_store.get(conversation_id)
-        if mem:
-            events = get_conversation_events(conversation_id)
-            sigs = [BuyingSignal(signal=s, strength="medium", confidence=50, reason="") for s in mem.buying_signals] if mem.buying_signals else []
-            obj_sigs = [s.model_dump() for s in sigs] if sigs else []
-            result["conversation_intelligence"] = {
-                "conversation_id": conversation_id,
-                "current_stage": mem.current_stage.value,
-                "summary": mem.summary,
-                "open_questions": mem.open_questions,
-                "outstanding_objections": mem.outstanding_objections,
-                "pain_points": mem.pain_points,
-                "business_goals": mem.business_goals,
-                "competitor_mentioned": mem.competitor_mentioned,
-                "decision_makers": mem.decision_makers,
-                "buying_signals": mem.buying_signals,
-                "last_recommendation": mem.last_recommendation,
-                "last_followup": mem.last_followup,
-                "key_risks": mem.key_risks,
-                "key_opportunities": mem.key_opportunities,
-                "urgency": mem.urgency,
-                "decision_confidence": mem.decision_confidence,
-                "top_objection": mem.top_objection,
-                "timeline_events": [e.model_dump() for e in events],
-            }
+    # SaaS-2.5: conversation memory/intelligence is only exposed for a
+    # conversation the caller provably owns. A client-supplied conversation_id
+    # must never read another tenant's memory/timeline.
+    if conversation_id and user_id:
+        from services.conversations.conversation_store import conversation_store
+        convo = conversation_store.get_conversation(conversation_id)
+        if convo is not None and _conversation_owned_by(convo, user_id):
+            mem = memory_store.get(conversation_id)
+            if mem:
+                events = get_conversation_events(conversation_id)
+                sigs = [BuyingSignal(signal=s, strength="medium", confidence=50, reason="") for s in mem.buying_signals] if mem.buying_signals else []
+                obj_sigs = [s.model_dump() for s in sigs] if sigs else []
+                result["conversation_intelligence"] = {
+                    "conversation_id": conversation_id,
+                    "current_stage": mem.current_stage.value,
+                    "summary": mem.summary,
+                    "open_questions": mem.open_questions,
+                    "outstanding_objections": mem.outstanding_objections,
+                    "pain_points": mem.pain_points,
+                    "business_goals": mem.business_goals,
+                    "competitor_mentioned": mem.competitor_mentioned,
+                    "decision_makers": mem.decision_makers,
+                    "buying_signals": mem.buying_signals,
+                    "last_recommendation": mem.last_recommendation,
+                    "last_followup": mem.last_followup,
+                    "key_risks": mem.key_risks,
+                    "key_opportunities": mem.key_opportunities,
+                    "urgency": mem.urgency,
+                    "decision_confidence": mem.decision_confidence,
+                    "top_objection": mem.top_objection,
+                    "timeline_events": [e.model_dump() for e in events],
+                }
 
     return result
 
@@ -2612,18 +2624,30 @@ async def post_web_session_message(
 
     if summary is None:
         user_id = None
+        canonical_session_id = ""
         if request.headers.get("authorization", ""):
-            from services.identity.api import get_authenticated_user_id
+            from services.identity.dependencies import get_current_auth
             try:
-                user_id = await get_authenticated_user_id(request)
+                _auth = await get_current_auth(request)
+                user_id = _auth.user_id
+                canonical_session_id = _auth.session_id
             except HTTPException:
                 user_id = None
+                canonical_session_id = ""
         created = engine.create_web_session(
             display_name="web-user",
             user_id=user_id,
         )
         if created is None:
             raise HTTPException(status_code=500, detail="Unable to create session")
+        # SaaS-1.6 / W1: bind the web session to the canonical session so that
+        # revocation of the canonical session (logout/password change) also
+        # invalidates this web session instead of leaving it live forever.
+        if user_id and canonical_session_id:
+            from services.web_session_binding import bind_web_session
+            await bind_web_session(
+                created["session_token"], user_id, canonical_session_id,
+            )
         summary = engine.get_web_session_summary(created["session_token"])
         if summary is None:
             raise HTTPException(status_code=500, detail="Session creation failed")
@@ -3316,8 +3340,10 @@ async def communication_timeline(session_token: str, conversation_id: str, reque
     owner_id = await _workspace_owner(request, session_token)
     from services.conversations.conversation_store import conversation_store
     convo = conversation_store.get_conversation(conversation_id)
-    if convo is not None and not _conversation_owned_by(convo, owner_id):
-        raise HTTPException(status_code=403, detail="Conversation not owned by this user")
+    if convo is None or not _conversation_owned_by(convo, owner_id):
+        # Safe not-found: foreign-but-existing and nonexistent conversations are
+        # indistinguishable (no existence leak, no foreign memory/timeline).
+        raise HTTPException(status_code=404, detail="Conversation not found")
     events = get_conversation_events(conversation_id)
     return {
         "ok": True,
@@ -3337,10 +3363,12 @@ class DevWorkspaceContextRequest(BaseModel):
 async def dev_workspace_context(session_token: str, conversation_id: str = "", request: Request = None):
     session_token = _session_token_from_request(request)
     """Returns workspace context with provider info for the dev providers page."""
+    owner_id = await _workspace_owner(request, session_token)
     ctx = _build_copilot_workspace_context(
         session_token,
         current_page="Mission Control",
         conversation_id=conversation_id or None,
+        user_id=owner_id,
     )
     return ctx
 
@@ -3833,7 +3861,9 @@ async def send_draft(session_token: str, draft_id: str, request: Request, payloa
     if owner_id and outbound_draft.provider_id:
         _draft_prov = communication_store.get_provider(outbound_draft.provider_id)
         if _draft_prov is not None and str(_draft_prov.user_id) != str(owner_id):
-            raise HTTPException(status_code=403, detail="Draft not owned by this user")
+            # Safe not-found: a foreign-but-existing draft must not be
+            # distinguishable from a nonexistent one (no existence leak).
+            raise HTTPException(status_code=404, detail="Draft not found")
     recipient_email = (outbound_draft.recipient.email if outbound_draft.recipient else "") or ""
     if not str(recipient_email).strip():
         return {"ok": False, "error": "This lead has no email address"}
@@ -6242,8 +6272,10 @@ async def get_discovery_endpoint(discovery_id: str, request: Request):
     log.info("[kickoff] GET /api/discoveries/%s: user=%s", discovery_id, user_id)
     from services.workspace_state import ensure_workspace
     workspace_id = await asyncio.to_thread(ensure_workspace, user_id)
-    discovery = await asyncio.to_thread(get_discovery, discovery_id)
-    if not discovery or not workspace_id or discovery.get("workspace_id") != workspace_id:
+    # SaaS-2.5: constrain the lookup to the caller's workspace so a foreign
+    # discovery id cannot return another tenant's PII even before the check.
+    discovery = await asyncio.to_thread(get_discovery, discovery_id, workspace_id)
+    if not discovery:
         raise HTTPException(status_code=404, detail="Discovery not found")
     return {"ok": True, "discovery": discovery}
 
@@ -6877,7 +6909,9 @@ async def send_conversation_reply_route(
         raise HTTPException(status_code=401, detail="Authentication required")
     owner_id = await _workspace_owner(request, session_token)
     if not _conversation_owned_by(convo, owner_id):
-        raise HTTPException(status_code=403, detail="Conversation not owned by this user")
+        # Safe not-found: foreign-but-existing conversation is indistinguishable
+        # from nonexistent (no existence leak).
+        raise HTTPException(status_code=404, detail="Conversation not found")
 
     # Duplicate-send guard: after a reply the conversation must return to an
     # awaiting-response state before another reply is allowed.
@@ -7045,7 +7079,9 @@ async def send_conversation_followup_route(
         raise HTTPException(status_code=401, detail="Authentication required")
     owner_id = await _workspace_owner(request, session_token)
     if not _conversation_owned_by(convo, owner_id):
-        raise HTTPException(status_code=403, detail="Conversation not owned by this user")
+        # Safe not-found: foreign-but-existing conversation is indistinguishable
+        # from nonexistent (no existence leak).
+        raise HTTPException(status_code=404, detail="Conversation not found")
 
     # Duplicate follow-up guard: only a conversation currently waiting for a
     # follow-up may send one. FOLLOW_UP_SENT (already sent) is rejected.

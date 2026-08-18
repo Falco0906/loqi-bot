@@ -154,6 +154,15 @@ log = logging.getLogger("loqi")
 request_id_var: ContextVar[str] = ContextVar("request_id")
 
 
+def _abandoned_registration_cleanup_interval() -> int:
+    """Seconds between abandoned-registration cleanup cycles (min 60s)."""
+    raw = os.getenv("ABANDONED_REGISTRATION_CLEANUP_INTERVAL_SECONDS", "900")
+    try:
+        return max(60, int(raw))
+    except (TypeError, ValueError):
+        return 900
+
+
 async def _cancel_and_wait(tasks: list["asyncio.Task"], timeout: float) -> None:
     """Cancel background tasks and await them with a bounded timeout.
 
@@ -324,6 +333,59 @@ async def lifespan(app: FastAPI):
         background_tasks.append(backfill_task)
     except Exception as e:
         log.warning("Canonical backfill startup task failed: %s", e)
+
+    # Abandoned-registration lifecycle cleanup (SaaS): periodically reclaim
+    # emails blocked by expired abandoned signup attempts. Uses the same
+    # conservative predicate as the operator CLI and lazy signup reclaim;
+    # idempotent and race-safe, so duplicate execution across instances is
+    # harmless. FAIL-CLOSED: the loop is only created when the runtime gate is
+    # satisfied (explicitly production AND
+    # ABANDONED_REGISTRATION_CLEANUP_ENABLED=true). A test or dev lifespan
+    # that sets ENVIRONMENT=production or connects to a shared Supabase project
+    # can never create/execute this task because the explicit enable flag is
+    # absent in tests.
+    try:
+        from services.identity.registration_cleanup import (
+            abandoned_cleanup_runtime_enabled,
+            resolve_automatic_cleanup_client,
+            run_abandoned_cleanup,
+        )
+        _cleanup_enabled, _cleanup_reason = abandoned_cleanup_runtime_enabled()
+        if not _cleanup_enabled:
+            log.info("Abandoned-registration cleanup loop disabled: %s", _cleanup_reason)
+        else:
+            # Explicit client injection: the loop only ever operates on the
+            # client returned by the gate-checked accessor, never on an
+            # implicit get_supabase_client().
+            _cleanup_client = resolve_automatic_cleanup_client()
+            if _cleanup_client is None:
+                log.info("Abandoned-registration cleanup loop disabled: cleanup client unavailable")
+            else:
+                async def _abandoned_registration_cleanup_loop() -> None:
+                    interval = _abandoned_registration_cleanup_interval()
+                    log.info("Abandoned-registration cleanup loop started (interval=%ss)", interval)
+                    # Initial delay: never run a destructive cycle at boot (the
+                    # safety decision is the runtime gate above, not this delay).
+                    await asyncio.sleep(interval)
+                    while True:
+                        try:
+                            report = await asyncio.to_thread(
+                                run_abandoned_cleanup, dry_run=False, client=_cleanup_client,
+                            )
+                            log.info(
+                                "abandoned-registration cleanup cycle "
+                                "scanned=%d cleaned_emails=%d cleaned_rows=%d skipped=%d failures=%d",
+                                report.get("scanned", 0), report.get("cleaned_emails", 0),
+                                report.get("cleaned_rows", 0), report.get("skipped", 0),
+                                report.get("failures", 0),
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            log.warning("abandoned-registration cleanup cycle failed: %s", exc)
+                        await asyncio.sleep(interval)
+
+                background_tasks.append(asyncio.create_task(_abandoned_registration_cleanup_loop()))
+    except Exception as e:
+        log.warning("Abandoned-registration cleanup startup failed: %s", e)
 
     set_ready()
     try:

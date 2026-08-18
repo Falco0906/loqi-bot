@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone, timedelta
 from uuid import uuid4
+
+log = logging.getLogger("loqi.identity.auth_service")
 
 from services.identity.config import IDENTITY_CONFIG
 from services.identity.events import IdentityEvent
@@ -241,6 +244,34 @@ class AuthService:
         """
         return (email or "").strip().lower()
 
+    async def _reclaim_abandoned_registration(self, email: str) -> None:
+        """Reclaim an email blocked only by expired abandoned registration
+        state (no canonical account). Uses the exact same conservative
+        predicate as the periodic cleanup job and the operator CLI.
+
+        Fail-closed: this request-path cleanup only runs when the runtime gate
+        is satisfied (explicitly production AND
+        ABANDONED_REGISTRATION_CLEANUP_ENABLED=true). In any other context
+        (development, tests, missing flag) it is skipped, so a test or a dev
+        process connecting to a shared Supabase project can never trigger a
+        destructive cleanup."""
+        from services.identity.registration_cleanup import (
+            cleanup_abandoned_email,
+            resolve_automatic_cleanup_client,
+        )
+
+        client = resolve_automatic_cleanup_client()
+        if client is None:
+            log.debug("abandoned-registration lazy reclaim skipped: runtime gate not satisfied")
+            return
+
+        _plan, summary = await asyncio.to_thread(
+            cleanup_abandoned_email, email, dry_run=False, require_expired=True, client=client,
+        )
+        cleaned = summary.get("total_rows", 0)
+        if cleaned:
+            log.info("abandoned-registration lazy reclaim cleaned_rows=%d", cleaned)
+
     async def begin_registration(
         self, email: str,
     ) -> RegistrationResult:
@@ -248,6 +279,18 @@ class AuthService:
         if "@" not in email or "." not in email.split("@")[-1]:
             from services.identity.exceptions import InvalidCredentialsException
             raise InvalidCredentialsException("Invalid email format")
+
+        # Lazy abandoned-registration reclaim: if this exact email is blocked
+        # only by EXPIRED abandoned registration state (no canonical account),
+        # reclaim it so a legitimate user can retry signup without operator
+        # intervention. Uses the same conservative predicate as the periodic
+        # cleanup job. Refusals are silent and fall through to the normal
+        # duplicate checks below (a real account or an active registration is
+        # never touched).
+        try:
+            await self._reclaim_abandoned_registration(email)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("abandoned-registration lazy reclaim skipped: %s", exc)
 
         existing = await self._email_identity_repo.find_by_email(email)
         if existing is not None:

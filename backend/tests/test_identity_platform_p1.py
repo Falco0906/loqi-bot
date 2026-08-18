@@ -380,13 +380,13 @@ class TestMembershipModel:
     def test_suspend(self):
         m = Membership(user_id="u1", organization_id="o1")
         assert m.is_active
-        m.suspend()
+        m.mark_removed()
         assert not m.is_active
-        assert m.status == MembershipStatus.SUSPENDED
+        assert m.status == MembershipStatus.REMOVED
 
     def test_activate(self):
         m = Membership(
-            user_id="u1", organization_id="o1", status=MembershipStatus.INVITED,
+            user_id="u1", organization_id="o1", status=MembershipStatus.PENDING,
         )
         m.activate()
         assert m.is_active

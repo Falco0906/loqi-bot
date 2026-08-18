@@ -570,7 +570,7 @@ class TestIsolationFoundation:
         assert created and created[0]["id"] == ws_a
 
 
-# ─── Identity membership status <-> durable CHECK mapping ────────────────
+# ─── Canonical membership status <-> durable CHECK agreement ────────────
 
 class TestMembershipStatusCompatibility:
 
@@ -583,16 +583,20 @@ class TestMembershipStatusCompatibility:
             user_id="u1", organization_id="o1", role="owner", status=MembershipStatus.ACTIVE,
         ))
         await mem_repo.save(Membership(
-            user_id="u2", organization_id="o1", role="member", status=MembershipStatus.INVITED,
+            user_id="u2", organization_id="o1", role="member", status=MembershipStatus.PENDING,
         ))
         await mem_repo.save(Membership(
-            user_id="u3", organization_id="o1", role="member", status=MembershipStatus.SUSPENDED,
+            user_id="u3", organization_id="o1", role="member", status=MembershipStatus.REMOVED,
+        ))
+        await mem_repo.save(Membership(
+            user_id="u4", organization_id="o1", role="member", status=MembershipStatus.LEFT,
         ))
         statuses = {r["user_id"]: r["status"] for r in db.tables["memberships"]}
-        # All values conform to the 025 CHECK: pending/active/removed/left.
+        # Canonical values are persisted as-is and all satisfy the 025 CHECK.
         assert statuses["u1"] == "active"
         assert statuses["u2"] == "pending"
         assert statuses["u3"] == "removed"
+        assert statuses["u4"] == "left"
 
     @pytest.mark.asyncio
     async def test_status_reads_round_trip_and_login_gate_respects(self):
@@ -610,9 +614,9 @@ class TestMembershipStatusCompatibility:
         mem_repo._client = lambda: db
         active = await mem_repo.find_active_by_user_id("u1")
         assert len(active) == 1 and active[0].status == MembershipStatus.ACTIVE
-        for uid, expected in (("u2", MembershipStatus.INVITED),
-                              ("u3", MembershipStatus.SUSPENDED),
-                              ("u4", MembershipStatus.SUSPENDED)):
+        for uid, expected in (("u2", MembershipStatus.PENDING),
+                              ("u3", MembershipStatus.REMOVED),
+                              ("u4", MembershipStatus.LEFT)):
             rows = await mem_repo.find_by_user_id(uid)
             assert rows[0].status == expected
             assert rows[0].is_active is False

@@ -80,7 +80,20 @@ class InvitationService:
         invitation.accept()
         await self._invitation_repo.save(invitation)
 
+        from services.identity.exceptions import MembershipAlreadyExistsException
         from services.identity.models import Membership
+
+        existing = await self._membership_repo.find_by_user_and_org(
+            user_id, invitation.organization_id,
+        )
+        if existing is not None:
+            if existing.is_active:
+                raise MembershipAlreadyExistsException(user_id, invitation.organization_id)
+            existing.role = invitation.role
+            existing.invited_by = invitation.invited_by_user_id
+            existing.activate()  # reactivate pending/removed/left -> active
+            return await self._membership_repo.save(existing)
+
         membership = Membership(
             user_id=user_id,
             organization_id=invitation.organization_id,

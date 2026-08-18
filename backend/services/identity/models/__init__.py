@@ -16,9 +16,18 @@ from services.identity.types import (
 
 
 class MembershipStatus(str, Enum):
+    """Canonical durable membership lifecycle (single source of truth).
+
+    These values are the canonical vocabulary shared with the durable
+    organizations/memberships persistence model and the 025 DB CHECK
+    constraint. The pre-SaaS-2.2 identity enum (active/invited/suspended) has
+    been reconciled onto this model: invited -> pending, suspended -> removed.
+    """
+
+    PENDING = "pending"
     ACTIVE = "active"
-    INVITED = "invited"
-    SUSPENDED = "suspended"
+    REMOVED = "removed"
+    LEFT = "left"
 
 
 class InvitationStatus(str, Enum):
@@ -145,6 +154,17 @@ class Organization:
 
 # ─── Membership ────────────────────────────────────────────────────────
 
+# Canonical lifecycle transitions. A transition that is not listed is invalid.
+# Same-state is idempotent (safe no-op). ``* -> active`` covers reactivation
+# (removed/left members rejoin via add_member, matching the product).
+_MEMBERSHIP_TRANSITIONS: dict[MembershipStatus, set[MembershipStatus]] = {
+    MembershipStatus.PENDING: {MembershipStatus.ACTIVE, MembershipStatus.REMOVED},
+    MembershipStatus.ACTIVE: {MembershipStatus.REMOVED, MembershipStatus.LEFT},
+    MembershipStatus.REMOVED: {MembershipStatus.ACTIVE},
+    MembershipStatus.LEFT: {MembershipStatus.ACTIVE},
+}
+
+
 @dataclass
 class Membership:
     id: str = field(default_factory=lambda: str(uuid4()))
@@ -160,12 +180,32 @@ class Membership:
     def is_active(self) -> bool:
         return self.status == MembershipStatus.ACTIVE
 
+    @property
+    def is_pending(self) -> bool:
+        return self.status == MembershipStatus.PENDING
+
     def activate(self) -> None:
-        self.status = MembershipStatus.ACTIVE
+        self.transition_to(MembershipStatus.ACTIVE)
         self.accepted_at = datetime.now(timezone.utc)
 
-    def suspend(self) -> None:
-        self.status = MembershipStatus.SUSPENDED
+    def mark_removed(self) -> None:
+        self.transition_to(MembershipStatus.REMOVED)
+
+    def mark_left(self) -> None:
+        self.transition_to(MembershipStatus.LEFT)
+
+    def transition_to(self, new_status: MembershipStatus) -> None:
+        """Transition the membership status, rejecting invalid lifecycle moves.
+
+        Same-state is a safe no-op (idempotent). Any transition not in the
+        canonical table raises ``InvalidMembershipTransitionException``.
+        """
+        if new_status == self.status:
+            return
+        if new_status not in _MEMBERSHIP_TRANSITIONS.get(self.status, set()):
+            from services.identity.exceptions import InvalidMembershipTransitionException
+            raise InvalidMembershipTransitionException(self.status.value, new_status.value)
+        self.status = new_status
 
 
 # ─── Session ───────────────────────────────────────────────────────────

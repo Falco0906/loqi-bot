@@ -60,6 +60,26 @@ class MembershipNotFoundException(IdentityException):
         super().__init__(message)
 
 
+class MembershipAlreadyExistsException(IdentityException):
+    def __init__(self, user_id: str = "", organization_id: str = "") -> None:
+        msg = (
+            f"Membership already exists for user {user_id} in organization "
+            f"{organization_id}" if user_id and organization_id
+            else "Membership already exists"
+        )
+        super().__init__(msg)
+        self.user_id = user_id
+        self.organization_id = organization_id
+
+
+class InvalidMembershipTransitionException(IdentityException):
+    def __init__(self, current: str = "", target: str = "") -> None:
+        msg = f"Invalid membership transition: {current} -> {target}"
+        super().__init__(msg)
+        self.current = current
+        self.target = target
+
+
 class SessionNotFoundException(IdentityException):
     def __init__(self, session_id: str = "") -> None:
         msg = f"Session not found: {session_id}" if session_id else "Session not found"

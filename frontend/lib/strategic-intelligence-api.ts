@@ -45,12 +45,15 @@ export type GenerateProfileResponse = {
 export async function generateStrategicProfile(
   data: GenerateProfileRequest,
 ): Promise<GenerateProfileResponse> {
+  let storedAccessToken = "";
+  try { storedAccessToken = localStorage.getItem("loqi_access_token") || ""; } catch { /* SSR/storage unavailable */ }
   const response = await fetch(
     `${API_BASE}/api/v1/strategic-intelligence/generate`,
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...(storedAccessToken ? { Authorization: `Bearer ${storedAccessToken}` } : {}),
       },
       body: JSON.stringify(data),
     },
@@ -67,11 +70,14 @@ export async function generateStrategicProfile(
 export async function getStrategicProfile(
   userId: string,
 ): Promise<{ profile: StrategicProfile | null; generated_at: string | null }> {
+  let storedAccessToken = "";
+  try { storedAccessToken = localStorage.getItem("loqi_access_token") || ""; } catch { /* SSR/storage unavailable */ }
   const response = await fetch(
     `${API_BASE}/api/v1/strategic-intelligence/profile/${encodeURIComponent(userId)}`,
     {
       headers: {
         "Content-Type": "application/json",
+        ...(storedAccessToken ? { Authorization: `Bearer ${storedAccessToken}` } : {}),
       },
     },
   );

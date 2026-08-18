@@ -42,6 +42,8 @@ from services.persistence.repositories import (
     SupabaseEmailIdentityRepository,
     SupabasePasswordCredentialRepository,
     SupabaseRegistrationSessionRepository,
+    SupabaseIdentityOrganizationRepository,
+    SupabaseIdentityMembershipRepository,
 )
 from services.identity.services import (
     AuthService,
@@ -91,9 +93,10 @@ def _make_identity_repositories():
     # The User aggregate is the account of record and is always durable
     # through Supabase (identity_users). In production every authentication
     # lifecycle repository is Supabase-backed so signup/verification/login
-    # state survives restarts and multi-instance operation. The identity-side
-    # org/membership and OAuth-state repositories remain in-memory (their
-    # durable platform lives in the organizations workspace schema).
+    # state survives restarts and multi-instance operation. The identity
+    # organization + owner membership are also durable (organizations /
+    # memberships tables) so login still resolves an active membership for a
+    # completed account after a restart or redeploy.
     if REPOSITORY_PROVIDER == RepositoryProvider.SUPABASE:
         vt_repo = SupabaseVerificationTokenRepository()
         session_repo = SupabaseSessionRepository()
@@ -102,6 +105,11 @@ def _make_identity_repositories():
         ei_repo = SupabaseEmailIdentityRepository()
         pc_repo = SupabasePasswordCredentialRepository()
         reg_session_repo = SupabaseRegistrationSessionRepository()
+        # Durable identity organization + owner membership (organizations /
+        # memberships tables). login() resolves the active membership from
+        # durable storage so a completed account survives restarts/redeploys.
+        org_repo = SupabaseIdentityOrganizationRepository()
+        mem_repo = SupabaseIdentityMembershipRepository()
     else:
         vt_repo = InMemoryVerificationTokenRepository()
         session_repo = InMemorySessionRepository()
@@ -110,14 +118,16 @@ def _make_identity_repositories():
         ei_repo = InMemoryEmailIdentityRepository()
         pc_repo = InMemoryPasswordCredentialRepository()
         reg_session_repo = InMemoryRegistrationSessionRepository()
+        org_repo = InMemoryOrganizationRepository()
+        mem_repo = InMemoryMembershipRepository()
     return {
         "reg_session_repo": reg_session_repo,
         "vt_repo": vt_repo,
         "ei_repo": ei_repo,
         "user_repo": SupabaseUserRepository(),
         "pc_repo": pc_repo,
-        "org_repo": InMemoryOrganizationRepository(),
-        "mem_repo": InMemoryMembershipRepository(),
+        "org_repo": org_repo,
+        "mem_repo": mem_repo,
         "session_repo": session_repo,
         "rt_repo": rt_repo,
         "pr_repo": pr_repo,

@@ -24,7 +24,7 @@ class OrganizationService:
     async def create_organization(
         self, name: str, owner_id: str,
     ) -> tuple[Organization, Membership, IdentityEvent]:
-        slug = _generate_slug(name)
+        slug = await self._unique_slug(_generate_slug(name))
 
         org = Organization(name=name, slug=slug, owner_id=owner_id)
         saved_org = await self._org_repo.save(org)
@@ -72,6 +72,18 @@ class OrganizationService:
             if org is not None and not org.is_deleted:
                 orgs.append(org)
         return orgs
+
+
+    async def _unique_slug(self, base: str) -> str:
+        # Durable organizations carry a unique partial index on slug
+        # (006_workspaces.sql: WHERE deleted_at IS NULL), so two accounts
+        # naming their org the same must not collide on insert.
+        slug = base
+        suffix = 1
+        while await self._org_repo.find_by_slug(slug) is not None:
+            slug = f"{base}-{suffix}"
+            suffix += 1
+        return slug
 
 
 def _generate_slug(name: str) -> str:

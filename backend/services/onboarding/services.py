@@ -379,6 +379,7 @@ class OnboardingService:
         # Completion is an account property on the durable identity user.
         # Rehydrate the completed state after a backend restart before
         # treating the user as new.
+        durable_step: str | None = None
         if self._user_service is not None:
             try:
                 user = await self._user_service.get_user(user_id)
@@ -394,8 +395,33 @@ class OnboardingService:
                         "total_steps": len(completed_ids),
                         "onboarding_complete": True,
                     }
+                if user is not None:
+                    durable_step = (user.onboarding_data_dict or {}).get("onboarding_step")
             except Exception:
                 pass
+
+        # Restart recovery: the wizard's actual step is durably stored in
+        # identity_users.onboarding_data. When that says the account reached
+        # the onboarding wizard, reconstruct the wizard phase instead of
+        # resetting to PROFILE_SETUP because the in-memory lifecycle/session
+        # repositories were recreated. A failed Google Workspace connection
+        # therefore remains retryable after a restart.
+        _WIZARD_STEPS = ("knowledge-validation", "workspace-connection", "executive-briefing")
+        if durable_step in _WIZARD_STEPS:
+            completed_ids = [
+                s.value for s in (StepId.PROFILE_SETUP, StepId.WORKSPACE_SETUP, StepId.ONBOARDING_WIZARD)
+            ]
+            return {
+                "lifecycle_state": LifecycleState.ONBOARDING_COMPLETE.value,
+                "current_step": StepId.ONBOARDING_WIZARD.value,
+                "next_route": "/onboarding",
+                "progress_percentage": 60,
+                "completed_steps": completed_ids,
+                "remaining_steps": [s.value for s in (StepId.PLAN_SELECTION, StepId.CHECKOUT)],
+                "total_steps": len(STEP_ORDER),
+                "onboarding_complete": False,
+            }
+
         session = await self._session_repo.find_active_by_user_id(user_id)
         if session is None:
             if lc.state in (LifecycleState.ACTIVE, LifecycleState.ONBOARDING_COMPLETE, LifecycleState.SUBSCRIPTION_ACTIVE):

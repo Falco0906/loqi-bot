@@ -2865,7 +2865,8 @@ async def analyze_campaigns_endpoint(session_token: str, payload: BatchDraftRequ
 async def list_drafts(session_token: str, request: Request):
     session_token = _session_token_from_request(request)
     owner_id = await _workspace_owner(request, session_token)
-    return {"ok": True, "drafts": _workspace_drafts(owner_id, session_token)}
+    ws_id = await _resolved_workspace_id_or_default(request, owner_id)
+    return {"ok": True, "drafts": _workspace_drafts(owner_id, session_token, workspace_id=ws_id)}
 
 
 @app.put("/api/web/session/{session_token}/drafts/{draft_id}")
@@ -3359,6 +3360,93 @@ class DevWorkspaceContextRequest(BaseModel):
     conversation_id: str = ""
 
 
+# ── Multi-Workspace Lifecycle (SaaS-2.7) ──
+
+class CreateWorkspaceRequest(BaseModel):
+    organization_id: str = ""
+    name: str = "Workspace"
+    slug: str = ""
+
+
+@app.get("/api/web/session/{session_token}/workspaces")
+async def list_workspaces(session_token: str, request: Request):
+    """List workspaces in every organization the caller actively belongs to."""
+    session_token = _session_token_from_request(request)
+    owner_id = await _workspace_owner(request, session_token)
+    from services.workspace_context import workspaces_for_user
+    ws = await asyncio.to_thread(workspaces_for_user, None, owner_id)
+    return {"ok": True, "workspaces": ws}
+
+
+@app.post("/api/web/session/{session_token}/workspaces/select")
+async def select_workspace(session_token: str, request: Request):
+    """Validate + return the context for an explicitly selected workspace."""
+    session_token = _session_token_from_request(request)
+    owner_id = await _workspace_owner(request, session_token)
+    ctx = await _resolve_selected_workspace_context(request, owner_id)
+    return {
+        "ok": True,
+        "workspace": {
+            "id": ctx.workspace_id,
+            "organization_id": ctx.organization_id,
+            "name": ctx.workspace_name,
+            "membership_role": ctx.membership_role,
+            "membership_status": ctx.membership_status,
+        },
+    }
+
+
+@app.post("/api/web/session/{session_token}/workspaces")
+async def create_workspace(session_token: str, payload: CreateWorkspaceRequest, request: Request):
+    """Create an additional workspace in an organization the caller is an
+    ACTIVE member of (owner/admin role required).
+
+    The organization is validated against membership — never trusted as
+    authority by itself. The workspace gets a fresh uuid (independent of any
+    workflow/web session), owner_user_id = the authenticated user, and
+    organization_id = the validated org. No duplicate organization is created
+    and no existing workspace is modified.
+    """
+    session_token = _session_token_from_request(request)
+    owner_id = await _workspace_owner(request, session_token)
+    org_id = (payload.organization_id or "").strip()
+
+    from services.workspace_context import active_memberships
+    memberships = await asyncio.to_thread(active_memberships, None, owner_id)
+    membership = next((m for m in memberships if m.get("organization_id") == org_id), None)
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    if (membership.get("role") or "member") not in ("owner", "admin"):
+        raise HTTPException(status_code=403, detail="Insufficient role to create a workspace")
+
+    from uuid import uuid4
+    new_id = str(uuid4())
+    slug = (payload.slug or "").strip() or _default_workspace_slug(new_id, payload.name)
+    name = (payload.name or "").strip() or "Workspace"
+    from services.persistence.launch.repositories import WorkspaceRepository, WorkspaceMemberRepository
+    from services.persistence.launch.models import Workspace, WorkspaceMember
+    repo = WorkspaceRepository()
+    await repo.save(Workspace(
+        id=new_id, organization_id=org_id, name=name, slug=slug,
+        owner_user_id=owner_id, created_by=owner_id, updated_by=owner_id,
+        status="active",
+    ))
+    # Owner workspace-member row for the new workspace.
+    await WorkspaceMemberRepository().save(WorkspaceMember(
+        workspace_id=new_id, user_id=owner_id, role="owner", status="active",
+    ))
+    return {"ok": True, "workspace": {
+        "id": new_id, "organization_id": org_id, "name": name, "slug": slug,
+        "owner_user_id": owner_id, "status": "active",
+    }}
+
+
+def _default_workspace_slug(workspace_id: str, name: str = "Workspace") -> str:
+    base = (name or "Workspace").replace(" ", "-").lower()
+    suffix = str(workspace_id or "")[:8]
+    return f"{base}-{suffix}" if suffix else base
+
+
 @app.get("/api/web/session/{session_token}/workspace-context")
 async def dev_workspace_context(session_token: str, conversation_id: str = "", request: Request = None):
     session_token = _session_token_from_request(request)
@@ -3610,7 +3698,7 @@ async def provider_events_endpoint(session_token: str, request: Request, provide
     try:
         owner_id = await _workspace_owner(request, session_token)
         from services.workspace_state import ensure_workspace
-        ws = await asyncio.to_thread(ensure_workspace, owner_id)
+        ws = await _resolved_workspace_id_or_default(request, owner_id)
         if ws:
             from services.persistence.launch.communication_persistence import list_provider_events
             durable = await asyncio.to_thread(list_provider_events, ws, provider_id, 100)
@@ -4246,7 +4334,7 @@ async def outbound_history(session_token: str, request: Request, provider_id: st
     try:
         owner_id = await _workspace_owner(request, session_token)
         from services.workspace_state import ensure_workspace
-        ws = await asyncio.to_thread(ensure_workspace, owner_id)
+        ws = await _resolved_workspace_id_or_default(request, owner_id)
         if ws:
             from services.persistence.launch.communication_persistence import list_outbound_history
             durable = await asyncio.to_thread(list_outbound_history, ws, provider_id, 100)
@@ -4323,10 +4411,22 @@ def _knowledge_service():
 
 
 async def _knowledge_workspace(request: Request, session_token: str) -> tuple[str, str]:
-    """Resolve (owner_id, workspace_id) for the authenticated session."""
-    from services.workspace_state import _async_workspace
+    """Resolve (owner_id, workspace_id) for the authenticated session.
+
+    The workspace is the membership-validated selected workspace (or the
+    single-workspace default). A genuine ambiguous multi-workspace request
+    (409) is re-raised so the client must select; when the user has no
+    accessible workspace via membership (e.g. legacy/fixture contexts), fall
+    back to the owner-based single-workspace default for compatibility.
+    """
     owner_id = await _workspace_owner(request, session_token)
-    workspace_id = await _async_workspace(owner_id)
+    try:
+        workspace_id = await _selected_workspace_id(request, owner_id)
+    except HTTPException as exc:
+        if exc.status_code == 409:
+            raise
+        from services.workspace_state import _async_workspace
+        workspace_id = await _async_workspace(owner_id)
     if not workspace_id:
         raise HTTPException(status_code=503, detail="Workspace could not be resolved")
     return owner_id, workspace_id
@@ -4725,20 +4825,98 @@ async def _workspace_owner_and_summary(request: Request, session_token: str = ""
     return owner_id, summary
 
 
-def _workspace_campaigns(user_id: str, session_token: str = "") -> list[dict[str, Any]]:
+def _workspace_campaigns(user_id: str, session_token: str = "", workspace_id: str = "") -> list[dict[str, Any]]:
     from services.workspace_state import load_workspace_state
-    return load_workspace_state(user_id)["campaigns"]
+    return load_workspace_state(user_id, workspace_id=workspace_id)["campaigns"]
 
 
-def _workspace_drafts(user_id: str, session_token: str = "") -> list[dict[str, Any]]:
+def _workspace_drafts(user_id: str, session_token: str = "", workspace_id: str = "") -> list[dict[str, Any]]:
     from services.workspace_state import load_drafts_only
-    return load_drafts_only(user_id)
+    return load_drafts_only(user_id, workspace_id=workspace_id)
+
+
+def _workspace_id_from_request(request: Request) -> str:
+    """The explicitly selected workspace id (header), if any.
+
+    This is a non-authoritative input: it is independently validated against
+    the authenticated user's ACTIVE memberships before use.
+    """
+    if request is None:
+        return ""
+    try:
+        value = request.headers.get("x-workspace-id") if hasattr(request, "headers") else ""
+    except Exception:  # noqa: BLE001
+        return ""
+    if not isinstance(value, str):
+        return ""
+    return value.strip()
+
+
+async def _resolve_selected_workspace_context(request: Request, owner_id: str):
+    """Resolve + validate the selected workspace context for the caller.
+
+    Raises a safe HTTP error when the requested workspace is inaccessible, the
+    user has no accessible workspace, or multiple accessible workspaces exist
+    without an explicit selection. Never trusts the client id as authority.
+    """
+    from services.workspace_context import (
+        AmbiguousWorkspaceError,
+        NoWorkspaceAvailable,
+        WorkspaceAccessDenied,
+        resolve_workspace_context,
+    )
+    requested = _workspace_id_from_request(request)
+    try:
+        ctx = await asyncio.to_thread(
+            resolve_workspace_context, None, owner_id, requested,
+        )
+    except WorkspaceAccessDenied:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    except NoWorkspaceAvailable:
+        raise HTTPException(status_code=404, detail="No accessible workspace")
+    except AmbiguousWorkspaceError:
+        raise HTTPException(
+            status_code=409,
+            detail="Multiple workspaces available; select one via the X-Workspace-Id header",
+        )
+    return ctx
+
+
+async def _selected_workspace_id(request: Request, owner_id: str) -> str:
+    """The validated selected workspace id for the caller (raises on error)."""
+    ctx = await _resolve_selected_workspace_context(request, owner_id)
+    return ctx.workspace_id
+
+
+async def _resolved_workspace_id_or_default(request: Request, owner_id: str) -> str:
+    """Selected workspace, falling back to the owner-based single-workspace
+    default when membership resolution finds no accessible workspace (legacy /
+    fixture accounts without a durable membership).
+
+    A genuine ambiguous multi-workspace request (409) is re-raised so the
+    client must select; never silently picks a workspace when multiple are
+    accessible.
+    """
+    try:
+        return await _selected_workspace_id(request, owner_id)
+    except HTTPException as exc:
+        if exc.status_code == 409:
+            raise
+        # Owner-based single-workspace default (legacy / fixture accounts
+        # without a durable membership). Defensive: an invalid/non-uuid owner
+        # id in a test/legacy context must not break the request.
+        try:
+            from services.workspace_state import _async_workspace
+            return await _async_workspace(owner_id) or ""
+        except Exception:  # noqa: BLE001
+            return ""
 
 
 @app.post("/api/web/session/{session_token}/campaigns")
 async def save_campaign(session_token: str, payload: SaveCampaignRequest, request: Request):
     session_token = _session_token_from_request(request)
     owner_id = await _workspace_owner(request, session_token)
+    ws_id = await _resolved_workspace_id_or_default(request, owner_id)
     now = datetime.now(timezone.utc).isoformat()
     leads = payload.leads or []
     campaign = {
@@ -4755,11 +4933,11 @@ async def save_campaign(session_token: str, payload: SaveCampaignRequest, reques
         "updated_at": now,
     }
     from services.workspace_state import append_event, persist_campaign_lead_awaited, persist_campaign_row
-    if not await persist_campaign_row(owner_id, campaign):
+    if not await persist_campaign_row(owner_id, campaign, workspace_id=ws_id):
         raise HTTPException(status_code=503, detail="Campaign could not be persisted")
     failed_leads = 0
     for lead in leads:
-        if not await persist_campaign_lead_awaited(owner_id, campaign["id"], lead):
+        if not await persist_campaign_lead_awaited(owner_id, campaign["id"], lead, workspace_id=ws_id):
             failed_leads += 1
     if failed_leads:
         raise HTTPException(
@@ -4794,8 +4972,9 @@ async def list_campaigns(session_token: str, request: Request):
     session_token = _session_token_from_request(request)
     from services.workspace_snapshot import enrich_campaigns
     owner_id = await _workspace_owner(request, session_token)
-    campaigns = _workspace_campaigns(owner_id, session_token)
-    drafts = _workspace_drafts(owner_id, session_token)
+    ws_id = await _resolved_workspace_id_or_default(request, owner_id)
+    campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=ws_id)
+    drafts = _workspace_drafts(owner_id, session_token, workspace_id=ws_id)
     return {"ok": True, "campaigns": enrich_campaigns(campaigns, drafts)}
 
 
@@ -4804,8 +4983,9 @@ async def campaign_summary(session_token: str, request: Request):
     session_token = _session_token_from_request(request)
     from services.workspace_snapshot import enrich_campaigns
     owner_id = await _workspace_owner(request, session_token)
-    campaigns = _workspace_campaigns(owner_id, session_token)
-    drafts = _workspace_drafts(owner_id, session_token)
+    ws_id = await _resolved_workspace_id_or_default(request, owner_id)
+    campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=ws_id)
+    drafts = _workspace_drafts(owner_id, session_token, workspace_id=ws_id)
     enriched = enrich_campaigns(campaigns, drafts)
     items = [{
         "id": c.get("id", ""),
@@ -4823,8 +5003,9 @@ async def get_campaign(session_token: str, campaign_id: str, request: Request):
     session_token = _session_token_from_request(request)
     from services.workspace_snapshot import enrich_campaigns
     owner_id = await _workspace_owner(request, session_token)
-    campaigns = _workspace_campaigns(owner_id, session_token)
-    drafts = _workspace_drafts(owner_id, session_token)
+    ws_id = await _resolved_workspace_id_or_default(request, owner_id)
+    campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=ws_id)
+    drafts = _workspace_drafts(owner_id, session_token, workspace_id=ws_id)
     enriched = enrich_campaigns(campaigns, drafts)
     target = next((c for c in enriched if c.get("id") == campaign_id), None)
     if not target:
@@ -4837,7 +5018,8 @@ async def get_campaign(session_token: str, campaign_id: str, request: Request):
 async def campaign_launch_progress(session_token: str, campaign_id: str, request: Request):
     session_token = _session_token_from_request(request)
     owner_id = await _workspace_owner(request, session_token)
-    campaigns = _workspace_campaigns(owner_id, session_token)
+    ws_id = await _resolved_workspace_id_or_default(request, owner_id)
+    campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=ws_id)
     target = next((c for c in campaigns if c.get("id") == campaign_id), None)
     if not target:
         raise HTTPException(status_code=404, detail="Campaign not found")
@@ -4883,7 +5065,8 @@ async def campaign_timeline(session_token: str, campaign_id: str, request: Reque
 async def update_campaign(session_token: str, campaign_id: str, payload: UpdateCampaignRequest, request: Request):
     session_token = _session_token_from_request(request)
     owner_id = await _workspace_owner(request, session_token)
-    campaigns = _workspace_campaigns(owner_id, session_token)
+    ws_id = await _resolved_workspace_id_or_default(request, owner_id)
+    campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=ws_id)
     target = next((c for c in campaigns if c.get("id") == campaign_id), None)
     if not target:
         raise HTTPException(status_code=404, detail="Campaign not found")
@@ -4909,7 +5092,7 @@ async def update_campaign(session_token: str, campaign_id: str, payload: UpdateC
             "previous_status": old_status,
         }, actor="user")
         if payload.status == "completed" and old_status != "completed":
-            durable_drafts = _workspace_drafts(owner_id, session_token)
+            durable_drafts = _workspace_drafts(owner_id, session_token, workspace_id=ws_id)
             approved = [d for d in durable_drafts
                         if d.get("campaign_id") == campaign_id and d.get("status") == "approved"]
             if not approved:
@@ -4931,7 +5114,7 @@ async def update_campaign(session_token: str, campaign_id: str, payload: UpdateC
         }, actor="user")
     target["updated_at"] = datetime.now(timezone.utc).isoformat()
     from services.workspace_state import persist_campaign_update_awaited
-    if updates and not await persist_campaign_update_awaited(owner_id, campaign_id, updates):
+    if updates and not await persist_campaign_update_awaited(owner_id, campaign_id, updates, workspace_id=ws_id):
         raise HTTPException(status_code=503, detail="Campaign update could not be persisted")
     return {"ok": True, "campaign": target}
 
@@ -5527,14 +5710,15 @@ async def delete_campaign(session_token: str, campaign_id: str, request: Request
     The row is kept for audit/restore but hidden from all normal reads.
     """
     owner_id = await _workspace_owner(request, session_token)
-    campaigns = _workspace_campaigns(owner_id, session_token)
+    ws_id = await _resolved_workspace_id_or_default(request, owner_id)
+    campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=ws_id)
     target = next((c for c in campaigns if c.get("id") == campaign_id), None)
     if not target:
         raise HTTPException(status_code=404, detail="Campaign not found")
     target["status"] = "deleted"
     target["updated_at"] = datetime.now(timezone.utc).isoformat()
     from services.workspace_state import persist_campaign_update_awaited
-    if not await persist_campaign_update_awaited(owner_id, campaign_id, {"status": "deleted"}):
+    if not await persist_campaign_update_awaited(owner_id, campaign_id, {"status": "deleted"}, workspace_id=ws_id):
         raise HTTPException(status_code=503, detail="Campaign delete could not be persisted")
     publish(session_token, WMEventType.CAMPAIGN_DELETED, {
         "campaign_id": campaign_id,
@@ -5552,8 +5736,9 @@ async def duplicate_campaign(session_token: str, campaign_id: str, request: Requ
     duplicated. The copy starts fresh in planning so the pipeline can rerun.
     """
     owner_id = await _workspace_owner(request, session_token)
+    ws_id = await _resolved_workspace_id_or_default(request, owner_id)
     from services.workspace_state import duplicate_campaign as _duplicate_campaign
-    copy = await _duplicate_campaign(owner_id, campaign_id)
+    copy = await _duplicate_campaign(owner_id, campaign_id, workspace_id=ws_id)
     if copy is None:
         raise HTTPException(status_code=404, detail="Campaign not found")
     publish(session_token, WMEventType.CAMPAIGN_DUPLICATED, {
@@ -6337,8 +6522,7 @@ async def get_discovery_endpoint(discovery_id: str, request: Request):
     if not user_id:
         raise HTTPException(status_code=401, detail="Valid session required")
     log.info("[kickoff] GET /api/discoveries/%s: user=%s", discovery_id, user_id)
-    from services.workspace_state import ensure_workspace
-    workspace_id = await asyncio.to_thread(ensure_workspace, user_id)
+    workspace_id = await _resolved_workspace_id_or_default(request, user_id)
     # SaaS-2.5: constrain the lookup to the caller's workspace so a foreign
     # discovery id cannot return another tenant's PII even before the check.
     discovery = await asyncio.to_thread(get_discovery, discovery_id, workspace_id)

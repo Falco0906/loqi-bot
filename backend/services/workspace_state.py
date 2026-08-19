@@ -221,14 +221,14 @@ def persist_campaign(user_id: str, campaign: dict[str, Any]) -> bool:
     return append_event(user_id, "campaign.created", {"campaign": campaign})
 
 
-async def duplicate_campaign(user_id: str, campaign_id: str) -> dict[str, Any] | None:
+async def duplicate_campaign(user_id: str, campaign_id: str, workspace_id: str = "") -> dict[str, Any] | None:
     """Deep-copy a campaign: campaign row + current strategy + lead links.
 
     Drafts, outbound threads, sent mail, analytics and runtime state are never
     duplicated. The copy starts fresh in the planning lifecycle with the same
     strategy and workspace leads so the user can re-run the pipeline.
     """
-    workspace_id = await _async_workspace(user_id)
+    workspace_id = await _async_workspace(user_id, workspace_id=workspace_id)
     if not workspace_id:
         return None
     campaign_repo = CampaignRepository()
@@ -316,7 +316,7 @@ async def duplicate_campaign(user_id: str, campaign_id: str) -> dict[str, Any] |
     }
 
 
-async def persist_campaign_row(user_id: str, campaign: dict[str, Any]) -> bool:
+async def persist_campaign_row(user_id: str, campaign: dict[str, Any], workspace_id: str = "") -> bool:
     """Await the canonical campaigns row write for ``campaign``.
 
     Mirrors ``persist_campaign``'s bool contract but guarantees the row is
@@ -324,15 +324,16 @@ async def persist_campaign_row(user_id: str, campaign: dict[str, Any]) -> bool:
     whose task is cancelled when a TestClient request scope ends).
     """
     try:
-        await _write_campaign_row(user_id, campaign)
+        await _write_campaign_row(user_id, campaign, workspace_id=workspace_id)
         return True
     except Exception as error:
         print(f"[workspace_state] persist_campaign_row failed: {error}")
         return False
 
 
-async def _write_campaign_row(user_id: str, campaign: dict[str, Any]) -> None:
-    workspace_id = await _async_workspace(user_id)
+async def _write_campaign_row(user_id: str, campaign: dict[str, Any],
+                              workspace_id: str = "") -> None:
+    workspace_id = await _async_workspace(user_id, workspace_id=workspace_id)
     if not workspace_id:
         return
     repo = CampaignRepository()
@@ -379,6 +380,7 @@ async def _async_workspace(
     name: str = "Personal Workspace",
     organization_id: str = "",
     slug: str = "",
+    workspace_id: str = "",
 ) -> str | None:
     """Resolve the user's canonical durable workspace id (find or create).
 
@@ -387,8 +389,18 @@ async def _async_workspace(
     never derived from workflow_sessions.id, web-session ids, access tokens or
     client-supplied ids. The ``organization_id`` is server-derived from the
     canonical active membership when not supplied.
+
+    SaaS-2.7: when an explicitly selected ``workspace_id`` is supplied (already
+    membership-validated upstream via workspace_context), it is used as the
+    workspace context. Otherwise the single-owner default applies for
+    backwards compatibility.
     """
     repo = WorkspaceRepository()
+    if workspace_id:
+        ws = await repo.get(workspace_id)
+        if ws is not None and ws.deleted_at is None:
+            return ws.id
+        return None
     existing = await repo.find_active_by_owner(user_id)
     if existing is not None:
         await _attach_canonical_org(existing, organization_id)
@@ -506,16 +518,16 @@ async def _write_strategy(campaign_id: str, strategy: dict[str, Any]) -> None:
     ))
 
 
-def persist_campaign_update(user_id: str, campaign_id: str, updates: dict[str, Any]) -> bool:
+def persist_campaign_update(user_id: str, campaign_id: str, updates: dict[str, Any], workspace_id: str = "") -> bool:
     if campaign_id:
-        _run(_update_campaign_row(user_id, campaign_id, updates))
+        _run(_update_campaign_row(user_id, campaign_id, updates, workspace_id=workspace_id))
     return append_event(user_id, "campaign.updated", {
         "campaign_id": campaign_id,
         "updates": updates,
     })
 
 
-async def persist_campaign_update_awaited(user_id: str, campaign_id: str, updates: dict[str, Any]) -> bool:
+async def persist_campaign_update_awaited(user_id: str, campaign_id: str, updates: dict[str, Any], workspace_id: str = "") -> bool:
     """Durable (awaited) campaign update for interactive endpoints.
 
     Mirrors ``persist_campaign_update``'s contract but guarantees the row is
@@ -524,7 +536,7 @@ async def persist_campaign_update_awaited(user_id: str, campaign_id: str, update
     must await persistence instead of scheduling it in the background.
     """
     try:
-        await _update_campaign_row(user_id, campaign_id, updates)
+        await _update_campaign_row(user_id, campaign_id, updates, workspace_id=workspace_id)
     except Exception as error:
         print(f"[workspace_state] campaign update failed: {error}")
         return False
@@ -542,7 +554,7 @@ async def persist_campaign_update_awaited(user_id: str, campaign_id: str, update
     return True
 
 
-async def persist_campaign_lead_awaited(user_id: str, campaign_id: str, lead: dict[str, Any]) -> bool:
+async def persist_campaign_lead_awaited(user_id: str, campaign_id: str, lead: dict[str, Any], workspace_id: str = "") -> bool:
     """Durable (awaited) campaign-lead link for interactive endpoints.
 
     Returns False only when the link genuinely could not be written, so the
@@ -551,7 +563,7 @@ async def persist_campaign_lead_awaited(user_id: str, campaign_id: str, lead: di
     normalizer required an email and still reported True.)
     """
     try:
-        if not await _persist_campaign_lead_row(user_id, campaign_id, lead):
+        if not await _persist_campaign_lead_row(user_id, campaign_id, lead, workspace_id=workspace_id):
             return False
     except Exception as error:
         print(f"[workspace_state] campaign lead write failed: {error}")
@@ -569,15 +581,15 @@ async def persist_campaign_lead_awaited(user_id: str, campaign_id: str, lead: di
     return True
 
 
-async def _update_campaign_row(user_id: str, campaign_id: str, updates: dict[str, Any]) -> None:
+async def _update_campaign_row(user_id: str, campaign_id: str, updates: dict[str, Any], workspace_id: str = "") -> None:
     repo = CampaignRepository()
     entity = await repo.get(campaign_id)
     if entity is None:
         return
     # SaaS-2.4: never update a campaign outside the caller's workspace (defense
     # in depth below the endpoint-level gate). Same safe silent no-op.
-    workspace_id = await _async_workspace(user_id)
-    if not workspace_id or entity.workspace_id != workspace_id:
+    resolved = await _async_workspace(user_id, workspace_id=workspace_id)
+    if not resolved or entity.workspace_id != resolved:
         return
     for key in ("name", "objective", "status", "search_query", "discovery_id"):
         if updates.get(key) is not None:
@@ -616,7 +628,7 @@ def persist_campaign_lead(user_id: str, campaign_id: str, lead: dict[str, Any]) 
     })
 
 
-async def _persist_campaign_lead_row(user_id: str, campaign_id: str, lead: dict[str, Any]) -> bool:
+async def _persist_campaign_lead_row(user_id: str, campaign_id: str, lead: dict[str, Any], workspace_id: str = "") -> bool:
     """Persist a campaign-lead link and report whether the link exists after.
 
     Returns True when the link is present after the write (newly created or
@@ -892,7 +904,7 @@ def persist_draft(user_id: str, draft: dict[str, Any]) -> bool:
     return append_event(user_id, "draft.created", {"draft": draft})
 
 
-async def persist_draft_awaited(user_id: str, draft: dict[str, Any]) -> bool:
+async def persist_draft_awaited(user_id: str, draft: dict[str, Any], workspace_id: str = "") -> bool:
     """Durable (awaited) draft write for batch generation.
 
     Draft generation must not treat an event-append as success: the draft row
@@ -917,8 +929,8 @@ async def persist_draft_awaited(user_id: str, draft: dict[str, Any]) -> bool:
     return True
 
 
-async def _write_draft_row(user_id: str, draft: dict[str, Any]) -> None:
-    workspace = await _async_workspace(user_id)
+async def _write_draft_row(user_id: str, draft: dict[str, Any], workspace_id: str = "") -> None:
+    workspace = await _async_workspace(user_id, workspace_id=workspace_id)
     if not workspace:
         return
     repo = DraftRepository()
@@ -961,12 +973,12 @@ def persist_draft_update(user_id: str, draft_id: str, updates: dict[str, Any]) -
     })
 
 
-async def persist_draft_update_awaited(user_id: str, draft_id: str, updates: dict[str, Any]) -> bool:
+async def persist_draft_update_awaited(user_id: str, draft_id: str, updates: dict[str, Any], workspace_id: str = "") -> bool:
     """Durable (awaited) draft update for interactive endpoints."""
     if not draft_id:
         return False
     try:
-        await _update_draft_row(user_id, draft_id, updates)
+        await _update_draft_row(user_id, draft_id, updates, workspace_id=workspace_id)
     except Exception as error:
         print(f"[workspace_state] draft update failed: {error}")
         return False
@@ -982,15 +994,15 @@ async def persist_draft_update_awaited(user_id: str, draft_id: str, updates: dic
     return True
 
 
-async def _update_draft_row(user_id: str, draft_id: str, updates: dict[str, Any]) -> None:
+async def _update_draft_row(user_id: str, draft_id: str, updates: dict[str, Any], workspace_id: str = "") -> None:
     repo = DraftRepository()
     entity = await repo.get(draft_id)
     if entity is None:
         return
     # SaaS-2.4: never update a draft outside the caller's workspace (defense in
     # depth below the endpoint-level gate). Same safe silent no-op.
-    workspace_id = await _async_workspace(user_id)
-    if not workspace_id or entity.workspace_id != workspace_id:
+    resolved = await _async_workspace(user_id, workspace_id=workspace_id)
+    if not resolved or entity.workspace_id != resolved:
         return
     for key in ("subject", "status", "tone", "length", "body"):
         if updates.get(key) is not None:
@@ -1089,7 +1101,8 @@ def _flatten_launch_counters(campaigns: dict[str, dict[str, Any]]) -> None:
             campaign["launch_failed"] = int(launch.get("failed", 0))
 
 
-def load_workspace_state(user_id: str, include_details: bool = True) -> dict[str, Any]:
+def load_workspace_state(user_id: str, include_details: bool = True,
+                         workspace_id: str = "") -> dict[str, Any]:
     """Return {campaigns, drafts, approved_leads} for the user's workspace.
 
     Prefers canonical tables when seeded; falls back to the event projection
@@ -1099,11 +1112,16 @@ def load_workspace_state(user_id: str, include_details: bool = True) -> dict[str
     fan-out (campaigns carry ``lead_count`` but empty ``leads`` and
     ``strategy=None``).  Use it for summary/tabular endpoints that only need
     counts and step state — it cuts the workspace-graph load roughly in half.
+
+    SaaS-2.7: ``workspace_id`` (membership-validated upstream) selects the
+    workspace context; empty keeps the single-owner default.
     """
     client = get_supabase_client()
     if client is not None:
         try:
-            projection = _run_sync(_load_canonical_state(user_id, include_details=include_details))
+            projection = _run_sync(_load_canonical_state(
+                user_id, include_details=include_details, workspace_id=workspace_id,
+            ))
             if projection is not None:
                 return projection
         except Exception as error:
@@ -1111,15 +1129,15 @@ def load_workspace_state(user_id: str, include_details: bool = True) -> dict[str
     return _project_from_events(_events(user_id))
 
 
-def load_drafts_only(user_id: str) -> list[dict[str, Any]]:
+def load_drafts_only(user_id: str, workspace_id: str = "") -> list[dict[str, Any]]:
     """Return just the workspace's draft dicts — one query, no graph fan-out.
 
     Same per-draft shape as ``load_workspace_state()["drafts"]`` so list/edit/
     approve endpoints no longer pay for leads, profiles, companies and
-    strategies.
+    strategies. SaaS-2.7: ``workspace_id`` selects the workspace context.
     """
     client = get_supabase_client()
-    workspace_id = _run_sync(_async_workspace(user_id))
+    workspace_id = _run_sync(_async_workspace(user_id, workspace_id=workspace_id))
     if client is not None and workspace_id:
         try:
             rows = _run_sync(DraftRepository().list_for_workspace(workspace_id))
@@ -1130,17 +1148,21 @@ def load_drafts_only(user_id: str) -> list[dict[str, Any]]:
     return _project_from_events(_events(user_id)).get("drafts", [])
 
 
-def load_campaign_state(user_id: str, campaign_id: str) -> dict[str, Any] | None:
+def load_campaign_state(user_id: str, campaign_id: str,
+                        workspace_id: str = "") -> dict[str, Any] | None:
     """Return one campaign with its leads and strategy — no whole-graph load.
 
     Uses the same canonical fan-out scoped to a single campaign (links,
     profiles, companies, strategy).  Returns None when the campaign is not
-    part of the user's workspace.
+    part of the user's workspace. SaaS-2.7: ``workspace_id`` selects the
+    workspace context.
     """
     client = get_supabase_client()
     if client is not None:
         try:
-            campaign = _run_sync(_load_canonical_state(user_id, campaign_id=campaign_id))
+            campaign = _run_sync(_load_canonical_state(
+                user_id, campaign_id=campaign_id, workspace_id=workspace_id,
+            ))
             if campaign is not None:
                 return campaign
         except Exception as error:
@@ -1153,8 +1175,9 @@ async def _load_canonical_state(
     user_id: str,
     campaign_id: str | None = None,
     include_details: bool = True,
+    workspace_id: str = "",
 ) -> Any:
-    workspace_id = await _async_workspace(user_id)
+    workspace_id = await _async_workspace(user_id, workspace_id=workspace_id)
     if not workspace_id:
         return None
     campaign_repo = CampaignRepository()

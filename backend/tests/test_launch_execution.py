@@ -73,17 +73,17 @@ def env(monkeypatch):
     async def fake_owner(session_token: str, request=None) -> str:
         return "owner-1"
 
-    def fake_campaigns(owner_id: str, session_token: str = "") -> list[dict]:
+    def fake_campaigns(owner_id: str, session_token: str = "", workspace_id: str = "") -> list[dict]:
         return list(state["campaigns"])
 
-    def fake_drafts(owner_id: str, session_token: str = "") -> list[dict]:
+    def fake_drafts(owner_id: str, session_token: str = "", workspace_id: str = "") -> list[dict]:
         return list(state["drafts"])
 
-    async def fake_persist_campaign(owner_id: str, campaign_id: str, updates: dict) -> bool:
+    async def fake_persist_campaign(owner_id: str, campaign_id: str, updates: dict, workspace_id: str = "") -> bool:
         state["campaign_updates"].append((campaign_id, dict(updates)))
         return True
 
-    async def fake_persist_draft(owner_id: str, draft_id: str, updates: dict) -> bool:
+    async def fake_persist_draft(owner_id: str, draft_id: str, updates: dict, workspace_id: str = "") -> bool:
         state["draft_updates"].append((draft_id, dict(updates)))
         for d in state["drafts"]:
             if d["id"] == draft_id:

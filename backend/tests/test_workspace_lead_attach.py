@@ -171,7 +171,7 @@ def env(monkeypatch):
     lead_profiles = _Rows()
     links = _Rows()
 
-    async def fake_async_workspace(user_id: str) -> str:
+    async def fake_async_workspace(user_id: str, **kwargs) -> str:
         return "ws-1"
 
     def fake_workflow_session_id(user_id: str) -> str:

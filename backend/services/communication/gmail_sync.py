@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Gmail Synchronizer — incremental sync engine for Gmail.
 
 Manages cursor-based incremental sync.

@@ -62,14 +62,28 @@ CHILD_WORKSPACE_TABLES: tuple[str, ...] = (
 
 def _select(client: Any, table: str,
             where: list[tuple[str, str, str]] | None = None) -> list[dict[str, Any]]:
-    q = client.table(table).select("*")
-    for col, op, val in (where or []):
-        if op == "eq":
-            q = q.eq(col, val)
-        elif op == "is":
-            q = q.is_(col, val)
-    res = q.execute()
-    return getattr(res, "data", None) or []
+    """Read a table with tenant filters, paginating past PostgREST's default
+    max-rows cap (1000) so counts are exact and categories are internally
+    consistent (legacy + non-legacy == total)."""
+    rows: list[dict[str, Any]] = []
+    page_size = 500
+    offset = 0
+    while True:
+        q = client.table(table).select("*")
+        for col, op, val in (where or []):
+            if op == "eq":
+                q = q.eq(col, val)
+            elif op == "is":
+                q = q.is_(col, val)
+        q = q.limit(page_size).offset(offset)
+        page = getattr(q.execute(), "data", None) or []
+        if not page:
+            break
+        rows.extend(page)
+        if len(page) < page_size:
+            break
+        offset += page_size
+    return rows
 
 
 def _first(client: Any, table: str,
@@ -80,14 +94,23 @@ def _first(client: Any, table: str,
 
 def _count(client: Any, table: str,
            where: list[tuple[str, str, str]] | None = None) -> int:
-    q = client.table(table).select("id")
-    for col, op, val in (where or []):
-        if op == "eq":
-            q = q.eq(col, val)
-        elif op == "is":
-            q = q.is_(col, val)
-    res = q.execute()
-    return len(getattr(res, "data", None) or [])
+    total = 0
+    page_size = 500
+    offset = 0
+    while True:
+        q = client.table(table).select("id")
+        for col, op, val in (where or []):
+            if op == "eq":
+                q = q.eq(col, val)
+            elif op == "is":
+                q = q.is_(col, val)
+        q = q.limit(page_size).offset(offset)
+        page = getattr(q.execute(), "data", None) or []
+        total += len(page)
+        if len(page) < page_size:
+            break
+        offset += page_size
+    return total
 
 
 def detect_legacy_workspaces(client: Any = None) -> list[dict[str, Any]]:
@@ -327,6 +350,22 @@ def apply_migration_plan(
     legacy_now = _first(client, "workspaces", where=[("id", "eq", legacy_id), ("deleted_at", "is", "null")])
     if legacy_now is None:
         return {"applied": False, "reason": "already_migrated_or_removed", "dry_run": False}
+
+    # Re-read durable state at apply time: never trust a stale dry-run plan.
+    # The organization must still exist and the owner must still have an ACTIVE
+    # membership in it; otherwise refuse this workspace.
+    org_id = plan.get("organization_id", "") or ""
+    owner_id = plan.get("owner_user_id", "") or ""
+    if org_id and _first(client, "organizations", where=[("id", "eq", org_id)]) is None:
+        return {"applied": False, "reason": "blocked",
+                "blockers": ["organization no longer exists"], "dry_run": False}
+    if owner_id and not any(
+        m.get("organization_id") == org_id and m.get("status") == "active"
+        for m in _select(client, "memberships", where=[("user_id", "eq", owner_id)])
+    ):
+        return {"applied": False, "reason": "blocked",
+                "blockers": ["owner no longer has an active membership in the target organization"],
+                "dry_run": False}
 
     # The provenance column must exist (migration 028) to write the mapping.
     if not _has_workflow_session_column(client):

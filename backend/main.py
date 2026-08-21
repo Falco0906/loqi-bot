@@ -1571,11 +1571,24 @@ def _resolve_provider_for_conversation(conversation: "object") -> str:
     return _find_outbound_gmail_provider_id()
 
 
-def _sync_draft_to_outbound(legacy_draft: dict, session_token: str) -> None:
+def _sync_draft_to_outbound(
+    legacy_draft: dict,
+    session_token: str,
+    owner_id: str = "",
+) -> None:
     """Sync a legacy campaign draft into the outbound DraftStore.
-    
+
     Uses workflow_id to store campaign_id for later lookup.
     Stores lead metadata in the DraftMessage metadata field.
+
+    PR-2B: ``owner_id`` scopes provider stamping to the draft's owner. The
+    previous behaviour stamped the FIRST Gmail provider in the global
+    registry, so with two connected users (or after an identity divergence)
+    a hydrated draft could carry another user's provider — which the send
+    route's cross-user ownership check then rejected with a misleading 404
+    "Draft not found". When the owner is known but has no connected Gmail
+    provider we stamp an EMPTY provider id and let the send-time resolver
+    (_get_outbound_provider_for_draft) bind the current one.
     """
     from services.outbound.draft_store import draft_store as outbound_draft_store
     from services.outbound.outbound_models import DraftMessage, DraftStatus, ApprovalState, Recipient
@@ -1591,14 +1604,17 @@ def _sync_draft_to_outbound(legacy_draft: dict, session_token: str) -> None:
         "draft": DraftStatus.DRAFT,
         "sent": DraftStatus.SENT,
     }
-    real_provider_id = _find_outbound_gmail_provider_id()
+    if owner_id:
+        real_provider_id = _resolve_owner_gmail_provider(owner_id)
+    else:
+        real_provider_id = _find_outbound_gmail_provider_id()
     sender_email = ""
     if real_provider_id:
         comm_instance = get_provider(real_provider_id)
         sender_email = getattr(comm_instance, "_mailbox_email", "") or ""
     outbound_draft = DraftMessage(
         id=legacy_draft.get("id", ""),
-        provider_id=real_provider_id or "campaign",
+        provider_id=real_provider_id,
         workflow_id=legacy_draft.get("campaign_id", ""),
         subject=legacy_draft.get("subject", ""),
         body=legacy_draft.get("text", ""),
@@ -1891,7 +1907,7 @@ async def _process_batch_drafts(
                 "body_preview": draft_entry["text"][:200],
             }, actor="system")
 
-            _sync_draft_to_outbound(draft_entry, session_token)
+            _sync_draft_to_outbound(draft_entry, session_token, owner_id=owner_id)
 
         except Exception as e:
             print(f"[batch] Draft failed for lead {i} ({name}): {e}")
@@ -2361,8 +2377,9 @@ async def gmail_auth_url(request: Request, session_token: str = ""):
             user_id = await get_authenticated_user_id(request)
         if not user_id and session_token:
             # Only accept a web-session token that actually resolves to a user.
+            # PR-2B: identity-only + cached; the full summary was overkill here.
             try:
-                summary = await asyncio.to_thread(engine.get_web_session_summary, session_token)
+                summary = await _cached_session_identity(session_token)
             except Exception:
                 summary = None
             if summary and summary.get("user_id"):
@@ -2587,6 +2604,13 @@ async def _perform_gmail_oauth_persistence(
             raise RuntimeError("Connected account persistence could not be verified")
 
         _register_credential_instance(access_token, refresh_token, email)
+        # PR-2B: the cached identity carries gmail_connected — drop stale
+        # entries for this user so /gmail + resolvers reflect the new state.
+        try:
+            from services.session_cache import session_cache
+            session_cache.invalidate_user(user_id)
+        except Exception:
+            pass
         log.info(
             "[oauth] provider persistence succeeded user=%s provider=%s",
             user_id[:8], provider_record.id[:8],
@@ -3302,7 +3326,7 @@ async def approve_draft(session_token: str, draft_id: str, request: Request):
             raise HTTPException(status_code=503, detail="Draft approval could not be persisted")
         durable_target["status"] = new_status
         if new_status == "approved":
-            _sync_draft_to_outbound(durable_target, session_token)
+            _sync_draft_to_outbound(durable_target, session_token, owner_id=owner_id)
             _call_outbound_approval(draft_id, durable_target)
         campaign_id = durable_target.get("campaign_id")
         current_step = None
@@ -3681,6 +3705,12 @@ async def provider_disconnect(session_token: str, provider_id: str, request: Req
     success = registry_disconnect(provider_id)
     if not success:
         raise HTTPException(status_code=404, detail="Provider not found or already disconnected")
+    # PR-2B: gmail_connected changed in the cached identity.
+    try:
+        from services.session_cache import session_cache
+        session_cache.invalidate_user(owner_id)
+    except Exception:
+        pass
     publish(session_token, WMEventType.PROVIDER_DISCONNECTED, {
         "provider_id": provider_id,
     }, actor="user")
@@ -4156,37 +4186,50 @@ async def send_draft(session_token: str, draft_id: str, request: Request, payloa
     test_recipient = payload.test_recipient or ""
     if test_recipient and not _test_recipient_override_enabled():
         raise HTTPException(status_code=403, detail="Test recipient override is disabled")
+
+    # PR-2B: resolve ownership + workspace BEFORE hydration. The durable
+    # lookup must use the same workspace scope as GET /drafts (the Review UI
+    # source), and the hydration stamp must be scoped to THIS owner.
+    owner_id = ""
+    try:
+        owner_id = await _workspace_owner(request, session_token)
+    except HTTPException:
+        owner_id = ""
+    try:
+        ws_id = await _resolved_workspace_id_or_default(request, owner_id) if owner_id else ""
+    except Exception:
+        # PR-2B: workspace scoping only narrows the durable fallback lookup;
+        # a workspace-resolution failure (e.g. transient DB error) must never
+        # fail the SEND itself. Empty scope = previous lookup semantics.
+        ws_id = ""
+
     outbound_draft = outbound_draft_store.get(draft_id)
     hydrated_owner_id: str | None = None
     if not outbound_draft:
         legacy_drafts = draft_store.get(session_token, [])
         legacy = next((d for d in legacy_drafts if d.get("id") == draft_id), None)
         if not legacy:
-            owner_id = await _workspace_owner(request, session_token)
+            # Same source + scope as GET /drafts (PR-2B: was missing the
+            # workspace id, which could hide drafts that /drafts shows).
             durable = next(
-                (d for d in _workspace_drafts(owner_id, session_token) if d.get("id") == draft_id),
+                (d for d in _workspace_drafts(owner_id, session_token, workspace_id=ws_id) if d.get("id") == draft_id),
                 None,
             )
             if not durable:
                 raise HTTPException(status_code=404, detail="Draft not found in any store")
             if durable.get("status") == "sent":
                 return {"ok": False, "error": "Draft already sent"}
-            _sync_draft_to_outbound(durable, session_token)
+            _sync_draft_to_outbound(durable, session_token, owner_id=owner_id)
             hydrated_owner_id = owner_id
         else:
-            _sync_draft_to_outbound(legacy, session_token)
+            _sync_draft_to_outbound(legacy, session_token, owner_id=owner_id)
         outbound_draft = outbound_draft_store.get(draft_id)
         if not outbound_draft:
             raise HTTPException(status_code=500, detail="Failed to sync draft to outbound store")
     from services.outbound.outbound_models import DraftStatus
     if outbound_draft.status in (DraftStatus.SENT, DraftStatus.SENDING):
         return {"ok": False, "error": "Draft already sent"}
-    owner_id = hydrated_owner_id or ""
-    if not owner_id:
-        try:
-            owner_id = await _workspace_owner(request, session_token)
-        except HTTPException:
-            owner_id = ""
+    owner_id = hydrated_owner_id or owner_id
     # PR10.8.3: never send a draft whose provider provably belongs to another
     # user (cross-user draft access via a guessed draft id).
     if owner_id and outbound_draft.provider_id:
@@ -4308,19 +4351,22 @@ async def schedule_draft(session_token: str, draft_id: str, payload: ScheduleDra
     from services.outbound.draft_store import draft_store as outbound_draft_store
     from services.outbound.outbound_scheduler import outbound_scheduler
     outbound_draft = outbound_draft_store.get(draft_id)
+    owner_id = ""
+    try:
+        # PR-2B: resolve the owner before hydration so the provider stamp is
+        # scoped to this user (same fix as the send route).
+        owner_id = await _workspace_owner(request, session_token)
+    except HTTPException:
+        owner_id = ""
     if not outbound_draft:
         legacy_drafts = draft_store.get(session_token, [])
         legacy = next((d for d in legacy_drafts if d.get("id") == draft_id), None)
         if not legacy:
             raise HTTPException(status_code=404, detail="Draft not found in any store")
-        _sync_draft_to_outbound(legacy, session_token)
+        _sync_draft_to_outbound(legacy, session_token, owner_id=owner_id)
         outbound_draft = outbound_draft_store.get(draft_id)
         if not outbound_draft:
             raise HTTPException(status_code=500, detail="Failed to sync draft to outbound store")
-    try:
-        owner_id = await _workspace_owner(request, session_token)
-    except HTTPException:
-        owner_id = ""
     recipient_email = (outbound_draft.recipient.email if outbound_draft.recipient else "") or ""
     if not str(recipient_email).strip():
         return {"ok": False, "error": "This lead has no email address"}
@@ -5005,8 +5051,12 @@ async def _resolve_session_context(request: Request) -> tuple[str, str]:
             return str(user_id), token
     except HTTPException:
         pass
-    summary = await asyncio.to_thread(engine.get_web_session_summary, token)
-    if summary and summary.get("user_id"):
+    # PR-2B: this resolver previously fetched the FULL session summary
+    # (~9-10 Supabase queries) and used only ``user_id``. The minimal cached
+    # identity serves the same decision with 2-4 queries at most, and a 15s
+    # TTL absorbs the per-request repetition.
+    identity = await _cached_session_identity(token)
+    if identity and identity.get("user_id"):
         binding = await _web_session_binding(token)
         if binding is not None:
             # The web-session is bound to a canonical session: require that
@@ -5019,7 +5069,7 @@ async def _resolve_session_context(request: Request) -> tuple[str, str]:
                     status_code=401, detail="Invalid or expired session",
                 ) from exc
             return binding.canonical_user_id, token
-        return str(summary["user_id"]), token
+        return str(identity["user_id"]), token
     raise HTTPException(status_code=401, detail="Invalid or expired session")
 
 
@@ -5028,16 +5078,53 @@ async def _web_session_binding(token: str):
     return await find_binding(token)
 
 
+async def _cached_session_identity(token: str) -> dict | None:
+    """PR-2B: minimal per-token identity with a 15s TTL.
+
+    Returns {user_id, display_name, gmail_connected} or None. Cache holds no
+    credentials; invalidated on provider connect/disconnect and session
+    revocation. Redis replaces the backing store pre-launch without caller
+    changes (see services/session_cache.py).
+    """
+    from services.session_cache import session_cache
+
+    cached = session_cache.get_identity(token)
+    if cached is not None:
+        return {
+            "user_id": cached.user_id,
+            "display_name": cached.display_name,
+            "gmail_connected": cached.gmail_connected,
+        }
+    try:
+        identity = await asyncio.to_thread(engine.get_web_session_identity, token)
+    except Exception as error:
+        log.warning("session_identity_lookup_failed error_type=%s", type(error).__name__)
+        return None
+    if identity and identity.get("user_id"):
+        from services.session_cache import SessionIdentity
+        session_cache.set_identity(token, SessionIdentity(
+            user_id=str(identity["user_id"]),
+            display_name=str(identity.get("display_name") or ""),
+            gmail_connected=bool(identity.get("gmail_connected")),
+        ))
+    return identity
+
+
 async def _workspace_owner_and_summary(request: Request, session_token: str = "") -> tuple[str, dict | None]:
     """Resolve the durable workspace owner and the web-session summary.
 
     PR10.8.3.1: authentication comes from the Authorization header only; the
     legacy ``{session_token}`` URL path parameter is ignored and never used as
     a credential.
+
+    PR-2B: every current caller reads only ``summary["user_id"]`` — the full
+    ~9-query summary fetch has been replaced with the cached minimal
+    identity. The returned "summary" keeps its historical shape
+    (``{"user_id": ...}``) so callers are untouched.
     """
     owner_id, token = await _resolve_session_context(request)
-    summary = await asyncio.to_thread(engine.get_web_session_summary, token)
-    return owner_id, summary
+    identity = await _cached_session_identity(token)
+    return owner_id, ({"user_id": identity["user_id"]} if identity else None)
 
 
 def _workspace_campaigns(user_id: str, session_token: str = "", workspace_id: str = "") -> list[dict[str, Any]]:
@@ -5745,7 +5832,7 @@ async def _dispatch_campaign_sends(session_token: str, campaign: dict, owner_id:
     ]
     if approved_durable:
         for d in approved_durable:
-            _sync_draft_to_outbound(d, session_token)
+            _sync_draft_to_outbound(d, session_token, owner_id=owner_id)
 
     approved_ids = {d["id"] for d in approved_durable}
     all_outbound = outbound_draft_store.list_by_workflow(campaign_id)
@@ -5761,7 +5848,7 @@ async def _dispatch_campaign_sends(session_token: str, campaign: dict, owner_id:
                            if d.get("campaign_id") == campaign_id and d.get("status") == "approved"]
         if legacy_approved:
             for ld in legacy_approved:
-                _sync_draft_to_outbound(ld, session_token)
+                _sync_draft_to_outbound(ld, session_token, owner_id=owner_id)
             approved = [outbound_draft_store.get(ld["id"]) for ld in legacy_approved]
             approved = [d for d in approved if d and d.status.value in ("approved", "auto_approved")]
     if not approved:
@@ -6498,7 +6585,8 @@ def log_conversation_internal(user_id: str, role: str, text: str) -> None:
 @app.get("/api/web/session/{session_token}/gmail")
 async def get_web_gmail_status(session_token: str, request: Request = None):
     session_token = _session_token_from_request(request)
-    summary = await asyncio.to_thread(engine.get_web_session_summary, session_token)
+    # PR-2B: only user_id + gmail_connected are used — cached identity.
+    summary = await _cached_session_identity(session_token)
     if summary is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -6795,8 +6883,8 @@ async def plan_workflow_endpoint(session_token: str, payload: PlanningInput, req
     campaigns = campaign_store.get(session_token, [])
     drafts = draft_store.get(session_token, [])
     total_leads = sum(c.get("lead_count", 0) or 0 for c in campaigns)
-    from services.conversation_engine import ConversationEngine
-    _summary = await asyncio.to_thread(ConversationEngine().get_web_session_summary, session_token)
+    # PR-2B: only the owning user id is consumed here — cached identity.
+    _summary = await _cached_session_identity(session_token)
     _db_user_id = _summary.get("user_id") if _summary else None
     snapshot = await asyncio.to_thread(
         build_snapshot, session_token, campaigns, drafts, total_leads, user_id=_db_user_id,

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
+import { ApiError, TimeoutError } from "../../lib/api";
 import {
   listDrafts,
   updateDraft,
@@ -73,6 +74,24 @@ type DraftEditEntry = {
 
 function getCampaignLabel(cid: string, cmap: Map<string, string>): string {
   return cmap.get(cid) || "Uncategorized";
+}
+
+/**
+ * PR-2B §5: surface WHY a critical draft action failed instead of a generic
+ * message. Status-aware, never exposes backend internals or tokens.
+ */
+function describeDraftActionError(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) {
+    if (err.status === 401) return "Your session expired — please refresh and sign in again.";
+    if (err.status === 403) return "You don't have permission for this action.";
+    if (err.status === 404) return "This draft no longer exists — refresh your draft list.";
+    if (err.status === 409) return "This draft changed elsewhere — refresh and try again.";
+    if (err.status === 429) return "Too many requests — wait a moment and try again.";
+    if (err.status >= 500) return "The server couldn't complete this action — please retry.";
+    return err.message ? `${fallback}: ${err.message}` : fallback;
+  }
+  if (err instanceof TimeoutError) return "The request timed out — please retry.";
+  return `${fallback} (connection issue)`;
 }
 
 export default function DraftReviewWorkspace() {
@@ -326,8 +345,8 @@ export default function DraftReviewWorkspace() {
       );
       setEditing(false);
       setMessage("Draft saved");
-    } catch {
-      setMessage("Failed to save");
+    } catch (err) {
+      setMessage(describeDraftActionError(err, "Failed to save"));
     }
   }
 
@@ -364,8 +383,8 @@ export default function DraftReviewWorkspace() {
         );
         setMessage(`Applied: ${action}`);
       }
-    } catch {
-      setMessage("Refinement failed");
+    } catch (err) {
+      setMessage(describeDraftActionError(err, "Refinement failed"));
     } finally {
       setRefining(null);
     }
@@ -394,8 +413,8 @@ export default function DraftReviewWorkspace() {
           );
         }
       }
-    } catch {
-      setMessage("Failed to update");
+    } catch (err) {
+      setMessage(describeDraftActionError(err, "Failed to update"));
     }
   }
 
@@ -433,8 +452,8 @@ export default function DraftReviewWorkspace() {
         const err = res.error || res.send_result?.error;
         setMessage(err ? `Send failed: ${err}` : "Send failed");
       }
-    } catch {
-      setMessage("Send request failed");
+    } catch (err) {
+      setMessage(describeDraftActionError(err, "Send request failed"));
     } finally {
       setSendingId(null);
     }
@@ -460,8 +479,8 @@ export default function DraftReviewWorkspace() {
       } else {
         setMessage(res.error || "Schedule failed");
       }
-    } catch {
-      setMessage("Schedule request failed");
+    } catch (err) {
+      setMessage(describeDraftActionError(err, "Schedule request failed"));
     } finally {
       setSchedulingId(null);
     }

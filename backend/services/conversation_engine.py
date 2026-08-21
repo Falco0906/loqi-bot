@@ -221,6 +221,20 @@ class ConversationEngine:
             return None
         return str(user.get("id") or "") or None
 
+    def get_web_session_identity(self, session_token: str) -> dict | None:
+        """PR-2B: minimal identity for hot paths — 2-4 queries instead of the
+        full summary's ~9-10. Returns {user_id, display_name, gmail_connected};
+        never loads workflow sessions or messages. Pairs with
+        services.session_cache for short-TTL caching."""
+        user = get_web_session(session_token)
+        if user is None:
+            return None
+        return {
+            "user_id": user["id"],
+            "display_name": user.get("username"),
+            "gmail_connected": has_connected_account(user["id"]),
+        }
+
     def get_web_session_summary(self, session_token: str) -> dict | None:
         user = get_web_session(session_token)
         if user is None:

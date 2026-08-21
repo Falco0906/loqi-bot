@@ -32,6 +32,27 @@ from fastapi import HTTPException
 
 SENTINEL = "PR10831_SESSION_SENTINEL_DO_NOT_LEAK"
 
+# PR-2B: several tests in this file patch main_module helpers via DIRECT
+# assignment (historic style). Without restoration the patches leak into
+# subsequently-run test files (e.g. send-provider resolution), breaking them
+# order-dependently. Snapshot + restore the commonly-patched callables.
+@pytest.fixture(autouse=True)
+def _restore_patched_main_helpers():
+    import main as _main
+    saved = {
+        name: getattr(_main, name)
+        for name in (
+            "_workspace_owner",
+            "_resolve_session_context",
+            "_session_token_from_request",
+            "_conversation_owned_by",
+        )
+        if hasattr(_main, name)
+    }
+    yield
+    for name, fn in saved.items():
+        setattr(_main, name, fn)
+
 
 @pytest.fixture(autouse=True)
 def _clean_runtime_state():

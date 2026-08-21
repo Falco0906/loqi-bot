@@ -184,7 +184,7 @@ export default function Sidebar({
         className="group flex h-5 shrink-0 cursor-col-resize touch-none items-center outline-none"
       >
         <div
-          className={`h-px bg-on-surface-variant/60 transition-colors duration-150 group-hover:bg-on-surface-variant group-focus-visible:bg-primary ${inset}`}
+          className={`h-px bg-on-surface-variant/30 transition-colors duration-150 group-hover:bg-on-surface-variant/50 group-focus-visible:bg-primary ${inset}`}
         />
       </div>
     );

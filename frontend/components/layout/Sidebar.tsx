@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useRef, type KeyboardEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useRef, type KeyboardEvent, type PointerEvent } from "react";
 import { usePathname } from "next/navigation";
 import Icon from "../shared/Icon";
 import { useAuth } from "../../hooks/useAuth";
@@ -64,6 +64,15 @@ export default function Sidebar({
   const { user } = useAuth();
   const { query, setQuery } = useWorkspaceSearch();
   const dragState = useRef<{ startX: number; fromExpanded: boolean } | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const pendingSearchFocus = useRef(false);
+
+  useEffect(() => {
+    if (!collapsed && pendingSearchFocus.current) {
+      pendingSearchFocus.current = false;
+      searchInputRef.current?.focus();
+    }
+  }, [collapsed]);
 
   const displayName =
     user && "display_name" in user && user.display_name
@@ -201,6 +210,7 @@ export default function Sidebar({
           <label className="mt-4 flex items-center gap-2 rounded-lg border border-outline-variant/20 bg-surface-lowest px-3 py-2 transition-colors focus-within:border-primary/50">
             <Icon name="search" className="text-base text-on-surface-variant/50 shrink-0" />
             <input
+              ref={searchInputRef}
               type="text"
               aria-label="Search"
               value={query}
@@ -219,6 +229,23 @@ export default function Sidebar({
               </button>
             )}
           </label>
+        )}
+        {collapsed && (
+          <div className="mt-4 flex justify-center">
+            <button
+              type="button"
+              onClick={() => {
+                pendingSearchFocus.current = true;
+                onToggleCollapse();
+              }}
+              title="Search"
+              aria-label="Expand sidebar to search"
+              className="relative w-9 h-9 grid place-items-center rounded-lg text-on-surface-variant/60 hover:text-primary hover:bg-surface-container-high/60 transition-all active:scale-95"
+            >
+              <Icon name="search" className="text-xl" />
+              {query.trim() ? <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-primary" /> : null}
+            </button>
+          </div>
         )}
       </div>
 

@@ -246,9 +246,16 @@ export default function MissionControlDashboard() {
   useEffect(() => {
     const status = mcData?.initialResearchStatus;
     if (status !== "queued" && status !== "running") return;
+    // PR-P1.4: in-flight guard — a slow mission-control fetch must never
+    // stack overlapping requests; each tick awaits the previous one.
+    let pollBusy = false;
     const timer = window.setInterval(() => {
+      if (pollBusy) return;
+      pollBusy = true;
       invalidateMissionControlCache();
-      mcRetry();
+      mcRetry().finally(() => {
+        pollBusy = false;
+      });
     }, 3000);
     return () => window.clearInterval(timer);
   }, [mcData?.initialResearchStatus, mcRetry]);

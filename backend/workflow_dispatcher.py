@@ -88,7 +88,10 @@ async def run_search_workflow(job: Job, on_progress) -> dict:
     plan = None
     try:
         from services.discovery_plan import derive_discovery_plan
-        plan = derive_discovery_plan(query, existing_context=discovery_context)
+        # PR-P1.2: derive_discovery_plan performs a synchronous OpenAI HTTP
+        # call (20s timeout via extract_structured_icp). This coroutine runs
+        # on the event loop, so offload to a worker thread.
+        plan = await asyncio.to_thread(derive_discovery_plan, query, existing_context=discovery_context)
     except Exception as e:
         _log(f"plan derivation failed, using legacy parse: {e}")
 

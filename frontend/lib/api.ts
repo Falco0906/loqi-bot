@@ -45,23 +45,65 @@ type FetchOptions = {
   signal?: AbortSignal;
 };
 
+/**
+ * PR-P1.3: retries are method-aware. Idempotent GET/HEAD may retry
+ * transient network/timeout failures; mutations (POST/PUT/PATCH/DELETE)
+ * must NOT be replayed automatically because a timeout does not tell us
+ * whether the backend already executed the operation. Callers can still
+ * override explicitly via `retries`.
+ */
+const IDEMPOTENT_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+function defaultRetriesFor(method: string): number {
+  return IDEMPOTENT_METHODS.has(method.toUpperCase()) ? 2 : 0;
+}
+
+/**
+ * Compose the caller's AbortSignal (if any) with an internal timeout signal
+ * so that BOTH can abort the fetch: the caller keeps full cancel power and
+ * the per-attempt timeout still fires when only a caller signal was given.
+ * Returns a cleanup fn that detaches listeners after the attempt settles.
+ */
+function composeSignals(external: AbortSignal | undefined, controller: AbortController): () => void {
+  if (!external) {
+    // No caller signal: the internal timeout alone governs abortion.
+    return () => {};
+  }
+  const onExternalAbort = () => controller.abort(external.reason);
+  if (external.aborted) {
+    onExternalAbort();
+    return () => {};
+  }
+  external.addEventListener("abort", onExternalAbort);
+  return () => external.removeEventListener("abort", onExternalAbort);
+}
+
 async function fetchWithRetry<T>(
   url: string,
   options: FetchOptions = {},
 ): Promise<T> {
   const timeout = options.timeout ?? 10000;
-  const retries = options.retries ?? 2;
+  const method = options.method || "GET";
+  const retries = options.retries ?? defaultRetriesFor(method);
   let lastError: Error | null = null;
-  const _start = Date.now();
 
   for (let attempt = 0; attempt <= retries; attempt++) {
+    // PR-P1.3: never sleep or re-attempt once the caller has cancelled.
+    if (options.signal?.aborted) {
+      throw lastError || new DOMException("Aborted", "AbortError");
+    }
+
     if (attempt > 0) {
       const delay = attempt === 1 ? 500 : 1000;
       await new Promise((r) => setTimeout(r, delay));
+      if (options.signal?.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
     }
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
+    const removeSignalListeners = composeSignals(options.signal, controller);
 
     // PR10.8.3.1: session credentials are sent ONLY via the Authorization
     // header — never interpolated into URLs. For /api/web/session/* calls,
@@ -85,11 +127,11 @@ async function fetchWithRetry<T>(
 
     try {
       const response = await fetch(url, {
-        method: options.method || "GET",
+        method,
         headers,
         body: options.body,
         cache: options.cache,
-        signal: options.signal || controller.signal,
+        signal: controller.signal,
       });
 
       clearTimeout(timeoutId);
@@ -113,15 +155,23 @@ async function fetchWithRetry<T>(
       clearTimeout(timeoutId);
       lastError = err as Error;
 
+      // A caller-initiated abort ends the loop immediately — do not retry.
+      if (options.signal?.aborted) {
+        throw err instanceof Error ? err : new DOMException("Aborted", "AbortError");
+      }
+
       if (err instanceof ApiError) throw err;
 
       if (err instanceof DOMException && err.name === "AbortError") {
+        // Our own timeout fired (caller signal was ruled out above).
         lastError = new TimeoutError();
       } else if (!(err instanceof TimeoutError)) {
         lastError = new NetworkError(
           err instanceof Error ? err.message : "Failed to fetch",
         );
       }
+    } finally {
+      removeSignalListeners();
     }
   }
 
@@ -199,7 +249,9 @@ export async function copilotMessage(
     {
       method: "POST",
       timeout: 20000,
-      retries: 1,
+      // PR-P1.3: a chat POST that times out may already have been processed
+      // server-side — replaying it would duplicate the user's message.
+      retries: 0,
       headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text: params.text,
@@ -609,7 +661,9 @@ export async function generateCampaignStrategy(
       headers: authHeaders(),
       body: JSON.stringify({ force }),
       timeout: 15000,
-      retries: 1,
+      // PR-P1.3: strategy start creates a backend job; a replayed POST would
+      // enqueue a second generation for the same campaign.
+      retries: 0,
     },
   );
 }
@@ -1021,11 +1075,18 @@ export async function getGmailCallback(code: string) {
 }
 
 export async function listProviders(sessionToken: string) {
+  // PR-2A §8 auth note (verified, not changed): the URL contains
+  // "/api/web/session/", so fetchWithRetry injects the ACTIVE WEB-SESSION
+  // token from localStorage ("loqi_active_session_token") as the Bearer
+  // header — exactly the credential the backend's session resolver expects.
+  // Deliberately NOT using authHeaders() here: that would send the identity
+  // access token instead and SUPPRESS the session-token injection.
   return fetchWithRetry<{ ok: boolean; providers: Array<{
     id: string; provider_type: string; status: string;
     email: string; last_sync: string; sync_cursor: string; created_at: string;
   }> }>(
     `${API_BASE}/api/web/session/_/providers`,
+    { cache: "no-store" },
   );
 }
 

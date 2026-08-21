@@ -1,12 +1,17 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 
 export type AsyncState<T> = {
   data: T | null;
   loading: boolean;
   error: string | null;
-  retry: () => void;
+  /**
+   * Trigger a refetch. Returns a promise that settles once the refetch has
+   * completed (success or failure) — callers can await it to prevent
+   * overlapping polls. Ignoring the returned promise remains fine.
+   */
+  retry: () => Promise<void>;
   /**
    * Patch the cached data in place so mutations never need a full page
    * reload. Accepts a value or an updater over the previous data.
@@ -34,8 +39,18 @@ export function useData<T>(
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
 
-  const retry = useCallback(() => {
+  // Tracks the most recent fetch attempt so retry() can serialize callers:
+  // PR-P1.4 — polling loops awaiting this can never overlap requests.
+  const inflightRef = useRef<Promise<void>>(Promise.resolve());
+
+  const retry = useCallback(async (): Promise<void> => {
+    // Wait out any fetch already in flight before triggering another.
+    await inflightRef.current;
     setRetryCount((n) => n + 1);
+    // Let React commit + run the effect that starts the new fetch, then
+    // wait for it. Worst case under heavy batching we resolve one tick late.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await inflightRef.current;
   }, []);
 
   const mutate = useCallback((updater: T | null | ((prev: T | null) => T | null)) => {
@@ -48,7 +63,7 @@ export function useData<T>(
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetcher()
+    const attempt = fetcher()
       .then((result) => {
         if (!cancelled) {
           setData(result);
@@ -61,6 +76,11 @@ export function useData<T>(
           setLoading(false);
         }
       });
+    // Settle regardless of outcome/cancellation so retry() never hangs.
+    inflightRef.current = attempt.then(
+      () => undefined,
+      () => undefined,
+    );
     return () => { cancelled = true; };
   }, [fetcher, retryCount]);
 

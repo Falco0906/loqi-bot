@@ -38,22 +38,32 @@ class BackgroundRunner:
             if on_update:
                 on_update({"job_id": job.id, "status": status, "stage": stage, "progress": progress, "error": error})
 
+        async def notify_off_loop(status: str, stage: str, progress: int, error: str = "") -> None:
+            # PR-P1.2: on_update handlers perform synchronous Supabase writes
+            # (discovery progress/status). Run them off the event loop.
+            await asyncio.to_thread(notify, status, stage, progress, error)
+
         try:
-            self._storage.update_job(
+            await asyncio.to_thread(
+                self._storage.update_job,
                 job.id,
                 status=JobStatus.RUNNING,
                 stage="Starting...",
                 progress=0,
             )
-            notify("running", "Starting...", 0)
+            await notify_off_loop("running", "Starting...", 0)
 
             def on_progress(job_id: str, stage: str, progress: int) -> None:
+                # NOTE: executed inside the executor thread that runs the
+                # sync pipeline (see run_in_executor in workflow_dispatcher),
+                # i.e. already off the event loop.
                 self._on_progress(job_id, stage, progress)
                 notify("running", stage, progress)
 
             result = await runner_fn(job, on_progress)
             if result.get("ok"):
-                self._storage.update_job(
+                await asyncio.to_thread(
+                    self._storage.update_job,
                     job.id,
                     status=JobStatus.COMPLETED,
                     stage="Complete",
@@ -61,31 +71,33 @@ class BackgroundRunner:
                     result_ready=True,
                     completed_at=datetime.now(timezone.utc),
                 )
-                notify("completed", "Complete", 100)
+                await notify_off_loop("completed", "Complete", 100)
                 if on_complete:
                     try:
                         await on_complete(job)
                     except Exception as e:
                         _log(f"job {job.id} on_complete hook failed: {e}")
             else:
-                self._storage.update_job(
+                await asyncio.to_thread(
+                    self._storage.update_job,
                     job.id,
                     status=JobStatus.FAILED,
                     stage="Failed",
                     error_message=result.get("error", "Unknown error"),
                     completed_at=datetime.now(timezone.utc),
                 )
-                notify("failed", "Failed", 0, result.get("error", "Unknown error"))
+                await notify_off_loop("failed", "Failed", 0, result.get("error", "Unknown error"))
         except Exception as e:
             _log(f"job {job.id} crashed: {e}")
-            self._storage.update_job(
+            await asyncio.to_thread(
+                self._storage.update_job,
                 job.id,
                 status=JobStatus.FAILED,
                 stage="Failed",
                 error_message=str(e),
                 completed_at=datetime.now(timezone.utc),
             )
-            notify("failed", "Failed", 0, str(e))
+            await notify_off_loop("failed", "Failed", 0, str(e))
         finally:
             self._tasks.pop(job.id, None)
 

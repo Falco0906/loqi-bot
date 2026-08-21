@@ -64,7 +64,11 @@ export default function CheckEmailContent({ email, sessionId }: Props) {
   };
 
   useEffect(() => {
+    // PR-P1.4: in-flight guard — never overlap registration-status polls.
+    let pollBusy = false;
     pollingRef.current = setInterval(async () => {
+      if (pollBusy) return;
+      pollBusy = true;
       try {
         const res = await getRegistrationStatus(sessionId);
         if (res.status === "verified" || res.status === "completed") {
@@ -73,6 +77,8 @@ export default function CheckEmailContent({ email, sessionId }: Props) {
         }
       } catch {
         /* poll will retry */
+      } finally {
+        pollBusy = false;
       }
     }, 2000);
 

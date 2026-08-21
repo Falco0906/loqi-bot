@@ -101,6 +101,7 @@ export default memo(function ExecutionWorkspace({
   const [collapsed, setCollapsed] = useState(false);
   const [completedAt, setCompletedAt] = useState("");
   const terminalNotified = useRef(false);
+  const pollInFlight = useRef(false);
 
   const status = progress.status || "sending";
   const inFlight = status === "sending";
@@ -111,7 +112,10 @@ export default memo(function ExecutionWorkspace({
   }, [done, launched]);
 
   const poll = useCallback(async () => {
-    if (!token) return;
+    if (!token || pollInFlight.current) return;
+    // PR-P1.4: shared guard — the immediate effect and the interval effect
+    // can both call poll(); never let two run at once.
+    pollInFlight.current = true;
     try {
       const [c, t] = await Promise.all([
         getCampaign(token, campaignId),
@@ -148,6 +152,8 @@ export default memo(function ExecutionWorkspace({
       }
     } catch {
       /* keep silent — polling continues */
+    } finally {
+      pollInFlight.current = false;
     }
   }, [token, campaignId, onProgress]);
 

@@ -510,7 +510,12 @@ export default function DiscoveryDetailWorkspace({ discoveryId }: { discoveryId:
     if (!status || (status !== "searching" && status !== "queued")) return;
     console.log("[kickoff] DiscoveryDetailWorkspace: starting poll loop for", discoveryId);
     let cancelled = false;
+    // PR-P1.4: in-flight guard — discovery polls must not overlap when a
+    // request outlives the 4s interval.
+    let pollBusy = false;
     const poll = async () => {
+      if (cancelled || pollBusy) return;
+      pollBusy = true;
       try {
         const fresh = await fetchDiscoveryFresh(discoveryId);
         console.log(
@@ -520,6 +525,8 @@ export default function DiscoveryDetailWorkspace({ discoveryId }: { discoveryId:
         if (!cancelled && fresh) setLive(fresh);
       } catch {
         /* transient — the next tick retries */
+      } finally {
+        pollBusy = false;
       }
     };
     void poll();

@@ -156,6 +156,7 @@ export default function DevProvidersPage() {
   const [syncStartTime, setSyncStartTime] = useState(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastPollSyncRef = useRef("");
+  const pollBusyRef = useRef(false);
   const lastPollCountRef = useRef(0);
 
   // ── Init ──
@@ -198,6 +199,9 @@ export default function DevProvidersPage() {
         stopPolling();
         return;
       }
+      // PR-P1.4: in-flight guard — never overlap sync-status polls.
+      if (pollBusyRef.current) return;
+      pollBusyRef.current = true;
       try {
         const [statusRes, msgRes] = await Promise.all([
           getProviderStatus(token, selectedProvider.id),
@@ -223,6 +227,8 @@ export default function DevProvidersPage() {
         }
       } catch {
         // poll error, keep polling
+      } finally {
+        pollBusyRef.current = false;
       }
     }, 5000);
   }
@@ -268,7 +274,11 @@ export default function DevProvidersPage() {
   // ── Event polling ──
   useEffect(() => {
     if (!token) return;
+    // PR-P1.4: in-flight guards on both event pollers.
+    let eventsBusy = false;
     const interval = setInterval(async () => {
+      if (eventsBusy) return;
+      eventsBusy = true;
       try {
         const evRes = await getProviderEvents(token, selectedProvider?.id, eventSeq);
         if (evRes.events?.length > 0) {
@@ -278,6 +288,8 @@ export default function DevProvidersPage() {
         }
       } catch {
         // ignore
+      } finally {
+        eventsBusy = false;
       }
     }, 3000);
     return () => clearInterval(interval);
@@ -548,14 +560,19 @@ export default function DevProvidersPage() {
   // ── Outbound events polling ──
   useEffect(() => {
     if (!token) return;
+    let outboundBusy = false;
     const interval = setInterval(async () => {
+      if (outboundBusy) return;
+      outboundBusy = true;
       try {
         const evRes = await outboundGetEventsApi(token, selectedProvider?.id, outboundEventSeq);
         if (evRes.events?.length > 0) {
           setOutboundEvents((prev) => [...prev, ...evRes.events].slice(-100));
           setOutboundEventSeq(evRes.latest_sequence);
         }
-      } catch {}
+      } catch {} finally {
+        outboundBusy = false;
+      }
     }, 3000);
     return () => clearInterval(interval);
   }, [token, selectedProvider?.id, outboundEventSeq]);

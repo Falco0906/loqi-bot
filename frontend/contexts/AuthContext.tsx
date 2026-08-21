@@ -87,6 +87,9 @@ function clearStoredTokens() {
     for (const key of Object.values(STORAGE_KEYS)) {
       localStorage.removeItem(key);
     }
+    // PR-P1.5: the web-session token belongs to the logged-in user — drop it
+    // on logout/credential reset so the next user gets a fresh session.
+    localStorage.removeItem("loqi_active_session_token");
   } catch {
     /* localStorage unavailable */
   }
@@ -113,11 +116,24 @@ function readStoredRefreshToken(): string | null {
   }
 }
 
+const ACTIVE_WEB_SESSION_KEY = "loqi_active_session_token";
+
 async function establishWebSession(displayName: string): Promise<void> {
+  // PR-P1.5: reuse an existing active web-session token instead of creating
+  // a brand-new backend session on every hard load / login. Web sessions are
+  // durable server-side, so a stored token stays resolvable across reloads.
+  // Cross-user leakage is prevented by dropping the token on logout and
+  // whenever the authenticated user id changes (see handleTokenResponse).
+  try {
+    const existing = localStorage.getItem(ACTIVE_WEB_SESSION_KEY);
+    if (existing) return;
+  } catch {
+    /* localStorage unavailable */
+  }
   try {
     const session = await createSession(displayName || "Loqi Operator");
     if (session.ok && session.session_token) {
-      localStorage.setItem("loqi_active_session_token", session.session_token);
+      localStorage.setItem(ACTIVE_WEB_SESSION_KEY, session.session_token);
     }
   } catch {
     // Authentication remains valid if workspace-session bootstrap is
@@ -135,17 +151,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const initRef = useRef(false);
 
   const handleTokenResponse = useCallback(async (res: TokenResponse): Promise<MeResponse | null> => {
+    // PR-P1.5: if the authenticated user changed, drop the previous user's
+    // web-session token so establishWebSession mints a fresh one for them.
+    try {
+      const prevUserId = localStorage.getItem(STORAGE_KEYS.USER_ID);
+      if (prevUserId && prevUserId !== res.user_id) {
+        localStorage.removeItem(ACTIVE_WEB_SESSION_KEY);
+      }
+    } catch {
+      /* localStorage unavailable */
+    }
     storeTokens(res);
     try {
       const me = await fetchMe(res.user_id);
+      // PR-P1.5 (race fix): keep isLoading true until the web session is
+      // established. Children gated on isAuthenticated/isLoading must not
+      // render — and read loqi_active_session_token — before it exists.
+      await establishWebSession(me.display_name);
       setState({
         user: me,
         isAuthenticated: true,
         isLoading: false,
       });
-      await establishWebSession(me.display_name);
       return me;
     } catch {
+      await establishWebSession("");
       setState({
         user: {
           id: res.user_id,
@@ -158,7 +188,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isAuthenticated: true,
         isLoading: false,
       });
-      await establishWebSession("");
       return null;
     }
   }, []);
@@ -171,7 +200,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     try {
       const res = await apiRefresh(refresh);
-      handleTokenResponse(res);
+      // PR-P1.5: await so the init effect truly waits for session setup.
+      await handleTokenResponse(res);
     } catch {
       clearStoredTokens();
       setState({ user: null, isAuthenticated: false, isLoading: false });

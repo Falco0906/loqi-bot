@@ -157,6 +157,20 @@ class ConnectedAccountRepository(LaunchRepository[ConnectedAccount]):
     async def list_for_user(self, user_id: str) -> list[ConnectedAccount]:
         return await self._list([("user_id", "eq", user_id)])
 
+    async def list_active_for_user(
+        self, user_id: str, provider: str | None = None,
+    ) -> list[ConnectedAccount]:
+        """PR-2A: authoritative provider listing — active (non-deleted) rows
+        for one user, optionally narrowed by provider. Single indexed query;
+        never touches Gmail or runtime registries."""
+        where: list[tuple[str, Any, Any]] = [
+            ("user_id", "eq", user_id),
+            ("deleted_at", "is", "null"),
+        ]
+        if provider:
+            where.append(("provider", "eq", provider))
+        return await self._list(where)
+
 
 # ─── Workspaces ─────────────────────────────────────────────────────────
 

@@ -36,10 +36,12 @@ def _isolated_limiter(monkeypatch):
     rate_limiter.limits["outbound"] = 3
     rate_limiter.limits["default"] = 3
     mapping = {TOKEN_A: USER_A, TOKEN_B: USER_B}
+    # PR-P1.1: the middleware now resolves identity via the cheap
+    # get_web_session_user_id lookup instead of the full session summary.
     monkeypatch.setattr(
         main_module.engine,
-        "get_web_session_summary",
-        lambda token: {"user_id": mapping[token]} if token in mapping else None,
+        "get_web_session_user_id",
+        lambda token: mapping.get(token),
     )
     yield
     asyncio.run(rate_limiter.clear())

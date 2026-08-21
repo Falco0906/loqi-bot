@@ -350,6 +350,9 @@ export function CopilotProvider({
 
       let lastStage = "";
       let completed = false;
+      // PR-P1.4: in-flight guard — never let job-status polls overlap when a
+      // request outlives the 1.5s interval (e.g. while the backend is slow).
+      let pollInFlight = false;
       const finish = async () => {
         if (completed) return;
         completed = true;
@@ -394,6 +397,8 @@ export function CopilotProvider({
           stopPolling();
           return;
         }
+        if (pollInFlight) return;
+        pollInFlight = true;
         try {
           const job = await getJob(jobId);
           const stage = job.stage ?? "";
@@ -414,6 +419,8 @@ export function CopilotProvider({
           }
         } catch {
           /* transient polling failure — keep polling */
+        } finally {
+          pollInFlight = false;
         }
       }, 1500);
     },

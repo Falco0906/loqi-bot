@@ -143,22 +143,28 @@ async def compute_shared_payload(
         _inflight[key] = fut
         _payload_cache.pop(key, None)
         try:
-            snapshot = build_snapshot(
-                session_token, campaigns, drafts, total_leads, user_id=db_user_id,
-            )
-            _embed_delta_into_snapshot(snapshot, delta)
-            recommendations = generate_recommendations(snapshot)
-            brief = generate_brief(snapshot, recommendations)
-            payload = {
-                "campaigns": campaigns,
-                "drafts": drafts,
-                "total_leads": total_leads,
-                "snapshot": snapshot,
-                "analysis": snapshot.get("analysis", {}),
-                "recommendations": recommendations,
-                "brief": brief,
-                "delta": delta,
-            }
+            def _build_payload_sync() -> dict[str, Any]:
+                """PR-P1.2: snapshot build + brief/recommendation generation are
+                synchronous (Supabase + OpenAI, 30s timeouts). Run them on a
+                worker thread so a slow LLM cannot stall the event loop."""
+                snap = build_snapshot(
+                    session_token, campaigns, drafts, total_leads, user_id=db_user_id,
+                )
+                _embed_delta_into_snapshot(snap, delta)
+                recs = generate_recommendations(snap)
+                brf = generate_brief(snap, recs)
+                return {
+                    "campaigns": campaigns,
+                    "drafts": drafts,
+                    "total_leads": total_leads,
+                    "snapshot": snap,
+                    "analysis": snap.get("analysis", {}),
+                    "recommendations": recs,
+                    "brief": brf,
+                    "delta": delta,
+                }
+
+            payload = await asyncio.to_thread(_build_payload_sync)
             _payload_cache[key] = payload
             fut.set_result(payload)
         except Exception as error:

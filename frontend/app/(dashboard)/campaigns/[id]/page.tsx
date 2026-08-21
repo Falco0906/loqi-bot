@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import WorkspaceContainer from "../../../../components/layout/WorkspaceContainer";
 import AppPage from "../../../../components/primitives/AppPage";
 import { useData } from "../../../../lib/hooks/use-data";
@@ -87,6 +87,13 @@ export default function CampaignDetailPage() {
   const tellLoqi = useTellLoqi("CampaignDetail", { campaignId });
   const token = typeof window !== "undefined" ? localStorage.getItem("loqi_active_session_token") : null;
   const [strategyBusy, setStrategyBusy] = useState(false);
+  // PR-P1.4: generateStrategy's poll loop must not keep running (and keep
+  // hitting the API) once the user has navigated away from this page.
+  const strategyPollAborted = useRef(false);
+  useEffect(() => {
+    strategyPollAborted.current = false;
+    return () => { strategyPollAborted.current = true; };
+  }, []);
   const [launchStarted, setLaunchStarted] = useState(false);
   const [liveLaunch, setLiveLaunch] = useState<CampaignLaunchProgress | null>(null);
   const [executionDismissed, setExecutionDismissed] = useState(false);
@@ -103,12 +110,19 @@ export default function CampaignDetailPage() {
   useEffect(() => {
     if (!data || data.generation?.status !== "processing" || !token) return;
     let cancelled = false;
+    // PR-P1.4: in-flight guard — generation-status polls must not overlap
+    // when a request outlives the 2s interval.
+    let pollBusy = false;
     const poll = async () => {
+      if (cancelled || pollBusy) return;
+      pollBusy = true;
       try {
         const status = await getCampaignGenerationStatus(token, campaignId);
         if (!cancelled && !status.active) void refreshCampaign();
       } catch {
         // Keep polling; the durable campaign state remains authoritative.
+      } finally {
+        pollBusy = false;
       }
     };
     const timer = window.setInterval(() => void poll(), 2000);
@@ -128,20 +142,33 @@ export default function CampaignDetailPage() {
   useEffect(() => {
     if (!waitingForCarriedStrategy || !token) return;
     let cancelled = false;
+    // PR-P1.4: in-flight guard for the carried-strategy poll.
+    let pollBusy = false;
     const budgetMs = 90_000;
     const deadline = Date.now() + budgetMs;
+    let timer: number | undefined;
     const poll = async () => {
-      if (cancelled || Date.now() > deadline) return;
-      const fresh = await loadCampaign().catch(() => null);
-      if (cancelled) return;
-      if (fresh && Object.keys(fresh.strategy || {}).length > 0) {
-        mutate(fresh);
+      if (cancelled || pollBusy) return;
+      if (Date.now() > deadline) {
+        if (timer !== undefined) window.clearInterval(timer);
         return;
+      }
+      pollBusy = true;
+      try {
+        const fresh = await loadCampaign().catch(() => null);
+        if (cancelled) return;
+        if (fresh && Object.keys(fresh.strategy || {}).length > 0) {
+          mutate(fresh);
+          if (timer !== undefined) window.clearInterval(timer);
+          return;
+        }
+      } finally {
+        pollBusy = false;
       }
     };
     void poll();
-    const timer = window.setInterval(() => void poll(), 3000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    timer = window.setInterval(() => void poll(), 3000);
+    return () => { cancelled = true; if (timer !== undefined) window.clearInterval(timer); };
   }, [waitingForCarriedStrategy, loadCampaign, mutate, token]);
 
   const leads = useMemo(() => data?.leads || [], [data?.leads]);
@@ -165,9 +192,12 @@ export default function CampaignDetailPage() {
       toast("success", "Strategy generation started");
       let attempts = 0;
       while (attempts < 120) {
+        if (strategyPollAborted.current) return;
         await new Promise((resolve) => setTimeout(resolve, 2000));
         attempts += 1;
+        if (strategyPollAborted.current) return;
         const status = await getStrategyGenerationStatus(token, campaignId, started.job_id);
+        if (strategyPollAborted.current) return;
         if (status.status === "completed") {
           toast("success", "Strategy generated");
           await refreshCampaign();

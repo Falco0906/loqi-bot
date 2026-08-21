@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { approveDraft, listCampaignDrafts } from "../../lib/api";
 
 type CampaignDraft = {
@@ -44,9 +44,12 @@ function CampaignDraftsSection({
   const [drafts, setDrafts] = useState<CampaignDraft[]>([]);
   const [loading, setLoading] = useState(true);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  // PR-P1.4: prevents overlapping polls when a fetch outlives its interval.
+  const fetchInFlight = useRef(false);
 
   const fetchDrafts = useCallback(async (silent = false) => {
-    if (!token) return;
+    if (!token || fetchInFlight.current) return;
+    fetchInFlight.current = true;
     if (!silent) setLoading(true);
     try {
       const res = await listCampaignDrafts(token, campaignId);
@@ -56,6 +59,7 @@ function CampaignDraftsSection({
     } catch {
       /* silent */
     } finally {
+      fetchInFlight.current = false;
       if (!silent) setLoading(false);
     }
   }, [token, campaignId]);

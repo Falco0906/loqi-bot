@@ -211,6 +211,16 @@ class ConversationEngine:
             "initial_messages": [welcome_message, prompt_message],
         }
 
+    def get_web_session_user_id(self, session_token: str) -> str | None:
+        """PR-P1.1: minimal identity resolution for callers that only need the
+        owning user id (e.g. rate limiting). Unlike ``get_web_session_summary``
+        this never loads workflow sessions, messages, or provider state —
+        1-3 cheap queries instead of ~9-10."""
+        user = get_web_session(session_token)
+        if user is None:
+            return None
+        return str(user.get("id") or "") or None
+
     def get_web_session_summary(self, session_token: str) -> dict | None:
         user = get_web_session(session_token)
         if user is None:

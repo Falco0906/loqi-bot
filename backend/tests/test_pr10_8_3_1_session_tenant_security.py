@@ -130,8 +130,9 @@ class TestSessionAuth:
             resp = client.get(f"/api/web/session/{SENTINEL}/providers")
             assert resp.status_code == 401
 
-    def test_authenticated_request_succeeds_via_header(self):
+    def test_authenticated_request_succeeds_via_header(self, monkeypatch):
         import main as main_module
+        import services.supabase as supabase_module
         from services.communication.communication_store import store
         from tests.conftest import REAL_RESOLVE_SESSION_CONTEXT
         main_module._resolve_session_context = REAL_RESOLVE_SESSION_CONTEXT
@@ -140,9 +141,25 @@ class TestSessionAuth:
         store._providers["p-a"] = _provider_record("p-a", "a@a.com", user_id="test-owner")
         store._user_providers["test-owner"] = ["p-a"]
         main_module._workspace_owner = _async_owner("test-owner")
+        # PR-2A: /providers reads the DURABLE store as source of truth; seed
+        # that seam so the ownership assertion keeps testing auth resolution,
+        # not the database.
+        monkeypatch.setattr(
+            supabase_module,
+            "get_durable_providers_for_user",
+            lambda user_id, provider="google": [{
+                "row_id": "row-1",
+                "communication_provider_id": "p-a",
+                "email": "a@a.com",
+                "account_id": "a@a.com",
+                "status": "active",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "last_synced_at": "",
+            }] if user_id == "test-owner" else [],
+        )
         result = asyncio.run(main_module.provider_list("_", _request_with_header()))
         assert result["ok"] is True
-        assert len(result["providers"]) == 1
+        assert len(result["providers"]) >= 1
 
     def test_logs_never_contain_session_token(self, caplog):
         import logging

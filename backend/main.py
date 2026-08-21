@@ -1369,40 +1369,6 @@ def _register_outbound_gmail_instance(comm_provider_id: str) -> None:
     log.info("[outbound] Registered GmailOutboundProvider instance for %s", comm_provider_id)
 
 
-def _save_provider_credentials(provider_id: str, session_token: str, *, account_id: str = "") -> None:
-    """Persist provider credentials to Supabase for startup recovery."""
-    from services.supabase import save_provider_credentials
-    comm_instance = get_provider(provider_id)
-    if not comm_instance:
-        log.warning("[startup] No comm instance found for %s", provider_id)
-        return
-    access_token = getattr(comm_instance, '_access_token', '')
-    refresh_token = getattr(comm_instance, '_refresh_token', '')
-    client_id = getattr(comm_instance, '_client_id', '')
-    client_secret = getattr(comm_instance, '_client_secret', '')
-    token_expiry = getattr(comm_instance, '_token_expiry', 0.0)
-    email = getattr(comm_instance, '_mailbox_email', '')
-    if not account_id:
-        account_id = getattr(comm_instance, '_account_id', '')
-    if not access_token and not refresh_token:
-        log.warning("[startup] No tokens to persist for provider %s", provider_id)
-        return
-    import time
-    expiry_iso = datetime.fromtimestamp(token_expiry, tz=timezone.utc).isoformat() if token_expiry else ""
-    saved = save_provider_credentials(
-        session_token, provider_id,
-        access_token=access_token,
-        refresh_token=refresh_token,
-        token_expiry=expiry_iso,
-        email=email,
-        client_id=client_id,
-        client_secret=client_secret,
-        account_id=account_id,
-    )
-    if not saved:
-        raise RuntimeError("Provider credentials could not be persisted to Supabase")
-
-
 def _restore_providers_on_startup() -> None:
     """On startup, load saved provider credentials from Supabase and restore instances.
     Refreshes tokens if expired.
@@ -1974,6 +1940,58 @@ async def _process_batch_drafts(
 
 # ── Logging Middleware ──
 
+# Rate-limit identity cache: session_token -> (expires_at, user_id).
+#
+# PR-P1.1: rate limiting only needs the owning user id, not the full web
+# session summary (which costs ~9-10 sequential Supabase round trips and was
+# executed synchronously on the event loop for EVERY request). We resolve the
+# identity via the cheap `get_web_session` lookup (1-3 queries) off the event
+# loop, and memoize it briefly. Only the non-sensitive user-id string is
+# cached; no conversations/messages/tasks data is involved.
+_RATE_LIMIT_IDENTITY_TTL_SECONDS = 30.0
+_RATE_LIMIT_IDENTITY_CACHE_MAX = 5000
+_rate_limit_identity_cache: dict[str, tuple[float, str]] = {}
+
+
+async def _resolve_rate_limit_identity(session_token: str) -> str:
+    """Return the user id owning this web-session token ("").
+
+    Deliberately cheap: never loads conversations/messages/workflow state.
+    Results are cached in-process for a short TTL so bursts of requests from
+    one tab cost at most one small lookup per TTL window.
+    """
+    if not session_token:
+        return ""
+    now = time.monotonic()
+    cached = _rate_limit_identity_cache.get(session_token)
+    if cached is not None:
+        expires_at, cached_user_id = cached
+        if expires_at > now:
+            return cached_user_id
+        _rate_limit_identity_cache.pop(session_token, None)
+
+    try:
+        # Uses the module-level `engine` instance so tests (and future
+        # decorators) can patch identity resolution in one place.
+        user_id = await asyncio.to_thread(engine.get_web_session_user_id, session_token)
+    except Exception as error:  # noqa: BLE001 — rate limiting must never fail a request
+        log.warning("rate_limit_identity_lookup_failed error=%s", error)
+        return ""
+    if user_id:
+        if len(_rate_limit_identity_cache) >= _RATE_LIMIT_IDENTITY_CACHE_MAX:
+            # Opportunistic prune; the map is bounded so it cannot grow forever.
+            expired = [k for k, (exp, _) in _rate_limit_identity_cache.items() if exp <= now]
+            for key in expired:
+                _rate_limit_identity_cache.pop(key, None)
+            if len(_rate_limit_identity_cache) >= _RATE_LIMIT_IDENTITY_CACHE_MAX:
+                _rate_limit_identity_cache.clear()
+        _rate_limit_identity_cache[session_token] = (
+            now + _RATE_LIMIT_IDENTITY_TTL_SECONDS,
+            user_id,
+        )
+    return user_id
+
+
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
     """PR10.5 — production rate limiting.
@@ -1982,6 +2000,10 @@ async def rate_limit_middleware(request: Request, call_next):
     before any route handler, so outbound sends are rejected with 429 before
     any side effect. Identity is derived server-side (web-session user id or
     normalized client IP); client-supplied identifiers are never read.
+
+    PR-P1.1 — identity resolution no longer loads the full web-session
+    summary. Only the owning user id is needed here; it is resolved with the
+    minimal lookup off the event loop and short-cached.
     """
     from services.rate_limit import classify_rate_limit, rate_limiter
 
@@ -1996,9 +2018,15 @@ async def rate_limit_middleware(request: Request, call_next):
     session_token = _session_token_from_request(request)
     identity = f"ip:{request.client.host if request.client else 'unknown'}"
     if session_token:
-        summary = engine.get_web_session_summary(session_token)
-        if summary and summary.get("user_id"):
-            identity = f"u:{summary.get('user_id')}"
+        user_id = await _resolve_rate_limit_identity(session_token)
+        if user_id:
+            identity = f"u:{user_id}"
+        try:
+            # Expose the resolved owner so downstream handlers can reuse it
+            # instead of re-resolving (progressive de-duplication aid).
+            request.state.rate_limit_user_id = user_id or None
+        except Exception:
+            pass
 
     allowed, retry_after = await rate_limiter.allow(f"{category}:{identity}", limit)
     if not allowed:
@@ -2367,7 +2395,29 @@ class GmailCallbackResponse(BaseModel):
 # /providers/connect, startup restore) so two concurrent connections for the
 # same user can never register two runtime providers (PR10.8.2.1 invariant:
 # exactly ONE active Gmail provider per user/provider type).
-_GMAIL_PROVIDER_CONNECT_LOCK = threading.Lock()
+#
+# PR-2A: per-user asyncio.Lock replaces the previous GLOBAL threading.Lock,
+# which serialized unrelated users' OAuth completions behind each other while
+# blocking the event loop. Same-user connects still serialize; different
+# users are fully independent. The dict is bounded: when it exceeds the cap,
+# entries for users with no in-flight connect are pruned.
+_GMAIL_CONNECT_LOCKS_MAX = 4096
+_gmail_connect_locks: dict[str, asyncio.Lock] = {}
+
+
+def _gmail_connect_lock(user_id: str) -> asyncio.Lock:
+    if not user_id:
+        user_id = "_anonymous_"
+    lock = _gmail_connect_locks.get(user_id)
+    if lock is None:
+        if len(_gmail_connect_locks) >= _GMAIL_CONNECT_LOCKS_MAX:
+            for key in [k for k, l in _gmail_connect_locks.items() if not l.locked()]:
+                _gmail_connect_locks.pop(key, None)
+        lock = _gmail_connect_locks.get(user_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            _gmail_connect_locks[user_id] = lock
+    return lock
 
 
 def _remove_existing_gmail_provider(user_id: str) -> None:
@@ -2434,10 +2484,120 @@ async def _resolve_oauth_state_user(state: str) -> str:
     return user_id
 
 
+async def _perform_gmail_oauth_persistence(
+    *,
+    user_id: str,
+    access_token: str,
+    refresh_token: str,
+    email: str,
+    account_id: str,
+) -> "CommunicationProvider":
+    """PR-2A: complete one Gmail connection for a user.
+
+    Sequence (all under a per-user lock):
+      1. remove any previous runtime Gmail provider for this user
+      2. connect runtime instance + register inbound/outbound
+      3. persist durably to connected_accounts (authoritative)
+      4. verify the durable record is actually readable
+    If step 3 or 4 fails, runtime state from this attempt is rolled back and
+    the exception propagates — the callback must never report success without
+    a durable record. Never logs tokens/secrets.
+    """
+    from services.google_auth import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+    from services.supabase import (
+        get_durable_providers_for_user,
+        sync_connected_account,
+    )
+
+    lock = _gmail_connect_lock(user_id)
+    async with lock:
+        log.info(
+            "[oauth] provider persistence started user=%s email=%s",
+            user_id[:8], email or "(unknown)",
+        )
+        _remove_existing_gmail_provider(user_id)
+        provider = GmailProvider()
+        provider_record = provider.connect(
+            auth_token=access_token,
+            user_id=user_id,
+            email=email,
+            account_id=account_id,
+            scope=",".join([
+                "https://www.googleapis.com/auth/gmail.readonly",
+                "https://www.googleapis.com/auth/gmail.send",
+            ]),
+            refresh_token=refresh_token,
+            client_id=GOOGLE_CLIENT_ID,
+            client_secret=GOOGLE_CLIENT_SECRET,
+        )
+        register_instance(provider_record.id, provider)
+        _register_outbound_gmail_instance(provider_record.id)
+
+        async def _rollback_runtime() -> None:
+            """Remove runtime state created by THIS attempt after a durable
+            failure, so a reported failure never leaves a half-connection."""
+            try:
+                provider.disconnect()
+            except Exception:
+                pass
+            remove_instance(provider_record.id)
+            try:
+                from services.outbound.outbound_registry import remove_instance as outbound_remove
+                outbound_remove(provider_record.id)
+            except Exception:
+                pass
+            try:
+                communication_store.remove_provider(provider_record.id)
+            except Exception:
+                pass
+
+        token_expiry_iso = ""
+        token_expiry_epoch = getattr(provider, "_token_expiry", 0.0)
+        if token_expiry_epoch:
+            token_expiry_iso = datetime.fromtimestamp(token_expiry_epoch, tz=timezone.utc).isoformat()
+
+        saved = await asyncio.to_thread(
+            sync_connected_account,
+            user_id,
+            provider="google",
+            account_id=account_id,
+            email=email,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_expiry=token_expiry_iso,
+            communication_provider_id=provider_record.id,
+        )
+        if not saved:
+            await _rollback_runtime()
+            log.error("[oauth] provider persistence failed user=%s", user_id[:8])
+            raise RuntimeError("Connected account could not be persisted")
+
+        # Verify the durable record is genuinely visible through the same
+        # read path /providers uses — closes the write/read gap completely.
+        try:
+            durable_rows = await asyncio.to_thread(get_durable_providers_for_user, user_id, "google")
+        except Exception as error:
+            await _rollback_runtime()
+            log.error("[oauth] provider persistence verification failed user=%s error_type=%s",
+                      user_id[:8], type(error).__name__)
+            raise RuntimeError("Connected account persistence could not be verified") from error
+        if not any(r.get("communication_provider_id") == provider_record.id for r in durable_rows):
+            await _rollback_runtime()
+            log.error("[oauth] persisted provider not visible in durable lookup user=%s", user_id[:8])
+            raise RuntimeError("Connected account persistence could not be verified")
+
+        _register_credential_instance(access_token, refresh_token, email)
+        log.info(
+            "[oauth] provider persistence succeeded user=%s provider=%s",
+            user_id[:8], provider_record.id[:8],
+        )
+        return provider_record
+
+
 @app.get("/api/auth/gmail/callback")
 async def gmail_auth_callback(code: str = "", state: str = "", error: str = ""):
     import json
-    from services.google_auth import exchange_code_for_tokens, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+    from services.google_auth import exchange_code_for_tokens
     from fastapi.responses import HTMLResponse
     ok = False
     provider_id = ""
@@ -2451,37 +2611,26 @@ async def gmail_auth_callback(code: str = "", state: str = "", error: str = ""):
         _user_id = await _resolve_oauth_state_user(state)
         if not _user_id:
             raise Exception("Invalid or expired OAuth state")
+        log.info("[oauth] state accepted user=%s", _user_id[:8])
         tokens = exchange_code_for_tokens(code)
         access_token = tokens.get("access_token", "")
         refresh_token = tokens.get("refresh_token", "")
         email_val = tokens.get("email", "")
         account_id = tokens.get("account_id", "") or email_val
-        from services.communication.gmail_provider import GmailProvider
-        with _GMAIL_PROVIDER_CONNECT_LOCK:
-            # Replace any existing (possibly reauth-required) provider for this
-            # user so reconnect never leaves duplicate Gmail providers. The
-            # lock makes the replace+connect+register sequence atomic against
-            # concurrent callbacks / legacy connects.
-            _remove_existing_gmail_provider(_user_id)
-            provider = GmailProvider()
-            provider_record = provider.connect(
-                auth_token=access_token,
-                user_id=_user_id,
-                email=email_val,
-                account_id=account_id,
-                scope=",".join(["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"]),
-                refresh_token=refresh_token,
-                client_id=GOOGLE_CLIENT_ID,
-                client_secret=GOOGLE_CLIENT_SECRET,
-            )
-            register_instance(provider_record.id, provider)
-            _register_outbound_gmail_instance(provider_record.id)
-            _save_provider_credentials(provider_record.id, _user_id, account_id=account_id)
-            _register_credential_instance(access_token, refresh_token, email_val)
+        log.info("[oauth] token exchange succeeded user=%s", _user_id[:8])
+        provider_record = await _perform_gmail_oauth_persistence(
+            user_id=_user_id,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            email=email_val,
+            account_id=account_id,
+        )
         ok = True
         provider_id = provider_record.id
+        log.info("[oauth] callback success user=%s provider=%s", _user_id[:8], provider_id[:8])
     except Exception as e:
         error_msg = str(e)
+        log.error("[oauth] callback failed error_type=%s", type(e).__name__)
     payload = json.dumps({"ok": ok, "provider_id": provider_id, "email": email_val, "error": error_msg})
     status_text = "✓ Gmail Connected" if ok else "✗ Gmail Connection Failed"
     pm_target = _frontend_postmessage_origin() or "*"
@@ -2596,7 +2745,7 @@ async def create_web_session(payload: CreateWebSessionRequest, request: Request)
 @app.get("/api/web/session/{session_token}")
 async def get_web_session(session_token: str, request: Request = None):
     session_token = _session_token_from_request(request)
-    data = engine.get_web_session_summary(session_token)
+    data = await asyncio.to_thread(engine.get_web_session_summary, session_token)
     if data is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return data
@@ -2620,7 +2769,7 @@ async def post_web_session_message(
     session_token = _session_token_from_request(request)
     import time; _t0 = time.time()
     print(f"[TRACE] 1 | ENTERED ENDPOINT | post_web_session_message | +0ms")
-    summary = engine.get_web_session_summary(session_token)
+    summary = await asyncio.to_thread(engine.get_web_session_summary, session_token)
 
     if summary is None:
         user_id = None
@@ -2648,7 +2797,7 @@ async def post_web_session_message(
             await bind_web_session(
                 created["session_token"], user_id, canonical_session_id,
             )
-        summary = engine.get_web_session_summary(created["session_token"])
+        summary = await asyncio.to_thread(engine.get_web_session_summary, created["session_token"])
         if summary is None:
             raise HTTPException(status_code=500, detail="Session creation failed")
         return await asyncio.to_thread(
@@ -2686,7 +2835,11 @@ async def post_web_session_message(
             f"memory_action={snapshot.get('memory', {}).get('last_action', 'none')}"
         )
         from services.conversational_response_generator import generate_copilot_response
-        response_text = generate_copilot_response(
+        # PR-P1.2: generate_copilot_response performs a synchronous OpenAI
+        # HTTP call (20s timeout). Offload to a worker thread so a slow LLM
+        # response cannot freeze the event loop for unrelated requests.
+        response_text = await asyncio.to_thread(
+            generate_copilot_response,
             user_message=payload.text,
             copilot_context={
                 **(payload.copilot.model_dump()),
@@ -3489,7 +3642,8 @@ async def provider_connect(session_token: str, payload: ProviderConnectRequest, 
         raise HTTPException(status_code=400, detail=f"Provider not registered: {payload.provider_type}")
 
     if ptype == ProviderType.GMAIL:
-        with _GMAIL_PROVIDER_CONNECT_LOCK:
+        # PR-2A: per-user lock (was global threading.Lock).
+        async with _gmail_connect_lock(session_token):
             # Replace any existing Gmail provider for this user so the runtime
             # registry never holds duplicate providers for the same Google
             # account; the lock makes replace+connect+register atomic.
@@ -3535,47 +3689,108 @@ async def provider_disconnect(session_token: str, provider_id: str, request: Req
 
 @app.get("/api/web/session/{session_token}/providers")
 async def provider_list(session_token: str, request: Request):
+    """PR-2A: durable-source-of-truth provider listing.
+
+    The authoritative records come from ``connected_accounts`` (Supabase) for
+    the resolved owner. Runtime registries (communication store + adapter
+    registry) are used ONLY to enrich status/sync fields for providers that
+    are currently live in this process — they can never make a provider
+    appear or disappear across restarts/process boundaries.
+
+    Response shape is unchanged: {ok, providers:[{id, provider_type, status,
+    email, last_sync, sync_cursor, created_at}]}.
+    """
     session_token = _session_token_from_request(request)
     owner_id = await _workspace_owner(request, session_token)
-    providers = communication_store.get_user_providers(owner_id)
-    # The persisted account may be auth_failed even when the runtime access
-    # token is still valid (revoked refresh token). Never surface that as
-    # healthy — the persisted status wins for Gmail (PR10.8.2.1).
-    persisted_reauth = False
+
+    # ── Durable records (authoritative) ──
+    # Single indexed query; no Gmail calls, no messages, no session summary.
+    from services.supabase import get_durable_providers_for_user
     try:
-        from services.supabase import is_connected_account_reauth_required
-        persisted_reauth = is_connected_account_reauth_required(owner_id, "google")
-    except Exception:
-        persisted_reauth = False
-    # Canonical logical accounts only: never return duplicate Gmail entries
-    # for the same Google account even if the runtime store still holds stale
-    # records (PR10.8.2). The stable logical identity is the account email
-    # (immutable for Gmail) — NOT account_id, which may differ between
-    # records created before/after subject capture.
-    seen_logical: set[str] = set()
+        durable_rows = await asyncio.to_thread(get_durable_providers_for_user, owner_id, "google")
+    except Exception as error:
+        log.error(
+            "[providers] durable provider lookup failed user=%s error_type=%s",
+            owner_id[:8], type(error).__name__,
+        )
+        # Distinguish "lookup failed" from "no providers" (PR-2A §10).
+        raise HTTPException(status_code=503, detail="Unable to load connected accounts")
+
+    log.info("[providers] durable provider lookup returned %d record(s) user=%s",
+             len(durable_rows), owner_id[:8])
+
     result = []
-    for p in providers:
-        email = (p.metadata.get("email") or "").strip().lower()
-        if email:
-            logical_key = (p.provider_type.value, email)
+    seen_runtime_ids: set[str] = set()
+    persisted_auth_failed = False
+
+    for row in durable_rows:
+        comm_pid = row.get("communication_provider_id") or ""
+        email = (row.get("email") or "").strip().lower()
+        durable_status = row.get("status") or "active"
+        if durable_status == "auth_failed":
+            persisted_auth_failed = True
+
+        runtime_instance = get_provider(comm_pid) if comm_pid else None
+        comm_record = communication_store.get_provider(comm_pid) if comm_pid else None
+        if comm_pid:
+            seen_runtime_ids.add(comm_pid)
+        if comm_record is not None:
+            seen_runtime_ids.add(comm_record.id)
+
+        # Persisted auth_failed wins over a still-valid runtime token
+        # (revoked refresh token) — PR10.8.2.1 semantics preserved.
+        if durable_status == "auth_failed":
+            status_val = ProviderStatus.AUTH_FAILED.value
+        elif runtime_instance is not None:
+            try:
+                status_val = runtime_instance.health().value
+            except Exception as error:
+                # PR-2A: a Gmail/network hiccup while probing one live
+                # instance must never fail the whole provider list.
+                log.warning(
+                    "[providers] runtime health probe failed provider=%s error_type=%s",
+                    comm_pid[:8], type(error).__name__,
+                )
+                if type(error).__name__ == "GmailReauthRequired":
+                    status_val = ProviderStatus.AUTH_FAILED.value
+                else:
+                    status_val = durable_status if durable_status in {"active", "healthy"} else ProviderStatus.AUTH_FAILED.value
         else:
-            logical_key = (p.provider_type.value, f"id:{p.id}")
-        if logical_key in seen_logical:
+            # Not live in this process (e.g. after a restart): report the
+            # durable status instead of pretending it is healthy.
+            status_val = durable_status if durable_status in {"active", "healthy"} else ProviderStatus.AUTH_FAILED.value
+
+        # Stable identity: prefer the persisted communication-provider id;
+        # fall back to a deterministic id derived from the durable row.
+        public_id = comm_pid or f"durable-{row.get('row_id', '')}"
+        result.append({
+            "id": public_id,
+            "provider_type": ProviderType.GMAIL.value,
+            "status": status_val,
+            "email": row.get("email", ""),
+            "last_sync": (comm_record.last_sync if comm_record else None) or row.get("last_synced_at"),
+            "sync_cursor": comm_record.sync_cursor if comm_record else "",
+            "created_at": row.get("created_at"),
+        })
+
+    # ── Runtime-only providers (secondary; e.g. legacy dev connects) ──
+    # These have no durable row yet. They are still listed so existing
+    # behaviour is preserved, but they can never mask missing durable state.
+    # The per-user store only ever holds this owner's records.
+    for p in communication_store.get_user_providers(owner_id):
+        if p.id in seen_runtime_ids:
             continue
-        seen_logical.add(logical_key)
         instance = get_provider(p.id)
-        health_val = instance.health().value if instance else p.status.value
-        if persisted_reauth and p.provider_type.value == "gmail":
-            health_val = ProviderStatus.AUTH_FAILED.value
         result.append({
             "id": p.id,
             "provider_type": p.provider_type.value,
-            "status": health_val,
+            "status": instance.health().value if instance else p.status.value,
             "email": p.metadata.get("email", ""),
             "last_sync": p.last_sync,
             "sync_cursor": p.sync_cursor,
             "created_at": p.created_at,
         })
+
     return {"ok": True, "providers": result}
 
 
@@ -4790,7 +5005,7 @@ async def _resolve_session_context(request: Request) -> tuple[str, str]:
             return str(user_id), token
     except HTTPException:
         pass
-    summary = engine.get_web_session_summary(token)
+    summary = await asyncio.to_thread(engine.get_web_session_summary, token)
     if summary and summary.get("user_id"):
         binding = await _web_session_binding(token)
         if binding is not None:
@@ -4821,7 +5036,7 @@ async def _workspace_owner_and_summary(request: Request, session_token: str = ""
     a credential.
     """
     owner_id, token = await _resolve_session_context(request)
-    summary = engine.get_web_session_summary(token)
+    summary = await asyncio.to_thread(engine.get_web_session_summary, token)
     return owner_id, summary
 
 
@@ -6176,7 +6391,7 @@ async def export_csv(session_token: str, request: Request = None):
     if not leads:
         from services.conversation_engine import ConversationEngine, _message
         local_engine = ConversationEngine()
-        summary = local_engine.get_web_session_summary(session_token)
+        summary = await asyncio.to_thread(local_engine.get_web_session_summary, session_token)
         if summary:
             for msg in (summary.get("messages") or []):
                 data = msg.get("data") or {}
@@ -6283,7 +6498,7 @@ def log_conversation_internal(user_id: str, role: str, text: str) -> None:
 @app.get("/api/web/session/{session_token}/gmail")
 async def get_web_gmail_status(session_token: str, request: Request = None):
     session_token = _session_token_from_request(request)
-    summary = engine.get_web_session_summary(session_token)
+    summary = await asyncio.to_thread(engine.get_web_session_summary, session_token)
     if summary is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -6581,9 +6796,11 @@ async def plan_workflow_endpoint(session_token: str, payload: PlanningInput, req
     drafts = draft_store.get(session_token, [])
     total_leads = sum(c.get("lead_count", 0) or 0 for c in campaigns)
     from services.conversation_engine import ConversationEngine
-    _summary = ConversationEngine().get_web_session_summary(session_token)
+    _summary = await asyncio.to_thread(ConversationEngine().get_web_session_summary, session_token)
     _db_user_id = _summary.get("user_id") if _summary else None
-    snapshot = build_snapshot(session_token, campaigns, drafts, total_leads, user_id=_db_user_id)
+    snapshot = await asyncio.to_thread(
+        build_snapshot, session_token, campaigns, drafts, total_leads, user_id=_db_user_id,
+    )
     result = plan_workflow(
         objective=payload.objective,
         snapshot=snapshot,
@@ -7088,7 +7305,11 @@ async def generate_reply_route(
                 latest_texts.append(f"[{direction}]: {preview}")
 
     gen_pipeline = GenerationPipeline()
-    result = gen_pipeline.generate(
+    # PR-P1.2: GenerationPipeline.generate performs synchronous OpenAI HTTP
+    # calls with an internal time.sleep retry loop (worst case ~95s). Offload
+    # the whole generation to a worker thread so the event loop stays free.
+    result = await asyncio.to_thread(
+        gen_pipeline.generate,
         intelligence=intelligence,
         reasoning=reasoning,
         styles=styles,

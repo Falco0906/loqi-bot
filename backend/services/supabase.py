@@ -352,12 +352,17 @@ async def _upsert_connected_account(
     access_token: str = "",
     refresh_token: str = "",
     token_expiry: str | None = None,
+    communication_provider_id: str = "",
 ) -> bool:
     """Upsert a connected_account row; canonical store for OAuth credentials.
 
     Idempotent by ``(user_id, provider)``, so transient network failures are
     retried with bounded backoff (PR10.8); the caller still receives the
     failure if the budget is exhausted.
+
+    PR-2A: ``communication_provider_id`` is stored in ``metadata`` so the
+    runtime provider id survives restarts and /providers can return a stable
+    identity that disconnect/health endpoints already understand.
     """
     from services.persistence.launch import ConnectedAccount, ConnectedAccountRepository
     from services.persistence.retry import retry_async
@@ -381,8 +386,13 @@ async def _upsert_connected_account(
                 existing.token_expires_at = _parse_dt(token_expiry)
             existing.status = "active"
             existing.deleted_at = None
+            if communication_provider_id:
+                meta = dict(getattr(existing, "metadata", None) or {})
+                meta["communication_provider_id"] = communication_provider_id
+                existing.metadata = meta
             await repo.save(existing)
         else:
+            meta = {"communication_provider_id": communication_provider_id} if communication_provider_id else {}
             await repo.save(ConnectedAccount(
                 user_id=user_id,
                 provider=provider,
@@ -393,6 +403,7 @@ async def _upsert_connected_account(
                 refresh_token=enc_refresh,
                 token_expires_at=_parse_dt(token_expiry),
                 status="active",
+                metadata=meta,
             ))
         return True
 
@@ -408,6 +419,7 @@ def sync_connected_account(
     access_token: str = "",
     refresh_token: str = "",
     token_expiry: str | None = None,
+    communication_provider_id: str = "",
 ) -> bool:
     """Mirror OAuth tokens into the canonical connected_accounts table.
 
@@ -418,6 +430,9 @@ def sync_connected_account(
     Idempotent by ``(user_id, provider)``: reconnecting the same Google
     account updates the existing row in place (new credentials, ``account_id``
     identity, status back to ``active``) instead of creating a duplicate.
+
+    PR-2A: ``communication_provider_id`` is persisted into row metadata so
+    the runtime provider identity survives restarts (see /providers).
     """
     try:
         return bool(_run_blocking(_upsert_connected_account(
@@ -428,10 +443,43 @@ def sync_connected_account(
             access_token=access_token,
             refresh_token=refresh_token,
             token_expiry=token_expiry,
+            communication_provider_id=communication_provider_id,
         )))
     except Exception as error:
         _log(f"sync_connected_account error: {error}")
         return False
+
+
+def get_durable_providers_for_user(user_id: str, provider: str = "google") -> list[dict]:
+    """PR-2A: authoritative provider records for one user from the durable
+    ``connected_accounts`` store.
+
+    Single indexed query. No Gmail/network calls, no messages, no session
+    summary — this is what /providers renders from. Raises on failure so
+    callers can distinguish "no providers" from "lookup failed".
+    """
+    from services.persistence.launch import ConnectedAccountRepository
+
+    def _read():
+        async def fetch():
+            repo = ConnectedAccountRepository()
+            accounts = await repo.list_active_for_user(user_id, provider)
+            rows = []
+            for a in accounts:
+                meta = getattr(a, "metadata", None) or {}
+                rows.append({
+                    "row_id": a.id,
+                    "communication_provider_id": str(meta.get("communication_provider_id") or ""),
+                    "email": a.email or "",
+                    "account_id": a.account_id or "",
+                    "status": str(getattr(a, "status", "") or "active"),
+                    "created_at": _dt_iso(a.created_at),
+                    "last_synced_at": _dt_iso(a.last_synced_at),
+                })
+            return rows
+        return _run_blocking(fetch())
+
+    return _read()
 
 
 def get_google_credentials(user_id: str) -> dict | None:

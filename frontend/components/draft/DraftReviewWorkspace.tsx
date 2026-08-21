@@ -698,8 +698,8 @@ export default function DraftReviewWorkspace() {
   return (
     <div className="flex h-full overflow-hidden">
       {/* ─── Draft Queue — left panel ─── */}
-      <aside className="w-80 shrink-0 border-r border-outline-variant/10 bg-surface-lowest overflow-y-auto flex flex-col">
-        <div className="px-4 py-4 border-b border-outline-variant/10">
+      <aside className="w-80 shrink-0 border-r border-outline-variant/10 bg-surface-lowest overflow-y-auto overflow-x-hidden flex flex-col">
+        <div className="px-4 py-4 border-b border-outline-variant/10 min-w-0">
           <div className="flex items-center justify-between">
             <h2 className="text-headline-sm font-bold text-on-surface">Drafts</h2>
             <span className="text-xs text-on-surface-variant/50">
@@ -713,7 +713,7 @@ export default function DraftReviewWorkspace() {
               <select
                 value={filterCampaign}
                 onChange={(e) => { setFilterCampaign(e.target.value); setSelectedIndex(0); }}
-                className="flex-1 rounded-lg border border-outline-variant/20 bg-surface-low px-2.5 py-1.5 text-xs text-on-surface outline-none focus:border-primary/50"
+                className="flex-1 min-w-0 rounded-lg border border-outline-variant/20 bg-surface-low px-2.5 py-1.5 text-xs text-on-surface outline-none focus:border-primary/50"
               >
                 <option value="__all__">All Campaigns</option>
                 {Array.from(campaignMap.entries()).map(([cid, cname]) => (
@@ -723,7 +723,7 @@ export default function DraftReviewWorkspace() {
               <select
                 value={filterStatus}
                 onChange={(e) => { setFilterStatus(e.target.value); setSelectedIndex(0); }}
-                className="flex-1 rounded-lg border border-outline-variant/20 bg-surface-low px-2.5 py-1.5 text-xs text-on-surface outline-none focus:border-primary/50"
+                className="flex-1 min-w-0 rounded-lg border border-outline-variant/20 bg-surface-low px-2.5 py-1.5 text-xs text-on-surface outline-none focus:border-primary/50"
               >
                 <option value="__all__">All</option>
                 <option value="pending">Pending</option>

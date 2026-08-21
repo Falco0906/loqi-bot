@@ -15,7 +15,7 @@ import {
   type QuickReplyOption,
 } from "../../lib/conversationMachine";
 
-export default function CopilotPanel() {
+export default function CopilotPanel({ width = 380 }: { width?: number }) {
   const {
     open,
     setOpen,
@@ -64,71 +64,55 @@ export default function CopilotPanel() {
     [pageContext?.page],
   );
 
-  if (!open) {
-    return (
-      <button
-        onClick={() => setOpen(true)}
-        className="fixed bottom-6 right-6 z-40 w-12 h-12 rounded-full bg-primary text-on-primary shadow-lg shadow-primary/20 flex items-center justify-center hover:brightness-110 hover:shadow-primary/30 hover:scale-105 active:scale-95 transition-all duration-150"
-        title="Open Loqi OS"
-        aria-label="Open Loqi OS"
-      >
-        <span className="material-symbols-outlined text-[24px]">smart_toy</span>
-      </button>
-    );
-  }
-
   const working = conversationState === "working";
 
   return (
     <div
-      className="w-[380px] max-w-[92vw] shrink-0 h-full flex flex-col overflow-hidden border-l border-outline-variant/15 bg-surface-lowest shadow-glass animate-slide-in-right"
+      className="shrink-0 h-full overflow-hidden flex justify-end bg-surface-lowest transition-[width] duration-200 ease-out"
+      style={{ width: open ? width : 0 }}
       role="dialog"
       aria-label="Loqi OS"
     >
-      <div className="flex items-center justify-between px-4 py-3 border-b border-outline-variant/10 shrink-0">
-        <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg bg-primary/15 flex items-center justify-center">
-            <span className="material-symbols-outlined text-[16px] text-primary">smart_toy</span>
+      <div
+        className="w-[380px] max-w-[92vw] shrink-0 h-full flex flex-col overflow-hidden border-l border-outline-variant/15 shadow-glass"
+        style={{ width }}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-outline-variant/10 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded-lg bg-primary/15 flex items-center justify-center">
+              <span className="material-symbols-outlined text-[16px] text-primary">smart_toy</span>
+            </div>
+            <span className="text-body-md text-on-surface font-bold">Loqi OS</span>
           </div>
-          <span className="text-body-md text-on-surface font-bold">Loqi OS</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span
-            className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wider font-semibold ${
-              working
-                ? "bg-primary/10 text-primary"
-                : conversationState === "clarification"
-                  ? "bg-warning/10 text-warning"
-                  : conversationState === "completed"
-                    ? "bg-success/10 text-success"
-                    : "bg-surface-high/60 text-on-surface-variant/60"
-            }`}
-          >
+          <div className="flex items-center gap-2">
             <span
-              className={`w-1.5 h-1.5 rounded-full ${
-                working ? "bg-primary animate-pulse" : "bg-current"
+              className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wider font-semibold ${
+                working
+                  ? "bg-primary/10 text-primary"
+                  : conversationState === "clarification"
+                    ? "bg-warning/10 text-warning"
+                    : conversationState === "completed"
+                      ? "bg-success/10 text-success"
+                      : "bg-surface-high/60 text-on-surface-variant/60"
               }`}
-            />
-            {STATE_LABELS[conversationState]}
-          </span>
-          <button
-            onClick={clear}
-            className="p-1.5 rounded-lg text-on-surface-variant/50 hover:text-on-surface hover:bg-surface-high/60 transition-all duration-150 active:scale-95"
-            title="Clear conversation"
-            aria-label="Clear conversation"
-          >
-            <span className="material-symbols-outlined text-[18px]">delete_sweep</span>
-          </button>
-          <button
-            onClick={() => setOpen(false)}
-            className="p-1.5 rounded-lg text-on-surface-variant/50 hover:text-on-surface hover:bg-surface-high/60 transition-all duration-150 active:scale-95"
-            title="Close (ESC)"
-            aria-label="Close Loqi OS"
-          >
-            <span className="material-symbols-outlined text-[18px]">close</span>
-          </button>
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  working ? "bg-primary animate-pulse" : "bg-current"
+                }`}
+              />
+              {STATE_LABELS[conversationState]}
+            </span>
+            <button
+              onClick={clear}
+              className="p-1.5 rounded-lg text-on-surface-variant/50 hover:text-on-surface hover:bg-surface-high/60 transition-all duration-150 active:scale-95"
+              title="Clear conversation"
+              aria-label="Clear conversation"
+            >
+              <span className="material-symbols-outlined text-[18px]">delete_sweep</span>
+            </button>
+          </div>
         </div>
-      </div>
 
       {(conversationState === "idle" || conversationState === "completed") && (
         <>
@@ -247,6 +231,7 @@ export default function CopilotPanel() {
           </div>
         </>
       )}
+      </div>
     </div>
   );
 }

@@ -562,7 +562,10 @@ export default function MissionControlDashboard() {
         </div>
 
         {/* Tell Loqi — sticky footer */}
-        <div className="fixed bottom-0 left-64 right-0 z-40 bg-gradient-to-t from-background via-background/95 to-transparent pt-20 pb-8">
+        <div
+          className="fixed bottom-0 z-40 pb-6 transition-[left,right] duration-200 ease-out"
+          style={{ left: "var(--sidebar-w, 16rem)", right: "var(--copilot-w, 0px)" }}
+        >
           <div className="reading-column px-6">
             <div className="bg-surface-lowest border border-outline-variant/20 rounded-xl p-4 ambient-shadow focus-within:ring-2 focus-within:ring-primary/5 transition-all">
               <label className="text-xs uppercase tracking-widest text-on-surface-variant block mb-2 px-2 font-medium">

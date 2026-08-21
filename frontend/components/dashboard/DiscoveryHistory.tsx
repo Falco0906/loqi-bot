@@ -269,7 +269,7 @@ export default function DiscoveryHistory() {
   return (
     <WorkspaceContainer>
       <AppPage>
-        <div className="reading-column py-16 flex flex-col gap-10">
+        <div className="reading-column pt-16 pb-72 flex flex-col gap-10">
 
           <section className="animate-fade-in">
             <h1 className="text-4xl md:text-5xl font-serif text-on-surface leading-tight tracking-tight font-normal">
@@ -323,55 +323,61 @@ export default function DiscoveryHistory() {
             </div>
           )}
 
-          <section className="pt-6 border-t border-outline-variant/20">
-            <div className="bg-surface-lowest border border-outline-variant/20 rounded-xl p-4 ambient-shadow">
-              <label className="text-xs uppercase tracking-widest text-on-surface-variant block mb-2 px-2 font-medium">
-                Tell Loqi...
-              </label>
-              <div className="flex items-end gap-3 px-2 pb-1">
-                <textarea
-                  className="w-full border-none p-0 focus:ring-0 text-lg placeholder:text-on-surface-variant/30 resize-none bg-transparent outline-none"
-                  placeholder="Start a new discovery, e.g. 'AI startups'…"
-                  rows={1}
-                  value={tellLoqi.text}
-                  onChange={(e) => tellLoqi.setText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      void tellLoqi.submit();
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  disabled={tellLoqi.sending || !tellLoqi.text.trim()}
-                  onClick={() => void tellLoqi.submit()}
-                  className="bg-primary text-on-primary w-10 h-10 rounded-full flex items-center justify-center hover:opacity-80 transition-opacity shrink-0 disabled:opacity-40"
-                >
-                  <span className="material-symbols-outlined text-sm">arrow_upward</span>
-                </button>
-              </div>
-            </div>
-            <div className="mt-4 flex justify-center gap-3 overflow-x-auto no-scrollbar">
-              <button
-                type="button"
-                onClick={() => void tellLoqi.submit("Find Series A fintech companies in cross-border payments.")}
-                className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
-              >
-                FIND SERIES A FINTECH
-              </button>
-              <button
-                type="button"
-                onClick={() => void tellLoqi.submit("Shift focus to healthcare SaaS companies.")}
-                className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
-              >
-                SHIFT TO HEALTHCARE
-              </button>
-            </div>
-          </section>
-
         </div>
       </AppPage>
+
+      {/* Tell Loqi — sticky footer */}
+      <div
+        className="fixed bottom-0 z-40 pb-6 transition-[left,right] duration-200 ease-out"
+        style={{ left: "var(--sidebar-w, 16rem)", right: "var(--copilot-w, 0px)" }}
+      >
+        <div className="reading-column px-6">
+          <div className="bg-surface-lowest border border-outline-variant/20 rounded-xl p-4 ambient-shadow">
+            <label className="text-xs uppercase tracking-widest text-on-surface-variant block mb-2 px-2 font-medium">
+              Tell Loqi...
+            </label>
+            <div className="flex items-end gap-3 px-2 pb-1">
+              <textarea
+                className="w-full border-none p-0 focus:ring-0 text-lg placeholder:text-on-surface-variant/30 resize-none bg-transparent outline-none"
+                placeholder="Start a new discovery, e.g. 'AI startups'…"
+                rows={1}
+                value={tellLoqi.text}
+                onChange={(e) => tellLoqi.setText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void tellLoqi.submit();
+                  }
+                }}
+              />
+              <button
+                type="button"
+                disabled={tellLoqi.sending || !tellLoqi.text.trim()}
+                onClick={() => void tellLoqi.submit()}
+                className="bg-primary text-on-primary w-10 h-10 rounded-full flex items-center justify-center hover:opacity-80 transition-opacity shrink-0 disabled:opacity-40"
+              >
+                <span className="material-symbols-outlined text-sm">arrow_upward</span>
+              </button>
+            </div>
+          </div>
+          <div className="mt-4 flex justify-center gap-3 overflow-x-auto no-scrollbar">
+            <button
+              type="button"
+              onClick={() => void tellLoqi.submit("Find Series A fintech companies in cross-border payments.")}
+              className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+            >
+              FIND SERIES A FINTECH
+            </button>
+            <button
+              type="button"
+              onClick={() => void tellLoqi.submit("Shift focus to healthcare SaaS companies.")}
+              className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
+            >
+              SHIFT TO HEALTHCARE
+            </button>
+          </div>
+        </div>
+      </div>
     </WorkspaceContainer>
   );
 }

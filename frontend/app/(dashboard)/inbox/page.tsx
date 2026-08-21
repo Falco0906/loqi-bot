@@ -101,11 +101,8 @@ export default function InboxPage() {
       <div className="flex h-full flex-col min-h-0 animate-fade-in">
 
         {/* Header */}
-        <header className="flex items-baseline gap-4 px-6 pt-5 pb-4 shrink-0 animate-conversation-fade">
-          <h1 className="font-serif text-[22px] leading-tight text-on-surface font-normal">
-            Inbox
-          </h1>
-          <span className="text-xs text-on-surface-variant/50 font-medium uppercase tracking-widest">
+        <header className="flex items-center gap-3 px-6 pt-5 pb-4 shrink-0 animate-conversation-fade">
+          <span className="text-xs font-bold uppercase tracking-widest text-primary bg-primary/10 rounded-full px-3 py-1.5">
             {rows.length} conversation{rows.length !== 1 ? "s" : ""}
           </span>
         </header>

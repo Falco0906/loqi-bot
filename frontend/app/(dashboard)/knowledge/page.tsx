@@ -378,8 +378,7 @@ export default function KnowledgePage() {
           <header className="flex flex-col gap-5 border-b border-outline-variant/10 pb-7 md:flex-row md:items-end md:justify-between">
             <div>
               <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">Knowledge foundation</p>
-              <h1 className="font-serif text-4xl font-normal text-on-surface">Knowledge</h1>
-              <p className="mt-2 max-w-xl text-sm leading-relaxed text-on-surface-variant/75">Everything Loqi knows about your business, kept in one place for the work ahead.</p>
+              <p className="max-w-xl font-serif text-xl leading-snug text-on-surface">Everything Loqi knows about your business, kept in one place for the work ahead.</p>
             </div>
             <label className="flex w-full items-center gap-2 rounded-lg border border-outline-variant/20 bg-surface-lowest px-3 py-2 md:max-w-xs">
               <Icon name="search" className="text-base text-on-surface-variant/50" />

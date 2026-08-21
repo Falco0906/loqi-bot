@@ -20,6 +20,7 @@ import { toast } from "../shared/Toast";
 import { draftBucket, DraftBucket } from "../../lib/draft-lifecycle";
 import { usePageContext } from "../../hooks/usePageContext";
 import { useActionHandlers } from "../../hooks/useActionHandlers";
+import { useWorkspaceSearch } from "../../contexts/SearchContext";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
@@ -105,6 +106,7 @@ export default function DraftReviewWorkspace() {
   const [scheduleTime, setScheduleTime] = useState("");
   const [schedulingId, setSchedulingId] = useState<string | null>(null);
   const [cancellingScheduleId, setCancellingScheduleId] = useState<string | null>(null);
+  const { query: searchQuery } = useWorkspaceSearch();
   const [testRecipient, setTestRecipient] = useState("");
   const aiEndRef = useRef<HTMLDivElement>(null);
 
@@ -207,7 +209,23 @@ export default function DraftReviewWorkspace() {
   }
 
   const draftsByCampaign = new Map<string, DraftEntry[]>();
-  for (const d of drafts) {
+  const q = searchQuery.trim().toLowerCase();
+  const visibleDrafts = q
+    ? drafts.filter((d) => {
+        const leadName = ((d.lead?.name as string) || "").toLowerCase();
+        const company = ((d.lead?.company as string) || "").toLowerCase();
+        const email = ((d.lead?.email as string) || "").toLowerCase();
+        const cid = (d.campaign_id as string) || "";
+        const campaignName = (campaignMap.get(cid) || (d.campaign_name as string) || "").toLowerCase();
+        return (
+          leadName.includes(q) ||
+          company.includes(q) ||
+          email.includes(q) ||
+          campaignName.includes(q)
+        );
+      })
+    : drafts;
+  for (const d of visibleDrafts) {
     const cid = (d.campaign_id as string) || "__none__";
     if (!draftsByCampaign.has(cid)) draftsByCampaign.set(cid, []);
     draftsByCampaign.get(cid)!.push(d);
@@ -695,6 +713,20 @@ export default function DraftReviewWorkspace() {
     );
   }
 
+  if (searchQuery.trim() && visibleDrafts.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-center px-6 animate-fade-in">
+        <div className="w-16 h-16 rounded-2xl bg-surface-high/30 flex items-center justify-center text-on-surface-variant/40 mb-4">
+          <Icon name="search_off" className="text-3xl" />
+        </div>
+        <p className="text-body-lg text-on-surface-variant/80 font-medium">No drafts match</p>
+        <p className="mt-1.5 text-body-md text-on-surface-variant/50 max-w-sm leading-relaxed">
+          Nothing matches &ldquo;{searchQuery.trim()}&rdquo;. Try a lead name, company, or campaign.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full overflow-hidden">
       {/* ─── Draft Queue — left panel ─── */}
@@ -703,7 +735,7 @@ export default function DraftReviewWorkspace() {
           <div className="flex items-center justify-between">
             <h2 className="text-headline-sm font-bold text-on-surface">Drafts</h2>
             <span className="text-xs text-on-surface-variant/50">
-              {drafts.length} total
+              {searchQuery.trim() ? `${visibleDrafts.length} of ${drafts.length}` : `${drafts.length}`} total
             </span>
           </div>
 

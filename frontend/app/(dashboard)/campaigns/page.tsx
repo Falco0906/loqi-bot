@@ -8,6 +8,7 @@ import { toast } from "../../../components/shared/Toast";
 import WorkspaceContainer from "../../../components/layout/WorkspaceContainer";
 import { useTellLoqi } from "../../../hooks/useTellLoqi";
 import { useActionHandlers } from "../../../hooks/useActionHandlers";
+import { useWorkspaceSearch } from "../../../contexts/SearchContext";
 import { buildResearchUrl, campaignAttachContext } from "../../../lib/discovery-mode";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
@@ -120,7 +121,13 @@ export default function CampaignsPage() {
     },
   });
 
-  const visibleCampaigns = campaigns.filter((c) => c.status !== "deleted");
+  const { query: searchQuery } = useWorkspaceSearch();
+  const q = searchQuery.trim().toLowerCase();
+  const visibleCampaigns = campaigns.filter(
+    (c) =>
+      c.status !== "deleted" &&
+      (!q || String(c.name ?? "").toLowerCase().includes(q) || String(c.objective ?? "").toLowerCase().includes(q))
+  );
   const activeCampaigns = visibleCampaigns.filter((c) => c.status !== "archived");
   const archivedCampaigns = visibleCampaigns.filter((c) => c.status === "archived");
 
@@ -234,6 +241,16 @@ export default function CampaignsPage() {
               </div>
             </div>
           </>
+        ) : visibleCampaigns.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center animate-fade-in">
+            <div className="w-16 h-16 rounded-2xl bg-surface-high/30 flex items-center justify-center text-on-surface-variant/40 mb-4">
+              <Icon name="search" className="text-3xl" />
+            </div>
+            <p className="text-body-lg text-on-surface-variant/80 font-medium">No campaigns match</p>
+            <p className="mt-1.5 text-body-md text-on-surface-variant/50 max-w-sm leading-relaxed">
+              Nothing matches &ldquo;{searchQuery.trim()}&rdquo;. Try a different term or clear the search in the sidebar.
+            </p>
+          </div>
         ) : (
           <>
             {activeCampaigns.length > 0 && (

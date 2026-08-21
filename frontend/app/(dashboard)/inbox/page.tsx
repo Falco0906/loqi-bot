@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import WorkspaceContainer from "../../../components/layout/WorkspaceContainer";
 import AppPage from "../../../components/primitives/AppPage";
 import { useData } from "../../../lib/hooks/use-data";
 import { fetchInbox } from "../../../lib/repositories";
 import { useTellLoqi } from "../../../hooks/useTellLoqi";
+import { useWorkspaceSearch } from "../../../contexts/SearchContext";
 import {
   attentionTone,
   classLabel,
@@ -21,6 +22,12 @@ export default function InboxPage() {
   const { data, loading, error, retry } = useData(fetchInbox);
   const [search, setSearch] = useState("");
   const [classFilter, setClassFilter] = useState("all");
+  const { query: sidebarQuery } = useWorkspaceSearch();
+
+  /* Sidebar search mirrors into the inbox's own search bar */
+  useEffect(() => {
+    setSearch(sidebarQuery);
+  }, [sidebarQuery]);
 
   const rows = useMemo(() => data?.rows ?? [], [data]);
   const tellLoqi = useTellLoqi("Inbox", { decisionCount: rows.length });

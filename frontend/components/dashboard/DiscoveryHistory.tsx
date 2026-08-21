@@ -8,6 +8,7 @@ import WorkspaceContainer from "../layout/WorkspaceContainer";
 import { useData } from "../../lib/hooks/use-data";
 import { fetchDiscoveryList, peekCachedDiscoveryList } from "../../lib/repositories";
 import { useTellLoqi } from "../../hooks/useTellLoqi";
+import { useWorkspaceSearch } from "../../contexts/SearchContext";
 import {
   parseDiscoveryMode,
   discoveryDetailUrl,
@@ -157,12 +158,21 @@ export default function DiscoveryHistory() {
   }, [attachMode, attachContext, attachAttempt, router]);
 
   const items = data ?? [];
+  const { query: searchQuery } = useWorkspaceSearch();
+  const q = searchQuery.trim().toLowerCase();
+  const matchesSearch = (d: DiscoveryListItem) =>
+    !q ||
+    (d.title || "").toLowerCase().includes(q) ||
+    (d.description || "").toLowerCase().includes(q) ||
+    d.query.toLowerCase().includes(q);
+  const filteredItems = items.filter(matchesSearch);
   const sections = [
-    { label: "Today", items: items.filter((d) => discoveryDay(d.createdAt) === "Today") },
-    { label: "Yesterday", items: items.filter((d) => discoveryDay(d.createdAt) === "Yesterday") },
+    { label: "Today", items: filteredItems.filter((d) => discoveryDay(d.createdAt) === "Today") },
+    { label: "Yesterday", items: filteredItems.filter((d) => discoveryDay(d.createdAt) === "Yesterday") },
   ];
-  const older = items.filter((d) => !["Today", "Yesterday"].includes(discoveryDay(d.createdAt)));
+  const older = filteredItems.filter((d) => !["Today", "Yesterday"].includes(discoveryDay(d.createdAt)));
   const hasAny = items.length > 0;
+  const anyMatch = filteredItems.length > 0;
 
   if (attachMode && attachContext) {
     const targetLabel =
@@ -280,7 +290,17 @@ export default function DiscoveryHistory() {
             </p>
           </section>
 
-          {hasAny ? (
+          {hasAny && !anyMatch ? (
+            <div className="flex flex-col items-center justify-center py-20 text-center animate-fade-in">
+              <div className="w-16 h-16 rounded-2xl bg-surface-high/30 flex items-center justify-center text-on-surface-variant/40 mb-4">
+                <span className="material-symbols-outlined text-3xl">search_off</span>
+              </div>
+              <p className="text-body-lg text-on-surface-variant/80 font-medium">No discoveries match</p>
+              <p className="mt-1.5 text-body-md text-on-surface-variant/50 max-w-sm leading-relaxed">
+                Nothing matches &ldquo;{searchQuery.trim()}&rdquo;. Try a different term or clear the search in the sidebar.
+              </p>
+            </div>
+          ) : hasAny ? (
             <div className="space-y-10">
               {sections.map(
                 (section) =>

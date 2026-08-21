@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Sidebar, { SIDEBAR_EXPANDED_WIDTH, SIDEBAR_COLLAPSED_WIDTH } from "../../components/layout/Sidebar";
 import Topbar from "../../components/layout/Topbar";
@@ -10,11 +10,14 @@ import ToastContainer from "../../components/shared/Toast";
 import CommandBar from "../../components/layout/CommandBar";
 import { useBackendHealth } from "../../hooks/useBackendHealth";
 import { useAuth } from "../../hooks/useAuth";
+import { useTextHighlight } from "../../hooks/useTextHighlight";
 import { CopilotProvider, useCopilot } from "../../contexts/CopilotContext";
+import { SearchProvider, useWorkspaceSearch } from "../../contexts/SearchContext";
 import AppPage from "../../components/primitives/AppPage";
 import { ProspectRegistryProvider } from "../../contexts/ProspectRegistryProvider";
 
 const COPILOT_PANEL_WIDTH = 380;
+const HIGHLIGHT_PAGES = ["/mission-control", "/knowledge", "/strategic-update", "/settings"];
 
 function DashboardShell({ children }: { children: React.ReactNode }) {
   const [isCommandBarOpen, setIsCommandBarOpen] = useState(false);
@@ -61,8 +64,13 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { healthy, retry } = useBackendHealth();
   const { user, isAuthenticated, isLoading } = useAuth();
+  const { query: searchQuery } = useWorkspaceSearch();
 
   const isDraftPage = pathname?.startsWith("/draft");
+  const isHighlightPage = !!pathname && HIGHLIGHT_PAGES.some((p) => pathname.startsWith(p));
+
+  const mainRef = useRef<HTMLElement>(null);
+  useTextHighlight(searchQuery, mainRef, isHighlightPage);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -131,7 +139,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         >
           <Topbar />
           <div className="flex flex-1 min-h-0">
-            <main className="flex-1 overflow-y-auto h-full">
+            <main ref={mainRef} className="flex-1 overflow-y-auto h-full">
                {isDraftPage ? children : <AppPage>{children}</AppPage>}
             </main>
             {!isDraftPage && <CopilotPanel width={COPILOT_PANEL_WIDTH} />}
@@ -151,9 +159,11 @@ export default function DashboardLayout({
   return (
     <ProspectRegistryProvider>
       <CopilotProvider>
-        <DashboardShell>
-          {children}
-        </DashboardShell>
+        <SearchProvider>
+          <DashboardShell>
+            {children}
+          </DashboardShell>
+        </SearchProvider>
       </CopilotProvider>
     </ProspectRegistryProvider>
   );

@@ -5,6 +5,8 @@ import { useCallback, useRef, type KeyboardEvent, type PointerEvent } from "reac
 import { usePathname } from "next/navigation";
 import Icon from "../shared/Icon";
 import { useAuth } from "../../hooks/useAuth";
+import { useWorkspaceSearch } from "../../contexts/SearchContext";
+import { pageConfig } from "./Topbar";
 
 const navigation = [
   { label: "Mission Control", href: "/mission-control", icon: "dashboard" },
@@ -60,6 +62,7 @@ export default function Sidebar({
 }: Props) {
   const pathname = usePathname();
   const { user } = useAuth();
+  const { query, setQuery } = useWorkspaceSearch();
   const dragState = useRef<{ startX: number; fromExpanded: boolean } | null>(null);
 
   const displayName =
@@ -187,11 +190,36 @@ export default function Sidebar({
       }`}
       style={{ width: previewWidth }}
     >
-      {/* Logo */}
-      <div className={`flex items-center py-8 shrink-0 ${collapsed ? "justify-center px-0" : "px-6"}`}>
-        <span className={`font-serif text-primary tracking-tight leading-none ${collapsed ? "text-headline-md" : "text-headline-sm"}`}>
-          {collapsed ? "L" : "Loqi"}
-        </span>
+      {/* Logo + search */}
+      <div className={`shrink-0 pt-6 pb-1 ${collapsed ? "px-3" : "px-4"}`}>
+        <div className={collapsed ? "flex justify-center" : "px-2"}>
+          <span className={`font-serif text-primary tracking-tight leading-none ${collapsed ? "text-headline-md" : "text-headline-sm"}`}>
+            {collapsed ? "L" : "Loqi"}
+          </span>
+        </div>
+        {!collapsed && (
+          <label className="mt-4 flex items-center gap-2 rounded-lg border border-outline-variant/20 bg-surface-lowest px-3 py-2 transition-colors focus-within:border-primary/50">
+            <Icon name="search" className="text-base text-on-surface-variant/50 shrink-0" />
+            <input
+              type="text"
+              aria-label="Search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={(pathname && pageConfig[pathname]?.searchPlaceholder) || "Search..."}
+              className="min-w-0 flex-1 bg-transparent text-sm text-on-surface outline-none placeholder:text-on-surface-variant/40"
+            />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery("")}
+                aria-label="Clear search"
+                className="shrink-0 text-on-surface-variant/40 hover:text-on-surface transition-colors"
+              >
+                <Icon name="close" className="text-sm" />
+              </button>
+            )}
+          </label>
+        )}
       </div>
 
       {/* Resize handle */}

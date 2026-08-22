@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { ApiError, TimeoutError } from "../../lib/api";
 import { swrFetch, peekCache, scopedKey, invalidateClientCache } from "../../lib/client-cache";
+import { getNavState, setNavState } from "../../lib/nav-state";
 import {
   listDrafts,
   updateDraft,
@@ -338,6 +339,22 @@ export default function DraftReviewWorkspace() {
   allSortedDrafts.forEach((item, i) => {
     globalIndexMap.set(item.draft.id, i);
   });
+
+  // PR-3D: persist + restore the reviewed draft across navigation.
+  useEffect(() => {
+    const d = allSortedDrafts[selectedIndex]?.draft;
+    if (d?.id) setNavState("draft-review", "selectedDraftId", String(d.id));
+  }, [selectedIndex, allSortedDrafts]);
+
+  const restoredSelectionRef = useRef(false);
+  useEffect(() => {
+    if (restoredSelectionRef.current || drafts.length === 0) return;
+    restoredSelectionRef.current = true;
+    const remembered = getNavState<string>("draft-review", "selectedDraftId");
+    if (!remembered) return;
+    const idx = allSortedDrafts.findIndex(e => e.draft?.id === remembered);
+    if (idx >= 0) setSelectedIndex(idx);
+  }, [drafts.length, allSortedDrafts]);
 
   const selected = allSortedDrafts[selectedIndex]?.draft || null;
   const selectedCampaignId = allSortedDrafts[selectedIndex]?.campaignId || null;

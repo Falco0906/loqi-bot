@@ -260,7 +260,12 @@ export default function MissionControlDashboard() {
     return () => window.clearInterval(timer);
   }, [mcData?.initialResearchStatus, mcRetry]);
 
-  const loading = mcLoading && briefingLoading;
+  // PR-3D: deterministic state precedence. The narrative briefing is the
+  // primary Mission Control view; the legacy card layout must never flash
+  // while the briefing request is still in flight just because the
+  // mission-control payload was seeded from cache.
+  const briefingPending = briefingLoading && !briefingError && !briefingData;
+  const loading = (mcLoading && briefingLoading) || briefingPending;
   const data = briefingData || mcData;
   const error = mcError || briefingError;
 

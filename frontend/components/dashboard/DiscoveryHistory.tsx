@@ -9,6 +9,7 @@ import { useData } from "../../lib/hooks/use-data";
 import { fetchDiscoveryList, peekCachedDiscoveryList } from "../../lib/repositories";
 import { useTellLoqi } from "../../hooks/useTellLoqi";
 import { useWorkspaceSearch } from "../../contexts/SearchContext";
+import { setNavState } from "../../lib/nav-state";
 import {
   parseDiscoveryMode,
   discoveryDetailUrl,
@@ -66,6 +67,7 @@ function DiscoveryRow({ item }: { item: DiscoveryListItem }) {
   return (
     <Link
       href={`/discovery/${item.id}`}
+      onClick={() => setNavState("discovery", "selected", { id: item.id, at: Date.now() })}
       className="group flex items-center justify-between gap-4 px-4 md:px-6 py-5 border-b border-outline-variant/20 transition-colors hover:bg-surface-container-low"
     >
       <div className="min-w-0 text-left">

@@ -96,6 +96,7 @@ function clearStoredTokens() {
   // PR-3C: purge every client-cached API payload — cached data must never
   // survive an identity boundary (logout, re-auth, registration switch).
   import("../lib/client-cache").then(({ clearClientCache }) => clearClientCache());
+  import("../lib/nav-state").then(({ clearNavState }) => clearNavState());
 }
 
 function readStoredUser(): User | null {

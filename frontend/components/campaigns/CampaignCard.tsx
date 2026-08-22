@@ -5,6 +5,7 @@ import Link from "next/link";
 import Icon from "../shared/Icon";
 import CampaignStatusBadge from "./CampaignStatusBadge";
 import { toast } from "../shared/Toast";
+import { setNavState } from "../../lib/nav-state";
 
 type Props = {
   id: string;
@@ -76,6 +77,7 @@ export default function CampaignCard({
       return (
         <Link
           href={`/campaigns/${id}`}
+      onClick={() => setNavState("campaign", "selected", { id, at: Date.now() })}
           className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
         >
           View Campaign
@@ -118,6 +120,7 @@ export default function CampaignCard({
       return (
         <Link
           href={`/campaigns/${id}`}
+      onClick={() => setNavState("campaign", "selected", { id, at: Date.now() })}
           className="px-3 py-1.5 rounded-lg border border-outline-variant/20 text-on-surface text-xs font-medium transition-all duration-150 hover:border-primary/40 hover:text-primary active:scale-[0.95]"
         >
           Campaign Details
@@ -135,7 +138,8 @@ export default function CampaignCard({
             <Icon name="campaign" className="text-primary text-lg" />
           </div>
           <div className="min-w-0">
-            <Link href={`/campaigns/${id}`} className="hover:underline">
+            <Link href={`/campaigns/${id}`}
+      onClick={() => setNavState("campaign", "selected", { id, at: Date.now() })} className="hover:underline">
               <h3 className="text-body-lg text-on-surface font-bold truncate">{name}</h3>
             </Link>
             <p className="text-label-sm text-on-surface-variant/60">

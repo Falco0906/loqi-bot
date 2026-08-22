@@ -18,6 +18,10 @@ export default function CampaignsPage() {
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [campaigns, setCampaigns] = useState<Array<Record<string, unknown>>>([]);
   const [loading, setLoading] = useState(true);
+  // PR-3D: UNKNOWN ≠ EMPTY. "No campaigns yet" may only render after a
+  // successful authoritative response proved the dataset is empty.
+  const [authoritativeEmpty, setAuthoritativeEmpty] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     const token = (() => {
@@ -33,7 +37,7 @@ export default function CampaignsPage() {
     const key = scopedKey(sessionToken, "campaigns");
     if (!peekCache<any>(key)) setLoading(true);
     try {
-      await swrFetch<Array<Record<string, unknown>>>(
+      const result = await swrFetch<Array<Record<string, unknown>>>(
         key,
         async () => {
           const res = await listCampaigns(sessionToken);
@@ -41,8 +45,14 @@ export default function CampaignsPage() {
         },
         { onStale: setCampaigns, onUpdate: setCampaigns },
       );
-    } catch {
-      /* keep cached content; first-visit failures surface via empty state */
+      setAuthoritativeEmpty(Array.isArray(result) && result.length === 0);
+      setLoadError("");
+    } catch (err) {
+      // PR-3D: refresh failure keeps cached content and never renders as
+      // empty; a first-visit failure shows an explicit error + retry.
+      if (!peekCache<any>(key)) {
+        setLoadError(err instanceof Error ? err.message : "Unable to load campaigns");
+      }
     } finally {
       setLoading(false);
     }
@@ -192,7 +202,14 @@ export default function CampaignsPage() {
               </div>
             ))}
           </div>
-        ) : campaigns.length === 0 ? (
+        ) : loadError ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center animate-fade-in">
+            <Icon name="warning" className="text-3xl text-error mb-4" />
+            <p className="text-body-lg text-on-surface font-medium">Unable to load campaigns</p>
+            <p className="mt-1.5 text-body-md text-on-surface-variant/50 max-w-sm leading-relaxed">{loadError}</p>
+            <button onClick={() => fetchCampaigns()} className="mt-6 rounded-lg border border-primary/40 px-5 py-2 text-sm font-semibold text-primary hover:bg-primary/10 transition-all">Retry</button>
+          </div>
+        ) : authoritativeEmpty && campaigns.length === 0 ? (
           <>
             <div className="flex flex-col items-center justify-center py-20 text-center animate-fade-in">
               <div className="w-16 h-16 rounded-2xl bg-surface-high/30 flex items-center justify-center text-on-surface-variant/40 mb-4">

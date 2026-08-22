@@ -43,6 +43,9 @@ import type {
   CampaignTimelineEntry,
   CampaignInsight,
 } from "./domain";
+
+// PR-3C/3D: re-export payload types for pages consuming cached fetchers.
+export type { InboxData, InboxConversationRow, CampaignData } from "./domain";
 import { qualificationFromPersistedMetadata } from "./discovery-qualification";
 
 /* ─── Utilities ─── */

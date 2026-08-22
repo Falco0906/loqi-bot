@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import WorkspaceContainer from "../../../components/layout/WorkspaceContainer";
 import AppPage from "../../../components/primitives/AppPage";
 import { useData } from "../../../lib/hooks/use-data";
-import { fetchInbox } from "../../../lib/repositories";
+import { fetchInbox, type InboxData } from "../../../lib/repositories";
+import { swrFetch, peekCache, scopedKey } from "../../../lib/client-cache";
+import { setNavState, getNavState } from "../../../lib/nav-state";
 import { useTellLoqi } from "../../../hooks/useTellLoqi";
 import { useWorkspaceSearch } from "../../../contexts/SearchContext";
 import {
@@ -19,10 +21,28 @@ import {
 
 export default function InboxPage() {
   const router = useRouter();
-  const { data, loading, error, retry } = useData(fetchInbox);
+  // PR-3D: stale-while-revalidate + navigation state. Returning to Inbox
+  // renders the cached list instantly and reopens the last conversation.
+  const inboxKey = scopedKey(
+    typeof window !== "undefined" ? localStorage.getItem("loqi_active_session_token") : null,
+    "inbox",
+  );
+  const loadInbox = useCallback(async (): Promise<InboxData> => {
+    return swrFetch<InboxData>(
+      inboxKey,
+      async () => {
+        const result = await fetchInbox();
+        return (result ?? { ok: false, rows: [] }) as InboxData;
+      },
+    );
+  }, [inboxKey]);
+  const { data, loading, error, retry } = useData<InboxData>(loadInbox, {
+    initial: peekCache<InboxData>(inboxKey)?.value ?? undefined,
+  });
   const [search, setSearch] = useState("");
   const [classFilter, setClassFilter] = useState("all");
   const { query: sidebarQuery } = useWorkspaceSearch();
+
 
   /* Sidebar search mirrors into the inbox's own search bar */
   useEffect(() => {
@@ -57,6 +77,20 @@ export default function InboxPage() {
       );
     });
   }, [rows, search, classFilter]);
+
+  /* PR-3D: restore the previously opened conversation (one-shot per mount).
+     Falls back gracefully to the list when it no longer exists. */
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current || loading || !rows.length) return;
+    const last = getNavState<{ id: string; at: number }>("inbox", "lastOpened");
+    if (!last) return;
+    restoredRef.current = true;
+    if (Date.now() - last.at < 30 * 60 * 1000 && rows.some((r: { id: string }) => r.id === last.id)) {
+      router.replace(`/conversations/${last.id}`);
+    }
+  }, [loading, rows, router]);
+
 
   /* ── Loading / error states ── */
 
@@ -173,7 +207,14 @@ export default function InboxPage() {
                 <button
                   key={row.id}
                   type="button"
-                  onClick={() => router.push(`/conversations/${row.id}`)}
+                  onClick={() => {
+                    setNavState("inbox", "lastOpened", {
+                      id: row.id,
+                      name: row.name,
+                      at: Date.now(),
+                    });
+                    router.push(`/conversations/${row.id}`);
+                  }}
                   aria-label={`Open conversation with ${row.name}`}
                   className="w-full text-left px-6 py-3 flex items-center gap-4 transition-colors group hover:bg-surface-container/40"
                 >

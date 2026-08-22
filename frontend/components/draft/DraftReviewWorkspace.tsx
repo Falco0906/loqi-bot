@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { ApiError, TimeoutError } from "../../lib/api";
+import { swrFetch, peekCache, scopedKey, invalidateClientCache } from "../../lib/client-cache";
 import {
   listDrafts,
   updateDraft,
@@ -189,27 +190,59 @@ export default function DraftReviewWorkspace() {
       setLoading(false);
       return;
     }
-    setLoading(true);
+    // PR-3C: stale-while-revalidate — if both lists are cached, render them
+    // immediately (no skeleton) and refresh silently in the background.
+    const draftsKey = scopedKey(sessionToken, "drafts");
+    const campaignsKey = scopedKey(sessionToken, "campaigns-meta");
+    const fullyCached = !!peekCache<any>(draftsKey) && !!peekCache<any>(campaignsKey);
+    if (!fullyCached) setLoading(true);
     setBackendError(false);
     try {
+      const applyDrafts = (value: { ok: boolean; drafts: DraftEntry[] }) => {
+        if (value.ok && Array.isArray(value.drafts)) {
+          setDrafts(value.drafts as DraftEntry[]);
+        }
+      };
+      const applyCampaigns = (value: { ok: boolean; campaigns: CampaignInfo[] }) => {
+        if (value.ok && Array.isArray(value.campaigns)) {
+          setCampaigns(value.campaigns as CampaignInfo[]);
+        }
+      };
+
+      const draftStale = peekCache<any>(draftsKey);
+      const metaStale = peekCache<any>(campaignsKey);
+      if (draftStale) applyDrafts(draftStale.value);
+      if (metaStale) applyCampaigns(metaStale.value);
+
       const [draftRes, campaignRes] = await Promise.allSettled([
-        listDrafts(sessionToken),
-        listCampaigns(sessionToken),
+        swrFetch<any>(
+          draftsKey,
+          () => listDrafts(sessionToken),
+          draftStale ? { onStale: applyDrafts, onUpdate: applyDrafts } : { onUpdate: applyDrafts },
+        ),
+        swrFetch<any>(
+          campaignsKey,
+          () => listCampaigns(sessionToken),
+          metaStale ? { onStale: applyCampaigns, onUpdate: applyCampaigns } : { onUpdate: applyCampaigns },
+        ),
       ]);
 
-      if (draftRes.status === "fulfilled" && draftRes.value.ok && Array.isArray(draftRes.value.drafts)) {
-        setDrafts(draftRes.value.drafts as DraftEntry[]);
-      }
-
-      if (campaignRes.status === "fulfilled" && campaignRes.value.ok && Array.isArray(campaignRes.value.campaigns)) {
-        setCampaigns(campaignRes.value.campaigns as CampaignInfo[]);
+      if (draftRes.status === "rejected" && campaignRes.status === "rejected") {
+        if (!fullyCached) setBackendError(true);
+        // Cached content stays visible when only the refresh failed.
       }
     } catch {
-      setBackendError(true);
+      if (!fullyCached) setBackendError(true);
     } finally {
       setLoading(false);
     }
   }, [sessionToken]);
+
+  function invalidateDraftCaches() {
+    if (!sessionToken) return;
+    invalidateClientCache(scopedKey(sessionToken, "drafts"));
+    invalidateClientCache(scopedKey(sessionToken, "campaigns-meta"));
+  }
 
   useEffect(() => {
     fetchData();
@@ -344,6 +377,7 @@ export default function DraftReviewWorkspace() {
         ),
       );
       setEditing(false);
+      invalidateDraftCaches();
       setMessage("Draft saved");
     } catch (err) {
       setMessage(describeDraftActionError(err, "Failed to save"));
@@ -381,6 +415,7 @@ export default function DraftReviewWorkspace() {
               : d,
           ),
         );
+        invalidateDraftCaches();
         setMessage(`Applied: ${action}`);
       }
     } catch (err) {
@@ -408,6 +443,7 @@ export default function DraftReviewWorkspace() {
         if (res.current_step === "sending") {
           setMessage("Campaign ready to launch!");
         } else {
+          invalidateDraftCaches();
           setMessage(
             updated.status === "approved" ? "Approved" : "Marked pending",
           );
@@ -447,6 +483,7 @@ export default function DraftReviewWorkspace() {
             d.id === selected.id ? { ...d, status: "sent" } : d,
           ),
         );
+        invalidateDraftCaches();
         setMessage("Draft sent successfully");
       } else {
         const err = res.error || res.send_result?.error;
@@ -474,6 +511,7 @@ export default function DraftReviewWorkspace() {
             d.id === selected.id ? { ...d, status: "scheduled" } : d,
           ),
         );
+        invalidateDraftCaches();
         setMessage(`Scheduled for ${new Date(scheduleTime).toLocaleString()}`);
         setShowSchedulePicker(false);
       } else {

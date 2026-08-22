@@ -31,6 +31,17 @@ SENTINEL = "PR10_RL_SENTINEL"
 def _isolated_limiter(monkeypatch):
     asyncio.run(rate_limiter.clear())
     monkeypatch.setattr(rate_limiter, "enabled", True)
+    # PR-3B/3A hermeticity: these tests pin LIMITER SEMANTICS, not transport.
+    # Force the local backend so a reachable production Redis (or a pooled
+    # client bound to another event loop) cannot make buckets nondeterministic.
+    monkeypatch.setenv("RATE_LIMIT_FORCE_LOCAL", "1")
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    from services import redis_client as _rc
+    monkeypatch.setattr(_rc, "_client", None)
+    import time as _t
+    monkeypatch.setattr(_rc, "_unavailable_until", 0.0)
+    _ = _t  # no-op keep-alive
+    monkeypatch.setattr(rate_limiter, "force_local", True)
     monkeypatch.setattr(rate_limiter, "limits", dict(rate_limiter.limits))
     rate_limiter.limits["ai"] = 3
     rate_limiter.limits["outbound"] = 3

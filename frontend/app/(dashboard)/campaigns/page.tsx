@@ -10,6 +10,7 @@ import { useTellLoqi } from "../../../hooks/useTellLoqi";
 import { useActionHandlers } from "../../../hooks/useActionHandlers";
 import { useWorkspaceSearch } from "../../../contexts/SearchContext";
 import { buildResearchUrl, campaignAttachContext } from "../../../lib/discovery-mode";
+import { swrFetch, peekCache, scopedKey, invalidateClientCache } from "../../../lib/client-cache";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
@@ -28,17 +29,27 @@ export default function CampaignsPage() {
 
   async function fetchCampaigns() {
     if (!sessionToken) return;
-    setLoading(true);
+    // PR-3C: stale-while-revalidate — skeleton only when nothing is cached.
+    const key = scopedKey(sessionToken, "campaigns");
+    if (!peekCache<any>(key)) setLoading(true);
     try {
-      const res = await listCampaigns(sessionToken);
-      if (res.ok && Array.isArray(res.campaigns)) {
-        setCampaigns(res.campaigns);
-      }
+      await swrFetch<Array<Record<string, unknown>>>(
+        key,
+        async () => {
+          const res = await listCampaigns(sessionToken);
+          return res.ok && Array.isArray(res.campaigns) ? res.campaigns : [];
+        },
+        { onStale: setCampaigns, onUpdate: setCampaigns },
+      );
     } catch {
-      /* silent */
+      /* keep cached content; first-visit failures surface via empty state */
     } finally {
       setLoading(false);
     }
+  }
+
+  function invalidateCampaigns() {
+    if (sessionToken) invalidateClientCache(scopedKey(sessionToken, "campaigns"));
   }
 
   useEffect(() => {
@@ -50,6 +61,7 @@ export default function CampaignsPage() {
     try {
       await archiveCampaign(sessionToken, id);
       toast("success", "Campaign archived");
+      invalidateCampaigns();
       fetchCampaigns();
     } catch { toast("error", "Failed to archive campaign"); }
   }
@@ -60,6 +72,7 @@ export default function CampaignsPage() {
     try {
       await updateCampaign(sessionToken, id, { name: newName.trim() });
       toast("success", "Campaign renamed");
+      invalidateCampaigns();
       fetchCampaigns();
     } catch { toast("error", "Failed to rename campaign"); }
   }
@@ -69,6 +82,7 @@ export default function CampaignsPage() {
     try {
       await updateCampaign(sessionToken, id, { status: "planning" });
       toast("success", "Campaign restored");
+      invalidateCampaigns();
       fetchCampaigns();
     } catch { toast("error", "Failed to restore campaign"); }
   }
@@ -80,6 +94,7 @@ export default function CampaignsPage() {
       if (!res.ok) throw new Error("duplicate failed");
       const copy = res.campaign as Record<string, unknown>;
       toast("success", `Duplicated — ${String(copy.name || "copy")} created`);
+      invalidateCampaigns();
       fetchCampaigns();
     } catch { toast("error", "Failed to duplicate campaign"); }
   }
@@ -90,6 +105,7 @@ export default function CampaignsPage() {
     try {
       await deleteCampaign(sessionToken, id);
       toast("success", "Campaign deleted");
+      invalidateCampaigns();
       fetchCampaigns();
     } catch { toast("error", "Failed to delete campaign"); }
   }

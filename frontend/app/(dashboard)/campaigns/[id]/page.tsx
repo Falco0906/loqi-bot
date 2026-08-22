@@ -6,6 +6,7 @@ import WorkspaceContainer from "../../../../components/layout/WorkspaceContainer
 import AppPage from "../../../../components/primitives/AppPage";
 import { useData } from "../../../../lib/hooks/use-data";
 import { fetchCampaign, invalidateMissionControlCache } from "../../../../lib/repositories";
+import { swrFetch, peekCache, scopedKey, invalidateClientCache } from "../../../../lib/client-cache";
 import type { CampaignData, CampaignLaunchProgress } from "../../../../lib/domain";
 import { useTellLoqi } from "../../../../hooks/useTellLoqi";
 import { useActionHandlers } from "../../../../hooks/useActionHandlers";
@@ -71,8 +72,33 @@ export default function CampaignDetailPage() {
   const params = useParams();
   const campaignId = params.id as string;
   const router = useRouter();
-  const loadCampaign = useCallback(() => fetchCampaign(campaignId), [campaignId]);
-  const { data, loading, error, retry, mutate } = useData(loadCampaign);
+  const [sessionToken] = useState<string | null>(() => {
+    try { return localStorage.getItem("loqi_active_session_token"); }
+    catch { return null; }
+  });
+  const campaignKey = scopedKey(sessionToken, "campaign", campaignId);
+  // PR-3C: stale-while-revalidate — returning to a recently visited campaign
+  // renders the cached payload instantly via `initial`, and every (re)load
+  // goes through swrFetch so fresh<10s hits cache and stale revalidates.
+  // mutate is declared by useData below; route SWR callbacks through a ref
+  // to avoid a circular dependency in the useCallback chain.
+  const mutateRef = useRef<(value: CampaignData | null) => void>(() => {});
+  const loadCampaign = useCallback(
+    (): Promise<CampaignData | null> => swrFetch<CampaignData | null>(
+      campaignKey,
+      () => fetchCampaign(campaignId),
+      {
+        onStale: value => mutateRef.current(value),
+        onUpdate: value => mutateRef.current(value),
+      },
+    ),
+    [campaignKey, campaignId],
+  );
+  const cachedCampaign = peekCache<CampaignData>(campaignKey);
+  const { data, loading, error, retry, mutate } = useData<CampaignData>(loadCampaign, {
+    initial: cachedCampaign ? cachedCampaign.value : undefined,
+  });
+  mutateRef.current = mutate;
 
   /**
    * Refetch the campaign and patch it in place. Used after every mutation —
@@ -80,10 +106,14 @@ export default function CampaignDetailPage() {
    * preserved and only the changed sections re-render.
    */
   const refreshCampaign = useCallback(async () => {
+    // Mutations just happened — invalidate so we never serve a pre-mutation
+    // cache entry as "fresh".
+    invalidateClientCache(campaignKey);
+    invalidateMissionControlCache();
     const fresh = await loadCampaign();
     if (fresh) mutate(fresh);
     return fresh;
-  }, [loadCampaign, mutate]);
+  }, [loadCampaign, mutate, campaignKey]);
   const tellLoqi = useTellLoqi("CampaignDetail", { campaignId });
   const token = typeof window !== "undefined" ? localStorage.getItem("loqi_active_session_token") : null;
   const [strategyBusy, setStrategyBusy] = useState(false);
@@ -537,12 +567,12 @@ export default function CampaignDetailPage() {
               </div>
               <div className="space-y-8 relative">
                 <div className="absolute left-[7px] top-2 bottom-0 w-px bg-outline-variant/30" />
-                {data.timeline.map((entry, i) => (
+                {(data?.timeline ?? []).map((entry: { date: string; events: string[] }, i: number) => (
                   <div key={i} className="relative pl-8">
                     <div className={`absolute left-0 top-[6px] w-4 h-4 rounded-full ${i === 0 ? "bg-primary" : "bg-outline-variant"} ring-4 ring-surface`} />
                     <p className="text-sm font-bold mb-1">{entry.date}</p>
                     <ul className="space-y-1">
-                      {entry.events.map((evt, j) => (
+                      {entry.events.map((evt: string, j: number) => (
                         <li key={j} className="text-base text-on-surface-variant flex items-center gap-2">
                           <span className="w-1 h-1 bg-outline rounded-full shrink-0" />
                           {evt}

@@ -6,6 +6,7 @@ import WorkspaceContainer from "../../../../components/layout/WorkspaceContainer
 import AppPage from "../../../../components/primitives/AppPage";
 import { saveCampaign } from "../../../../lib/api";
 import { toast } from "../../../../components/shared/Toast";
+import { invalidateClientCache, scopedKey } from "../../../../lib/client-cache";
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
 export default function NewCampaignPage() {
@@ -50,6 +51,8 @@ export default function NewCampaignPage() {
       const id = String(campaign.id || "");
       if (!created.ok || !id) throw new Error("Campaign could not be created");
       toast("success", "Campaign created — research prospects next");
+      // PR-3C: new campaign must not be hidden by a cached campaigns list.
+      invalidateClientCache(scopedKey(token, "campaigns"));
       sessionStorage.removeItem("loqi_pending_campaign_leads");
       router.push(`/campaigns/${id}`);
     } catch (err) {

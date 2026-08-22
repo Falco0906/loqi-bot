@@ -19,3 +19,4 @@ node_modules/
 backend/.simulate_replies.json
 backend/.conversations.json
 .DS_Store
+frontend/tsconfig.tsbuildinfo

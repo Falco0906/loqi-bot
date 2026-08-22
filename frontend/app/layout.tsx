@@ -3,7 +3,12 @@ import "./globals.css";
 import { AuthProvider } from "../contexts/AuthContext";
 
 export const metadata: Metadata = {
-  title: "Loqi AI — Outbound OS",
+  title: {
+    // PR: dynamic tab titles — "%s" is filled by route-level metadata where
+    // available; client pages update document.title directly (see Topbar).
+    default: "Loqi",
+    template: "%s — Loqi",
+  },
   description: "AI-native outbound operating system",
   icons: {
     icon: [

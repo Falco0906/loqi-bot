@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAuth } from "../../../hooks/useAuth";
 import CheckEmailContent from "../../../components/auth/CheckEmailContent";
+import { usePageTitle } from "../../../hooks/usePageTitle";
 
 function CheckEmailInner() {
   const searchParams = useSearchParams();
@@ -33,6 +34,7 @@ function CheckEmailInner() {
 }
 
 export default function CheckEmailPage() {
+  usePageTitle("Verify Email");
   return (
     <Suspense
       fallback={

@@ -5,8 +5,10 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "../../../hooks/useAuth";
 import SignupForm from "../../../components/auth/SignupForm";
 import Link from "next/link";
+import { usePageTitle } from "../../../hooks/usePageTitle";
 
 export default function SignupPage() {
+  usePageTitle("Sign Up");
   const router = useRouter();
   const { isAuthenticated, isLoading } = useAuth();
   const [submitted, setSubmitted] = useState(false);

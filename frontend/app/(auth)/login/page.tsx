@@ -3,8 +3,10 @@
 import { useAuth } from "../../../hooks/useAuth";
 import LoginForm from "../../../components/auth/LoginForm";
 import Link from "next/link";
+import { usePageTitle } from "../../../hooks/usePageTitle";
 
 export default function LoginPage() {
+  usePageTitle("Login");
   const { isAuthenticated, isLoading } = useAuth();
 
   if (isLoading) {

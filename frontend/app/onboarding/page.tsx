@@ -13,6 +13,7 @@ import { isTrustedGmailOAuthMessage, openGmailAuthPopup } from "../../lib/gmail-
 import { generateStrategicProfile } from "../../lib/strategic-intelligence-api";
 import type { StrategicProfile } from "../../lib/strategic-intelligence-api";
 import { ProfileValue } from "../../components/shared/ProfileValue";
+import { usePageTitle } from "../../hooks/usePageTitle";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 const ONBOARDING_MESSAGES_KEY = "loqi_onboarding_messages";
@@ -24,6 +25,7 @@ type OnboardingState =
   | "executive-briefing";
 
 export default function OnboardingPage() {
+  usePageTitle("Onboarding");
   const router = useRouter();
   const { user, isLoading: authLoading, refreshUser } = useAuth();
   const [state, setState] = useState<OnboardingState>("conversational-discovery");

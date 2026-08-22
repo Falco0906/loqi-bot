@@ -1,7 +1,9 @@
 "use client";
 
+import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { useCopilot } from "../../contexts/CopilotContext";
+import { usePageTitle } from "../../hooks/usePageTitle";
 
 export const pageConfig: Record<string, { title: string; searchPlaceholder: string }> = {
   "/mission-control": { title: "Briefing", searchPlaceholder: "Search briefings..." },
@@ -20,6 +22,10 @@ export default function Topbar() {
   const config = pageConfig[pathname] ?? { title: "", searchPlaceholder: "Search..." };
   const { open, setOpen } = useCopilot();
   const copilotAvailable = pathname !== "/draft";
+
+  // PR: tab title follows the current page ("Campaigns — Loqi"). Uses the
+  // already-computed route config — no fetches, no added latency.
+  usePageTitle(config.title);
 
   return (
     <header className="shrink-0 flex h-16 items-center justify-between border-b border-outline-variant/10 bg-surface-lowest/50 px-6 backdrop-blur-md">

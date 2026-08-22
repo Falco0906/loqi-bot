@@ -105,7 +105,12 @@ def _build_fallback_queries(service: str, target: str, icp: dict) -> list[str]:
     return queries[:5]
 
 
-def search_with_expansion(service: str, target: str, plan=None, context: dict | None = None) -> dict:
+def search_with_expansion(service: str, target: str, plan=None, context: dict | None = None,
+                          on_partial_results=None) -> dict:
+    """``on_partial_results(leads)`` — PR-4 first-result hook. Invoked with
+    raw provider leads immediately after the provider responds (before
+    filtering), enabling incremental persistence so users see leads without
+    waiting for finalize."""
     """AI-enhanced lead search with buyer-intent expansion and filtering.
 
     ``plan`` is the structured Discovery Plan (``discoveries.metadata.plan``).
@@ -158,18 +163,61 @@ def search_with_expansion(service: str, target: str, plan=None, context: dict | 
         print(f"[TRACE] 6b | SEARCH EXPANSION FAILED | expand_search_intent | +{int((time.time()-_t0)*1000)}ms | error={e}")
         expansion = None
 
+    # PR-4: hardened provider execution — bounded retries for transient
+    # failures (timeout/429/5xx), immediate failure for auth/validation.
+    from services.providers.base_provider import (
+        ProviderPermanentError,
+        ProviderTimeoutError,
+        search_leads_with_retry,
+    )
     try:
-        result = provider.search_leads(icp=icp, search_expansion=expansion, limit=30)
+        result = search_leads_with_retry(
+            provider, icp=icp, search_expansion=expansion, limit=30,
+        )
+    except ProviderPermanentError as e:
+        return {
+            "ok": False,
+            "provider_error_kind": "permanent",
+            "error": str(e),
+            "leads": [],
+            "icp": icp,
+            "context_provenance": (context or {}).get("provenance", {}),
+        }
+    except ProviderTimeoutError as e:
+        return {
+            "ok": False,
+            "provider_error_kind": "timeout",
+            "error": str(e),
+            "leads": [],
+            "icp": icp,
+            "context_provenance": (context or {}).get("provenance", {}),
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "provider_error_kind": "unknown",
+            "error": str(e)[:200],
+            "leads": [],
+            "icp": icp,
+            "context_provenance": (context or {}).get("provenance", {}),
+        }
 
-        if not result.get("ok"):
-            return {
-                "ok": False,
-                "source": result.get("provider", type(provider).__name__),
-                "leads": [],
-                "error": result.get("error", "Provider search failed"),
-                "icp": icp,
-                "context_provenance": (context or {}).get("provenance", {}),
-            }
+    # ── PR-4 FIRST-RESULT HOOK: surface raw provider leads immediately. ──
+    if on_partial_results and result.get("leads"):
+        try:
+            on_partial_results(result["leads"])
+        except Exception as cb_err:
+            _log(f"on_partial_results callback failed: {cb_err}")
+
+    if not result.get("ok"):
+        return {
+            "ok": False,
+            "source": result.get("provider", type(provider).__name__),
+            "leads": [],
+            "error": result.get("error", "Provider search failed"),
+            "icp": icp,
+            "context_provenance": (context or {}).get("provenance", {}),
+        }
 
         all_leads = result.get("leads", [])
 
@@ -223,16 +271,7 @@ def search_with_expansion(service: str, target: str, plan=None, context: dict | 
             "context_provenance": (context or {}).get("provenance", {}),
         }
 
-    except Exception as error:
-        _log(f"error: {error}")
-        return {
-            "ok": False,
-            "source": type(provider).__name__,
-            "leads": [],
-            "error": str(error),
-            "icp": icp,
-            "context_provenance": (context or {}).get("provenance", {}),
-        }
+    # PR-4: errors are handled inline per-failure-class above; nothing else
 
 
 def _apply_discovery_context(icp: dict | None, context: dict | None) -> dict | None:

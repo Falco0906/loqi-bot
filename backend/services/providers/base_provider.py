@@ -117,3 +117,116 @@ class BaseProvider(ABC):
             Full company dict from the provider's data, or None if not found.
         """
         pass
+
+
+# ─── PR-4: provider execution hardening ──────────────────────────────────
+
+import random  # noqa: E402
+import time as _time  # noqa: E402
+
+RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+
+class ProviderTimeoutError(Exception):
+    """Provider remained unavailable past the retry budget."""
+
+
+class ProviderPermanentError(Exception):
+    """Provider rejected the request in a way retries cannot fix."""
+
+MAX_PROVIDER_RETRIES = 2
+PROVIDER_TIMEOUT_SECONDS = 45.0
+
+
+def classify_provider_error(error: str = "", status: int | None = None) -> str:
+    """Classify a provider failure as retryable or permanent."""
+    lowered = (error or "").lower()
+    if status is not None and status in RETRYABLE_STATUS:
+        return "retryable"
+    if status is not None and 400 <= status < 500:
+        if status == 429:
+            return "retryable"
+        return "permanent"
+    for marker in ("timeout", "timed out", "connection reset", "connection refused",
+                   "temporarily unavailable", "bad gateway"):
+        if marker in lowered:
+            return "retryable"
+    for marker in ("unauthorized", "invalid api key", "invalid credentials",
+                   "forbidden", "authentication", "not yet implemented", "stub"):
+        if marker in lowered:
+            return "permanent"
+    return "retryable"  # default safe: transient-looking
+
+
+def search_leads_with_retry(
+    provider,
+    *,
+    icp: dict,
+    search_expansion: dict,
+    limit: int = 30,
+    max_retries: int = MAX_PROVIDER_RETRIES,
+    timeout_seconds: float = PROVIDER_TIMEOUT_SECONDS,
+) -> dict:
+    """Bounded, idempotent search with retryable-only retries.
+
+    - exponential backoff + jitter; honors Retry-After when the provider
+      surfaces one in the error string
+    - permanent failures (auth/4xx validation) fail immediately
+    - never mutates shared state; same inputs → same request semantics
+
+    Returns the provider's result dict unchanged on success.
+    Raises ProviderTimeoutError / ProviderPermanentError otherwise.
+    """
+    import requests as _requests
+
+    attempt = 0
+    last_error = ""
+    last_status = None
+    while attempt <= max_retries:
+        attempt += 1
+        try:
+            deadline = _time.monotonic() + timeout_seconds
+            result = provider.search_leads(icp=icp, search_expansion=search_expansion, limit=limit)
+            if result.get("ok"):
+                return result
+            error = str(result.get("error") or "provider search failed")
+            # Stub/unimplemented providers are permanent by definition.
+            if "not yet implemented" in error.lower() or "stub" in error.lower():
+                raise ProviderPermanentError(error)
+            classification = classify_provider_error(error)
+            if classification == "permanent":
+                raise ProviderPermanentError(error)
+            last_error = error
+            retry_after = None
+            if "retry-after" in error.lower():
+                try:
+                    retry_after = int("".join(ch for ch in error.split("retry-after")[1] if ch.isdigit())[:4])
+                except (ValueError, IndexError):
+                    retry_after = None
+            if attempt <= max_retries:
+                backoff = min(8.0, (2 ** attempt) * 0.5 + random.uniform(0, 0.25))
+                _time.sleep(max(backoff, float(retry_after or 0)))
+                continue
+            raise TimeoutError(last_error)
+        except (_requests.Timeout,) as e:
+            last_error = f"provider timeout after {timeout_seconds}s"
+            if attempt > max_retries:
+                raise ProviderTimeoutError(last_error)
+            _time.sleep(min(8.0, (2 ** attempt) * 0.5 + random.uniform(0, 0.25)))
+        except _requests.RequestException as e:
+            msg = str(e)
+            cls = classify_provider_error(msg)
+            last_error = msg[:200]
+            if cls == "permanent":
+                raise ProviderPermanentError(msg[:200])
+            if attempt > max_retries:
+                raise ProviderTimeoutError(msg[:200])
+            _time.sleep(min(8.0, (2 ** attempt) * 0.5))
+        except (ProviderTimeoutError, ProviderPermanentError):
+            raise
+        except Exception as e:
+            last_error = str(e)[:200]
+            if attempt > max_retries:
+                raise ProviderTimeoutError(last_error)
+            _time.sleep(1.0)
+    raise ProviderTimeoutError(last_error or "provider retries exhausted")

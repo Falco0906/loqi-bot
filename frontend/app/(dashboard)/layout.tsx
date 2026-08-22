@@ -93,10 +93,22 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       switch (event.type) {
         case "job.completed":
         case "job.progress":
+        case "draft.created":
+        case "draft.generation_started":
+        case "draft.generation_completed":
+        case "draft.generation_failed":
           invalidateClientCache(scopedKey(token, "campaigns"));
           invalidateClientCache(scopedKey(token, "campaigns-meta"));
+          invalidateClientCache(scopedKey(token, "drafts"));
           invalidateDiscoveryCache();
           invalidateMissionControlCache();
+          break;
+        case "draft.approved":
+        case "draft.sent":
+        case "draft.scheduled":
+        case "draft.updated":
+          invalidateClientCache(scopedKey(token, "drafts"));
+          invalidateClientCache(scopedKey(token, "campaigns-meta"));
           break;
         case "provider.connected":
         case "provider.disconnected":

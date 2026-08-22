@@ -68,6 +68,7 @@ from services.workspace_timeline import (
     record_drafts_generated,
     record_draft_approved,
     record_campaign_launched,
+    get_grouped_events,
 )
 from services.workspace_snapshot import build_snapshot
 from services.recommendation_engine import generate_recommendations
@@ -1912,17 +1913,30 @@ async def _process_batch_drafts(
                 "body_preview": draft_entry["text"][:200],
             }, actor="system")
 
+            await _emit_draft_event(
+                owner_id, "draft.created",
+                draft_id=draft_entry["id"],
+                campaign_id=str(draft_entry["campaign_id"] or ""),
+                lead_name=name,
+            )
             _sync_draft_to_outbound(draft_entry, session_token, owner_id=owner_id)
 
         except Exception as e:
             print(f"[batch] Draft failed for lead {i} ({name}): {e}")
             publish(session_token, WMEventType.DRAFT_FAILED, {
                 "lead_index": i,
+                "lead_index": i,
                 "lead_name": name,
                 "error": str(e),
                 "campaign_id": job.get("campaign_id"),
             }, actor="system")
             job["completed"] = i + 1
+            await _emit_draft_event(
+                owner_id, "draft.generation_failed",
+                campaign_id=str(job.get("campaign_id") or ""),
+                lead_name=name,
+                extra={"lead_index": i},
+            )
 
     job["status"] = "completed"
 
@@ -1956,6 +1970,12 @@ async def _process_batch_drafts(
             "campaign_id": campaign_id,
             "generation": generation,
         }, actor="system")
+    final_status = "draft.generation_completed" if job["status"] != "failed" else "draft.generation_failed"
+    await _emit_draft_event(
+        owner_id, final_status,
+        campaign_id=str(campaign_id or ""),
+        extra={"completed": job.get("completed", 0), "total": job.get("total", 0)},
+    )
     if campaign_name:
         record_drafts_generated(session_token, campaign_name, job.get("completed", 0))
 
@@ -3328,6 +3348,29 @@ def _call_outbound_approval(draft_id: str, legacy_draft: dict) -> None:
         log.warning("[outbound_adapter] approve_draft failed for %s: %s", draft_id, e)
 
 
+
+async def _emit_draft_event(user_id: str, event_type: str, *, draft_id: str = "",
+                            campaign_id: str = "", lead_name: str = "",
+                            extra: dict | None = None) -> None:
+    """PR-3E: draft lifecycle event via Redis pub/sub. Best-effort, scoped to
+    the server-resolved owner; payloads carry identifiers only."""
+    try:
+        from services.events_bus import event_bus
+        data: dict = {}
+        if campaign_id:
+            data["campaign_id"] = campaign_id
+        if lead_name:
+            data["lead"] = lead_name[:80]
+        if extra:
+            data.update({k: v for k, v in extra.items() if not any(b in k.lower() for b in ("token", "secret", "body", "subject"))})
+        await event_bus.publish_user_event(
+            user_id, event_type,
+            data, status=event_type.split(".", 1)[-1],
+        )
+    except Exception:
+        pass
+
+
 @app.post("/api/web/session/{session_token}/drafts/{draft_id}/approve")
 async def approve_draft(session_token: str, draft_id: str, request: Request):
     session_token = _session_token_from_request(request)
@@ -3347,6 +3390,12 @@ async def approve_draft(session_token: str, draft_id: str, request: Request):
         if new_status == "approved":
             _sync_draft_to_outbound(durable_target, session_token, owner_id=owner_id)
             _call_outbound_approval(draft_id, durable_target)
+            await _emit_draft_event(
+                owner_id, "draft.approved",
+                draft_id=draft_id,
+                campaign_id=str(campaign_id or ""),
+                lead_name=(durable_target.get("lead") or {}).get("name", ""),
+            )
         campaign_id = durable_target.get("campaign_id")
         current_step = None
         pending_in_campaign = 0
@@ -4311,6 +4360,13 @@ async def send_draft(session_token: str, draft_id: str, request: Request, payloa
                     "persistence_write_failed category=draft_status status=sent draft_id=%s error_type=%s",
                     draft_id[:12], type(e).__name__,
                 )
+        effective_owner = hydrated_owner_id or owner_id
+        if result.get("ok") and effective_owner:
+            await _emit_draft_event(
+                effective_owner, "draft.sent", draft_id=draft_id,
+                campaign_id=outbound_draft.workflow_id or "",
+                lead_name=outbound_draft.recipient.name if outbound_draft.recipient else "",
+            )
         send_data = result.get("send_result", {})
         try:
             from services.conversations.integration import create_conversation_from_send
@@ -4406,6 +4462,7 @@ async def schedule_draft(session_token: str, draft_id: str, payload: ScheduleDra
             if d.get("id") == draft_id:
                 d["status"] = "scheduled"
                 break
+        await _emit_draft_event(owner_id, "draft.scheduled", draft_id=draft_id)
         publish(session_token, WMEventType.DRAFT_SCHEDULED, {
             "draft_id": draft_id,
             "send_at": payload.send_at,
@@ -4433,6 +4490,7 @@ async def cancel_schedule_draft(session_token: str, draft_id: str, request: Requ
             if d.get("id") == draft_id:
                 d["status"] = "pending"
                 break
+        await _emit_draft_event(owner_id, "draft.updated", draft_id=draft_id)
         publish(session_token, WMEventType.DRAFT_UPDATED, {
             "draft_id": draft_id,
             "status": "pending",
@@ -5652,6 +5710,16 @@ async def _run_strategy_job(
     """
     job_id = str(job.get("id") or "")
     job["status"] = "running"
+    # PR-3F: durable lifecycle — RUNNING record (reconciled lazily if the
+    # process dies mid-generation).
+    try:
+        await _persist_strategy_job_meta(job["owner_id"], job["campaign_id"], {
+            "id": job_id, "status": "running",
+            "started_at": job.get("started_at"),
+            "finished_at": None, "error": None,
+        })
+    except Exception:
+        pass
     try:
         context = await _build_strategy_context(target)
         from services.knowledge.context_adapter import retrieve_knowledge_context
@@ -5685,6 +5753,11 @@ async def _run_strategy_job(
         job["strategy"] = strategy
         job["status"] = "completed"
         job["finished_at"] = datetime.now(timezone.utc).isoformat()
+        await _persist_strategy_job_meta(job["owner_id"], job["campaign_id"], {
+            "id": job_id, "status": "completed",
+            "started_at": job.get("started_at"), "finished_at": job["finished_at"],
+            "error": None,
+        })
         publish(session_token, WMEventType.CAMPAIGN_UPDATED, {
             "campaign_id": job["campaign_id"],
             "objective": objective,
@@ -5695,6 +5768,14 @@ async def _run_strategy_job(
         job["error"] = str(e)
         job["status"] = "failed"
         job["finished_at"] = datetime.now(timezone.utc).isoformat()
+        try:
+            await _persist_strategy_job_meta(job["owner_id"], job["campaign_id"], {
+                "id": job_id, "status": "failed",
+                "started_at": job.get("started_at"), "finished_at": job["finished_at"],
+                "error": str(e)[:200],
+            })
+        except Exception:
+            pass
 
 
 @app.post("/api/web/session/{session_token}/campaigns/{campaign_id}/generate-strategy", status_code=202)
@@ -5748,6 +5829,45 @@ async def generate_campaign_strategy(session_token: str, campaign_id: str, paylo
     return {"ok": True, "job_id": job_id, "status": status}
 
 
+
+async def _persist_strategy_job_meta(owner_id: str, campaign_id: str, meta: dict) -> None:
+    """PR-3F: persist strategy-job lifecycle into campaign settings so job
+    state survives process restarts (Supabase = source of truth)."""
+    from services.workspace_state import persist_campaign_update_awaited
+    await persist_campaign_update_awaited(owner_id, campaign_id, {"strategy_job": meta})
+
+
+async def _load_strategy_job_meta(owner_id: str, campaign_id: str) -> dict | None:
+    from services.workspace_state import load_campaign_state
+    try:
+        state = await asyncio.to_thread(
+            load_campaign_state, owner_id, campaign_id,
+        )
+        if isinstance(state, dict) and isinstance(state.get("strategy_job"), dict):
+            return state["strategy_job"]
+        return None
+    except Exception:
+        pass
+    return None
+
+
+def _reconcile_strategy_meta(meta: dict | None) -> tuple[str | None, str | None]:
+    """Lazy restart reconciliation. Returns (status, strategy|None).
+
+    In-memory job missing + durable meta says queued/running ⇒ the process
+    died mid-generation; AI work cannot be resumed safely → mark FAILED with
+    an actionable message instead of leaving it stuck forever."""
+    if not meta:
+        return None, None
+    status = str(meta.get("status") or "")
+    if status in ("queued", "running"):
+        return "failed", "Generation was interrupted by a server restart — please run it again."
+    if status == "completed":
+        return "completed", None
+    return "failed", str(meta.get("error") or "unknown error")
+
+
+
 async def _enqueue_strategy_job(
     session_token: str,
     owner_id: str,
@@ -5768,6 +5888,10 @@ async def _enqueue_strategy_job(
         ):
             return existing["id"], existing["status"]
 
+    # PR-3F idempotency/reconciliation: a stale durable record from a dead
+    # process must not block (or double-run) generation. It is reconciled to
+    # failed here; the user's explicit retry proceeds.
+
     job_id = str(uuid.uuid4())
     job: dict[str, Any] = {
         "id": job_id,
@@ -5780,6 +5904,11 @@ async def _enqueue_strategy_job(
         "finished_at": None,
     }
     STRATEGY_JOBS[job_id] = job
+    # PR-3F: durable lifecycle record (survives restarts).
+    await _persist_strategy_job_meta(owner_id, campaign_id, {
+        "id": job_id, "status": "queued",
+        "started_at": job["started_at"], "finished_at": None, "error": None,
+    })
     task = asyncio.create_task(
         _run_strategy_job(session_token, job, target, objective)
     )
@@ -5819,11 +5948,27 @@ async def _maybe_auto_strategy(
 
 @app.get("/api/web/session/{session_token}/campaigns/{campaign_id}/strategy-jobs/{job_id}")
 async def strategy_job_status(session_token: str, campaign_id: str, job_id: str, request: Request):
+    """Poll endpoint for a background strategy generation job.
+
+    PR-3F: when the in-memory record is gone (process restart) the durable
+    ``settings.strategy_job`` record is reconciled lazily — a stale
+    queued/running entry becomes an explicit FAILED with an actionable
+    message instead of leaving the client polling forever."""
     session_token = _session_token_from_request(request)
-    """Poll endpoint for a background strategy generation job."""
-    await _workspace_owner(request, session_token)
+    owner_id = await _workspace_owner(request, session_token)
     job = STRATEGY_JOBS.get(job_id)
     if not job or job.get("campaign_id") != campaign_id:
+        meta = await _load_strategy_job_meta(owner_id, campaign_id)
+        if meta and str(meta.get("id")) == job_id:
+            status, error = _reconcile_strategy_meta(meta)
+            if status is None:
+                raise HTTPException(status_code=404, detail="Strategy job not found")
+            return {
+                "job_id": job_id,
+                "status": status,
+                "strategy": None,
+                "error": error,
+            }
         raise HTTPException(status_code=404, detail="Strategy job not found")
     return {
         "job_id": job_id,
@@ -6391,6 +6536,7 @@ def _mc_phase(name: str, t: list[float]) -> None:
 async def mission_control_summary(session_token: str, request: Request, onboarding_user_id: str = ""):
     session_token = _session_token_from_request(request)
     _mc_t = [time.monotonic()]
+    _t_start = _mc_t[0]
     owner_id, summary = await _workspace_owner_and_summary(request, session_token)
     _mc_phase("auth/owner", _mc_t)
     from services.mission_control.payload import compute_shared_payload
@@ -6448,20 +6594,17 @@ async def mission_control_summary(session_token: str, request: Request, onboardi
     snapshot_total_leads = snapshot.get("total_leads", total_leads)
     reply_rate_heuristic = round((approved_drafts / total_drafts * 100) if total_drafts else 0)
 
-    try:
-        # SaaS-2.4: never trust the client-supplied onboarding_user_id query
-        # param as a target identity. Jobs/wizard data are always read for the
-        # authenticated caller (db_user_id) only.
-        if db_user_id:
-            current_jobs = job_manager.list_active_jobs(db_user_id)
-        else:
-            current_jobs = []
-    except Exception:
-        current_jobs = []
+    # PR-3E: wizard/jobs/timeline reads are mutually independent — run them
+    # concurrently instead of sequentially on the cache-miss path.
+    async def _load_current_jobs():
+        try:
+            return job_manager.list_active_jobs(db_user_id) if db_user_id else []
+        except Exception:
+            return []
 
-    initial_research = None
-    initial_research_result_count = None
-    if db_user_id:
+    async def _load_initial_research():
+        if not db_user_id:
+            return None, None
         try:
             wizard = await _onboarding_svc.get_wizard_data(db_user_id)
             job_id = str(wizard.get("initial_research_job_id") or "")
@@ -6472,14 +6615,24 @@ async def mission_control_summary(session_token: str, request: Request, onboardi
                 ]
                 if recent_searches:
                     job_id = str(recent_searches[0].get("id") or "")
-            if job_id:
-                initial_research = job_manager.get_job(job_id)
-                if initial_research and initial_research.get("status") == "completed":
-                    result = job_manager.get_job_results(job_id)
-                    if result and result.get("ok"):
-                        initial_research_result_count = len(result.get("leads") or [])
+            if not job_id:
+                return None, None
+            job = job_manager.get_job(job_id)
+            count = None
+            if job and job.get("status") == "completed":
+                result = job_manager.get_job_results(job_id)
+                if result and result.get("ok"):
+                    count = len(result.get("leads") or [])
+            return job, count
         except Exception:
-            initial_research = None
+            return None, None
+
+    current_jobs, (initial_research, initial_research_result_count), grouped_activity = await asyncio.gather(
+        _load_current_jobs(),
+        _load_initial_research(),
+        asyncio.to_thread(get_grouped_events, session_token, 10),
+    )
+    _mc_phase("wizard+jobs+timeline", _mc_t)
 
     attention_items = analysis.get("attention_items", [])[:4]
     needs_attention = [
@@ -6493,10 +6646,9 @@ async def mission_control_summary(session_token: str, request: Request, onboardi
         for a in attention_items
     ]
 
-    from services.workspace_timeline import get_grouped_events
-    grouped_activity = get_grouped_events(session_token, limit=10)
-    _mc_phase("timeline", _mc_t)
-    print(f"[MC-DIAG] mission_control_summary TOTAL: {(time.monotonic() - _mc_t[0]) * 1000:.0f}ms", flush=True)
+    phases_ms = [round((_mc_t[i + 1] - _mc_t[i]) * 1000) for i in range(len(_mc_t) - 1)]
+    log.info("[perf] route=/mission-control owner=%s total_ms=%.0f phases_ms=%s",
+             owner_id[:8], (_time.monotonic() - _t_start) * 1000, phases_ms)
 
     return {
         "ok": True,

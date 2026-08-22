@@ -106,6 +106,30 @@ class JobStorage:
             _log(f"store_search_results error: {e}")
             return False
 
+    def append_search_results(self, job_id: str, leads: list[dict]) -> bool:
+        """PR-4: incremental insert with explicit ranks (first-result path).
+
+        Each lead carries ``_rank``; rows are written immediately so users see
+        results before finalize. Dedup at read time by lead identity."""
+        client = get_supabase_client()
+        if not client:
+            return False
+        try:
+            rows = [
+                {
+                    "job_id": job_id,
+                    "rank": lead.pop("_rank", i + 1),
+                    "lead_data": lead,
+                }
+                for i, lead in enumerate(leads)
+            ]
+            if rows:
+                client.table("search_results").insert(rows).execute()
+            return True
+        except Exception as e:
+            _log(f"append_search_results error: {e}")
+            return False
+
     def get_search_results(self, job_id: str) -> list[dict]:
         client = get_supabase_client()
         if not client:

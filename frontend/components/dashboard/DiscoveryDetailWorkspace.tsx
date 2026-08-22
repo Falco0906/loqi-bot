@@ -739,6 +739,18 @@ export default function DiscoveryDetailWorkspace({ discoveryId }: { discoveryId:
                   plan={view?.plan}
                   narrative={view?.narrativeLines?.[1]}
                 />
+                {(() => {
+                  // PR-4: live partial count arrives via progress stage text
+                  // ("N leads found") written by incremental persistence.
+                  const m = /\b(\d+) leads found/i.exec(view?.progress?.stage || "");
+                  const n = m ? parseInt(m[1], 10) : 0;
+                  return n > 0 ? (
+                    <div className="flex items-center gap-2 px-1 text-sm text-on-surface" data-testid="partial-leads-count">
+                      <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                      <span><strong>{n} leads found</strong> so far — results stream in as providers return.</span>
+                    </div>
+                  ) : null;
+                })()}
               </section>
             ) : failed ? (
               <div className="flex flex-col items-center justify-center py-20 text-center animate-fade-in">

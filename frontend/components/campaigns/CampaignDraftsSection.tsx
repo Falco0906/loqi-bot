@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { approveDraft, listCampaignDrafts } from "../../lib/api";
+import { onServerEvent, type ServerEvent } from "../../lib/event-client";
 
 type CampaignDraft = {
   id: string;
@@ -68,11 +69,23 @@ function CampaignDraftsSection({
     void fetchDrafts();
   }, [fetchDrafts]);
 
+  // PR-3E: SSE-driven — draft lifecycle events trigger an immediate
+  // authoritative refetch. The interval is now a conservative safety net for
+  // missed pub/sub events (ephemeral transport), reduced from 2.5s to 15s.
   useEffect(() => {
-    if (generating) {
-      const id = window.setInterval(() => void fetchDrafts(true), 2500);
-      return () => window.clearInterval(id);
-    }
+    if (!generating) return;
+    const offEvent = onServerEvent((event: ServerEvent) => {
+      const t = event.type;
+      if (t === "draft.created" || t === "draft.generation_completed" ||
+          t === "draft.generation_failed" || t === "draft.approved") {
+        void fetchDrafts(true);
+      }
+    });
+    const id = window.setInterval(() => void fetchDrafts(true), 15000);
+    return () => {
+      offEvent();
+      window.clearInterval(id);
+    };
   }, [generating, fetchDrafts]);
 
   async function toggleApprove(draft: CampaignDraft) {

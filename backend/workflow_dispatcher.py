@@ -36,6 +36,7 @@ def _search_with_progress(
     plan: Optional[dict],
     discovery_context: Optional[dict],
     on_progress: ProgressCallback,
+    on_results=None,
 ) -> dict:
     def on_stage(stage_idx: int) -> None:
         if stage_idx < len(STAGES_SEARCH):
@@ -65,7 +66,10 @@ def _search_with_progress(
     except Exception:
         pass
 
-    result = search_with_expansion(service, target, plan=plan, context=discovery_context)
+    result = search_with_expansion(
+        service, target, plan=plan, context=discovery_context,
+        on_partial_results=on_results,
+    )
     on_stage(3)
 
     on_stage(4)
@@ -127,6 +131,48 @@ async def run_search_workflow(job: Job, on_progress) -> dict:
             except Exception as e:
                 _log(f"storing plan failed: {e}")
 
+    # ── PR-4: incremental first-result persistence ──
+    # The sync pipeline runs in an executor thread; when the provider returns
+    # its first batch we IMMEDIATELY persist it and notify the user — long
+    # before finalize. Rank offsets keep multi-batch inserts stable.
+    from services.job_engine.storage import JobStorage as _JS
+    rank_offset = {"n": 0}
+    leads_found = {"n": 0}
+
+    async def persist_partial(leads: list) -> None:
+        try:
+            from services.discovery import update_discovery_progress
+            from services.redis_client import hash_token  # noqa: F401
+            from services import events_bus
+            ranked = []
+            for lead in leads:
+                rank_offset["n"] += 1
+                ranked.append({**lead, "_rank": rank_offset["n"]})
+            await asyncio.to_thread(_store_batch, job.id, ranked)
+            leads_found["n"] += len(ranked)
+            if job.discovery_id:
+                await update_discovery_progress(
+                    job.discovery_id,
+                    f"{leads_found['n']} leads found",
+                    min(99, 10 + leads_found["n"]),
+                )
+            from services.events_bus import event_bus as _bus
+            await _bus.publish_user_event(
+                job.user_id, "discovery.leads",
+                {"discovery_id": job.discovery_id or ""},
+                job_id=job.id,
+                status="running",
+                progress=leads_found["n"],
+            )
+        except Exception as error:
+            print(f"[workflow_dispatcher] partial persistence failed: {error}")
+
+    def _store_batch(job_id: str, ranked: list) -> None:
+        from services.job_engine.storage import JobStorage
+        client_ok = JobStorage().append_search_results(job_id, ranked)
+        if not client_ok:
+            print("[workflow_dispatcher] append_search_results failed")
+
     def progress_callback(stage: str, pct: int) -> None:
         on_progress(job.id, stage, pct)
 
@@ -138,6 +184,7 @@ async def run_search_workflow(job: Job, on_progress) -> dict:
         plan_dict,
         discovery_context,
         progress_callback,
+        persist_partial,
     )
 
     if result.get("ok") and result.get("leads"):

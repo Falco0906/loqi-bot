@@ -1,14 +1,31 @@
 import asyncio
 import concurrent.futures
+import os
+import time
 
 # TEMPORARY: shared executor for bridging sync→async.
 # Remove once handle_message() and the workflow execution path
 # become async-native and can directly await GmailAdapter.
 # See backlog in AGENTS.md.
+#
+# PR-3F hardening:
+#   - workers raised 4 → 16 (env-tunable) so one user's slow blocking op
+#     cannot exhaust the shared pool and stall unrelated requests;
+#   - every bridge call carries a bounded timeout (env-tunable). On timeout a
+#     TimeoutError surfaces to the CALLER immediately — the underlying worker
+#     thread keeps draining until the coroutine finishes naturally (Python
+#     threads are not cancellable), but it no longer blocks other work items
+#     beyond that single slot. Active-worker gauge is logged per call.
 _ASYNC_BRIDGE_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
-    max_workers=4,
+    max_workers=int(os.getenv("ASYNC_BRIDGE_WORKERS", "16")),
     thread_name_prefix="async_bridge",
 )
+_ASYNC_BRIDGE_TIMEOUT_SECONDS = float(os.getenv("ASYNC_BRIDGE_TIMEOUT_SECONDS", "120"))
+
+
+def _bridge_active_workers() -> int:
+    return len([t for t in _ASYNC_BRIDGE_EXECUTOR._threads if t.is_alive()]) \
+        if getattr(_ASYNC_BRIDGE_EXECUTOR, "_threads", None) else -1
 
 
 def _run_async(coro):
@@ -25,7 +42,26 @@ def _run_async(coro):
     (see backlog), callers should ``await adapter.execute(ctx)``
     directly and this function should be removed.
     """
-    return _ASYNC_BRIDGE_EXECUTOR.submit(asyncio.run, coro).result()
+    started = time.monotonic()
+    future = _ASYNC_BRIDGE_EXECUTOR.submit(asyncio.run, coro)
+    try:
+        result = future.result(timeout=_ASYNC_BRIDGE_TIMEOUT_SECONDS)
+        import logging as _log_mod
+        _log_mod.getLogger(__name__).info(
+            "[perf] bridge done active=%d duration_ms=%d",
+            _bridge_active_workers(), int((time.monotonic() - started) * 1000),
+        )
+        return result
+    except concurrent.futures.TimeoutError:
+        import logging as _log_mod
+        _log_mod.getLogger(__name__).error(
+            "[perf] bridge TIMEOUT after %ss active=%d — caller receives an error; "
+            "worker continues draining",
+            _ASYNC_BRIDGE_TIMEOUT_SECONDS, _bridge_active_workers(),
+        )
+        raise TimeoutError(
+            f"Bridge operation exceeded {_ASYNC_BRIDGE_TIMEOUT_SECONDS}s"
+        ) from None
 
 from services.google_auth import refresh_access_token
 from services.lead_provider import format_leads_message

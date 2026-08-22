@@ -690,6 +690,11 @@ async def _update_campaign_row(user_id: str, campaign_id: str, updates: dict[str
         settings = dict(entity.settings or {})
         settings["launch"] = updates["launch"]
         entity.settings = settings
+    if isinstance(updates.get("strategy_job"), dict):
+        # PR-3F: durable strategy-job lifecycle record.
+        settings = dict(entity.settings or {})
+        settings["strategy_job"] = updates["strategy_job"]
+        entity.settings = settings
     entity.updated_at = datetime.now(timezone.utc)
     await repo.save(entity)
 
@@ -1305,6 +1310,7 @@ async def _load_canonical_state(
                 "leads": [],
                 "strategy": None,
                 "generation": (campaign.settings or {}).get("generation"),
+                "strategy_job": (campaign.settings or {}).get("strategy_job"),
                 "launch": (campaign.settings or {}).get("launch") or {},
                 "launch_sent": int(((campaign.settings or {}).get("launch") or {}).get("sent", 0)),
                 "launch_total": int(((campaign.settings or {}).get("launch") or {}).get("total", 0)),
@@ -1362,6 +1368,7 @@ async def _load_canonical_state(
                 ],
                 "strategy": _strategy_as_dict(strategies[campaign.id]),
                 "generation": (campaign.settings or {}).get("generation"),
+                "strategy_job": (campaign.settings or {}).get("strategy_job"),
                 "launch": (campaign.settings or {}).get("launch") or {},
                 "launch_sent": int(((campaign.settings or {}).get("launch") or {}).get("sent", 0)),
                 "launch_total": int(((campaign.settings or {}).get("launch") or {}).get("total", 0)),

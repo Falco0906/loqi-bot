@@ -13,6 +13,12 @@ import { useAuth } from "../../hooks/useAuth";
 import { useTextHighlight } from "../../hooks/useTextHighlight";
 import { CopilotProvider, useCopilot } from "../../contexts/CopilotContext";
 import { SearchProvider, useWorkspaceSearch } from "../../contexts/SearchContext";
+import { startEventStream, stopEventStream, onServerEvent, type ServerEvent } from "../../lib/event-client";
+import { invalidateClientCache, scopedKey } from "../../lib/client-cache";
+import {
+  invalidateMissionControlCache,
+  invalidateDiscoveryCache,
+} from "../../lib/repositories";
 import AppPage from "../../components/primitives/AppPage";
 import { ProspectRegistryProvider } from "../../contexts/ProspectRegistryProvider";
 
@@ -71,6 +77,38 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
   const mainRef = useRef<HTMLElement>(null);
   useTextHighlight(searchQuery, mainRef, isHighlightPage);
+
+  // ── PR-3D: real-time event stream → targeted cache invalidation ──
+  useEffect(() => {
+    if (!isAuthenticated || isLoading) return;
+    startEventStream();
+    return () => stopEventStream();
+  }, [isAuthenticated, isLoading]);
+
+  useEffect(() => {
+    // Narrowly-scoped invalidation: events mark relevant client-cache keys
+    // stale; the next mount/refetch pulls authoritative data via REST.
+    const handle = (event: ServerEvent) => {
+      const token = localStorage.getItem("loqi_active_session_token");
+      switch (event.type) {
+        case "job.completed":
+        case "job.progress":
+          invalidateClientCache(scopedKey(token, "campaigns"));
+          invalidateClientCache(scopedKey(token, "campaigns-meta"));
+          invalidateDiscoveryCache();
+          invalidateMissionControlCache();
+          break;
+        case "provider.connected":
+        case "provider.disconnected":
+          // Provider list cache lives server-side; identity cache is
+          // invalidated backend-side. Nothing client-side to drop today.
+          break;
+        default:
+          break;
+      }
+    };
+    return onServerEvent(handle);
+  }, []);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {

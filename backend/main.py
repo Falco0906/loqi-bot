@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 load_dotenv()
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from services.agent import process_message
 from services.identity.api import router as auth_router
@@ -6796,13 +6796,20 @@ async def _create_search_run(user_id: str, query: str, session_token: str = "") 
     )
 
     async def _emit_job_event(payload: dict) -> None:
-        # PR-3A: real-time fan-out via Redis pub/sub (best-effort).
+        # PR-3A/3D: real-time fan-out via Redis pub/sub (best-effort).
+        # PR-3D: carries discovery_id so clients invalidate narrowly.
         try:
             from services.events_bus import event_bus
+            event_type = "job.completed" if payload.get("status") in ("completed", "failed", "cancelled") else "job.progress"
+            data: dict = {"stage": payload.get("stage", "")}
+            if discovery_id:
+                data["discovery_id"] = discovery_id
+            if payload.get("error"):
+                data["error"] = str(payload.get("error"))[:200]
             await event_bus.publish_user_event(
                 user_id,
-                "job.progress",
-                {"stage": payload.get("stage", "")},
+                event_type,
+                data,
                 job_id=payload.get("job_id", ""),
                 status=str(payload.get("status") or ""),
                 progress=int(payload.get("progress") or 0),
@@ -7858,3 +7865,109 @@ if __name__ == "__main__":
 
     port = int(os.getenv("PORT", "10000"))
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
+
+
+# ── PR-3D: SSE event gateway ─────────────────────────────────────────────
+
+_SSE_HEARTBEAT_SECONDS = 15.0
+_SSE_REVOCATION_CHECK_SECONDS = 30.0
+
+
+@app.get("/api/events/stream")
+async def events_stream(request: Request):
+    """User-scoped Server-Sent Events gateway (PR-3D).
+
+    Security:
+      - identity resolved server-side from the Authorization header via the
+        SAME resolver every session endpoint uses; the subscription target is
+        ALWAYS the resolved owner — a client can never subscribe to another
+        user's channel.
+      - the stream self-terminates if the bearer stops resolving (revoked /
+        expired), so revoked sessions cannot receive events indefinitely.
+
+    Degraded mode:
+      - Redis unavailable ⇒ stream stays alive with heartbeats only
+        (REST + client cache remain fully functional).
+    """
+    from services.events_bus import event_bus
+
+    try:
+        owner_id, token = await _resolve_session_context(request)
+    except HTTPException:
+        raise
+    if not owner_id or not token:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    pubsub = await event_bus.subscribe_user(owner_id)
+
+    async def generator():
+        nonlocal pubsub
+        import json as _json
+        import time as _time
+
+        log.info("[sse] stream opened user=%s subscribed=%s", owner_id[:8], pubsub is not None)
+        yield "retry: 5000\n\n"
+        yield f"data: {_json.dumps({'type': 'hello', 'user': owner_id[:8]})}\n\n"
+
+        last_heartbeat = _time.monotonic()
+        last_revocation_check = _time.monotonic()
+        still_valid = True
+        try:
+            while True:
+                now = _time.monotonic()
+                got_event = False
+                if pubsub is not None:
+                    try:
+                        message = await asyncio.wait_for(pubsub.get_message(ignore_subscribe_messages=True), timeout=0.5)
+                        if message is not None and message.get("type") == "message":
+                            got_event = True
+                            raw = message.get("data", "")
+                            # Payload was scrubbed at the producer; forward verbatim.
+                            yield f"data: {raw}\n\n"
+                    except asyncio.TimeoutError:
+                        pass
+                    except Exception as error:
+                        log.warning("[sse] pubsub read failed error_type=%s", type(error).__name__)
+                        # Pub/sub broke (e.g. Redis died) — drop the
+                        # subscription but keep heartbeats; client keeps
+                        # working over REST.
+                        try:
+                            await pubsub.aclose()
+                        except Exception:
+                            pass
+                        pubsub = None
+
+                now = _time.monotonic()
+                if not got_event and now - last_heartbeat >= _SSE_HEARTBEAT_SECONDS:
+                    last_heartbeat = now
+                    yield ": heartbeat\n\n"
+
+                if now - last_revocation_check >= _SSE_REVOCATION_CHECK_SECONDS:
+                    last_revocation_check = now
+                    identity = await _cached_session_identity(token)
+                    if identity is None or identity.get("user_id") != owner_id:
+                        log.info("[sse] stream closing: identity no longer valid user=%s", owner_id[:8])
+                        still_valid = False
+                        break
+
+                await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if pubsub is not None:
+                try:
+                    await pubsub.aclose()
+                except Exception:
+                    pass
+            log.info("[sse] stream closed user=%s reason=%s",
+                     owner_id[:8], "auth" if not still_valid else "client")
+
+    return StreamingResponse(
+        generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )

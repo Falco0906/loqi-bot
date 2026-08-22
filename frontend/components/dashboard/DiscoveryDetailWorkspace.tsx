@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { onServerEvent, type ServerEvent } from "../../lib/event-client";
 import AppPage from "../primitives/AppPage";
 import WorkspaceContainer from "../layout/WorkspaceContainer";
 import { useData } from "../../lib/hooks/use-data";
@@ -529,11 +530,24 @@ export default function DiscoveryDetailWorkspace({ discoveryId }: { discoveryId:
         pollBusy = false;
       }
     };
+    // PR-3D: event-driven refresh — the SSE stream triggers an immediate
+    // authoritative refetch on every job event for THIS discovery. The
+    // interval remains only as a slow safety net for missed pub/sub events
+    // (ephemeral transport), reduced from 4s to 15s.
+    const offEvent = onServerEvent((event: ServerEvent) => {
+      if (cancelled) return;
+      const ed = (event.data as Record<string, unknown> | undefined)?.discovery_id;
+      if (ed && ed !== discoveryId) return;
+      if (event.type === "job.progress" || event.type === "job.completed") {
+        void poll();
+      }
+    });
     void poll();
-    const id = window.setInterval(poll, 4000);
+    const id = window.setInterval(poll, 15000);
     return () => {
       cancelled = true;
       window.clearInterval(id);
+      offEvent();
     };
   }, [discoveryId, live?.status, data?.status]);
 

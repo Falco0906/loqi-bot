@@ -374,6 +374,72 @@ async def _write_campaign_row(user_id: str, campaign: dict[str, Any],
         await _write_strategy(campaign_id=entity.id, strategy=strategy)
 
 
+def redis_get_client():
+    from services.redis_client import get_client as _gc
+    return _gc()
+
+
+# ── PR-3B: workspace-id resolution cache ─────────────────────────────────
+# Workspace id for an owner changes ~never; membership-validated selection is
+# stable request-to-request. A 10s Redis+local cache removes the duplicate
+# workspace lookups that previously ran TWICE per list request (route-level
+# resolver + loader-internal _async_workspace). TTL bounds any staleness;
+# workspace creation/membership changes self-heal within one TTL.
+_WS_RESOLVE_TTL_SECONDS = 10
+# Deliberately NO process-local mirror: cross-test/cross-request pollution
+# risk outweighs its value; when Redis is unavailable we simply skip caching
+# and resolve as before.
+
+
+_ws_epoch_local = {"v": 0}
+
+
+def _ws_cache_key(owner_id: str, requested: str) -> str:
+    """Stable cache key: sha256(salt:owner|requested)[:32]."""
+    from services.redis_client import hash_token
+    return hash_token(f"{owner_id}|{requested}")
+
+
+async def _ws_cache_get(owner_id: str, requested: str) -> str:
+    """Read cached default-workspace id. Redis-only: when Redis is
+    unconfigured/unreachable this returns "" and the caller resolves via the
+    repository as before (hermetic tests, no cross-request pollution)."""
+    from services.redis_client import k_session_binding, hash_token, OPERATION_TIMEOUT
+    client = await redis_get_client()
+    if client is None:
+        return ""
+    key = _ws_cache_key(owner_id, requested)
+    try:
+        raw = await asyncio.wait_for(
+            client.get(k_session_binding("ws:" + hash_token(key))),
+            OPERATION_TIMEOUT,
+        )
+        return raw if isinstance(raw, str) else ""
+    except Exception:
+        return ""
+
+
+async def _ws_cache_set(owner_id: str, requested: str, ws_id: str) -> None:
+    if not ws_id:
+        return
+    from services.redis_client import k_session_binding, hash_token, OPERATION_TIMEOUT
+    client = await redis_get_client()
+    if client is None:
+        return
+    key = _ws_cache_key(owner_id, requested)
+    try:
+        await asyncio.wait_for(
+            client.set(k_session_binding("ws:" + hash_token(key)), ws_id,
+                       ex=_WS_RESOLVE_TTL_SECONDS),
+            OPERATION_TIMEOUT,
+        )
+    except Exception:
+        pass
+
+
+UNSET = object()
+
+
 async def _async_workspace(
     user_id: str,
     *,
@@ -395,10 +461,21 @@ async def _async_workspace(
     workspace context. Otherwise the single-owner default applies for
     backwards compatibility.
     """
+    # PR-3B: 10s resolution cache — the same (owner, requested) pair is
+    # resolved by BOTH the route-level resolver and this loader within one
+    # request; serving the second lookup from cache removes 1-3 redundant
+    # queries per list request. Tenant safety: key includes owner_id, and an
+    # explicitly requested workspace_id is still membership-validated
+    # upstream before it reaches here.
+    cached = await _ws_cache_get(user_id, workspace_id or "")
+    if cached:
+        return cached
+
     repo = WorkspaceRepository()
     if workspace_id:
         ws = await repo.get(workspace_id)
         if ws is not None and ws.deleted_at is None:
+            await _ws_cache_set(user_id, workspace_id or "", ws.id)
             return ws.id
         return None
     existing = await repo.find_active_by_owner(user_id)
@@ -415,6 +492,7 @@ async def _async_workspace(
     # Re-resolve after create so a concurrent first-touch converges on one
     # workspace even without a DB-level unique constraint (added in a later
     # phase once legacy duplicates are reconciled).
+    found = await repo.find_active_by_owner(user_id)
     found = await repo.find_active_by_owner(user_id)
     return found.id if found is not None else workspace_id
 
@@ -1202,10 +1280,13 @@ async def _load_canonical_state(
     #   campaigns → links → workspace-leads → profiles / companies / strategies
     # Repos use ``asyncio.to_thread`` for their I/O, so gathering the
     # coroutines runs the queries concurrently (one thread per query).
-    drafts_rows, links_by_campaign = await asyncio.gather(
+    # PR-3B: ONE IN-query replaces the per-campaign link fan-out (N+1).
+    campaign_ids = [c.id for c in campaigns_rows]
+    drafts_rows, links_map = await asyncio.gather(
         draft_repo.list_for_workspace(workspace_id),
-        asyncio.gather(*[cl_repo.list_for_campaign(c.id) for c in campaigns_rows]),
+        cl_repo.list_for_campaigns(campaign_ids),
     )
+    links_by_campaign = [links_map.get(cid, []) for cid in campaign_ids]
 
     if not include_details:
         approved: list[dict[str, Any]] = []

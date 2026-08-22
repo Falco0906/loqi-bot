@@ -428,6 +428,18 @@ class CampaignLeadRepository(LaunchRepository[CampaignLead]):
     async def list_for_campaign(self, campaign_id: str) -> list[CampaignLead]:
         return await self._list([("campaign_id", "eq", campaign_id)])
 
+    async def list_for_campaigns(self, campaign_ids: list[str]) -> dict[str, list[CampaignLead]]:
+        """PR-3B: one IN query replacing the per-campaign fan-out (N+1) in
+        workspace-state loads. Returns {campaign_id: [links]} preserving every
+        requested id as a key."""
+        if not campaign_ids:
+            return {}
+        rows = await self._list([("campaign_id", "in", list(campaign_ids))], limit=10000)
+        grouped: dict[str, list[CampaignLead]] = {cid: [] for cid in campaign_ids}
+        for row in rows:
+            grouped.setdefault(row.campaign_id, []).append(row)
+        return grouped
+
 
 class StrategyRepository(LaunchRepository[Strategy]):
     _table_name = "strategies"

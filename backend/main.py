@@ -3055,9 +3055,14 @@ async def analyze_campaigns_endpoint(session_token: str, payload: BatchDraftRequ
 @app.get("/api/web/session/{session_token}/drafts")
 async def list_drafts(session_token: str, request: Request):
     session_token = _session_token_from_request(request)
+    import time as _t
+    _t0 = _t.perf_counter()
     owner_id = await _workspace_owner(request, session_token)
     ws_id = await _resolved_workspace_id_or_default(request, owner_id)
-    return {"ok": True, "drafts": _workspace_drafts(owner_id, session_token, workspace_id=ws_id)}
+    drafts = await asyncio.to_thread(_workspace_drafts, owner_id, session_token, workspace_id=ws_id)
+    log.info("[perf] route=/drafts owner=%s ms=%.0f drafts=%d",
+             owner_id[:8], (_t.perf_counter() - _t0) * 1000, len(drafts))
+    return {"ok": True, "drafts": drafts}
 
 
 @app.put("/api/web/session/{session_token}/drafts/{draft_id}")
@@ -5201,9 +5206,11 @@ async def _workspace_owner_and_summary(request: Request, session_token: str = ""
     return owner_id, ({"user_id": identity["user_id"]} if identity else None)
 
 
-def _workspace_campaigns(user_id: str, session_token: str = "", workspace_id: str = "") -> list[dict[str, Any]]:
+def _workspace_campaigns(user_id: str, session_token: str = "", workspace_id: str = "",
+                         include_details: bool = True) -> list[dict[str, Any]]:
     from services.workspace_state import load_workspace_state
-    return load_workspace_state(user_id, workspace_id=workspace_id)["campaigns"]
+    return load_workspace_state(user_id, workspace_id=workspace_id,
+                                include_details=include_details)["campaigns"]
 
 
 def _workspace_drafts(user_id: str, session_token: str = "", workspace_id: str = "") -> list[dict[str, Any]]:
@@ -5346,11 +5353,23 @@ async def save_campaign(session_token: str, payload: SaveCampaignRequest, reques
 @app.get("/api/web/session/{session_token}/campaigns")
 async def list_campaigns(session_token: str, request: Request):
     session_token = _session_token_from_request(request)
+    import time as _t
+    _t0 = _t.perf_counter()
     from services.workspace_snapshot import enrich_campaigns
     owner_id = await _workspace_owner(request, session_token)
     ws_id = await _resolved_workspace_id_or_default(request, owner_id)
-    campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=ws_id)
-    drafts = _workspace_drafts(owner_id, session_token, workspace_id=ws_id)
+    # PR-3B: (a) campaigns load COUNTS-ONLY — the list page never renders
+    # nested leads/strategies, so the previous full graph fan-out
+    # (ws_leads/leads/companies/strategies per id) was pure overfetch;
+    # (b) campaigns + drafts are independent once ws_id is known → run
+    # concurrently instead of serially.
+    campaigns, drafts = await asyncio.gather(
+        asyncio.to_thread(_workspace_campaigns, owner_id, session_token,
+                          workspace_id=ws_id, include_details=False),
+        asyncio.to_thread(_workspace_drafts, owner_id, session_token, workspace_id=ws_id),
+    )
+    log.info("[perf] route=/campaigns owner=%s ms=%.0f campaigns=%d",
+             owner_id[:8], (_t.perf_counter() - _t0) * 1000, len(campaigns))
     return {"ok": True, "campaigns": enrich_campaigns(campaigns, drafts)}
 
 

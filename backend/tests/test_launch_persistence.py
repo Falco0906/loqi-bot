@@ -239,6 +239,12 @@ class _ScriptedClient:
         self._filters.append((col, val))
         return self
 
+    def in_(self, col, values):
+        # Mirror Postgrest `in` filter (PR-3B batched campaign-links query).
+        vals = set(values or [])
+        self._filters.append((col, ("__in__", vals)))
+        return self
+
     def is_(self, col, val):
         self._filters.append((col, val))
         return self
@@ -259,7 +265,9 @@ class _ScriptedClient:
     def execute(self):
         rows = self._tables.get(self._table, [])
         for col, val in self._filters:
-            if val == "null":
+            if isinstance(val, tuple) and val and val[0] == "__in__":
+                rows = [r for r in rows if r.get(col) in val[1]]
+            elif val == "null":
                 rows = [r for r in rows if r.get(col) is None]
             else:
                 rows = [r for r in rows if r.get(col) == val]

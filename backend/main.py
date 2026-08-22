@@ -402,6 +402,11 @@ async def lifespan(app: FastAPI):
 
     set_shutting_down()
     log.info("application_shutdown_started")
+    try:
+        from services import redis_client
+        await redis_client.close()
+    except Exception as e:
+        log.warning("redis shutdown failed: %s", e)
     shutdown_timeout = float(os.getenv("SHUTDOWN_TIMEOUT_SECONDS", "5"))
 
     cancel_tasks: list[asyncio.Task] = list(background_tasks)
@@ -2608,7 +2613,7 @@ async def _perform_gmail_oauth_persistence(
         # entries for this user so /gmail + resolvers reflect the new state.
         try:
             from services.session_cache import session_cache
-            session_cache.invalidate_user(user_id)
+            await session_cache.invalidate_user(user_id)
         except Exception:
             pass
         log.info(
@@ -2652,6 +2657,15 @@ async def gmail_auth_callback(code: str = "", state: str = "", error: str = ""):
         ok = True
         provider_id = provider_record.id
         log.info("[oauth] callback success user=%s provider=%s", _user_id[:8], provider_id[:8])
+        try:
+            from services.events_bus import event_bus
+            await event_bus.publish_user_event(
+                _user_id, "provider.connected",
+                {"provider": "gmail", "email": email_val},
+                status="connected",
+            )
+        except Exception:
+            pass
     except Exception as e:
         error_msg = str(e)
         log.error("[oauth] callback failed error_type=%s", type(e).__name__)
@@ -3708,12 +3722,18 @@ async def provider_disconnect(session_token: str, provider_id: str, request: Req
     # PR-2B: gmail_connected changed in the cached identity.
     try:
         from services.session_cache import session_cache
-        session_cache.invalidate_user(owner_id)
+        await session_cache.invalidate_user(owner_id)
     except Exception:
         pass
     publish(session_token, WMEventType.PROVIDER_DISCONNECTED, {
         "provider_id": provider_id,
     }, actor="user")
+    try:
+        from services.events_bus import event_bus
+        await event_bus.publish_user_event(owner_id, "provider.disconnected",
+                                           {"provider": "gmail"}, status="disconnected")
+    except Exception:
+        pass
     return {"ok": True}
 
 
@@ -5073,9 +5093,66 @@ async def _resolve_session_context(request: Request) -> tuple[str, str]:
     raise HTTPException(status_code=401, detail="Invalid or expired session")
 
 
+_BINDING_TTL_SECONDS = 10
+
+
 async def _web_session_binding(token: str):
+    """Resolve the canonical web-session binding for a bearer token.
+
+    PR-3A: cached in Redis (shared across workers) for 10s, including
+    explicit negatives. Authority is NOT the cache: for bound sessions the
+    resolver still calls ``touch_session`` on EVERY request, which fails
+    closed (401) when the canonical session is revoked/expired — so
+    revocation enforcement stays immediate regardless of cached contents.
+    The cache only removes a repeated binding SELECT per request.
+    """
+    import json as _json
+    from services import redis_client
+    from services.session_cache import _token_hash
+
+    key = redis_client.k_session_binding(_token_hash(token))
+    local = getattr(_web_session_binding, "_local", None)
+    if local is None:
+        local = _web_session_binding._local = {}
+
+    now = time.monotonic()
+    entry = local.get(key)
+    if entry is not None:
+        expires_at, value = entry
+        if expires_at > now:
+            return value[1] if value[0] else None
+        local.pop(key, None)
+
+    client = await redis_client.get_client()
+    if client is not None:
+        try:
+            raw = await asyncio.wait_for(client.get(key), redis_client.OPERATION_TIMEOUT)
+            if raw is not None:
+                data = _json.loads(raw)
+                found = data.get("b") if isinstance(data, dict) else None
+                local[key] = (now + _BINDING_TTL_SECONDS, (1, found))
+                return found
+        except Exception as error:  # noqa: BLE001 — degraded mode only
+            log.debug("binding_cache_read_failed error_type=%s", type(error).__name__)
+            client = None
+
     from services.web_session_binding import find_binding
-    return await find_binding(token)
+    binding = await find_binding(token)
+
+    if client is not None:
+        try:
+            payload = {"b": binding} if binding is not None else {}
+            await asyncio.wait_for(
+                client.set(key, _json.dumps(payload, separators=(",", ":")), ex=_BINDING_TTL_SECONDS),
+                redis_client.OPERATION_TIMEOUT,
+            )
+        except Exception as error:  # noqa: BLE001
+            log.debug("binding_cache_write_failed error_type=%s", type(error).__name__)
+    local[key] = (
+        now + _BINDING_TTL_SECONDS,
+        (0 if binding is None else 1, binding),
+    )
+    return binding
 
 
 async def _cached_session_identity(token: str) -> dict | None:
@@ -5086,23 +5163,20 @@ async def _cached_session_identity(token: str) -> dict | None:
     revocation. Redis replaces the backing store pre-launch without caller
     changes (see services/session_cache.py).
     """
-    from services.session_cache import session_cache
+    from services.session_cache import session_cache, SessionIdentity
 
-    cached = session_cache.get_identity(token)
+    # PR-3A: Redis-backed (shared across workers); local mirror only serves
+    # while Redis is unavailable. None → caller falls back to Supabase.
+    cached = await session_cache.get_identity(token)
     if cached is not None:
-        return {
-            "user_id": cached.user_id,
-            "display_name": cached.display_name,
-            "gmail_connected": cached.gmail_connected,
-        }
+        return cached
     try:
         identity = await asyncio.to_thread(engine.get_web_session_identity, token)
     except Exception as error:
         log.warning("session_identity_lookup_failed error_type=%s", type(error).__name__)
         return None
     if identity and identity.get("user_id"):
-        from services.session_cache import SessionIdentity
-        session_cache.set_identity(token, SessionIdentity(
+        await session_cache.set_identity(token, SessionIdentity(
             user_id=str(identity["user_id"]),
             display_name=str(identity.get("display_name") or ""),
             gmail_connected=bool(identity.get("gmail_connected")),
@@ -6702,9 +6776,33 @@ async def _create_search_run(user_id: str, query: str, session_token: str = "") 
         update_discovery_progress,
     )
 
+    async def _emit_job_event(payload: dict) -> None:
+        # PR-3A: real-time fan-out via Redis pub/sub (best-effort).
+        try:
+            from services.events_bus import event_bus
+            await event_bus.publish_user_event(
+                user_id,
+                "job.progress",
+                {"stage": payload.get("stage", "")},
+                job_id=payload.get("job_id", ""),
+                status=str(payload.get("status") or ""),
+                progress=int(payload.get("progress") or 0),
+            )
+        except Exception:
+            pass
+
     def on_update(payload: dict) -> None:
         status = payload.get("status")
         job_id = payload.get("job_id", "")
+        import asyncio as _asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                loop.create_task(_emit_job_event(payload))
+            else:
+                _asyncio.run(_emit_job_event(payload))
+        except RuntimeError:
+            pass
         if status in ("failed", "cancelled"):
             discovery = get_discovery_by_job_id(job_id)
             if discovery:

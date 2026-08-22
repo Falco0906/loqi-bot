@@ -1,28 +1,35 @@
-"""In-process fixed-window rate limiter (PR10.5).
+"""Rate limiting (PR10.5 → PR-3A).
 
-Design choice:
-- Fixed-window algorithm (wall-clock aligned) — deterministic, bounded memory,
-  trivially safe under concurrency within one process.
-- In-memory only: this is a per-instance limiter. Loqi is currently deployed
-  as a single Dockerized FastAPI instance; if the deployment scales to multiple
-  instances, this limiter provides no cross-instance guarantee and must be
-  replaced by a shared atomic store (e.g. Redis) — that is a documented
-  limitation, not a hidden multi-instance claim.
+Two backends behind one interface:
 
-Safety:
-- Bucket keys are derived server-side (web-session user id, or normalized
-  client IP). Client-supplied identifiers are never read.
-- Limits are checked BEFORE route execution, so outbound sends are rejected
-  before any side effect occurs.
-- Memory is bounded: expired windows are pruned and the bucket dict is capped.
+1. REDIS (distributed) — when ``REDIS_URL`` is configured and reachable.
+   Atomic fixed-window counter per ``(category, identity, window)`` using a
+   small Lua script (INCR + EXPIRE only on first increment) so concurrent
+   requests across ALL workers share one bucket and cannot race past the
+   limit. Keys auto-expire after the window → bounded memory, correct reset.
+
+2. PROCESS-LOCAL (degraded fallback) — the original Phase-1 limiter, used
+   when Redis is unconfigured or unreachable.
+
+Fallback policy (documented, fail-safe):
+    Redis down ⇒ per-instance limiting continues. This is STRICTLY stronger
+    than no limiting: every instance still enforces the same limits for the
+    identities it sees; we never widen the effective limit beyond
+    instances × limit during an outage window, and never disable it.
+
+Identity derivation is unchanged and server-side (web-session user id or
+client IP). Client-supplied identifiers are never trusted.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 WINDOW_SECONDS = 60
 MAX_BUCKETS = 50000
@@ -34,6 +41,13 @@ DEFAULT_LIMITS = {
     "webhook": 120,
     "default": 300,
 }
+
+# Atomic fixed-window counter WITHOUT Lua (works on managed/fake Redis):
+#   INCR key            → atomic count
+#   EXPIRE key win NX   → set TTL only if none exists; never resets a live
+#                         window, so concurrent requests cannot extend/bypass.
+# The only theoretical gap (crash between INCR and EXPIRE) is closed by
+# issuing EXPIRE NX on every hit.
 
 _HEALTH_PATHS = {"/", "/health", "/ready", "/docs", "/openapi.json", "/redoc"}
 _AUTH_MARKERS = ("/auth/", "/signup", "/login", "/verify-email", "/logout")
@@ -99,10 +113,11 @@ def limits_from_env(env: dict[str, str] | None = None) -> dict[str, int]:
 
 
 class RateLimiter:
-    """Fixed-window per-instance limiter.
+    """Fixed-window limiter: Redis (distributed) with local degraded fallback.
 
-    Thread-safe for async use via an asyncio.Lock. Buckets are keyed by
-    ``category:identity`` and aligned to a 60s wall-clock window.
+    ``allow()`` tries the Redis path first whenever a client is available;
+    any failure flips to the process-local window for that call. Both paths
+    enforce identical limits and windows.
     """
 
     def __init__(
@@ -117,15 +132,46 @@ class RateLimiter:
         self.window_seconds = window_seconds
         self._buckets: dict[str, tuple[int, int]] = {}
         self._lock = asyncio.Lock()
+        # Test/ops seam: force-local mode regardless of Redis availability.
+        self.force_local = os.getenv("RATE_LIMIT_FORCE_LOCAL", "").strip().lower() in {"1", "true", "yes"}
 
     def _now_window(self, now: int) -> int:
         return now - (now % self.window_seconds)
 
+    async def _allow_redis(self, key: str, limit: int) -> tuple[bool, int | None] | None:
+        """Distributed attempt. Returns None when Redis is unusable."""
+        from services import redis_client
+        from services.redis_client import k_rate, hash_token
+
+        if self.force_local or not redis_client.is_configured():
+            return None
+        client = await redis_client.get_client()
+        if client is None:
+            return None
+        bucket_key = k_rate(key.split(":", 1)[0], hash_token(key), self._now_window(int(time.time())))
+        try:
+            pipe = client.pipeline()
+            pipe.incr(bucket_key)
+            pipe.expire(bucket_key, self.window_seconds, nx=True)
+            pipe.ttl(bucket_key)
+            count, _, ttl = await asyncio.wait_for(pipe.execute(), redis_client.OPERATION_TIMEOUT)
+            if int(count) > limit:
+                return False, max(int(ttl) if int(ttl) > 0 else self.window_seconds, 1)
+            return True, None
+        except Exception as error:  # noqa: BLE001 — degrade to local
+            log.warning("rate_limit_redis_failed error_type=%s falling_back=local", type(error).__name__)
+            return None
+
     async def allow(self, key: str, limit: int) -> tuple[bool, int | None]:
-        """Return ``(allowed, retry_after_seconds)``. Applies the limit for a
-        single identity bucket; ``limit<=0`` means unlimited."""
+        """Return ``(allowed, retry_after_seconds)``. ``limit<=0`` = unlimited."""
         if not self.enabled or limit <= 0:
             return True, None
+        distributed = await self._allow_redis(key, limit)
+        if distributed is not None:
+            return distributed
+        return await self._allow_local(key, limit)
+
+    async def _allow_local(self, key: str, limit: int) -> tuple[bool, int | None]:
         now = int(time.time())
         current = self._now_window(now)
         async with self._lock:

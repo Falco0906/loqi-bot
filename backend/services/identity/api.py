@@ -539,6 +539,13 @@ async def revoke_session(
     if session.user_id != auth.user_id:
         raise HTTPException(status_code=404, detail="Session not found")
     await svc.revoke_session(session_id)
+    # PR-3A: drop any cached session identity for this user immediately so
+    # revocation is reflected across workers without waiting for TTL.
+    try:
+        from services.session_cache import session_cache
+        await session_cache.invalidate_user(session.user_id)
+    except Exception:
+        pass
     get_metrics().session_revoked_total["ok"] += 1
     return SessionRevokeResponse()
 

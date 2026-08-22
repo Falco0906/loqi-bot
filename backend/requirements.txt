@@ -13,3 +13,9 @@ resend
 # test
 pytest
 httpx
+
+# ephemeral shared state (cache / rate limit / pub-sub)
+redis>=5.2
+
+# test
+fakeredis>=2.26

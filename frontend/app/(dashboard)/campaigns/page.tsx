@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listCampaigns, updateCampaign, archiveCampaign, duplicateCampaign, deleteCampaign } from "../../../lib/api";
 import CampaignCard from "../../../components/campaigns/CampaignCard";
 import Icon from "../../../components/shared/Icon";
@@ -11,6 +11,7 @@ import { useActionHandlers } from "../../../hooks/useActionHandlers";
 import { useWorkspaceSearch } from "../../../contexts/SearchContext";
 import { buildResearchUrl, campaignAttachContext } from "../../../lib/discovery-mode";
 import { swrFetch, peekCache, scopedKey, invalidateClientCache } from "../../../lib/client-cache";
+import { filterCampaigns, canonicalTotal } from "../../../lib/campaign-filters";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
@@ -22,6 +23,7 @@ export default function CampaignsPage() {
   // successful authoritative response proved the dataset is empty.
   const [authoritativeEmpty, setAuthoritativeEmpty] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const fetchGeneration = useRef(0);
 
   useEffect(() => {
     const token = (() => {
@@ -36,25 +38,37 @@ export default function CampaignsPage() {
     // PR-3C: stale-while-revalidate — skeleton only when nothing is cached.
     const key = scopedKey(sessionToken, "campaigns");
     if (!peekCache<any>(key)) setLoading(true);
+
+    // PR-3D-FIX: generation guard — a slow/late resolution (including an
+    // empty one) must never overwrite a newer fetch's result.
+    const generation = ++fetchGeneration.current;
     try {
       const result = await swrFetch<Array<Record<string, unknown>>>(
         key,
         async () => {
           const res = await listCampaigns(sessionToken);
-          return res.ok && Array.isArray(res.campaigns) ? res.campaigns : [];
+          // PR-3D-FIX: never convert a failed response into [] — throw so
+          // the error path runs instead of the authoritative-empty path.
+          if (!res.ok || !Array.isArray(res.campaigns)) {
+            throw new Error("Unable to load campaigns");
+          }
+          return res.campaigns;
         },
         { onStale: setCampaigns, onUpdate: setCampaigns },
       );
-      setAuthoritativeEmpty(Array.isArray(result) && result.length === 0);
+      if (generation !== fetchGeneration.current) return; // stale resolution
+      setCampaigns(result);
+      setAuthoritativeEmpty(result.length === 0);
       setLoadError("");
     } catch (err) {
-      // PR-3D: refresh failure keeps cached content and never renders as
-      // empty; a first-visit failure shows an explicit error + retry.
+      if (generation !== fetchGeneration.current) return;
+      // Refresh failure keeps cached content and never renders as empty;
+      // a first-visit failure shows an explicit error + retry.
       if (!peekCache<any>(key)) {
         setLoadError(err instanceof Error ? err.message : "Unable to load campaigns");
       }
     } finally {
-      setLoading(false);
+      if (generation === fetchGeneration.current) setLoading(false);
     }
   }
 
@@ -149,11 +163,8 @@ export default function CampaignsPage() {
 
   const { query: searchQuery } = useWorkspaceSearch();
   const q = searchQuery.trim().toLowerCase();
-  const visibleCampaigns = campaigns.filter(
-    (c) =>
-      c.status !== "deleted" &&
-      (!q || String(c.name ?? "").toLowerCase().includes(q) || String(c.objective ?? "").toLowerCase().includes(q))
-  );
+  // PR-3D-FIX: filtering is a pure derivation; canonical data is untouched.
+  const visibleCampaigns = filterCampaigns(campaigns, q);
   const activeCampaigns = visibleCampaigns.filter((c) => c.status !== "archived");
   const archivedCampaigns = visibleCampaigns.filter((c) => c.status === "archived");
 
@@ -182,8 +193,9 @@ export default function CampaignsPage() {
         <div className="max-w-5xl mx-auto">
         <div className="flex items-center justify-between gap-3 mb-8">
           <span className="text-xs font-bold uppercase tracking-widest text-primary bg-primary/10 rounded-full px-3 py-1.5">
-            {campaigns.length} campaign{campaigns.length !== 1 ? "s" : ""} total
-            {activeCampaigns.length > 0 ? ` \u00b7 ${activeCampaigns.length} active` : ""}
+            {loading
+              ? "Loading campaigns\u2026"
+              : `${campaigns.length} campaign${campaigns.length !== 1 ? "s" : ""} total${activeCampaigns.length > 0 ? ` \u00b7 ${activeCampaigns.length} active` : ""}`}
           </span>
           <a href="/campaigns/new" className="rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-on-primary hover:brightness-110">Create Campaign</a>
         </div>
@@ -274,7 +286,15 @@ export default function CampaignsPage() {
               </div>
             </div>
           </>
-        ) : visibleCampaigns.length === 0 ? (
+        ) : !authoritativeEmpty && campaigns.length === 0 ? (
+          /* Transient state between cache restore / refresh — never claim empty. */
+          <div className="flex flex-col items-center justify-center py-20 animate-fade-in">
+            <div className="w-16 h-16 rounded-2xl bg-surface-high/30 flex items-center justify-center text-on-surface-variant/40 mb-4">
+              <Icon name="campaign" className="text-3xl" />
+            </div>
+            <p className="text-body-lg text-on-surface-variant/80 font-medium">Loading campaigns…</p>
+          </div>
+        ) : q.trim() !== "" && visibleCampaigns.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center animate-fade-in">
             <div className="w-16 h-16 rounded-2xl bg-surface-high/30 flex items-center justify-center text-on-surface-variant/40 mb-4">
               <Icon name="search" className="text-3xl" />

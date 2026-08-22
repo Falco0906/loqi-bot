@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { getJob, getJobResults } from "../lib/api";
+import { ApiError, getJob, getJobResults } from "../lib/api";
 import {
   fetchBriefing,
   startDiscoverySearch,
@@ -417,7 +417,14 @@ export function CopilotProvider({
           } else if (job.status === "completed" && !completed) {
             void finish();
           }
-        } catch {
+        } catch (err) {
+          // PR-4 HOTFIX: a 401 means the session is gone — stop hammering
+          // and surface it instead of looping unauthenticated forever.
+          if (err instanceof ApiError && err.status === 401) {
+            stopPolling();
+            failWork(groupId, "Your session expired — sign in again to continue.");
+            return;
+          }
           /* transient polling failure — keep polling */
         } finally {
           pollInFlight = false;

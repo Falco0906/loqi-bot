@@ -1043,17 +1043,37 @@ export async function getDiscovery(sessionToken: string, discoveryId: string) {
   );
 }
 
-export async function getJob(jobId: string) {
+// PR-4 HOTFIX: job-status/results endpoints authenticate via the ACTIVE
+// WEB-SESSION token (same credential that created the discovery). These
+// calls previously sent no Authorization header at all → 401 → uncontrolled
+// poll loop. Explicit header (not URL params), same as startSearchJob.
+export async function getJob(jobId: string, sessionToken?: string) {
+  let token = sessionToken ?? null;
+  if (!token) {
+    try { token = localStorage.getItem("loqi_active_session_token"); } catch { /* noop */ }
+  }
   return fetchWithRetry<JobResponse>(
     `${API_BASE}/api/jobs/${jobId}`,
-    { timeout: 5000, retries: 0 },
+    {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      timeout: 5000,
+      retries: 0,
+    },
   );
 }
 
-export async function getJobResults(jobId: string) {
+export async function getJobResults(jobId: string, sessionToken?: string) {
+  let token = sessionToken ?? null;
+  if (!token) {
+    try { token = localStorage.getItem("loqi_active_session_token"); } catch { /* noop */ }
+  }
   return fetchWithRetry<{ ok: boolean; leads: Record<string, unknown>[] }>(
     `${API_BASE}/api/jobs/${jobId}/results`,
-    { timeout: 5000, retries: 0 },
+    {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      timeout: 5000,
+      retries: 0,
+    },
   );
 }
 

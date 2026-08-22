@@ -126,8 +126,17 @@ async function streamOnce(token: string): Promise<boolean> {
       signal: controller!.signal,
       cache: "no-store",
     });
+    if (res.status === 401 || res.status === 403) {
+      // PR-4.5F: invalid/expired session — surface it and STOP. Retrying
+      // with the same token would 401-loop forever.
+      debug(`auth failed status=${res.status} stopping stream`);
+      dispatch({ type: "auth.failed" });
+      running = false;
+      currentToken = null;
+      return false;
+    }
     if (!res.ok || !res.body) {
-      // 401/403/503 etc. — treat as failed open; backoff applies.
+      // Transient (5xx/network) — backoff applies.
       return false;
     }
     opened = true;

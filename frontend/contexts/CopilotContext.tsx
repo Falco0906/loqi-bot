@@ -12,9 +12,10 @@ import {
 } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { ApiError, getJob, getJobResults } from "../lib/api";
+import { searchDiscoveryAction } from "../lib/copilot-actions";
+import { normalizeDiscoveryRequest } from "../lib/discovery-request";
 import {
   fetchBriefing,
-  startDiscoverySearch,
   prefetchDiscovery,
   prefetchDiscoveryList,
   prefetchMissionControl,
@@ -137,6 +138,11 @@ function leadScore(lead: Record<string, unknown>): number | null {
   return raw > 1 ? raw : raw * 100;
 }
 
+function getTokenForActions(): string {
+  try { return localStorage.getItem("loqi_active_session_token") || ""; }
+  catch { return ""; }
+}
+
 export function CopilotProvider({
   children,
 }: {
@@ -153,12 +159,40 @@ export function CopilotProvider({
   const [conversationState, setConversationState] = useState<ConversationState>("idle");
   const [groups, setGroups] = useState<TaskGroup[]>([]);
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
+
+  // ── PR-4.5: bounded conversation persistence (sessionStorage) ──
+  // Survives client-side navigation AND full refresh within the same tab.
+  // Cleared on logout via clearStoredTokens → clearClientCache path plus the
+  // explicit purge below. Bounded to the last 3 groups / 40 steps.
+  const persistConversation = useCallback((gs: TaskGroup[], activeId: string | null) => {
+    try {
+      const trimmed = gs.slice(0, 3).map(g => ({
+        ...g,
+        steps: g.steps.slice(0, 40),
+      }));
+      sessionStorage.setItem("loqi_copilot_conversation", JSON.stringify({
+        groups: trimmed, activeGroupId: activeId,
+      }));
+    } catch { /* quota/private mode — persistence is best-effort */ }
+  }, []);
   const [recentTask, setRecentTask] = useState<RecentTask | null>(null);
 
   const pageContextRef = useRef<PageContext | null>(null);
 
   const setPageContext = useCallback((ctx: PageContext | null) => {
-    // Keep the ref in sync synchronously so startTask() — called immediately
+  
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("loqi_copilot_conversation");
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed.groups) && parsed.groups.length > 0) {
+        setGroups(parsed.groups.slice(0, 3));
+        setActiveGroupId(parsed.activeGroupId ?? null);
+      }
+    } catch { /* corrupted snapshot — start fresh */ }
+  }, []);
+  // Keep the ref in sync synchronously so startTask() — called immediately
     // after setPageContext() in the same handler — sees the fresh page.
     pageContextRef.current = ctx;
     setPageContextState(ctx);
@@ -332,10 +366,12 @@ export function CopilotProvider({
       let discoveryId: string | null = null;
       let jobId: string | null = null;
       try {
-        const started = await startDiscoverySearch(instruction);
-        if (started) {
-          discoveryId = started.discoveryId;
-          jobId = started.jobId;
+        // PR-4.5: canonical Discovery action — same operation as the
+        // Discovery search box, with deterministic query normalization.
+        const action = await searchDiscoveryAction(getTokenForActions(), instruction, "sidebar");
+        if (action) {
+          discoveryId = action.discoveryId;
+          jobId = action.jobId;
         }
       } catch {
         failWork(groupId, "Research couldn't start. Please try again.");
@@ -660,7 +696,13 @@ export function CopilotProvider({
     setActiveGroupId(null);
     setRecentTask(null);
     setConversationState("idle");
+    try { sessionStorage.removeItem("loqi_copilot_conversation"); } catch { /* noop */ }
   }, [stopPolling]);
+
+  // PR-4.5: persist on every conversation change (bounded by persistConversation).
+  useEffect(() => {
+    persistConversation(groups, activeGroupId);
+  }, [groups, activeGroupId, persistConversation]);
 
   const actions: CopilotActions = useMemo(
     () => ({

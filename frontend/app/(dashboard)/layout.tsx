@@ -73,6 +73,9 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const { query: searchQuery } = useWorkspaceSearch();
 
   const isDraftPage = pathname?.startsWith("/draft");
+  // PR-4.5: /copilot renders the FULL Copilot in-page; the sidebar mini
+  // instance would duplicate the connection/conversation UI.
+  const isCopilotPage = pathname?.startsWith("/copilot");
   const isHighlightPage = !!pathname && HIGHLIGHT_PAGES.some((p) => pathname.startsWith(p));
 
   const mainRef = useRef<HTMLElement>(null);
@@ -192,7 +195,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
             <main ref={mainRef} className="flex-1 overflow-y-auto h-full">
                {isDraftPage ? children : <AppPage>{children}</AppPage>}
             </main>
-            {!isDraftPage && <CopilotPanel width={COPILOT_PANEL_WIDTH} />}
+            {!isDraftPage && !isCopilotPage && <CopilotPanel width={COPILOT_PANEL_WIDTH} />}
           </div>
           <ToastContainer />
         </div>

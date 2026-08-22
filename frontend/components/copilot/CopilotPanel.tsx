@@ -15,7 +15,7 @@ import {
   type QuickReplyOption,
 } from "../../lib/conversationMachine";
 
-export default function CopilotPanel({ width = 380 }: { width?: number }) {
+export default function CopilotPanel({ width = 380, variant = "sidebar" }: { width?: number; variant?: "sidebar" | "page" }) {
   const {
     open,
     setOpen,
@@ -68,8 +68,10 @@ export default function CopilotPanel({ width = 380 }: { width?: number }) {
 
   return (
     <div
-      className="shrink-0 h-full overflow-hidden flex justify-end bg-surface-lowest transition-[width] duration-200 ease-out"
-      style={{ width: open ? width : 0 }}
+      className={variant === "page"
+        ? "h-full w-full flex"
+        : "shrink-0 h-full overflow-hidden flex justify-end bg-surface-lowest transition-[width] duration-200 ease-out"}
+      style={variant === "page" ? undefined : { width: open ? width : 0 }}
       role="dialog"
       aria-label="Loqi OS"
     >

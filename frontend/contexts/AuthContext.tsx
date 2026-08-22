@@ -97,6 +97,7 @@ function clearStoredTokens() {
   // survive an identity boundary (logout, re-auth, registration switch).
   import("../lib/client-cache").then(({ clearClientCache }) => clearClientCache());
   import("../lib/nav-state").then(({ clearNavState }) => clearNavState());
+  try { sessionStorage.removeItem("loqi_copilot_conversation"); } catch { /* noop */ }
 }
 
 function readStoredUser(): User | null {

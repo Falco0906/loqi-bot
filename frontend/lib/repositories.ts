@@ -47,6 +47,7 @@ import type {
 // PR-3C/3D: re-export payload types for pages consuming cached fetchers.
 export type { InboxData, InboxConversationRow, CampaignData } from "./domain";
 import { qualificationFromPersistedMetadata } from "./discovery-qualification";
+import { normalizeDiscoveryRequest } from "./discovery-request";
 
 /* ─── Utilities ─── */
 
@@ -1132,8 +1133,14 @@ export function invalidateDiscoveryCache(): void {
   fetchCache.delete(sessionKey("discovery-list"));
 }
 
-export async function startDiscoverySearch(query: string): Promise<{ jobId: string; discoveryId: string } | null> {
+export async function startDiscoverySearch(rawQuery: string): Promise<{ jobId: string; discoveryId: string } | null> {
   const token = getToken();
+  // PR-4.5: SINGLE normalization choke point — every Discovery creation
+  // caller (search box, copilot sidebar/page, rerun, campaign-attach) gets
+  // the identical canonical query. Clean structured queries pass through
+  // unchanged (normalization is a no-op on them).
+  const { cleanedQuery } = normalizeDiscoveryRequest(rawQuery);
+  const query = cleanedQuery || rawQuery.trim();
   console.log("[kickoff] startDiscoverySearch: enter", { tokenPresent: !!token, query: query.slice(0, 80) });
   if (!token || !query.trim()) {
     console.log("[kickoff] startDiscoverySearch: ABORT (no token or empty query)");

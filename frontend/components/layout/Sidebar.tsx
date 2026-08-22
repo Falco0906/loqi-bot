@@ -14,6 +14,7 @@ const navigation = [
   { label: "Campaigns", href: "/campaigns", icon: "campaign" },
   { label: "Draft Review", href: "/draft", icon: "draft" },
   { label: "Inbox", href: "/inbox", icon: "inbox" },
+  { label: "Copilot", href: "/copilot", icon: "smart_toy" },
 ];
 
 const utilityPages = [

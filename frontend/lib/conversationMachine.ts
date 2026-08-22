@@ -1,4 +1,5 @@
 import type { CopilotAction } from "./actionRegistry";
+import { normalizeDiscoveryRequest } from "./discovery-request";
 
 export type ConversationState = "idle" | "clarification" | "working" | "completed";
 
@@ -175,6 +176,7 @@ const KIND_TITLES: Record<TaskKind, string> = {
 };
 
 const LEAD_VERBS = ["find", "search", "research", "look for", "get me", "help me", "source", "discover"];
+
 const STOP_WORDS = new Set([
   "the", "that", "match", "matching", "my", "new", "for", "with", "and",
   "companies", "company", "leads", "prospects", "venture", "icp", "us", "in",
@@ -200,16 +202,9 @@ export function taskTitle(kind: TaskKind, instruction: string): string {
  * companies…") instead of technical stage names.
  */
 export function instructionSubject(instruction: string): string {
-  let t = instruction.toLowerCase().trim();
-  for (const verb of LEAD_VERBS) {
-    if (t.startsWith(verb)) {
-      t = t.slice(verb.length).trim();
-      break;
-    }
-  }
-  const words = t.replace(/[^a-z0-9 ]/g, " ").split(" ").filter(Boolean);
-  const significant = words.filter((w) => !STOP_WORDS.has(w)).slice(0, 2);
-  return significant.length > 0 ? significant.join(" ") : "";
+  // PR-4.5: deterministic normalization — filler/pronoun residue ("me
+  // venture") can never leak into the narrative again.
+  return normalizeDiscoveryRequest(instruction).target.split(" ").slice(0, 3).join(" ");
 }
 
 export function researchFirstStep(instruction: string): string {

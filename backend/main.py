@@ -2873,6 +2873,18 @@ async def post_web_session_message(
             page_context=payload.copilot.page_context,
             user_id=summary.get("user_id"),
         )
+        # Use the canonical Knowledge adapter for every agent turn. This is
+        # additive context for the existing generator; it does not create a
+        # second memory or retrieval system.
+        try:
+            from services.knowledge.context_adapter import retrieve_knowledge_context
+            knowledge = await retrieve_knowledge_context(
+                str(summary.get("user_id") or ""),
+                query=payload.text,
+            )
+            workspace_context["knowledge_context"] = knowledge.to_dict()
+        except Exception as error:
+            log.warning("Copilot Knowledge retrieval unavailable: %s", error)
         analysis = workspace_context.get("analysis", {})
         snapshot = workspace_context.get("snapshot", {})
         cf = analysis.get("current_focus", {})

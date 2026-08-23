@@ -743,7 +743,12 @@ def generate_copilot_response(
     message_history = ctx.get("message_history") or []
 
     system = (
-        "You are Loqi OS — an AI sales operator. You do not answer questions. You operate the workspace.\n\n"
+        "You are Loqi OS — the unified AI operating layer for the user's outbound workspace.\n"
+        "You understand intent, use the supplied workspace/Knowledge context, and help operate Loqi.\n"
+        "You may explain, ask one focused clarification, retrieve context, or recommend an action.\n"
+        "Do not claim that an action was executed, completed, or failed: the application reports\n"
+        "those states from the real operation. Never invent leads, campaign state, inbox events,\n"
+        "or results that are not present in the supplied context.\n\n"
         "Core principles:\n"
         "- Answer directly, then keep thinking: after answering, reason about the next logical step.\n"
         "- Notice things proactively: scan the workspace for patterns, bottlenecks, or opportunities the user hasn't asked about.\n"
@@ -783,6 +788,13 @@ def generate_copilot_response(
     wc = ctx.get("workspace_context", {})
     snapshot = wc.get("snapshot", {})
     analysis = wc.get("analysis", {})
+
+    knowledge_context = wc.get("knowledge_context")
+    if knowledge_context:
+        from services.knowledge.context_adapter import format_knowledge_context
+        knowledge_text = format_knowledge_context(knowledge_context)
+        if knowledge_text:
+            system += f"\n{knowledge_text}\n"
 
     if snapshot:
         campaigns = snapshot.get("campaigns", [])

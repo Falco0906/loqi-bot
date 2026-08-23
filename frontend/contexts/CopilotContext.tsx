@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { ApiError, getJob, getJobResults } from "../lib/api";
+import { ApiError, copilotMessage, getJob, getJobResults } from "../lib/api";
 import { searchDiscoveryAction } from "../lib/copilot-actions";
 import { normalizeDiscoveryRequest } from "../lib/discovery-request";
 import {
@@ -176,6 +176,26 @@ function getTokenForActions(): string {
   catch { return ""; }
 }
 
+const AGENT_ACTION_TYPES: ActionType[] = [
+  "select_all", "clear_selection", "compare", "plan_campaign", "generate_drafts",
+  "generate_strategy", "approve", "approve_all", "refine", "search", "save_campaign",
+  "export_csv", "launch_campaign", "view_drafts", "open_campaign", "duplicate_campaign",
+  "delete_campaign", "add_leads", "attach_discovery",
+];
+
+function parseAgentResponse(raw: string): { content: string; actions: CopilotAction[] } {
+  const actions: CopilotAction[] = [];
+  const content = raw.replace(/<<action:([^:>]+):([^>]+)>>/g, (_match, label: string, target: string) => {
+    if (target.startsWith("/")) {
+      actions.push({ type: "navigate", label: label.trim(), path: target.trim() });
+    } else if (AGENT_ACTION_TYPES.includes(target.trim() as ActionType)) {
+      actions.push({ type: "action", label: label.trim(), action: target.trim() as ActionType });
+    }
+    return "";
+  }).trim();
+  return { content, actions };
+}
+
 export function CopilotProvider({
   children,
 }: {
@@ -283,6 +303,27 @@ export function CopilotProvider({
   const busyRef = useRef(false);
   const sessionRef = useRef(0);
   const activeGroupTitleRef = useRef("");
+
+  const askAgent = useCallback(async (text: string, conversation: CopilotMessage[], requestSession: number) => {
+    appendMessage({ role: "tool", content: "Reviewing your request and current Loqi context…" });
+    try {
+      const response = await copilotMessage(getTokenForActions(), {
+        text,
+        currentPage: pageContextRef.current?.page,
+        pageContext: pageContextRef.current?.data,
+        availableActions: AGENT_ACTION_TYPES,
+        messageHistory: conversation.slice(-12).map((message) => ({ role: message.role, text: message.content })),
+      });
+      if (sessionRef.current !== requestSession || !response.ok) return;
+      const generated = response.messages?.find((message) => message.role === "assistant")?.text?.trim();
+      if (!generated) return;
+      const parsed = parseAgentResponse(generated);
+      appendMessage({ role: "assistant", content: parsed.content || generated, actions: parsed.actions });
+    } catch {
+      // The operational task owns success/failure. A generation outage must
+      // never turn a real job into a false success or block its execution.
+    }
+  }, [appendMessage]);
 
   useEffect(() => {
     return () => {
@@ -762,9 +803,21 @@ export function CopilotProvider({
       if (!trimmed) return false;
       if (busyRef.current) return false;
 
+      const previousMessages = messages;
       appendMessage({ role: "user", content: trimmed });
 
-      const kind = resolveTaskKind(trimmed, pageContextRef.current?.page);
+      const requestSession = sessionRef.current + 1;
+      void askAgent(trimmed, previousMessages, requestSession);
+
+      let kind = resolveTaskKind(trimmed, pageContextRef.current?.page);
+      // Preserve the active operation across natural follow-ups such as
+      // “in Hyderabad” and “give me 100”. The backend receives the complete
+      // history as well, but this keeps the existing canonical job actions
+      // deterministic and avoids starting a clarification dead-end.
+      if (kind === "unknown" && previousMessages.some((message) =>
+        message.role === "user" && resolveTaskKind(message.content, pageContextRef.current?.page) === "research")) {
+        kind = "research";
+      }
       if (kind === "unknown") {
         // Never drop an instruction silently: route unclassified input into
         // the clarification UI (prompt + quick replies) so the user can pick
@@ -773,12 +826,12 @@ export function CopilotProvider({
         transition({ type: "instruction", kind });
         return true;
       }
-      sessionRef.current += 1;
+      sessionRef.current = requestSession;
       transition({ type: "instruction", kind });
       beginTask(kind, trimmed);
       return true;
     },
-    [transition, beginTask, appendMessage],
+    [transition, beginTask, appendMessage, askAgent, messages],
   );
 
   const answerClarification = useCallback(

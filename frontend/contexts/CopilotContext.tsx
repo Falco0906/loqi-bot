@@ -874,15 +874,12 @@ export function CopilotProvider({
           setConversationState(turn.error ? "failed" : "idle");
           return;
         }
-        const kind = resolveTaskKind(trimmed, pageContextRef.current?.page);
-        if (kind === "unknown") {
-          busyRef.current = false;
-          setRecentTask(null);
-          setConversationState("idle");
-          return;
-        }
-        transition({ type: "instruction", kind });
-        beginTask(kind, trimmed, Promise.resolve(turn));
+        // A Copilot request must be owned by the backend decision contract.
+        // If an older/malformed response has no intent, fail closed instead
+        // of allowing the legacy keyword/page classifier to create a task.
+        busyRef.current = false;
+        setRecentTask(null);
+        setConversationState("failed");
       })();
       return true;
     },

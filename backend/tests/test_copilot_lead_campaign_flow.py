@@ -167,6 +167,77 @@ def test_campaign_create_uses_selected_ranked_leads_not_entire_discovery():
     assert [lead["id"] for lead in selected] == ["lead-1", "lead-2", "lead-3", "lead-4", "lead-5"]
 
 
+@pytest.mark.asyncio
+async def test_endpoint_rank_then_campaign_returns_assistant_and_attaches_exact_selection(monkeypatch):
+    import main as main_module
+
+    discovery = {
+        "id": "discovery-1",
+        "status": "completed",
+        "discovery_leads": [
+            {"rank": index, "match_score": 100 - index, "workspace_lead": {"id": f"lead-{index}", "lead": {"name": f"Lead {index}"}}}
+            for index in range(1, 21)
+        ],
+        "discovery_companies": [],
+    }
+    persisted = {}
+    attached: list[str] = []
+    decisions = iter([
+        {"intent": "read", "action": "lead.rank", "limit": 5, "sort": "best"},
+        {"intent": "action", "action": "campaign.create", "campaign": {"name": "Cafe owners"}},
+    ])
+
+    monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1", "display_name": "Owner"})
+    monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *_args, **_kwargs: {"snapshot": {}, "analysis": {}})
+    monkeypatch.setattr("services.workspace_state.ensure_workspace", lambda _user: "workspace-1")
+    monkeypatch.setattr(main_module, "_copilot_tool_failure_reason", lambda tool: f"{tool} failed")
+    monkeypatch.setattr(
+        "services.conversational_response_generator.decide_copilot_intent",
+        lambda *_args, **_kwargs: next(decisions),
+    )
+    async def knowledge_context(*_args, **_kwargs):
+        return SimpleNamespace(to_dict=lambda: {"items": [], "sources": []})
+
+    monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", knowledge_context)
+    monkeypatch.setattr("services.discovery.get_discovery", lambda *_args, **_kwargs: discovery)
+    async def persist_campaign(_u, campaign, workspace_id=""):
+        persisted.update(campaign)
+        return True
+
+    monkeypatch.setattr("services.workspace_state.persist_campaign_row", persist_campaign)
+    async def persist_attachment(_u, _campaign, lead, workspace_id=""):
+        attached.append(str(lead["id"]))
+        return str(lead["id"])
+
+    monkeypatch.setattr("services.workspace_state.persist_campaign_lead_id_awaited", persist_attachment)
+    monkeypatch.setattr("services.workspace_state.load_campaign_state", lambda *_args, **_kwargs: {**persisted, "lead_count": len(attached)})
+    monkeypatch.setattr("services.workspace_state.append_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_module, "_maybe_auto_strategy", _noop_async)
+
+    request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
+    rank_payload = main_module.SendWebMessageRequest(
+        text="Pick the best 5",
+        copilot=main_module.CopilotContextModel(current_page="Discovery", page_context={"discovery_id": "discovery-1"}, message_history=[]),
+    )
+    rank_response = await main_module.post_web_session_message("_", rank_payload, request)
+    ranked_ids = [lead["id"] for lead in rank_response["messages"][0]["data"]["result"]["leads"]]
+    assert ranked_ids == [f"lead-{index}" for index in range(1, 6)]
+
+    campaign_payload = main_module.SendWebMessageRequest(
+        text="Create a campaign for them",
+        copilot=main_module.CopilotContextModel(
+            current_page="Discovery",
+            page_context={"discovery_id": "discovery-1", "selected_lead_ids": ranked_ids},
+            message_history=[],
+        ),
+    )
+    campaign_response = await main_module.post_web_session_message("_", campaign_payload, request)
+    assert campaign_response["messages"][0]["role"] == "assistant"
+    assert campaign_response["messages"][0]["text"]
+    assert attached == ranked_ids
+    assert campaign_response["messages"][0]["data"]["result"]["campaign"]["lead_count"] == 5
+
+
 def test_database_failures_are_not_formatted_into_copilot_text():
     import main as main_module
 

@@ -2270,7 +2270,14 @@ async def _run_copilot_campaign(
         if not isinstance(campaign_input, dict):
             campaign_input = {}
         active_search = decision.get("active_search") or {}
-        discovery_id = str(campaign_input.get("discovery_id") or active_search.get("discovery_id") or "").strip()
+        page_context = decision.get("page_context") or {}
+        discovery_id = str(
+            campaign_input.get("discovery_id")
+            or active_search.get("discovery_id")
+            or page_context.get("discovery_id")
+            or page_context.get("active_discovery_id")
+            or ""
+        ).strip()
         leads: list[dict[str, Any]] = []
         if discovery_id:
             from services.copilot_tools import _discovery_leads, _requested_leads

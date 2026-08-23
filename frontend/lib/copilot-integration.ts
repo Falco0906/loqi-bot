@@ -13,10 +13,12 @@ export function mergeCopilotResourceContext(
   pageData: Record<string, unknown> | undefined,
   resource: CopilotResourceContextLike | null | undefined,
 ): Record<string, unknown> {
+  const pageSelected = pageData?.selected_lead_ids;
+  const hasPageSelection = Array.isArray(pageSelected) && pageSelected.length > 0;
   return {
     ...(pageData || {}),
     discovery_id: pageData?.discovery_id || resource?.discoveryId,
-    selected_lead_ids: pageData?.selected_lead_ids || resource?.selectedLeadIds,
+    selected_lead_ids: hasPageSelection ? pageSelected : resource?.selectedLeadIds,
     campaign_id: pageData?.campaign_id || resource?.campaignId,
     draft_id: pageData?.draft_id || resource?.draftId,
     conversation_id: pageData?.conversation_id || resource?.conversationId,

@@ -479,9 +479,6 @@ export function CopilotProvider({
         return { intent: response.intent, operation: response.operation };
       }
       const assistantMessage = response.messages?.find((message) => message.role === "assistant");
-      const generated = assistantMessage?.text?.trim();
-      if (!generated) return { intent: response.intent, error: response.ok ? undefined : "Copilot operation failed" };
-      const parsed = parseAgentResponse(generated);
       const messageData = assistantMessage?.data;
       const rawTool = typeof messageData?.tool === "string" ? messageData.tool : "";
       const rawResult = messageData?.result;
@@ -500,13 +497,29 @@ export function CopilotProvider({
         ? capabilityResult as KnowledgeOperationResult : undefined;
       const analyticsResult = rawTool.startsWith("analytics.") && capabilityResult
         ? capabilityResult as AnalyticsOperationResult : undefined;
+      const generated = assistantMessage?.text?.trim() || "";
+      const fallback = response.ok
+        ? rawTool.startsWith("campaign.")
+          ? "The campaign operation completed."
+          : "The requested Loqi operation completed."
+        : "Copilot could not complete that operation.";
+      const parsed = parseAgentResponse(generated || fallback);
       appendMessage({
         role: "assistant",
-        content: parsed.content || generated,
+        content: parsed.content || fallback,
         actions: parsed.actions,
         data: messageData,
       });
-      return { intent: response.intent, error: response.ok ? undefined : generated, leadResult, campaignResult, outreachResult, inboxResult, knowledgeResult, analyticsResult };
+      return {
+        intent: response.intent,
+        error: response.ok ? undefined : generated || fallback,
+        leadResult,
+        campaignResult,
+        outreachResult,
+        inboxResult,
+        knowledgeResult,
+        analyticsResult,
+      };
     } catch (error) {
       // The operational task owns success/failure. A generation outage must
       // never turn a real job into a false success or block its execution.

@@ -18,6 +18,14 @@ test("persisted resource context is flattened for backend page context", () => {
   assert.deepEqual(context.selected_lead_ids, ["lead-1"]);
 });
 
+test("an empty page selection does not erase ranked resource selection", () => {
+  const context = mergeCopilotResourceContext(
+    { selected_lead_ids: [] },
+    { selectedLeadIds: ["lead-1", "lead-2", "lead-3", "lead-4", "lead-5"] },
+  );
+  assert.deepEqual(context.selected_lead_ids, ["lead-1", "lead-2", "lead-3", "lead-4", "lead-5"]);
+});
+
 test("capability results are accepted only from registered tool namespaces", () => {
   const result = { drafts: [{ id: "draft-1" }] };
   assert.deepEqual(extractCopilotCapabilityResult("outreach.draft.refine", result), result);

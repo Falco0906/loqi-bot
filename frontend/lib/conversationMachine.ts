@@ -238,7 +238,7 @@ export const RESEARCH_SKIPPED_STAGES = new Set([
 ]);
 
 const COMPLETION_LABELS: Record<TaskKind, { primary: string; secondary: string }> = {
-  research: { primary: "View Discovery", secondary: "Open Mission Control" },
+  research: { primary: "View results", secondary: "Open Mission Control" },
   campaign: { primary: "Open Campaigns", secondary: "Review Drafts" },
   inbox: { primary: "Open Inbox", secondary: "Open Mission Control" },
   briefing: { primary: "Continue Briefing", secondary: "Open Mission Control" },

@@ -185,8 +185,10 @@ export function CopilotProvider({
       if (!raw) return;
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed.groups) && parsed.groups.length > 0) {
-        setGroups(parsed.groups.slice(0, 3));
-        setActiveGroupId(parsed.activeGroupId ?? null);
+        // Do not let late session hydration replace a task submitted during
+        // the first render (the submitted group is the authoritative state).
+        setGroups((current) => current.length > 0 ? current : parsed.groups.slice(0, 3));
+        setActiveGroupId((current) => current ?? parsed.activeGroupId ?? null);
       }
     } catch { /* corrupted snapshot — start fresh */ }
   }, []);

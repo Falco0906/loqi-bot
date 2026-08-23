@@ -53,7 +53,10 @@ async def test_campaign_create_returns_authoritative_campaign_and_attached_ids(m
         return True
 
     async def attach(_user, _campaign_id, lead, workspace_id=""):
-        return {"a@example.test": "workspace-lead-a", "b@example.test": "workspace-lead-b"}.get(lead["email"])
+        return {
+            f"lead-{index}@example.test": f"workspace-lead-{index}"
+            for index in range(1, 6)
+        }.get(lead["email"])
 
     monkeypatch.setattr(main_module, "_maybe_auto_strategy", _noop_async)
     monkeypatch.setattr(
@@ -61,8 +64,8 @@ async def test_campaign_create_returns_authoritative_campaign_and_attached_ids(m
         lambda *_args, **_kwargs: {
             "id": "discovery-1",
             "discovery_leads": [
-                {"rank": 1, "workspace_lead": {"id": "source-a", "lead": {"email": "a@example.test"}}},
-                {"rank": 2, "workspace_lead": {"id": "source-b", "lead": {"email": "b@example.test"}}},
+                {"rank": index, "workspace_lead": {"id": f"source-{index}", "lead": {"email": f"lead-{index}@example.test"}}}
+                for index in range(1, 7)
             ],
         },
     )
@@ -79,14 +82,15 @@ async def test_campaign_create_returns_authoritative_campaign_and_attached_ids(m
         {
             "campaign": {"name": "Cafe owners", "objective": "outreach"},
             "active_search": {"discovery_id": "discovery-1"},
-            "page_context": {},
+            "page_context": {"selected_lead_ids": [f"source-{index}" for index in range(1, 6)]},
         },
     )
 
     assert result["ok"] is True
     assert result["result"]["campaign_id"] == persisted["id"]
     assert result["result"]["active_campaign_id"] == persisted["id"]
-    assert result["result"]["attached_lead_ids"] == ["workspace-lead-a", "workspace-lead-b"]
+    assert result["result"]["attached_lead_ids"] == [f"workspace-lead-{index}" for index in range(1, 6)]
+    assert result["result"]["campaign"]["lead_count"] == 5
 
 
 @pytest.mark.asyncio
@@ -141,6 +145,26 @@ def test_campaign_result_exposes_active_campaign_context():
     }
     assert result["active_campaign_id"] == result["campaign"]["id"]
     assert result["campaign_id"] == "campaign-1"
+
+
+def test_campaign_create_uses_selected_ranked_leads_not_entire_discovery():
+    from services.copilot_tools import _requested_leads
+
+    discovery = {
+        "discovery_leads": [
+            {"rank": 1, "workspace_lead": {"id": "lead-1", "lead": {"name": "One"}}},
+            {"rank": 2, "workspace_lead": {"id": "lead-2", "lead": {"name": "Two"}}},
+            {"rank": 3, "workspace_lead": {"id": "lead-3", "lead": {"name": "Three"}}},
+            {"rank": 4, "workspace_lead": {"id": "lead-4", "lead": {"name": "Four"}}},
+            {"rank": 5, "workspace_lead": {"id": "lead-5", "lead": {"name": "Five"}}},
+            {"rank": 6, "workspace_lead": {"id": "lead-6", "lead": {"name": "Six"}}},
+        ],
+    }
+    selected = _requested_leads(
+        discovery,
+        {"page_context": {"selected_lead_ids": ["lead-1", "lead-2", "lead-3", "lead-4", "lead-5"]}},
+    )
+    assert [lead["id"] for lead in selected] == ["lead-1", "lead-2", "lead-3", "lead-4", "lead-5"]
 
 
 def test_database_failures_are_not_formatted_into_copilot_text():

@@ -2,6 +2,7 @@ import assert from "node:assert";
 import { test } from "node:test";
 import {
   extractCopilotCapabilityResult,
+  leadIdsFromResult,
   mergeCopilotResourceContext,
   resultMatchesResource,
 } from "../lib/copilot-integration.ts";
@@ -31,4 +32,11 @@ test("page synchronization only accepts results for the selected resource", () =
   assert.equal(resultMatchesResource({ conversation_id: "conversation-1" }, "conversation-1", ["conversation_id"]), true);
   assert.equal(resultMatchesResource({ campaign_id: "campaign-2" }, "campaign-1", ["campaign_id"]), false);
   assert.equal(resultMatchesResource({ campaign_id: "" }, "campaign-1", ["campaign_id"]), false);
+});
+
+test("ranked lead results become the selected IDs for the next Copilot turn", () => {
+  assert.deepEqual(
+    leadIdsFromResult({ leads: [{ id: "lead-5" }, { id: "lead-2" }, { id: "" }] }),
+    ["lead-5", "lead-2"],
+  );
 });

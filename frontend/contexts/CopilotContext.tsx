@@ -44,7 +44,7 @@ import type {
   ActionHandler,
 } from "../lib/actionRegistry";
 import type { MCBriefingData } from "../lib/domain";
-import { extractCopilotCapabilityResult, mergeCopilotResourceContext } from "../lib/copilot-integration";
+import { extractCopilotCapabilityResult, leadIdsFromResult, mergeCopilotResourceContext } from "../lib/copilot-integration";
 
 export type { CopilotAction, ActionType, ActionHandler };
 
@@ -1035,7 +1035,11 @@ export function CopilotProvider({
           busyRef.current = false;
           if (turn.leadResult) {
             setLeadResult(turn.leadResult);
-            setResourceContext((previous) => ({ ...previous, discoveryId: turn.leadResult?.discovery_id }));
+            setResourceContext((previous) => ({
+              ...previous,
+              discoveryId: turn.leadResult?.discovery_id,
+              selectedLeadIds: leadIdsFromResult(turn.leadResult),
+            }));
           }
           if (turn.campaignResult) {
             setCampaignResult(turn.campaignResult);

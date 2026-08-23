@@ -39,3 +39,10 @@ export function resultMatchesResource(
   if (!result || !resourceId) return false;
   return keys.some((key) => String(result[key] || "") === resourceId);
 }
+
+/** Carry the authoritative lead ordering/selection into the next Copilot turn. */
+export function leadIdsFromResult(result: { leads?: Array<Record<string, unknown>> } | null | undefined): string[] {
+  return (result?.leads || [])
+    .map((lead) => String(lead.id || "").trim())
+    .filter(Boolean);
+}

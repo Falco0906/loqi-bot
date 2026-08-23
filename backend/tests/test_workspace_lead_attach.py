@@ -129,6 +129,12 @@ class _FakeCampaignLeadRepo:
     async def list_for_campaign(self, campaign_id: str):
         return self.rows.matching(lambda r: r.campaign_id == campaign_id)
 
+    async def list_for_campaigns(self, campaign_ids: list[str]):
+        return {
+            campaign_id: await self.list_for_campaign(campaign_id)
+            for campaign_id in campaign_ids
+        }
+
     async def save(self, entity):
         return self.rows.store(entity)
 

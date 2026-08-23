@@ -659,6 +659,37 @@ async def persist_campaign_lead_awaited(user_id: str, campaign_id: str, lead: di
     return True
 
 
+async def persist_campaign_lead_id_awaited(
+    user_id: str,
+    campaign_id: str,
+    lead: dict[str, Any],
+    workspace_id: str = "",
+) -> str | None:
+    """Persist a campaign link and return the canonical workspace-lead ID.
+
+    This is the ID used by ``campaign_leads`` and drafts. The existing boolean
+    helper remains the compatibility path for non-Copilot callers.
+    """
+    try:
+        lead_id = await _persist_campaign_lead_id_row(
+            user_id, campaign_id, lead, workspace_id=workspace_id,
+        )
+    except Exception as error:
+        print(f"[workspace_state] campaign lead write failed: {error}")
+        return None
+    if not lead_id:
+        return None
+    try:
+        append_event(user_id, "campaign.lead_added", {
+            "campaign_id": campaign_id,
+            "lead": lead,
+            "lead_id": lead_id,
+        })
+    except Exception as error:
+        print(f"[workspace_state] campaign lead event append failed: {error}")
+    return lead_id
+
+
 async def _update_campaign_row(user_id: str, campaign_id: str, updates: dict[str, Any], workspace_id: str = "") -> None:
     repo = CampaignRepository()
     entity = await repo.get(campaign_id)
@@ -717,9 +748,20 @@ async def _persist_campaign_lead_row(user_id: str, campaign_id: str, lead: dict[
     Returns True when the link is present after the write (newly created or
     already deduped), False when the lead could not be linked at all.
     """
+    return bool(await _persist_campaign_lead_id_row(
+        user_id, campaign_id, lead, workspace_id=workspace_id,
+    ))
+
+
+async def _persist_campaign_lead_id_row(
+    user_id: str,
+    campaign_id: str,
+    lead: dict[str, Any],
+    workspace_id: str = "",
+) -> str | None:
     workspace = await _async_workspace(user_id)
     if not workspace:
-        return False
+        return None
     try:
         lead_id = await _normalize_lead(workspace, lead)
     except Exception:
@@ -728,17 +770,17 @@ async def _persist_campaign_lead_row(user_id: str, campaign_id: str, lead: dict[
         # Retry once — the second pass finds and links the existing rows.
         lead_id = await _normalize_lead(workspace, lead)
     if not lead_id:
-        return False
+        return None
     cl_repo = CampaignLeadRepository()
     link = await cl_repo.find_link(campaign_id, lead_id)
     if link is not None:
-        return True
+        return lead_id
     try:
         await cl_repo.save(CampaignLead(campaign_id=campaign_id, lead_id=lead_id, added_by=user_id))
     except Exception:
         if await cl_repo.find_link(campaign_id, lead_id) is None:
             raise
-    return True
+    return lead_id
 
 
 async def _normalize_lead(workspace_id: str, lead: dict[str, Any]) -> str | None:
@@ -813,7 +855,7 @@ async def _normalize_lead(workspace_id: str, lead: dict[str, Any]) -> str | None
                 setattr(existing, key, str(value))
         status = lead.get("status") or lead.get("lead_status")
         if status:
-            existing.lead_status = str(status)
+            existing.lead_status = _canonical_lead_status(status)
         if lead.get("source") or lead.get("provider"):
             existing.source = str(
                 lead.get("source") or lead.get("provider") or ""
@@ -835,7 +877,7 @@ async def _normalize_lead(workspace_id: str, lead: dict[str, Any]) -> str | None
         title=profile.title,
         phone=profile.phone,
         linkedin_url=profile.linkedin_url,
-        lead_status=str(lead.get("status") or lead.get("lead_status") or "new"),
+        lead_status=_canonical_lead_status(lead.get("status") or lead.get("lead_status")),
         confidence=_to_float(lead.get("confidence")),
         source=source or str(lead.get("source") or ""),
         metadata=_qualification_metadata(lead),
@@ -901,7 +943,7 @@ async def _normalize_company_lead(workspace_id: str, lead: dict[str, Any]) -> st
         company_id=company_id,
         title=str(lead.get("title") or ""),
         linkedin_url=str(lead.get("linkedin_url") or ""),
-        lead_status=str(lead.get("status") or lead.get("lead_status") or "new"),
+        lead_status=_canonical_lead_status(lead.get("status") or lead.get("lead_status")),
         confidence=_to_float(lead.get("confidence")),
         source=str(lead.get("source") or ""),
         metadata=_qualification_metadata(lead),
@@ -921,6 +963,23 @@ def _qualification_metadata(lead: dict[str, Any]) -> dict[str, Any]:
     """Persist qualification explanation without changing the lead model."""
     breakdown = lead.get("commercial_score_breakdown")
     return {"qualification": breakdown} if isinstance(breakdown, dict) else {}
+
+
+_CANONICAL_LEAD_STATUSES = {"new", "added", "approved", "rejected"}
+_LEAD_STATUS_ALIASES = {
+    "saved": "added",
+    "selected": "added",
+    "active": "added",
+    "pending": "new",
+    "": "new",
+}
+
+
+def _canonical_lead_status(value: Any) -> str:
+    """Map provider/UI status vocabulary to the DB constraint vocabulary."""
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    canonical = _LEAD_STATUS_ALIASES.get(normalized, normalized)
+    return canonical if canonical in _CANONICAL_LEAD_STATUSES else "new"
 
 
 def _lead_domain(lead: dict[str, Any]) -> str | None:

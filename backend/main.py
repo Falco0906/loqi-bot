@@ -2227,7 +2227,7 @@ async def _run_copilot_campaign(
         append_event,
         load_campaign_state,
         load_workspace_state,
-        persist_campaign_lead_awaited,
+        persist_campaign_lead_id_awaited,
         persist_campaign_row,
         persist_campaign_update_awaited,
     )
@@ -2294,13 +2294,38 @@ async def _run_copilot_campaign(
         }
         if not await persist_campaign_row(user_id, campaign, workspace_id=workspace_id):
             return {"ok": False, "status": "failed", "tool": tool_name, "reason": "Campaign could not be persisted."}
+        attached_lead_ids: list[str] = []
         for lead in leads:
-            if not await persist_campaign_lead_awaited(user_id, campaign["id"], lead, workspace_id=workspace_id):
-                return {"ok": False, "status": "failed", "tool": tool_name, "reason": "Campaign was created but a lead could not be persisted."}
+            lead_id = await persist_campaign_lead_id_awaited(
+                user_id, campaign["id"], lead, workspace_id=workspace_id,
+            )
+            if not lead_id:
+                return {
+                    "ok": False,
+                    "status": "failed",
+                    "tool": tool_name,
+                    "reason": "Campaign was created but a lead could not be persisted.",
+                    "result": {
+                        "campaign_id": campaign["id"],
+                        "attached_lead_ids": attached_lead_ids,
+                    },
+                }
+            attached_lead_ids.append(str(lead_id))
         append_event(user_id, "campaign.created", {"campaign": campaign})
         await _maybe_auto_strategy(session_token, user_id, campaign["id"], campaign["objective"], campaign)
         saved = await asyncio.to_thread(load_campaign_state, user_id, campaign["id"], workspace_id=workspace_id) or campaign
-        return {"ok": True, "status": "completed", "tool": tool_name, "result": {"campaign": saved}}
+        return {
+            "ok": True,
+            "status": "completed",
+            "tool": tool_name,
+            "result": {
+                "campaign": saved,
+                "campaign_id": str(saved.get("id") or campaign["id"]),
+                "discovery_id": discovery_id or None,
+                "attached_lead_ids": attached_lead_ids,
+                "active_campaign_id": str(saved.get("id") or campaign["id"]),
+            },
+        }
 
     target = await asyncio.to_thread(load_campaign_state, user_id, campaign_id, workspace_id=workspace_id)
     if not target:
@@ -3512,7 +3537,9 @@ async def post_web_session_message(
                     "ok": False,
                     "status": "failed",
                     "tool": tool_name,
-                    "reason": f"{tool_name} failed: {error}",
+                    # Keep database/provider details in server logs only. Raw
+                    # driver errors are not a safe Copilot-facing contract.
+                    "reason": _copilot_tool_failure_reason(tool_name),
                 }
             if tool_name.startswith("campaign."):
                 if tool_result.get("ok"):
@@ -5971,6 +5998,11 @@ def _session_token_from_request(request: Request) -> str:
     if scheme.lower() != "bearer" or not token.strip():
         return ""
     return token.strip()
+
+
+def _copilot_tool_failure_reason(tool_name: str) -> str:
+    """Return a stable user-facing failure without leaking driver details."""
+    return f"{tool_name} could not be completed. Please try again."
 
 
 async def _resolve_session_context(request: Request) -> tuple[str, str]:

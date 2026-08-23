@@ -551,14 +551,17 @@ async def execute_copilot_tool(
         campaign_id = str(decision.get("campaign_id") or (decision.get("page_context") or {}).get("campaign_id") or "")
         if not campaign_id:
             return {"ok": False, "status": "unavailable", "tool": tool_name, "reason": "A campaign must be selected before attaching leads."}
-        from services.workspace_state import load_campaign_state, persist_campaign_lead_awaited
+        from services.workspace_state import load_campaign_state, persist_campaign_lead_id_awaited
         campaign = await asyncio.to_thread(load_campaign_state, user_id, campaign_id, workspace_id=workspace_id)
         if not campaign:
             return {"ok": False, "status": "failed", "tool": tool_name, "reason": "The selected campaign is not available in this workspace."}
         attached = []
         for lead in leads:
-            if await persist_campaign_lead_awaited(user_id, campaign_id, lead, workspace_id=workspace_id):
-                attached.append(str(lead.get("id")))
+            lead_id = await persist_campaign_lead_id_awaited(
+                user_id, campaign_id, lead, workspace_id=workspace_id,
+            )
+            if lead_id:
+                attached.append(str(lead_id))
         if len(attached) != len(leads):
             return {"ok": False, "status": "failed", "tool": tool_name, "reason": "One or more leads could not be attached."}
-        return {"ok": True, "status": "completed", "tool": tool_name, "result": {**_lead_result(discovery, leads), "campaign_id": campaign_id, "attached_ids": attached}}
+        return {"ok": True, "status": "completed", "tool": tool_name, "result": {**_lead_result(discovery, leads), "campaign_id": campaign_id, "attached_ids": attached, "attached_lead_ids": attached}}

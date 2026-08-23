@@ -219,57 +219,57 @@ def search_with_expansion(service: str, target: str, plan=None, context: dict | 
             "context_provenance": (context or {}).get("provenance", {}),
         }
 
-        all_leads = result.get("leads", [])
+    all_leads = result.get("leads", [])
 
-        if not all_leads:
-            return {
-                "ok": False,
-                "source": result.get("provider", type(provider).__name__),
-                "leads": [],
-                "error": "No leads found. Try a broader target.",
-                "icp": icp,
-                "context_provenance": (context or {}).get("provenance", {}),
-            }
-
-        filtered_leads = all_leads
-        filter_stats = {
-            "total_found": len(all_leads),
-            "excluded_count": 0,
-            "scored_count": len(all_leads),
-            "average_score": 0,
-        }
-
-        if icp and (icp.get("buyer_roles") or icp.get("excluded_roles")):
-            _log("Applying buyer-intent filtering and ranking...")
-            filtered_leads, filter_stats = _filter_and_rank_leads(all_leads, icp, context=context)
-
-        if not filtered_leads and len(all_leads) >= 3:
-            _log("Qualification filtered ALL leads — retrying with relaxed filtering...")
-            filtered_leads, filter_stats = _filter_and_rank_leads_soft(all_leads, icp, context=context)
-
-        if not filtered_leads and all_leads:
-            _log("No qualified leads after filtering — returning raw leads as fallback")
-            filtered_leads = all_leads[:5]
-            filter_stats = {
-                "total_found": len(all_leads),
-                "excluded_count": len(all_leads) - len(filtered_leads),
-                "scored_count": len(filtered_leads),
-                "average_score": 0,
-                "fallback_mode": True,
-            }
-
-        _log(f"Final result: {len(filtered_leads)} leads after filtering (from {filter_stats['total_found']} found)")
-
+    if not all_leads:
         return {
-            "ok": True,
+            "ok": False,
             "source": result.get("provider", type(provider).__name__),
-            "leads": filtered_leads,
-            "error": None,
-            "expansion": expansion,
+            "leads": [],
+            "error": "No leads found. Try a broader target.",
             "icp": icp,
-            "filter_stats": filter_stats,
             "context_provenance": (context or {}).get("provenance", {}),
         }
+
+    filtered_leads = all_leads
+    filter_stats = {
+        "total_found": len(all_leads),
+        "excluded_count": 0,
+        "scored_count": len(all_leads),
+        "average_score": 0,
+    }
+
+    if icp and (icp.get("buyer_roles") or icp.get("excluded_roles")):
+        _log("Applying buyer-intent filtering and ranking...")
+        filtered_leads, filter_stats = _filter_and_rank_leads(all_leads, icp, context=context)
+
+    if not filtered_leads and len(all_leads) >= 3:
+        _log("Qualification filtered ALL leads — retrying with relaxed filtering...")
+        filtered_leads, filter_stats = _filter_and_rank_leads_soft(all_leads, icp, context=context)
+
+    if not filtered_leads and all_leads:
+        _log("No qualified leads after filtering — returning raw leads as fallback")
+        filtered_leads = all_leads[:5]
+        filter_stats = {
+            "total_found": len(all_leads),
+            "excluded_count": len(all_leads) - len(filtered_leads),
+            "scored_count": len(filtered_leads),
+            "average_score": 0,
+            "fallback_mode": True,
+        }
+
+    _log(f"Final result: {len(filtered_leads)} leads after filtering (from {filter_stats['total_found']} found)")
+
+    return {
+        "ok": True,
+        "source": result.get("provider", type(provider).__name__),
+        "leads": filtered_leads,
+        "error": None,
+        "expansion": expansion,
+        "icp": icp,
+        "filter_stats": filter_stats,
+        "context_provenance": (context or {}).get("provenance", {}),
+    }
 
     # PR-4: errors are handled inline per-failure-class above; nothing else
 

@@ -3128,6 +3128,7 @@ async def post_web_session_message(
             user_message=payload.text,
             copilot_context={
                 **(payload.copilot.model_dump()),
+                "intent": decision.get("intent"),
                 "workspace_context": workspace_context,
             },
             context={

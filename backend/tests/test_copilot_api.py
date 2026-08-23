@@ -48,6 +48,24 @@ class TestCopilotOperationBoundary:
         assert action["intent"] == "action"
         assert action["action"] == "campaign.create"
 
+    def test_conversation_response_ignores_active_workspace_operations(self):
+        from services.conversational_response_generator import generate_copilot_response
+
+        response = generate_copilot_response(
+            "hi",
+            copilot_context={
+                "intent": "conversation",
+                "workspace_context": {
+                    "snapshot": {"total_leads": 30},
+                    "analysis": {"recommended_next_action": {"title": "Create a campaign"}},
+                },
+                "active_search": {"discovery_id": "d-1"},
+                "available_actions": ["launch_campaign", "generate_drafts"],
+            },
+        )
+        assert response == "I’m here to help with your Loqi workspace. What would you like to work on?"
+        assert "campaign" not in response.lower()
+
     @pytest.mark.asyncio
     async def test_tool_boundary_does_not_execute_for_conversation_or_read(self, monkeypatch):
         from services.copilot_tools import execute_copilot_tool, select_copilot_tool
@@ -102,10 +120,6 @@ class TestCopilotOperationBoundary:
             "services.conversational_response_generator.decide_copilot_intent",
             lambda *_args, **_kwargs: next(decisions),
         )
-        monkeypatch.setattr(
-            "services.conversational_response_generator.generate_copilot_response",
-            lambda **_kwargs: "Hi — what would you like to work on?",
-        )
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
         monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
         monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}))
@@ -117,6 +131,9 @@ class TestCopilotOperationBoundary:
         conversation = await main_module.post_web_session_message("session-1", payload, request)
         assert conversation["intent"] == "conversation"
         assert "operation" not in conversation
+        conversation_text = conversation["messages"][0]["text"]
+        assert "campaign" not in conversation_text.lower()
+        assert "<<action:" not in conversation_text
         payload.text = "what did you find?"
         payload.copilot.active_search = {"discovery_id": "d-1"}
         read = await main_module.post_web_session_message("session-1", payload, request)

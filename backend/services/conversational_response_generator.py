@@ -824,6 +824,11 @@ def generate_copilot_response(
     and user message before calling the LLM.
     """
     ctx = copilot_context or {}
+    if ctx.get("intent") == "conversation":
+        # Conversation is a real terminal intent for this turn. Do not feed
+        # workspace priorities/search state into the proactive operator prompt
+        # or offer action markup for an operation the user did not request.
+        return "I’m here to help with your Loqi workspace. What would you like to work on?"
     current_page = ctx.get("current_page", "unknown")
     page_context = ctx.get("page_context") or {}
     available_actions = ctx.get("available_actions") or []

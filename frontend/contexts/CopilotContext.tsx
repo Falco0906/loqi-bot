@@ -419,8 +419,12 @@ export function CopilotProvider({
           // Job completion precedes Discovery finalization in the backend.
           // Wait for the linked entity to become authoritative before
           // telling Copilot the requested operation succeeded.
+          addStep(groupId, "Persisting Discovery results…", "active");
           let persisted = false;
-          for (let attempt = 0; attempt < 20; attempt += 1) {
+          // Lead normalization/linking can take longer than the job terminal
+          // update, especially for a first run. Keep this bounded, but do
+          // not report a false persistence failure during normal finalization.
+          for (let attempt = 0; attempt < 60; attempt += 1) {
             const discovery = await fetchDiscoveryFresh(discoveryId);
             if (discovery?.status === "completed") {
               persisted = true;

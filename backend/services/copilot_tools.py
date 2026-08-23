@@ -51,7 +51,7 @@ LEAD_TOOLS: dict[str, CopilotTool] = {
     ),
     "lead.rank": CopilotTool(
         name="lead.rank",
-        input_schema={"discovery_id": "owned Discovery ID", "sort": "rank or score"},
+        input_schema={"discovery_id": "owned Discovery ID", "sort": "rank or score", "limit": "optional result limit"},
         read_only=True,
     ),
     "lead.save": CopilotTool(
@@ -230,6 +230,9 @@ async def execute_copilot_tool(
                 key=lambda lead: float(lead.get("match_score") or lead.get("confidence") or 0),
                 reverse=sort in {"score", "match_score", "confidence", "best"},
             )
+            limit = decision.get("limit")
+            if isinstance(limit, int) and limit > 0:
+                leads = leads[:limit]
         return {
             "ok": True,
             "status": "completed",

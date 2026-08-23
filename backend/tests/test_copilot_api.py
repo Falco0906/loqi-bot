@@ -119,6 +119,31 @@ class TestCopilotOperationBoundary:
         assert select_copilot_tool({"intent": "action", "action": "lead.attach"}) == "lead.attach"
         assert select_copilot_tool({"intent": "action", "action": "campaign.launch"}) is None
 
+    def test_active_discovery_followups_route_to_lead_capabilities(self, monkeypatch):
+        from services.conversational_response_generator import decide_copilot_intent
+        from services.copilot_tools import select_copilot_tool
+
+        decisions = iter([
+            '{"intent":"read","action":"lead.rank","sort":"best","limit":5,"search_context":{},"reason":"rank existing leads"}',
+            '{"intent":"read","action":"lead.rank","sort":"best","search_context":{},"reason":"rank existing leads"}',
+            '{"intent":"read","action":"lead.filter","filters":{"title":"restaurant owner"},"search_context":{},"reason":"filter existing leads"}',
+        ])
+        monkeypatch.setattr(
+            "services.conversational_response_generator._send_openai_request",
+            lambda *_args, **_kwargs: next(decisions),
+        )
+        active = {"discovery_id": "d-1", "search_context": {"industry": ["restaurants"]}}
+
+        best_five = decide_copilot_intent("find the best 5", active_search=active)
+        strongest = decide_copilot_intent("show the strongest leads", active_search=active)
+        owners = decide_copilot_intent("only restaurant owners", active_search=active)
+
+        assert select_copilot_tool(best_five) == "lead.rank"
+        assert best_five["limit"] == 5
+        assert select_copilot_tool(strongest) == "lead.rank"
+        assert select_copilot_tool(owners) == "lead.filter"
+        assert owners["filters"] == {"title": "restaurant owner"}
+
     @pytest.mark.asyncio
     async def test_lead_read_filter_and_rank_use_owned_discovery(self, monkeypatch):
         from services.copilot_tools import execute_copilot_tool

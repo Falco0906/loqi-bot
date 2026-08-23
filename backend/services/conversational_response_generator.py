@@ -75,13 +75,15 @@ def decide_copilot_intent(
     """Make the agent's intent/tool decision before response generation."""
     _log(f"COPILOT_INTENT_ROUTER_ENTER message_chars={len(user_message)} history_len={len(message_history or [])}")
     system = (
-        "You are Loqi's intent and goal router. Return JSON only with keys intent, mode, "
-        "search_context, reason.\n"
+        "You are Loqi's intent and goal router. Return JSON only with keys intent, mode, action, "
+        "search_context, lead_ids, filters, sort, limit, campaign_id, confirmed, reason. Omit fields that do not apply.\n"
         "Allowed intent values: conversation, discovery, discovery_refinement, read, action, clarification.\n"
         "Use conversation for greetings, acknowledgements, and ordinary chat.\n"
         "Use discovery for a new explicit request to find/source/provide leads, prospects, or companies.\n"
         "Use discovery_refinement only when the user explicitly changes an existing Discovery request.\n"
-        "Use read for questions about existing results, such as what was found or which results are best.\n"
+        "Use read for questions about existing results. When the user asks to inspect or transform existing "
+        "leads, set the appropriate lead action: lead.read for showing them, lead.rank for strongest/best/top "
+        "results (including a requested limit), and lead.filter for applying criteria to existing results.\n"
         "Use action when the user requests another product operation, even if that capability is not available yet.\n"
         "For lead operations, set action to exactly one of lead.read, lead.filter, lead.rank, lead.save, "
         "lead.approve, lead.reject, or lead.attach. Use lead.read/filter/rank for reading existing leads; "
@@ -97,6 +99,12 @@ def decide_copilot_intent(
         "search_context must use only these fields: industry (list of strings), location (list of strings), "
         "decision_makers (list of strings), quantity (integer or null).\n"
         "Never claim that a job ran or completed.\n"
+        "Examples of the decision contract:\n"
+        "- active Discovery + 'find the best 5' -> {intent:'read', action:'lead.rank', sort:'best'}\n"
+        "- active Discovery + 'show the strongest leads' -> {intent:'read', action:'lead.rank', sort:'best'}\n"
+        "- active Discovery + 'only restaurant owners' -> {intent:'read', action:'lead.filter', filters:{...}}\n"
+        "These examples describe goals and tool selection; infer the structured filter from the available lead "
+        "schema and context. Do not copy message text into a Discovery query.\n"
     )
     user = json.dumps({
         "message": user_message,
@@ -142,10 +150,11 @@ def decide_copilot_intent(
         "intent": intent,
         "mode": "refine" if decision.get("mode") == "refine" else "new",
         "search_context": context,
-        "action": str(decision.get("action") or "").strip(),
+        "action": str(decision.get("action") or decision.get("tool") or "").strip(),
         "lead_ids": [str(item).strip() for item in (decision.get("lead_ids") or []) if str(item).strip()],
         "filters": decision.get("filters") if isinstance(decision.get("filters"), dict) else {},
         "sort": str(decision.get("sort") or "").strip(),
+        "limit": int(decision["limit"]) if str(decision.get("limit") or "").isdigit() else None,
         "campaign_id": str(decision.get("campaign_id") or "").strip(),
         "confirmed": bool(decision.get("confirmed")),
         "reason": str(decision.get("reason") or "").strip(),

@@ -23,6 +23,125 @@ class TestHealth:
 
 
 class TestCopilotOperationBoundary:
+    def test_discovery_title_is_natural_and_separate_from_provider_query(self):
+        title = main_module._discovery_title_from_search_context
+        assert title({"industry": ["cafe"]}) == "Cafe leads"
+        assert title({"industry": ["cafe"], "decision_makers": ["cafe_owner"]}) == "Cafe owners"
+        assert title({"industry": ["cafe"], "decision_makers": ["cafe_owner"], "location": ["Hyderabad"]}) == "Cafe owners in Hyderabad"
+        assert title({"industry": ["cafe"], "decision_makers": ["cafe_owner"], "location": ["Hyderabad"], "quantity": 100}) == "100 cafe owners in Hyderabad"
+
+    def test_intent_contract_supports_conversation_read_and_unsupported_action(self, monkeypatch):
+        from services.conversational_response_generator import decide_copilot_intent
+
+        decisions = iter([
+            '{"intent":"conversation","mode":"new","search_context":{},"reason":"greeting"}',
+            '{"intent":"read","mode":"new","search_context":{},"reason":"existing results"}',
+            '{"intent":"action","mode":"new","search_context":{},"action":"campaign.create","reason":"create campaign"}',
+        ])
+        monkeypatch.setattr(
+            "services.conversational_response_generator._send_openai_request",
+            lambda *_args, **_kwargs: next(decisions),
+        )
+        assert decide_copilot_intent("hi")["intent"] == "conversation"
+        assert decide_copilot_intent("what did you find?", active_search={"discovery_id": "d-1"})["intent"] == "read"
+        action = decide_copilot_intent("create a campaign for these")
+        assert action["intent"] == "action"
+        assert action["action"] == "campaign.create"
+
+    @pytest.mark.asyncio
+    async def test_tool_boundary_does_not_execute_for_conversation_or_read(self, monkeypatch):
+        from services.copilot_tools import execute_copilot_tool, select_copilot_tool
+
+        assert select_copilot_tool({"intent": "conversation"}) is None
+        monkeypatch.setattr(
+            "services.discovery.get_discovery",
+            lambda _discovery_id, _workspace_id: {
+                "id": "d-1", "status": "completed", "title": "Restaurant leads",
+                "discovery_leads": [{"rank": 1, "workspace_lead": {"lead": {"name": "A"}}}],
+                "discovery_companies": [], "summary": {"lead_count": 1},
+            },
+        )
+
+        async def must_not_run(*_args, **_kwargs):
+            raise AssertionError("Discovery runner must not run for a read")
+
+        result = await execute_copilot_tool(
+            "discovery.read",
+            user_id="u-1", workspace_id="w-1", session_token="s-1",
+            decision={"intent": "read", "active_search": {"discovery_id": "d-1"}},
+            discovery_runner=must_not_run,
+        )
+        assert result["ok"] is True
+        assert result["result"]["lead_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_discovery_and_refinement_use_executor_runner(self):
+        from services.copilot_tools import execute_copilot_tool
+        calls = []
+
+        async def runner(user_id, context, session):
+            calls.append((user_id, context, session))
+            return {"discovery_id": "d-1", "job_id": "j-1", "status": "queued"}
+
+        result = await execute_copilot_tool(
+            "discovery.refine",
+            user_id="u-1", workspace_id="w-1", session_token="s-1",
+            decision={"intent": "discovery_refinement", "search_context": {"industry": ["restaurants"]}},
+            discovery_runner=runner,
+        )
+        assert result["ok"] is True
+        assert calls == [("u-1", {"industry": ["restaurants"]}, "s-1")]
+
+    @pytest.mark.asyncio
+    async def test_endpoint_conversation_and_read_never_create_discovery(self, monkeypatch):
+        decisions = iter([
+            {"intent": "conversation", "mode": "new", "search_context": {}, "reason": "greeting"},
+            {"intent": "read", "mode": "new", "search_context": {}, "reason": "read results"},
+        ])
+        monkeypatch.setattr(
+            "services.conversational_response_generator.decide_copilot_intent",
+            lambda *_args, **_kwargs: next(decisions),
+        )
+        monkeypatch.setattr(
+            "services.conversational_response_generator.generate_copilot_response",
+            lambda **_kwargs: "Hi — what would you like to work on?",
+        )
+        monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
+        monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
+        monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}))
+        monkeypatch.setattr("services.workspace_state.ensure_workspace", lambda _user_id: "workspace-1")
+        monkeypatch.setattr(main_module, "_create_search_run", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("read/conversation must not create Discovery")))
+        monkeypatch.setattr("services.discovery.get_discovery", lambda *_args: {"id": "d-1", "status": "completed", "title": "Restaurant leads", "discovery_leads": [], "discovery_companies": [], "summary": {}})
+        request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
+        payload = main_module.SendWebMessageRequest(text="hi", copilot=main_module.CopilotContextModel(current_page="Mission Control", message_history=[]))
+        conversation = await main_module.post_web_session_message("session-1", payload, request)
+        assert conversation["intent"] == "conversation"
+        assert "operation" not in conversation
+        payload.text = "what did you find?"
+        payload.copilot.active_search = {"discovery_id": "d-1"}
+        read = await main_module.post_web_session_message("session-1", payload, request)
+        assert read["intent"] == "read"
+        assert read["read_result"]["discovery_id"] == "d-1"
+
+    @pytest.mark.asyncio
+    async def test_discovery_tool_failure_is_structured(self, monkeypatch):
+        monkeypatch.setattr(
+            "services.conversational_response_generator.decide_copilot_intent",
+            lambda *_args, **_kwargs: {"intent": "discovery", "mode": "new", "search_context": {"industry": ["restaurants"]}},
+        )
+        monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
+        monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
+        monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}))
+        monkeypatch.setattr("services.workspace_state.ensure_workspace", lambda _user_id: "workspace-1")
+        async def fail_runner(*_args, **_kwargs):
+            raise RuntimeError("provider unavailable")
+        monkeypatch.setattr(main_module, "_run_copilot_discovery", fail_runner)
+        request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
+        payload = main_module.SendWebMessageRequest(text="I need restaurant leads", copilot=main_module.CopilotContextModel(current_page="Mission Control", message_history=[]))
+        result = await main_module.post_web_session_message("session-1", payload, request)
+        assert result["ok"] is False
+        assert result["operation"]["status"] == "failed"
+
     def test_agent_intent_router_distinguishes_action_and_refinements(self, monkeypatch):
         from services.conversational_response_generator import decide_copilot_intent
 
@@ -39,7 +158,7 @@ class TestCopilotOperationBoundary:
         first = decide_copilot_intent("I need restaurant leads", message_history=[])
         second = decide_copilot_intent("Make it Hyderabad", message_history=history)
         third = decide_copilot_intent("Actually give me 100", message_history=history + [{"role": "user", "text": "Make it Hyderabad"}])
-        assert [first["intent"], second["intent"], third["intent"]] == ["lead_discovery"] * 3
+        assert [first["intent"], second["intent"], third["intent"]] == ["discovery"] * 3
         assert second["search_context"]["location"] == ["Hyderabad"]
         assert third["search_context"]["quantity"] == 100
 
@@ -48,16 +167,17 @@ class TestCopilotOperationBoundary:
         async def fake_knowledge(*_args, **_kwargs):
             return SimpleNamespace(to_dict=lambda: {"items": [], "sources": []})
 
-        async def fake_create_search_run(user_id, query, session):
+        async def fake_create_search_run(user_id, query, session, *, display_title=None):
             assert user_id == "owner-1"
             assert query == "Find leads matching industries: restaurants"
             assert session == "session-1"
+            assert display_title == "Restaurant leads"
             return {"discovery_id": "discovery-1", "job_id": "job-1", "status": "queued"}
 
         monkeypatch.setattr(
             "services.conversational_response_generator.decide_copilot_intent",
             lambda *_args, **_kwargs: {
-                "intent": "lead_discovery",
+                "intent": "discovery",
                 "mode": "new",
                 "search_context": {"industry": ["restaurants"], "location": [], "decision_makers": [], "quantity": None},
                 "reason": "explicit operation",
@@ -97,12 +217,12 @@ class TestCopilotOperationBoundary:
         )
         monkeypatch.setattr(
             "services.conversational_response_generator.decide_copilot_intent",
-            lambda *_args, **_kwargs: {"intent": "lead_discovery", "mode": "new", "search_context": {"industry": ["restaurants"], "location": [], "decision_makers": [], "quantity": None}, "reason": "explicit operation"},
+            lambda *_args, **_kwargs: {"intent": "discovery", "mode": "new", "search_context": {"industry": ["restaurants"], "location": [], "decision_makers": [], "quantity": None}, "reason": "explicit operation"},
         )
         async def empty_knowledge(*_args, **_kwargs):
             return SimpleNamespace(to_dict=lambda: {"items": [], "sources": []})
         monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", empty_knowledge)
-        async def fake_create_search_run(_user_id, _query, _session):
+        async def fake_create_search_run(_user_id, _query, _session, **_kwargs):
             return {"discovery_id": "discovery-2", "job_id": "job-2", "status": "queued"}
         monkeypatch.setattr(main_module, "_create_search_run", fake_create_search_run)
 
@@ -256,13 +376,18 @@ class TestStructuredContext:
     def test_explicit_lead_request_starts_canonical_discovery_job(self, client, session_token, monkeypatch):
         calls = []
 
-        async def fake_create_search_run(user_id, query, session):
+        async def fake_create_search_run(user_id, query, session, **_kwargs):
             calls.append((user_id, query, session))
             return {"discovery_id": "discovery-1", "job_id": "job-1", "status": "queued"}
 
         monkeypatch.setattr(
             "services.conversational_response_generator.decide_copilot_intent",
-            lambda *_args, **_kwargs: {"intent": "lead_discovery", "query": "I need new restaurant leads", "reason": "explicit operation"},
+            lambda *_args, **_kwargs: {
+                "intent": "discovery",
+                "mode": "new",
+                "search_context": {"industry": ["restaurants"], "location": [], "decision_makers": [], "quantity": None},
+                "reason": "explicit operation",
+            },
         )
 
         monkeypatch.setattr(main_module, "_create_search_run", fake_create_search_run)

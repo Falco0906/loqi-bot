@@ -2155,6 +2155,78 @@ def _discovery_query_from_search_context(search_context: dict) -> str:
     return "Find leads matching " + "; ".join(parts) if parts else "Find leads"
 
 
+def _discovery_title_from_search_context(search_context: dict) -> str:
+    """Return a concise display label without changing the execution query."""
+    def values(key: str) -> list[str]:
+        raw = search_context.get(key, [])
+        if isinstance(raw, str):
+            raw = [raw]
+        return [str(value).strip() for value in raw if str(value).strip()]
+
+    def natural(items: list[str]) -> str:
+        rendered = [item.replace("_", " ").strip() for item in items]
+        if len(rendered) < 2:
+            return (rendered[0][0].upper() + rendered[0][1:]) if rendered else ""
+        return ", ".join(rendered[:-1]) + " and " + rendered[-1]
+
+    industries = values("industry")
+    decision_makers = values("decision_makers")
+    locations = values("location")
+    if decision_makers:
+        role_parts: list[str] = []
+        for role in decision_makers:
+            words = role.replace("_", " ").split()
+            if words and words[-1].lower() not in {"s", "ss"}:
+                words[-1] += "s"
+            role_parts.append(" ".join(words))
+        label = natural(role_parts)
+    elif industries:
+        industry_names = [
+            industry[:-1] if industry.lower().endswith("s") and not industry.lower().endswith("ss") else industry
+            for industry in industries
+        ]
+        label = f"{natural(industry_names)} leads"
+    else:
+        label = "Leads"
+
+    if label:
+        label = label[0].upper() + label[1:]
+
+    quantity = search_context.get("quantity")
+    if isinstance(quantity, int) and quantity > 0:
+        label = f"{quantity} {label[0].lower() + label[1:] if label else 'leads'}"
+    if locations:
+        label += f" in {natural(locations)}"
+    return label
+
+
+async def _run_copilot_discovery(
+    user_id: str,
+    search_context: dict,
+    session_token: str,
+) -> dict:
+    """Discovery tool adapter; the existing search-run pipeline remains authoritative."""
+    discovery_query = _discovery_query_from_search_context(search_context)
+    return await _create_search_run(
+        user_id,
+        discovery_query,
+        session_token,
+        display_title=_discovery_title_from_search_context(search_context),
+    )
+
+
+def _copilot_read_message(result: dict) -> str:
+    status = str(result.get("status") or "")
+    if status != "completed":
+        return f"That Discovery is currently {status or 'not ready'}; I don't have completed results yet."
+    leads = int(result.get("lead_count") or 0)
+    companies = int(result.get("company_count") or 0)
+    return (
+        f"The Discovery found {leads} lead{'s' if leads != 1 else ''}"
+        f" across {companies} compan{'ies' if companies != 1 else 'y'}."
+    )
+
+
 def _register_outbound_providers() -> None:
     try:
         from services.outbound.outbound_registry import register_outbound_provider
@@ -2945,39 +3017,107 @@ async def post_web_session_message(
             message_history=payload.copilot.message_history,
             active_search=payload.copilot.active_search,
         )
-        if decision.get("intent") == "lead_discovery" and decision.get("search_context"):
-            search_context = decision["search_context"]
-            discovery_query = _discovery_query_from_search_context(search_context)
+        decision = {**decision, "active_search": payload.copilot.active_search or {}}
+        from services.copilot_tools import execute_copilot_tool, select_copilot_tool
+        tool_name = select_copilot_tool(decision)
+        if tool_name:
+            user_id = str(summary.get("user_id") or "")
+            from services.workspace_state import ensure_workspace
+            workspace_id = await asyncio.to_thread(ensure_workspace, user_id)
             log.info(
-                "COPILOT_DISCOVERY_DECISION mode=%s context=%s query_chars=%s",
-                decision.get("mode"), search_context, len(discovery_query),
+                "COPILOT_DECISION intent=%s tool=%s mode=%s",
+                decision.get("intent"), tool_name, decision.get("mode"),
             )
             try:
-                log.info("COPILOT_DISCOVERY_TOOL_ENTER tool=_create_search_run")
-                started = await _create_search_run(
-                    str(summary.get("user_id") or ""),
-                    discovery_query,
-                    session_token,
-                )
-                log.info(
-                    "COPILOT_DISCOVERY_TOOL_RETURN discovery_id=%s job_id=%s",
-                    started.get("discovery_id", ""),
-                    started.get("job_id", ""),
+                tool_result = await execute_copilot_tool(
+                    tool_name,
+                    user_id=user_id,
+                    workspace_id=workspace_id or "",
+                    session_token=session_token,
+                    decision=decision,
+                    discovery_runner=_run_copilot_discovery,
                 )
             except Exception as error:
-                log.exception("Copilot Discovery tool failed context=%s", search_context)
-                raise HTTPException(status_code=502, detail=f"Discovery tool failed: {error}") from error
+                log.exception("Copilot tool failed tool=%s", tool_name)
+                tool_result = {
+                    "ok": False,
+                    "status": "failed",
+                    "tool": tool_name,
+                    "reason": f"{tool_name} failed: {error}",
+                }
+            if tool_name == "discovery.read":
+                if tool_result.get("ok"):
+                    result = tool_result.get("result") or {}
+                    return {
+                        "ok": True,
+                        "intent": decision.get("intent"),
+                        "messages": [_message(
+                            role="assistant",
+                            message_type="text",
+                            text=_copilot_read_message(result),
+                            data={"tool": tool_name, "result": result},
+                        )],
+                        "events": [{"type": "tool.completed", "tool": tool_name, "result": result}],
+                        "read_result": result,
+                    }
+                return {
+                    "ok": False,
+                    "intent": decision.get("intent"),
+                    "messages": [_message(
+                        role="assistant", message_type="tool",
+                        text=str(tool_result.get("reason") or "I couldn't retrieve that Discovery."),
+                        data={"tool": tool_name, "status": tool_result.get("status", "failed")},
+                    )],
+                    "events": [{"type": "tool.failed", "tool": tool_name}],
+                    "operation": {"kind": tool_name, "status": "failed", "error": tool_result.get("reason")},
+                }
+
+            if not tool_result.get("ok"):
+                reason = str(tool_result.get("reason") or "Discovery operation failed.")
+                return {
+                    "ok": False,
+                    "intent": decision.get("intent"),
+                    "messages": [_message(
+                        role="assistant", message_type="tool", text=reason,
+                        data={"tool": tool_name, "status": "failed"},
+                    )],
+                    "events": [{"type": "tool.failed", "tool": tool_name}],
+                    "operation": {"kind": tool_name, "status": "failed", "error": reason},
+                }
+
+            started = tool_result.get("operation") or {}
+            search_context = tool_result.get("search_context") or {}
+            active_context = {
+                **search_context,
+                "discovery_id": started.get("discovery_id"),
+                "job_id": started.get("job_id"),
+            }
             operation_message = _message(
                 role="assistant",
                 message_type="tool",
                 text="I’m starting a Discovery search and will report back when the results are persisted.",
-                data={"operation": "search_discovery", "search_context": search_context, **started},
+                data={"operation": "search_discovery", "tool": tool_name, "search_context": active_context, **started},
             )
             return {
                 "ok": True,
+                "intent": decision.get("intent"),
                 "messages": [operation_message],
-                "events": [{"type": "tool.started", "operation": "search_discovery", **started}],
-                "operation": {"kind": "search_discovery", "search_context": search_context, **started},
+                "events": [{"type": "tool.started", "tool": tool_name, "operation": "search_discovery", **started}],
+                "operation": {"kind": "search_discovery", "tool": tool_name, "search_context": active_context, **started},
+            }
+
+        if decision.get("intent") == "action":
+            requested_action = str(decision.get("action") or "")
+            message = "That action is understood, but the corresponding Loqi capability is not available yet."
+            return {
+                "ok": False,
+                "intent": decision.get("intent"),
+                "messages": [_message(
+                    role="assistant", message_type="tool", text=message,
+                    data={"status": "unsupported", "action": requested_action},
+                )],
+                "events": [{"type": "tool.unsupported", "action": requested_action}],
+                "operation": {"kind": "action", "status": "unsupported", "action": requested_action},
             }
         from services.conversational_response_generator import generate_copilot_response
         # PR-P1.2: generate_copilot_response performs a synchronous OpenAI
@@ -2998,7 +3138,7 @@ async def post_web_session_message(
         )
         print(f"[COPILOT_TRACE] page={payload.copilot.current_page or '(unset)'} message={payload.text[:60]} history_len={len(payload.copilot.message_history or [])}")
         msg = _message(role="assistant", message_type="text", text=response_text)
-        return {"ok": True, "messages": [msg], "events": []}
+        return {"ok": True, "intent": decision.get("intent"), "messages": [msg], "events": []}
 
     _result = await asyncio.to_thread(
         engine.handle_message,
@@ -7014,7 +7154,13 @@ async def _resolve_web_user_id(request: Request) -> tuple[str, str]:
     return await _resolve_session_context(request)
 
 
-async def _create_search_run(user_id: str, query: str, session_token: str = "") -> dict:
+async def _create_search_run(
+    user_id: str,
+    query: str,
+    session_token: str = "",
+    *,
+    display_title: str | None = None,
+) -> dict:
     """Create a first-class discovery entity AND the search job that fills it.
 
     The discovery row is created FIRST; the transient job is then enqueued
@@ -7097,7 +7243,9 @@ async def _create_search_run(user_id: str, query: str, session_token: str = "") 
 
     discovery_id = ""
     if workspace_id:
-        discovery = await asyncio.to_thread(create_discovery, workspace_id, user_id, query)
+        discovery = await asyncio.to_thread(
+            create_discovery, workspace_id, user_id, query, display_title
+        )
         if discovery:
             discovery_id = str(discovery.get("id") or "")
     log.info("[kickoff] _create_search_run: discovery_id=%s (empty => row not created)",

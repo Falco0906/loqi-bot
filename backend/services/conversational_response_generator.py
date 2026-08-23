@@ -75,17 +75,22 @@ def decide_copilot_intent(
     """Make the agent's intent/tool decision before response generation."""
     _log(f"COPILOT_INTENT_ROUTER_ENTER message_chars={len(user_message)} history_len={len(message_history or [])}")
     system = (
-        "You are Loqi's action router. Return JSON only with keys intent, mode, search_context, reason.\n"
-        "Allowed intent values: lead_discovery, informational, clarification.\n"
-        "mode is new or refine.\n"
-        "Use lead_discovery when the user asks Loqi to find, source, get, or provide leads, prospects, or companies.\n"
-        "A request such as 'I need restaurant leads' is an explicit operation, not a question about personas.\n"
-        "Use informational for questions or advice, clarification only when genuinely ambiguous.\n"
-        "For follow-ups, use active_search and prior context: location, decision-maker, and quantity changes are\n"
-        "refinements of an active lead_discovery request. search_context must be structured JSON with only these\n"
-        "fields: industry (list of strings), location (list of strings), decision_makers (list of strings),\n"
-        "quantity (integer or null). Preserve existing fields during refine and add only requested changes.\n"
-        "For an independent request, use mode=new and replace the prior context. Never claim job completion.\n"
+        "You are Loqi's intent and goal router. Return JSON only with keys intent, mode, "
+        "search_context, reason.\n"
+        "Allowed intent values: conversation, discovery, discovery_refinement, read, action, clarification.\n"
+        "Use conversation for greetings, acknowledgements, and ordinary chat.\n"
+        "Use discovery for a new explicit request to find/source/provide leads, prospects, or companies.\n"
+        "Use discovery_refinement only when the user explicitly changes an existing Discovery request.\n"
+        "Use read for questions about existing results, such as what was found or which results are best.\n"
+        "Use action when the user requests another product operation, even if that capability is not available yet.\n"
+        "Use clarification only when the user's goal is genuinely ambiguous.\n"
+        "CRITICAL: active_search is context, not an instruction. It must never turn an unrelated message "
+        "such as 'hi' into discovery or discovery_refinement. Only use it for an explicit refinement or read request.\n"
+        "mode is new or refine. For discovery_refinement, preserve existing structured fields and apply only "
+        "the requested changes. For a new discovery, replace the prior context.\n"
+        "search_context must use only these fields: industry (list of strings), location (list of strings), "
+        "decision_makers (list of strings), quantity (integer or null).\n"
+        "Never claim that a job ran or completed.\n"
     )
     user = json.dumps({
         "message": user_message,
@@ -105,8 +110,16 @@ def decide_copilot_intent(
     except (TypeError, ValueError, json.JSONDecodeError):
         _log(f"Copilot intent router returned invalid JSON: {raw[:200]}")
         return {"intent": "clarification", "mode": "new", "search_context": {}, "reason": "Invalid intent decision"}
-    if not isinstance(decision, dict) or decision.get("intent") not in {"lead_discovery", "informational", "clarification"}:
+    intent_aliases = {
+        "lead_discovery": "discovery",
+        "informational": "conversation",
+    }
+    if not isinstance(decision, dict):
         _log("COPILOT_INTENT_ROUTER_INVALID decision_shape=true")
+        return {"intent": "clarification", "mode": "new", "search_context": {}, "reason": "Invalid intent decision"}
+    intent = intent_aliases.get(str(decision.get("intent") or ""), str(decision.get("intent") or ""))
+    if intent not in {"conversation", "discovery", "discovery_refinement", "read", "action", "clarification"}:
+        _log("COPILOT_INTENT_ROUTER_INVALID intent=true")
         return {"intent": "clarification", "mode": "new", "search_context": {}, "reason": "Invalid intent decision"}
     raw_context = decision.get("search_context") or {}
     if not isinstance(raw_context, dict):
@@ -120,11 +133,20 @@ def decide_copilot_intent(
         "quantity": int(raw_context["quantity"]) if str(raw_context.get("quantity") or "").isdigit() else None,
     }
     normalized = {
-        "intent": decision["intent"],
+        "intent": intent,
         "mode": "refine" if decision.get("mode") == "refine" else "new",
         "search_context": context,
+        "action": str(decision.get("action") or "").strip(),
         "reason": str(decision.get("reason") or "").strip(),
     }
+    if intent == "discovery_refinement" and not active_search:
+        normalized = {
+            "intent": "clarification",
+            "mode": "new",
+            "search_context": {},
+            "action": "",
+            "reason": "A Discovery refinement requires an active Discovery context.",
+        }
     _log(f"COPILOT_INTENT_ROUTER_DECISION intent={normalized['intent']} mode={normalized['mode']} context={context}")
     return normalized
 

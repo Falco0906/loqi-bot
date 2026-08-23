@@ -57,6 +57,7 @@ def create_discovery(
     workspace_id: str,
     user_id: str,
     query: str,
+    title: Optional[str] = None,
 ) -> Optional[dict]:
     """Persist a new discovery row (no job link yet).
 
@@ -67,7 +68,7 @@ def create_discovery(
     ``failed`` using the job's outcome.
 
     Creation defaults (everything else stays empty/false):
-    ``title = query``, ``last_viewed_at = created_at``, and
+    ``title = title or query``, ``last_viewed_at = created_at``, and
     ``last_refreshed_at = created_at``.
     """
     client = get_supabase_client()
@@ -78,7 +79,7 @@ def create_discovery(
         "workspace_id": workspace_id,
         "query": str(query or ""),
         "status": "searching",
-        "title": str(query or ""),
+        "title": str(title or query or ""),
         "last_viewed_at": now,
         "last_refreshed_at": now,
         "summary": {},

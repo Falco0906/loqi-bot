@@ -242,11 +242,14 @@ export async function copilotMessage(
       location: string[];
       decision_makers: string[];
       quantity: number | null;
+      discovery_id?: string;
+      job_id?: string;
     };
   },
 ) {
   return fetchWithRetry<{
     ok: boolean;
+    intent?: "conversation" | "discovery" | "discovery_refinement" | "read" | "action" | "clarification";
     messages: LoqiMessage[];
     events: unknown[];
     session_token?: string;

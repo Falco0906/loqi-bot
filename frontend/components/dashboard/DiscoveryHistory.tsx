@@ -72,7 +72,7 @@ function DiscoveryRow({ item }: { item: DiscoveryListItem }) {
     >
       <div className="min-w-0 text-left">
         <p className="text-lg font-serif text-on-surface truncate group-hover:text-primary transition-colors">
-          {item.query || "Untitled research"}
+          {item.title || item.query || "Untitled research"}
         </p>
         {brief && <p className="text-sm text-on-surface-variant/60 truncate mt-1">{brief}</p>}
         <p className="text-[11px] uppercase tracking-wider text-on-surface-variant/40 mt-1">

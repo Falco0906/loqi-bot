@@ -79,6 +79,8 @@ export type ActiveSearch = {
   location: string[];
   decision_makers: string[];
   quantity: number | null;
+  discovery_id?: string;
+  job_id?: string;
 };
 
 type CopilotState = {
@@ -101,7 +103,11 @@ type AgentOperation = {
   search_context: ActiveSearch;
 };
 
-type AgentTurn = { operation?: AgentOperation; error?: string };
+type AgentTurn = {
+  intent?: "conversation" | "discovery" | "discovery_refinement" | "read" | "action" | "clarification";
+  operation?: AgentOperation;
+  error?: string;
+};
 
 type CopilotActions = {
   setOpen: (v: boolean) => void;
@@ -336,17 +342,22 @@ export function CopilotProvider({
         messageHistory: conversation.slice(-12).map((message) => ({ role: message.role, text: message.content })),
         activeSearch: activeSearchRef.current || undefined,
       });
-      if (sessionRef.current !== requestSession || !response.ok) return {};
-      if (response.operation) return { operation: response.operation };
+      if (sessionRef.current !== requestSession) return {};
+      if (response.operation?.kind === "search_discovery") {
+        return { intent: response.intent, operation: response.operation };
+      }
       const generated = response.messages?.find((message) => message.role === "assistant")?.text?.trim();
-      if (!generated) return {};
+      if (!generated) return { intent: response.intent, error: response.ok ? undefined : "Copilot operation failed" };
       const parsed = parseAgentResponse(generated);
       appendMessage({ role: "assistant", content: parsed.content || generated, actions: parsed.actions });
-      return {};
+      return { intent: response.intent, error: response.ok ? undefined : generated };
     } catch (error) {
       // The operational task owns success/failure. A generation outage must
       // never turn a real job into a false success or block its execution.
-      return { error: error instanceof Error ? error.message : "Agent request failed" };
+      return {
+        intent: "clarification",
+        error: error instanceof Error ? error.message : "Agent request failed",
+      };
     }
     return {};
   }, [appendMessage]);
@@ -524,8 +535,13 @@ export function CopilotProvider({
         const turn = await agentTurn;
         const operation = turn?.operation;
         if (operation?.kind === "search_discovery") {
-          activeSearchRef.current = operation.search_context;
-          setActiveSearchState(operation.search_context);
+          const activeContext = {
+            ...operation.search_context,
+            discovery_id: operation.discovery_id,
+            job_id: operation.job_id,
+          };
+          activeSearchRef.current = activeContext;
+          setActiveSearchState(activeContext);
           discoveryId = operation.discovery_id;
           jobId = operation.job_id;
           console.info(`[discovery] agent accepted discovery=${discoveryId.slice(0, 8)} job=${jobId.slice(0, 8)}`);
@@ -847,6 +863,15 @@ export function CopilotProvider({
         if (turn.operation?.kind === "search_discovery") {
           transition({ type: "instruction", kind: "research" });
           beginTask("research", trimmed, Promise.resolve(turn));
+          return;
+        }
+        // The backend is authoritative for Copilot semantics. Do not let the
+        // legacy local task classifier reinterpret a conversation/read/action
+        // response as a product task.
+        if (turn.intent) {
+          busyRef.current = false;
+          setRecentTask(null);
+          setConversationState(turn.error ? "failed" : "idle");
           return;
         }
         const kind = resolveTaskKind(trimmed, pageContextRef.current?.page);

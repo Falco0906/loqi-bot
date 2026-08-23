@@ -64,6 +64,11 @@ class TestCopilotOperationBoundary:
         )
 
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
+        monkeypatch.setattr(
+            main_module.engine,
+            "handle_message",
+            lambda **_kwargs: (_ for _ in ()).throw(AssertionError("legacy engine must not receive Copilot requests")),
+        )
         monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
         monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", fake_knowledge)
         monkeypatch.setattr(main_module, "_create_search_run", fake_create_search_run)
@@ -78,6 +83,35 @@ class TestCopilotOperationBoundary:
         assert result["operation"]["kind"] == "search_discovery"
         assert result["operation"]["discovery_id"] == "discovery-1"
         assert result["operation"]["job_id"] == "job-1"
+
+    @pytest.mark.asyncio
+    async def test_copilot_bootstrap_does_not_fall_into_legacy_engine(self, monkeypatch):
+        summaries = iter([None, {"user_id": "owner-1", "display_name": "user"}])
+        monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: next(summaries))
+        monkeypatch.setattr(main_module.engine, "create_web_session", lambda **_kwargs: {"session_token": "created-session"})
+        monkeypatch.setattr(
+            main_module.engine,
+            "handle_message",
+            lambda **_kwargs: (_ for _ in ()).throw(AssertionError("legacy engine must not receive Copilot bootstrap")),
+        )
+        monkeypatch.setattr(
+            "services.conversational_response_generator.decide_copilot_intent",
+            lambda *_args, **_kwargs: {"intent": "lead_discovery", "query": "restaurant leads", "reason": "explicit operation"},
+        )
+        async def empty_knowledge(*_args, **_kwargs):
+            return SimpleNamespace(to_dict=lambda: {"items": [], "sources": []})
+        monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", empty_knowledge)
+        async def fake_create_search_run(_user_id, _query, _session):
+            return {"discovery_id": "discovery-2", "job_id": "job-2", "status": "queued"}
+        monkeypatch.setattr(main_module, "_create_search_run", fake_create_search_run)
+
+        request = SimpleNamespace(headers=SimpleNamespace(get=lambda _key, default="": default))
+        payload = main_module.SendWebMessageRequest(
+            text="I need restaurant leads",
+            copilot=main_module.CopilotContextModel(current_page="Mission Control", message_history=[]),
+        )
+        result = await main_module.post_web_session_message("missing-session", payload, request)
+        assert result["operation"]["job_id"] == "job-2"
 
 
 class TestSessionCreation:

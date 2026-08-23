@@ -2860,18 +2860,22 @@ async def post_web_session_message(
         summary = await asyncio.to_thread(engine.get_web_session_summary, created["session_token"])
         if summary is None:
             raise HTTPException(status_code=500, detail="Session creation failed")
-        return await asyncio.to_thread(
-            engine.handle_message,
-            channel="web",
-            external_user_id=created["session_token"],
-            text=payload.text,
-            username=summary.get("display_name"),
-        )
+        session_token = created["session_token"]
+        # A Copilot bootstrap must continue through the Copilot owner below.
+        # Only legacy web messages use ConversationEngine.handle_message.
+        if payload.copilot is None:
+            return await asyncio.to_thread(
+                engine.handle_message,
+                channel="web",
+                external_user_id=session_token,
+                text=payload.text,
+                username=summary.get("display_name"),
+            )
 
-    if payload.copilot and payload.copilot.current_page:
+    if payload.copilot is not None:
         log.info(
             "COPILOT_REQUEST path=post_web_session_message page=%s text_chars=%s",
-            payload.copilot.current_page,
+            payload.copilot.current_page or "(unset)",
             len(payload.text or ""),
         )
         workspace_context = _build_copilot_workspace_context(
@@ -2964,7 +2968,7 @@ async def post_web_session_message(
                 "target": "",
             },
         )
-        print(f"[COPILOT_TRACE] page={payload.copilot.current_page} message={payload.text[:60]} history_len={len(payload.copilot.message_history or [])}")
+        print(f"[COPILOT_TRACE] page={payload.copilot.current_page or '(unset)'} message={payload.text[:60]} history_len={len(payload.copilot.message_history or [])}")
         msg = _message(role="assistant", message_type="text", text=response_text)
         return {"ok": True, "messages": [msg], "events": []}
 

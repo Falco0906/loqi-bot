@@ -23,6 +23,7 @@ def _send_openai_request(system_text: str, user_text: str, timeout: int = 30) ->
         _log("OPENAI_API_KEY not configured")
         return None
 
+
     payload = {
         "model": OPENAI_MODEL,
         "input": [
@@ -62,6 +63,48 @@ def _send_openai_request(system_text: str, user_text: str, timeout: int = 30) ->
     except Exception as e:
         _log(f"OpenAI request failed: {e}")
         return None
+
+
+def decide_copilot_intent(
+    user_message: str,
+    *,
+    workspace_context: dict | None = None,
+    message_history: list[dict] | None = None,
+) -> dict:
+    """Make the agent's intent/tool decision before response generation."""
+    system = (
+        "You are Loqi's action router. Return JSON only with keys intent, query, reason.\n"
+        "Allowed intent values: lead_discovery, informational, clarification.\n"
+        "Use lead_discovery when the user asks Loqi to find, source, get, or provide leads, prospects, or companies.\n"
+        "A request such as 'I need restaurant leads' is an explicit operation, not a question about personas.\n"
+        "Use informational for questions or advice, clarification only when genuinely ambiguous.\n"
+        "For follow-ups, use prior user requests and active workspace state: location and quantity changes are\n"
+        "refinements of an active lead_discovery request. For lead_discovery, query must be a complete natural-language\n"
+        "Discovery query including inherited context and the refinement. Never claim job completion.\n"
+    )
+    user = json.dumps({
+        "message": user_message,
+        "history": (message_history or [])[-12:],
+        "workspace_context": workspace_context or {},
+    }, ensure_ascii=False, default=str)
+    raw = _send_openai_request(system, user, timeout=20)
+    if not raw:
+        return {"intent": "clarification", "query": "", "reason": "Intent router unavailable"}
+    try:
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.strip("`").removeprefix("json").strip()
+        decision = json.loads(cleaned)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        _log(f"Copilot intent router returned invalid JSON: {raw[:200]}")
+        return {"intent": "clarification", "query": "", "reason": "Invalid intent decision"}
+    if not isinstance(decision, dict) or decision.get("intent") not in {"lead_discovery", "informational", "clarification"}:
+        return {"intent": "clarification", "query": "", "reason": "Invalid intent decision"}
+    return {
+        "intent": decision["intent"],
+        "query": str(decision.get("query") or "").strip(),
+        "reason": str(decision.get("reason") or "").strip(),
+    }
 
 
 RESPONSE_VARIATIONS = {

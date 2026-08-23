@@ -23,6 +23,26 @@ class TestHealth:
 
 
 class TestCopilotOperationBoundary:
+    def test_agent_intent_router_distinguishes_action_and_refinements(self, monkeypatch):
+        from services.conversational_response_generator import decide_copilot_intent
+
+        decisions = iter([
+            '{"intent":"lead_discovery","query":"restaurant leads","reason":"explicit operation"}',
+            '{"intent":"lead_discovery","query":"restaurant leads in Hyderabad","reason":"location refinement"}',
+            '{"intent":"lead_discovery","query":"restaurant leads in Hyderabad, 100 leads","reason":"quantity refinement"}',
+        ])
+        monkeypatch.setattr(
+            "services.conversational_response_generator._send_openai_request",
+            lambda *_args, **_kwargs: next(decisions),
+        )
+        history = [{"role": "user", "text": "I need restaurant leads"}]
+        first = decide_copilot_intent("I need restaurant leads", message_history=[])
+        second = decide_copilot_intent("Make it Hyderabad", message_history=history)
+        third = decide_copilot_intent("Actually give me 100", message_history=history + [{"role": "user", "text": "Make it Hyderabad"}])
+        assert [first["intent"], second["intent"], third["intent"]] == ["lead_discovery"] * 3
+        assert second["query"] == "restaurant leads in Hyderabad"
+        assert "100" in third["query"]
+
     @pytest.mark.asyncio
     async def test_endpoint_returns_real_discovery_operation_for_explicit_request(self, monkeypatch):
         async def fake_knowledge(*_args, **_kwargs):
@@ -33,6 +53,15 @@ class TestCopilotOperationBoundary:
             assert query == "I need new restaurant leads"
             assert session == "session-1"
             return {"discovery_id": "discovery-1", "job_id": "job-1", "status": "queued"}
+
+        monkeypatch.setattr(
+            "services.conversational_response_generator.decide_copilot_intent",
+            lambda *_args, **_kwargs: {
+                "intent": "lead_discovery",
+                "query": "I need new restaurant leads",
+                "reason": "explicit operation",
+            },
+        )
 
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
         monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
@@ -196,6 +225,11 @@ class TestStructuredContext:
             calls.append((user_id, query, session))
             return {"discovery_id": "discovery-1", "job_id": "job-1", "status": "queued"}
 
+        monkeypatch.setattr(
+            "services.conversational_response_generator.decide_copilot_intent",
+            lambda *_args, **_kwargs: {"intent": "lead_discovery", "query": "I need new restaurant leads", "reason": "explicit operation"},
+        )
+
         monkeypatch.setattr(main_module, "_create_search_run", fake_create_search_run)
         resp = client.post(
             f"/api/web/session/{session_token}/messages",
@@ -216,17 +250,6 @@ class TestStructuredContext:
             "status": "queued",
         }
         assert calls and calls[0][1] == "I need new restaurant leads"
-
-    def test_lead_followups_are_refinements(self):
-        assert main_module._copilot_discovery_query(
-            "Make it Hyderabad",
-            [{"role": "user", "text": "I need restaurant leads"}],
-        ) == "I need restaurant leads; refinement: Make it Hyderabad"
-        assert main_module._copilot_discovery_query(
-            "Actually give me 100",
-            [{"role": "user", "text": "I need restaurant leads"}],
-        ) == "I need restaurant leads; refinement: Actually give me 100"
-
 
 class TestUnknownSession:
     def test_unknown_session_returns_valid_response(self, client):

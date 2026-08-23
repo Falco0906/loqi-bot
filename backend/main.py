@@ -2135,31 +2135,6 @@ class SendWebMessageRequest(BaseModel):
     copilot: CopilotContextModel | None = None
 
 
-def _copilot_discovery_query(text: str, history: list[dict] | None) -> str | None:
-    """Identify explicit Discovery operations without trusting model prose."""
-    value = " ".join(str(text or "").strip().split())
-    lower = value.lower()
-    lead_terms = ("lead", "leads", "prospect", "prospects", "companies", "customers")
-    operation_terms = ("find", "need", "get", "source", "search", "research", "look for", "give me")
-    explicit = any(term in lower for term in lead_terms) and any(term in lower for term in operation_terms)
-    if explicit:
-        return value
-
-    prior = ""
-    for item in reversed(history or []):
-        if str(item.get("role", "")).lower() != "user":
-            continue
-        candidate = str(item.get("text") or item.get("content") or "").strip()
-        candidate_lower = candidate.lower()
-        if any(term in candidate_lower for term in lead_terms) and any(term in candidate_lower for term in operation_terms):
-            prior = candidate
-            break
-    refinement = any(marker in lower for marker in (" in ", "make it", "change it", "actually", "give me", "limit", "location"))
-    if prior and refinement:
-        return f"{prior}; refinement: {value}"
-    return None
-
-
 def _register_outbound_providers() -> None:
     try:
         from services.outbound.outbound_registry import register_outbound_provider
@@ -2929,16 +2904,23 @@ async def post_web_session_message(
             f"timeline_events={len(snapshot.get('timeline', []))} "
             f"memory_action={snapshot.get('memory', {}).get('last_action', 'none')}"
         )
-        discovery_query = _copilot_discovery_query(
+        from services.conversational_response_generator import decide_copilot_intent
+        decision = await asyncio.to_thread(
+            decide_copilot_intent,
             payload.text,
-            payload.copilot.message_history,
+            workspace_context=workspace_context,
+            message_history=payload.copilot.message_history,
         )
-        if discovery_query:
-            started = await _create_search_run(
-                str(summary.get("user_id") or ""),
-                discovery_query,
-                session_token,
-            )
+        if decision.get("intent") == "lead_discovery" and decision.get("query"):
+            try:
+                started = await _create_search_run(
+                    str(summary.get("user_id") or ""),
+                    str(decision["query"]),
+                    session_token,
+                )
+            except Exception as error:
+                log.exception("Copilot Discovery tool failed query=%r", decision.get("query"))
+                raise HTTPException(status_code=502, detail=f"Discovery tool failed: {error}") from error
             operation_message = _message(
                 role="assistant",
                 message_type="tool",

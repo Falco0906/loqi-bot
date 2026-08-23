@@ -91,7 +91,7 @@ type AgentOperation = {
   job_id: string;
 };
 
-type AgentTurn = { operation?: AgentOperation };
+type AgentTurn = { operation?: AgentOperation; error?: string };
 
 type CopilotActions = {
   setOpen: (v: boolean) => void;
@@ -327,9 +327,10 @@ export function CopilotProvider({
       const parsed = parseAgentResponse(generated);
       appendMessage({ role: "assistant", content: parsed.content || generated, actions: parsed.actions });
       return {};
-    } catch {
+    } catch (error) {
       // The operational task owns success/failure. A generation outage must
       // never turn a real job into a false success or block its execution.
+      return { error: error instanceof Error ? error.message : "Agent request failed" };
     }
     return {};
   }, [appendMessage]);
@@ -504,13 +505,14 @@ export function CopilotProvider({
       let discoveryId: string | null = null;
       let jobId: string | null = null;
       try {
-        const operation = (await agentTurn)?.operation;
+        const turn = await agentTurn;
+        const operation = turn?.operation;
         if (operation?.kind === "search_discovery") {
           discoveryId = operation.discovery_id;
           jobId = operation.job_id;
           console.info(`[discovery] agent accepted discovery=${discoveryId.slice(0, 8)} job=${jobId.slice(0, 8)}`);
         } else {
-          failWork(groupId, "I couldn't start the Discovery operation.");
+          failWork(groupId, `I couldn't start the Discovery operation${turn?.error ? `: ${turn.error}` : "."}`);
           return;
         }
       } catch {
@@ -818,28 +820,27 @@ export function CopilotProvider({
       appendMessage({ role: "user", content: trimmed });
 
       const requestSession = sessionRef.current + 1;
-      const agentTurn = askAgent(trimmed, previousMessages, requestSession);
-
-      let kind = resolveTaskKind(trimmed, pageContextRef.current?.page);
-      // Preserve the active operation across natural follow-ups such as
-      // “in Hyderabad” and “give me 100”. The backend receives the complete
-      // history as well, but this keeps the existing canonical job actions
-      // deterministic and avoids starting a clarification dead-end.
-      if (kind === "unknown" && previousMessages.some((message) =>
-        message.role === "user" && resolveTaskKind(message.content, pageContextRef.current?.page) === "research")) {
-        kind = "research";
-      }
-      if (kind === "unknown") {
-        // Never drop an instruction silently: route unclassified input into
-        // the clarification UI (prompt + quick replies) so the user can pick
-        // a task. Discovery never reaches this branch — it always searches.
-        setRecentTask(null);
-        transition({ type: "instruction", kind });
-        return true;
-      }
       sessionRef.current = requestSession;
-      transition({ type: "instruction", kind });
-      beginTask(kind, trimmed, agentTurn);
+      const agentTurn = askAgent(trimmed, previousMessages, requestSession);
+      setConversationState("working");
+      void (async () => {
+        const turn = await agentTurn;
+        if (sessionRef.current !== requestSession) return;
+        if (turn.operation?.kind === "search_discovery") {
+          transition({ type: "instruction", kind: "research" });
+          beginTask("research", trimmed, Promise.resolve(turn));
+          return;
+        }
+        const kind = resolveTaskKind(trimmed, pageContextRef.current?.page);
+        if (kind === "unknown") {
+          busyRef.current = false;
+          setRecentTask(null);
+          setConversationState("idle");
+          return;
+        }
+        transition({ type: "instruction", kind });
+        beginTask(kind, trimmed, Promise.resolve(turn));
+      })();
       return true;
     },
     [transition, beginTask, appendMessage, askAgent, messages],

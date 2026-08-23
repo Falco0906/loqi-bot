@@ -308,11 +308,15 @@ def _requested_leads(discovery: dict[str, Any], decision: dict[str, Any]) -> lis
     selected = page_context.get("selected_leads") or page_context.get("selected_lead_ids")
     if isinstance(selected, list) and selected and isinstance(selected[0], dict):
         selected = [item.get("id") for item in selected]
+    # The selected result supplied by the Copilot/page context is the
+    # authoritative referent for "them". Never let an LLM-emitted lead_ids or
+    # a stale active search replace it, and never fall back to the whole
+    # Discovery when it is present.
     requested = (
-        decision.get("lead_ids")
-        or active_search.get("lead_ids")
+        selected
         or active_search.get("selected_lead_ids")
-        or selected
+        or active_search.get("lead_ids")
+        or decision.get("lead_ids")
         or []
     )
     requested_ids = {str(value) for value in requested if str(value).strip()}

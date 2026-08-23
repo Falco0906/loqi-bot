@@ -12,10 +12,18 @@ test("persisted resource context is flattened for backend page context", () => {
     { page: "Draft Review", draft_id: "page-draft" },
     { campaignId: "campaign-1", draftId: "saved-draft", conversationId: "conversation-1", selectedLeadIds: ["lead-1"] },
   );
-  assert.equal(context.draft_id, "page-draft", "current page selection wins");
+  assert.equal(context.draft_id, "page-draft", "page resource selection wins for its resource type");
   assert.equal(context.campaign_id, "campaign-1");
   assert.equal(context.conversation_id, "conversation-1");
   assert.deepEqual(context.selected_lead_ids, ["lead-1"]);
+});
+
+test("Copilot-ranked selection wins over a broader Discovery table selection", () => {
+  const context = mergeCopilotResourceContext(
+    { selected_lead_ids: Array.from({ length: 25 }, (_, index) => `lead-${index + 1}`) },
+    { selectedLeadIds: ["lead-1", "lead-2", "lead-3", "lead-4"] },
+  );
+  assert.deepEqual(context.selected_lead_ids, ["lead-1", "lead-2", "lead-3", "lead-4"]);
 });
 
 test("an empty page selection does not erase ranked resource selection", () => {

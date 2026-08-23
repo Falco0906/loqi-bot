@@ -162,7 +162,10 @@ def test_campaign_create_uses_selected_ranked_leads_not_entire_discovery():
     }
     selected = _requested_leads(
         discovery,
-        {"page_context": {"selected_lead_ids": ["lead-1", "lead-2", "lead-3", "lead-4", "lead-5"]}},
+        {
+            "lead_ids": [f"lead-{index}" for index in range(1, 7)],
+            "page_context": {"selected_lead_ids": ["lead-1", "lead-2", "lead-3", "lead-4", "lead-5"]},
+        },
     )
     assert [lead["id"] for lead in selected] == ["lead-1", "lead-2", "lead-3", "lead-4", "lead-5"]
 
@@ -176,14 +179,14 @@ async def test_endpoint_rank_then_campaign_returns_assistant_and_attaches_exact_
         "status": "completed",
         "discovery_leads": [
             {"rank": index, "match_score": 100 - index, "workspace_lead": {"id": f"lead-{index}", "lead": {"name": f"Lead {index}"}}}
-            for index in range(1, 21)
+            for index in range(1, 51)
         ],
         "discovery_companies": [],
     }
     persisted = {}
     attached: list[str] = []
     decisions = iter([
-        {"intent": "read", "action": "lead.rank", "limit": 5, "sort": "best"},
+        {"intent": "read", "action": "lead.rank", "limit": 4, "sort": "best"},
         {"intent": "action", "action": "campaign.create", "campaign": {"name": "Cafe owners"}},
     ])
 
@@ -221,13 +224,17 @@ async def test_endpoint_rank_then_campaign_returns_assistant_and_attaches_exact_
     )
     rank_response = await main_module.post_web_session_message("_", rank_payload, request)
     ranked_ids = [lead["id"] for lead in rank_response["messages"][0]["data"]["result"]["leads"]]
-    assert ranked_ids == [f"lead-{index}" for index in range(1, 6)]
+    assert ranked_ids == [f"lead-{index}" for index in range(1, 5)]
 
     campaign_payload = main_module.SendWebMessageRequest(
         text="Create a campaign for them",
         copilot=main_module.CopilotContextModel(
             current_page="Discovery",
-            page_context={"discovery_id": "discovery-1", "selected_lead_ids": ranked_ids},
+            page_context={
+                "discovery_id": "discovery-1",
+                "selected_lead_ids": ranked_ids,
+                "table_selected_lead_ids": [f"lead-{index}" for index in range(1, 26)],
+            },
             message_history=[],
         ),
     )
@@ -235,7 +242,7 @@ async def test_endpoint_rank_then_campaign_returns_assistant_and_attaches_exact_
     assert campaign_response["messages"][0]["role"] == "assistant"
     assert campaign_response["messages"][0]["text"]
     assert attached == ranked_ids
-    assert campaign_response["messages"][0]["data"]["result"]["campaign"]["lead_count"] == 5
+    assert campaign_response["messages"][0]["data"]["result"]["campaign"]["lead_count"] == 4
 
 
 def test_database_failures_are_not_formatted_into_copilot_text():

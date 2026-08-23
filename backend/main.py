@@ -3578,7 +3578,7 @@ async def post_web_session_message(
                     "ok": False,
                     "intent": decision.get("intent"),
                     "messages": [_message(
-                        role="assistant", message_type="tool",
+                        role="assistant", message_type="text",
                         text=str(tool_result.get("reason") or "Campaign operation failed."),
                         data={"tool": tool_name, "status": tool_result.get("status", "failed")},
                     )],
@@ -6300,13 +6300,26 @@ async def save_campaign(session_token: str, payload: SaveCampaignRequest, reques
         "search_query": campaign["search_query"],
     }, actor="user")
     _get_feedback().on_campaign_created(session_token, campaign["id"])
-    await _maybe_auto_strategy(
+    # Campaign creation is complete once the campaign row and selected lead
+    # links are durable. Strategy generation is already a background job; do
+    # not make the manual creation request wait for its metadata write.
+    strategy_task = asyncio.create_task(_maybe_auto_strategy(
         session_token,
         owner_id,
         campaign["id"],
         str(payload.objective or "").strip(),
         campaign,
-    )
+    ))
+
+    def _report_strategy_start_failure(task: asyncio.Task) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            log.exception("[campaign_strategy] auto-start failed campaign=%s", campaign["id"])
+
+    strategy_task.add_done_callback(_report_strategy_start_failure)
     return {"ok": True, "campaign": campaign}
 
 

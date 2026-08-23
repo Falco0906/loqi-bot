@@ -15,10 +15,14 @@ export function mergeCopilotResourceContext(
 ): Record<string, unknown> {
   const pageSelected = pageData?.selected_lead_ids;
   const hasPageSelection = Array.isArray(pageSelected) && pageSelected.length > 0;
+  const copilotSelected = resource?.selectedLeadIds;
+  const hasCopilotSelection = Array.isArray(copilotSelected) && copilotSelected.length > 0;
   return {
     ...(pageData || {}),
     discovery_id: pageData?.discovery_id || resource?.discoveryId,
-    selected_lead_ids: hasPageSelection ? pageSelected : resource?.selectedLeadIds,
+    // A ranked/filter result is the referent for the next Copilot turn. The
+    // page's broader table selection must not replace it.
+    selected_lead_ids: hasCopilotSelection ? copilotSelected : (hasPageSelection ? pageSelected : undefined),
     campaign_id: pageData?.campaign_id || resource?.campaignId,
     draft_id: pageData?.draft_id || resource?.draftId,
     conversation_id: pageData?.conversation_id || resource?.conversationId,

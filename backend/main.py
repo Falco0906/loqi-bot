@@ -3017,7 +3017,12 @@ async def post_web_session_message(
             message_history=payload.copilot.message_history,
             active_search=payload.copilot.active_search,
         )
-        decision = {**decision, "active_search": payload.copilot.active_search or {}}
+        decision = {
+            **decision,
+            "active_search": payload.copilot.active_search or {},
+            "page_context": payload.copilot.page_context or {},
+            "current_page": payload.copilot.current_page or "",
+        }
         from services.copilot_tools import execute_copilot_tool, select_copilot_tool
         tool_name = select_copilot_tool(decision)
         if tool_name:
@@ -3045,20 +3050,26 @@ async def post_web_session_message(
                     "tool": tool_name,
                     "reason": f"{tool_name} failed: {error}",
                 }
-            if tool_name == "discovery.read":
+            if tool_name == "discovery.read" or tool_name.startswith("lead."):
                 if tool_result.get("ok"):
                     result = tool_result.get("result") or {}
+                    if tool_name == "discovery.read":
+                        text = _copilot_read_message(result)
+                    elif tool_name in {"lead.read", "lead.filter", "lead.rank"}:
+                        text = f"I found {result.get('lead_count', 0)} lead(s) in the active Discovery."
+                    else:
+                        text = f"{tool_name.replace('.', ' ').capitalize()} completed for {len(result.get('leads') or [])} lead(s)."
                     return {
                         "ok": True,
                         "intent": decision.get("intent"),
                         "messages": [_message(
                             role="assistant",
                             message_type="text",
-                            text=_copilot_read_message(result),
+                            text=text,
                             data={"tool": tool_name, "result": result},
                         )],
                         "events": [{"type": "tool.completed", "tool": tool_name, "result": result}],
-                        "read_result": result,
+                        "read_result": result if tool_name == "discovery.read" or tool_name.startswith("lead.") else None,
                     }
                 return {
                     "ok": False,

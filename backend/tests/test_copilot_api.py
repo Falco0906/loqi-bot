@@ -110,6 +110,87 @@ class TestCopilotOperationBoundary:
         assert result["ok"] is True
         assert calls == [("u-1", {"industry": ["restaurants"]}, "s-1")]
 
+    def test_lead_actions_select_only_from_structured_contract(self):
+        from services.copilot_tools import select_copilot_tool
+
+        assert select_copilot_tool({"intent": "read", "action": "lead.read"}) == "lead.read"
+        assert select_copilot_tool({"intent": "read", "action": "lead.filter"}) == "lead.filter"
+        assert select_copilot_tool({"intent": "read", "action": "lead.rank"}) == "lead.rank"
+        assert select_copilot_tool({"intent": "action", "action": "lead.attach"}) == "lead.attach"
+        assert select_copilot_tool({"intent": "action", "action": "campaign.launch"}) is None
+
+    @pytest.mark.asyncio
+    async def test_lead_read_filter_and_rank_use_owned_discovery(self, monkeypatch):
+        from services.copilot_tools import execute_copilot_tool
+
+        monkeypatch.setattr(
+            "services.discovery.get_discovery",
+            lambda discovery_id, workspace_id: {
+                "id": discovery_id,
+                "workspace_id": workspace_id,
+                "status": "completed",
+                "discovery_leads": [
+                    {"lead_id": "l-1", "rank": 2, "match_score": 0.4, "workspace_lead": {"id": "wl-1", "title": "Owner", "lead": {"name": "A", "company": "Cafe A"}}},
+                    {"lead_id": "l-2", "rank": 1, "match_score": 0.9, "workspace_lead": {"id": "wl-2", "title": "Founder", "lead": {"name": "B", "company": "Cafe B"}}},
+                ],
+                "discovery_companies": [],
+            },
+        )
+
+        common = {
+            "intent": "read",
+            "active_search": {"discovery_id": "d-1"},
+        }
+        filtered = await execute_copilot_tool(
+            "lead.filter", user_id="u-1", workspace_id="w-1", session_token="s-1",
+            decision={**common, "filters": {"title": "owner"}}, discovery_runner=None,
+        )
+        assert filtered["ok"] is True
+        assert [lead["id"] for lead in filtered["result"]["leads"]] == ["wl-1"]
+
+        ranked = await execute_copilot_tool(
+            "lead.rank", user_id="u-1", workspace_id="w-1", session_token="s-1",
+            decision={**common, "sort": "best"}, discovery_runner=None,
+        )
+        assert [lead["id"] for lead in ranked["result"]["leads"]] == ["wl-2", "wl-1"]
+
+        selected = await execute_copilot_tool(
+            "lead.read", user_id="u-1", workspace_id="w-1", session_token="s-1",
+            decision={**common, "page_context": {"selected_lead_ids": ["wl-2"]}}, discovery_runner=None,
+        )
+        assert [lead["id"] for lead in selected["result"]["leads"]] == ["wl-2"]
+
+    @pytest.mark.asyncio
+    async def test_lead_mutations_require_confirmation_and_use_existing_services(self, monkeypatch):
+        from services.copilot_tools import execute_copilot_tool
+
+        monkeypatch.setattr(
+            "services.discovery.get_discovery",
+            lambda *_args: {
+                "id": "d-1", "status": "completed", "discovery_companies": [],
+                "discovery_leads": [{"lead_id": "l-1", "rank": 1, "workspace_lead": {"id": "wl-1", "email": "a@example.com", "lead": {"name": "A"}}}],
+            },
+        )
+        decision = {"intent": "action", "active_search": {"discovery_id": "d-1"}, "lead_ids": ["wl-1"]}
+        pending = await execute_copilot_tool(
+            "lead.approve", user_id="u-1", workspace_id="w-1", session_token="s-1",
+            decision=decision, discovery_runner=None,
+        )
+        assert pending["ok"] is False
+        assert pending["status"] == "confirmation_required"
+
+        calls = []
+        monkeypatch.setattr(
+            "services.workspace_state.persist_lead_decision",
+            lambda user_id, lead, approved: calls.append((user_id, lead["id"], approved)) or True,
+        )
+        completed = await execute_copilot_tool(
+            "lead.approve", user_id="u-1", workspace_id="w-1", session_token="s-1",
+            decision={**decision, "confirmed": True}, discovery_runner=None,
+        )
+        assert completed["ok"] is True
+        assert calls == [("u-1", "wl-1", True)]
+
     @pytest.mark.asyncio
     async def test_endpoint_conversation_and_read_never_create_discovery(self, monkeypatch):
         decisions = iter([

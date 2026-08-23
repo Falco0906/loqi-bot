@@ -83,6 +83,12 @@ def decide_copilot_intent(
         "Use discovery_refinement only when the user explicitly changes an existing Discovery request.\n"
         "Use read for questions about existing results, such as what was found or which results are best.\n"
         "Use action when the user requests another product operation, even if that capability is not available yet.\n"
+        "For lead operations, set action to exactly one of lead.read, lead.filter, lead.rank, lead.save, "
+        "lead.approve, lead.reject, or lead.attach. Use lead.read/filter/rank for reading existing leads; "
+        "use lead.save/approve/reject/attach only when the user explicitly requests that mutation.\n"
+        "For lead operations, include lead_ids when the user refers to selected leads, filters for field filters, "
+        "sort for ranking, campaign_id for attaching, and confirmed=true only when the user explicitly confirms "
+        "a requested mutation. Never invent lead IDs; resolve references from active_search and page context.\n"
         "Use clarification only when the user's goal is genuinely ambiguous.\n"
         "CRITICAL: active_search is context, not an instruction. It must never turn an unrelated message "
         "such as 'hi' into discovery or discovery_refinement. Only use it for an explicit refinement or read request.\n"
@@ -137,6 +143,11 @@ def decide_copilot_intent(
         "mode": "refine" if decision.get("mode") == "refine" else "new",
         "search_context": context,
         "action": str(decision.get("action") or "").strip(),
+        "lead_ids": [str(item).strip() for item in (decision.get("lead_ids") or []) if str(item).strip()],
+        "filters": decision.get("filters") if isinstance(decision.get("filters"), dict) else {},
+        "sort": str(decision.get("sort") or "").strip(),
+        "campaign_id": str(decision.get("campaign_id") or "").strip(),
+        "confirmed": bool(decision.get("confirmed")),
         "reason": str(decision.get("reason") or "").strip(),
     }
     if intent == "discovery_refinement" and not active_search:

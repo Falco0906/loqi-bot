@@ -1,6 +1,7 @@
 """Native Discovery-selection -> manual Campaign creation regression."""
 
 import asyncio
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -59,6 +60,47 @@ async def test_manual_campaign_returns_after_four_selected_leads_are_durable(mon
     # The response is not held hostage by strategy setup.
     await asyncio.wait_for(strategy_started.wait(), timeout=0.2)
     release_strategy.set()
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_manual_campaign_without_leads_returns_when_compatibility_event_is_slow(monkeypatch):
+    import main as main_module
+
+    event_started = threading.Event()
+    release_event = threading.Event()
+    persisted = {}
+
+    async def persist_campaign(_owner, campaign, workspace_id=""):
+        persisted.update(campaign)
+        return True
+
+    def blocked_event(*_args, **_kwargs):
+        event_started.set()
+        release_event.wait(timeout=2)
+        return True
+
+    monkeypatch.setattr(main_module, "_session_token_from_request", lambda _request: "session-1")
+    monkeypatch.setattr(main_module, "_workspace_owner", lambda *_args, **_kwargs: _async_value("owner-1"))
+    monkeypatch.setattr(main_module, "_resolved_workspace_id_or_default", lambda *_args, **_kwargs: _async_value("workspace-1"))
+    monkeypatch.setattr("services.workspace_state.persist_campaign_row", persist_campaign)
+    monkeypatch.setattr("services.workspace_state.append_event", blocked_event)
+    monkeypatch.setattr(main_module, "record_campaign_created", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_module, "publish", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_module, "_get_feedback", lambda: SimpleNamespace(on_campaign_created=lambda *_args: None))
+
+    response = await main_module.save_campaign(
+        "_",
+        main_module.SaveCampaignRequest(name="Empty campaign", objective="No leads yet"),
+        SimpleNamespace(),
+    )
+
+    assert response["ok"] is True
+    assert response["campaign"]["lead_count"] == 0
+    assert response["campaign"]["leads"] == []
+    assert persisted["id"] == response["campaign"]["id"]
+    await asyncio.to_thread(event_started.wait, 0.2)
+    release_event.set()
     await asyncio.sleep(0)
 
 

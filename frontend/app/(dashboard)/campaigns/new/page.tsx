@@ -20,6 +20,14 @@ export default function NewCampaignPage() {
   const [pendingLeads, setPendingLeads] = useState<Record<string, unknown>[]>([]);
 
   useEffect(() => {
+    const discoveryEntry = Boolean(discoveryId && searchParams?.get("return") === "discovery");
+    if (!discoveryEntry) {
+      // Pending leads are an explicit Discovery -> Campaign handoff only.
+      // A fresh Campaigns-page entry must never inherit that transient state.
+      sessionStorage.removeItem("loqi_pending_campaign_leads");
+      setPendingLeads([]);
+      return;
+    }
     try {
       const raw = sessionStorage.getItem("loqi_pending_campaign_leads");
       if (raw) setPendingLeads(JSON.parse(raw) as Record<string, unknown>[]);

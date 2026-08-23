@@ -6290,7 +6290,23 @@ async def save_campaign(session_token: str, payload: SaveCampaignRequest, reques
                 "lead(s) could not be persisted"
             ),
         )
-    append_event(owner_id, "campaign.created", {"campaign": campaign})
+    # The canonical campaign row and lead links above are the success
+    # boundary. The compatibility workflow-event projection performs a
+    # synchronous Supabase insert, so keep it on the existing path without
+    # making the manual creation request wait for that secondary log write.
+    event_task = asyncio.create_task(asyncio.to_thread(
+        append_event, owner_id, "campaign.created", {"campaign": campaign},
+    ))
+
+    def _report_campaign_event_failure(task: asyncio.Task) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            log.exception("[campaign] compatibility event append failed campaign=%s", campaign["id"])
+
+    event_task.add_done_callback(_report_campaign_event_failure)
     record_campaign_created(session_token, payload.name)
     publish(session_token, WMEventType.CAMPAIGN_CREATED, {
         "id": campaign["id"],

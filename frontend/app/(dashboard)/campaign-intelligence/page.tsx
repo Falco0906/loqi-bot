@@ -8,6 +8,7 @@ import Icon from "../../../components/shared/Icon";
 import CampaignStatusBadge from "../../../components/campaigns/CampaignStatusBadge";
 import { usePageContext } from "../../../hooks/usePageContext";
 import { useActionHandlers } from "../../../hooks/useActionHandlers";
+import { useCopilot } from "../../../contexts/CopilotContext";
 import { useRouter } from "next/navigation";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
@@ -25,6 +26,7 @@ export default function CampaignIntelligencePage() {
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [campaigns, setCampaigns] = useState<CampaignInfo[]>([]);
   const [loading, setLoading] = useState(true);
+  const { analyticsResult } = useCopilot();
 
   const activeCampaignList = campaigns.filter((c) => c.status !== "archived" && c.status !== "completed");
   const campaignNames = activeCampaignList.map((c) => c.name).filter(Boolean);
@@ -35,7 +37,9 @@ export default function CampaignIntelligencePage() {
     total_campaigns: campaigns.length,
     pending_drafts: campaigns.reduce((s, c) => s + c.pending_drafts, 0),
     active_names: campaignNames,
+    campaign_ids: activeCampaignList.map((campaign) => campaign.id),
     statuses: campaignStatuses,
+    analytics: { scope: "workspace", campaignIds: activeCampaignList.map((campaign) => campaign.id) },
     recommended_actions: campaignNames.length > 0 ? "review_drafts, compare_performance" : "create_campaign",
   });
 
@@ -61,6 +65,13 @@ export default function CampaignIntelligencePage() {
       if (res.ok) setCampaigns(res.campaigns);
     }).catch(() => {}).finally(() => setLoading(false));
   }, [sessionToken]);
+
+  useEffect(() => {
+    if (!sessionToken || !analyticsResult) return;
+    void getCampaignSummary(sessionToken).then((res) => {
+      if (res.ok) setCampaigns(res.campaigns);
+    }).catch(() => {});
+  }, [sessionToken, analyticsResult]);
 
   const activeCampaigns = campaigns.filter((c) => c.status !== "archived" && c.status !== "completed");
   const hasDrafts = campaigns.some((c) => c.pending_drafts > 0);

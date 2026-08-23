@@ -11,8 +11,11 @@ import {
   fetchDiscoveryFresh,
   peekCachedDiscovery,
   startDiscoverySearch,
+  workspaceLeadToRecommendation,
 } from "../../lib/repositories";
 import { useTellLoqi } from "../../hooks/useTellLoqi";
+import { useCopilot } from "../../contexts/CopilotContext";
+import { usePageContext } from "../../hooks/usePageContext";
 import { toast } from "../shared/Toast";
 import { addLeadToCampaign, decideLead, listCampaigns } from "../../lib/api";
 import {
@@ -472,8 +475,29 @@ export default function DiscoveryDetailWorkspace({ discoveryId }: { discoveryId:
   const [expandedLead, setExpandedLead] = useState<string | null>(null);
   const [savingSelection, setSavingSelection] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  const { leadResult } = useCopilot();
+  const copilotRecommendations = useMemo(() => {
+    if (!leadResult || leadResult.discovery_id !== discoveryId) return null;
+    return leadResult.leads.map((lead, index) => workspaceLeadToRecommendation(lead, index));
+  }, [leadResult, discoveryId]);
+  useEffect(() => {
+    if (!leadResult || leadResult.discovery_id !== discoveryId) return;
+    void fetchDiscoveryFresh(discoveryId).then((fresh) => {
+      if (fresh) setLive(fresh);
+    });
+  }, [leadResult, discoveryId]);
+  const recommendations = copilotRecommendations ?? view?.recommendations ?? [];
+  usePageContext("Discovery", {
+    discovery_id: discoveryId,
+    selected_lead_ids: Array.from(selectedLeads.keys()),
+    recommendations: recommendations.length,
+    resource_context: {
+      discoveryId,
+      selectedLeadIds: Array.from(selectedLeads.keys()),
+    },
+  });
   const tellLoqi = useTellLoqi("Discovery", {
-    recommendations: view?.recommendations.length ?? 0,
+    recommendations: recommendations.length,
   });
 
   useEffect(() => {
@@ -646,7 +670,7 @@ export default function DiscoveryDetailWorkspace({ discoveryId }: { discoveryId:
     }
   };
 
-  const visible = view?.recommendations.filter((r) => !dismissed.has(r.id)) ?? [];
+  const visible = recommendations.filter((r) => !dismissed.has(r.id));
 
   const attachTarget =
     attachContext?.objective || attachContext?.audience || attachContext?.campaignName || "";
@@ -716,7 +740,7 @@ export default function DiscoveryDetailWorkspace({ discoveryId }: { discoveryId:
     );
   }
 
-  if (!view || view.recommendations.length === 0) {
+  if (!view || recommendations.length === 0) {
     const running = view?.status === "searching" || view?.status === "queued";
     const failed = view?.status === "failed" || view?.status === "cancelled";
     return (
@@ -848,9 +872,9 @@ export default function DiscoveryDetailWorkspace({ discoveryId }: { discoveryId:
                   <span className="bg-surface-container px-3 py-1 rounded-full text-[11px] uppercase tracking-wider text-on-surface-variant font-medium">
                     {view.companyCount} companies
                   </span>
-                  {view.leadCount > 0 && (
+                  {recommendations.length > 0 && (
                     <span className="bg-secondary-container text-on-secondary-container px-3 py-1 rounded-full text-[11px] uppercase tracking-wider font-medium">
-                      {view.leadCount} decision makers
+                      {recommendations.length} decision makers
                     </span>
                   )}
                 </div>

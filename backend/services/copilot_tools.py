@@ -77,10 +77,164 @@ LEAD_TOOLS: dict[str, CopilotTool] = {
 }
 
 
-COPILOT_TOOLS = {**DISCOVERY_TOOLS, **LEAD_TOOLS}
+CAMPAIGN_TOOLS: dict[str, CopilotTool] = {
+    "campaign.list": CopilotTool(
+        name="campaign.list",
+        input_schema={"workspace_id": "authorized workspace"},
+        read_only=True,
+    ),
+    "campaign.read": CopilotTool(
+        name="campaign.read",
+        input_schema={"campaign_id": "owned campaign ID"},
+        read_only=True,
+    ),
+    "campaign.drafts": CopilotTool(
+        name="campaign.drafts",
+        input_schema={"campaign_id": "owned campaign ID"},
+        read_only=True,
+    ),
+    "campaign.create": CopilotTool(
+        name="campaign.create",
+        input_schema={"campaign": "structured campaign fields", "lead_ids": "selected lead IDs"},
+        read_only=False,
+    ),
+    "campaign.refine": CopilotTool(
+        name="campaign.refine",
+        input_schema={"campaign_id": "owned campaign ID", "campaign_updates": "structured updates"},
+        read_only=False,
+    ),
+    "campaign.plan": CopilotTool(
+        name="campaign.plan",
+        input_schema={"campaign_id": "owned campaign ID", "force": "optional regeneration flag"},
+        read_only=False,
+    ),
+    "campaign.generate_drafts": CopilotTool(
+        name="campaign.generate_drafts",
+        input_schema={"campaign_id": "owned campaign ID"},
+        read_only=False,
+    ),
+}
+
+
+OUTREACH_TOOLS: dict[str, CopilotTool] = {
+    "outreach.drafts.read": CopilotTool(
+        name="outreach.drafts.read",
+        input_schema={"draft_id": "optional owned draft ID", "campaign_id": "optional owned campaign ID"},
+        read_only=True,
+    ),
+    "outreach.draft.generate": CopilotTool(
+        name="outreach.draft.generate",
+        input_schema={"campaign_id": "owned campaign ID"},
+        read_only=False,
+    ),
+    "outreach.draft.refine": CopilotTool(
+        name="outreach.draft.refine",
+        input_schema={"draft_id": "owned draft ID", "edit_request": "requested draft change"},
+        read_only=False,
+    ),
+    "outreach.draft.approve": CopilotTool(
+        name="outreach.draft.approve",
+        input_schema={"draft_id": "owned draft ID", "confirmed": "explicit approval"},
+        read_only=False,
+    ),
+    "outreach.draft.schedule": CopilotTool(
+        name="outreach.draft.schedule",
+        input_schema={"draft_id": "owned draft ID", "send_at": "ISO datetime", "confirmed": "explicit confirmation"},
+        read_only=False,
+    ),
+    "outreach.draft.send": CopilotTool(
+        name="outreach.draft.send",
+        input_schema={"draft_id": "owned draft ID", "confirmed": "explicit confirmation"},
+        read_only=False,
+    ),
+}
+
+
+INBOX_TOOLS: dict[str, CopilotTool] = {
+    "inbox.conversation.read": CopilotTool(
+        name="inbox.conversation.read",
+        input_schema={"conversation_id": "owned conversation ID"},
+        read_only=True,
+    ),
+    "inbox.conversation.summary": CopilotTool(
+        name="inbox.conversation.summary",
+        input_schema={"conversation_id": "owned conversation ID"},
+        read_only=True,
+    ),
+    "inbox.conversation.analyze": CopilotTool(
+        name="inbox.conversation.analyze",
+        input_schema={"conversation_id": "owned conversation ID"},
+        read_only=True,
+    ),
+    "inbox.conversation.recommend": CopilotTool(
+        name="inbox.conversation.recommend",
+        input_schema={"conversation_id": "owned conversation ID"},
+        read_only=True,
+    ),
+    "inbox.reply.generate": CopilotTool(
+        name="inbox.reply.generate",
+        input_schema={"conversation_id": "owned conversation ID", "instruction": "optional reply instruction"},
+        read_only=True,
+    ),
+    "inbox.reply.send": CopilotTool(
+        name="inbox.reply.send",
+        input_schema={"conversation_id": "owned conversation ID", "body": "reply body", "confirmed": "explicit confirmation"},
+        read_only=False,
+    ),
+}
+
+
+KNOWLEDGE_TOOLS: dict[str, CopilotTool] = {
+    "knowledge.search": CopilotTool(
+        name="knowledge.search",
+        input_schema={"query": "grounded Knowledge query", "categories": "optional Knowledge categories"},
+        read_only=True,
+    ),
+    "knowledge.read": CopilotTool(
+        name="knowledge.read",
+        input_schema={"item_id": "optional owned Knowledge item ID", "query": "optional Knowledge query"},
+        read_only=True,
+    ),
+}
+
+
+ANALYTICS_TOOLS: dict[str, CopilotTool] = {
+    "analytics.workspace.summary": CopilotTool(
+        name="analytics.workspace.summary",
+        input_schema={"workspace_id": "authorized workspace"},
+        read_only=True,
+    ),
+    "analytics.campaign.summary": CopilotTool(
+        name="analytics.campaign.summary",
+        input_schema={"campaign_id": "owned campaign ID"},
+        read_only=True,
+    ),
+    "analytics.leads.summary": CopilotTool(
+        name="analytics.leads.summary",
+        input_schema={"campaign_id": "optional owned campaign ID"},
+        read_only=True,
+    ),
+}
+
+
+COPILOT_TOOLS = {**DISCOVERY_TOOLS, **LEAD_TOOLS, **CAMPAIGN_TOOLS, **OUTREACH_TOOLS, **INBOX_TOOLS, **KNOWLEDGE_TOOLS, **ANALYTICS_TOOLS}
 
 _LEAD_READ_TOOLS = {"lead.read", "lead.filter", "lead.rank"}
 _LEAD_MUTATION_TOOLS = {"lead.save", "lead.approve", "lead.reject", "lead.attach"}
+_CAMPAIGN_READ_TOOLS = {"campaign.list", "campaign.read", "campaign.drafts"}
+_CAMPAIGN_MUTATION_TOOLS = {"campaign.create", "campaign.refine", "campaign.plan", "campaign.generate_drafts"}
+_OUTREACH_READ_TOOLS = {"outreach.drafts.read"}
+_OUTREACH_MUTATION_TOOLS = {
+    "outreach.draft.generate", "outreach.draft.refine", "outreach.draft.approve",
+    "outreach.draft.schedule", "outreach.draft.send",
+}
+_INBOX_READ_TOOLS = {
+    "inbox.conversation.read", "inbox.conversation.summary", "inbox.conversation.analyze",
+    "inbox.conversation.recommend", "inbox.reply.generate",
+}
+_INBOX_MUTATION_TOOLS = {"inbox.reply.send"}
+_KNOWLEDGE_READ_TOOLS = {"knowledge.search", "knowledge.read"}
+_ANALYTICS_READ_TOOLS = set(ANALYTICS_TOOLS)
 
 
 def select_copilot_tool(decision: dict[str, Any]) -> str | None:
@@ -94,10 +248,26 @@ def select_copilot_tool(decision: dict[str, Any]) -> str | None:
         action = str(decision.get("action") or "").strip()
         if action in _LEAD_READ_TOOLS:
             return action
+        if action in _CAMPAIGN_READ_TOOLS:
+            return action
+        if action in _OUTREACH_READ_TOOLS:
+            return action
+        if action in _INBOX_READ_TOOLS:
+            return action
+        if action in _KNOWLEDGE_READ_TOOLS:
+            return action
+        if action in _ANALYTICS_READ_TOOLS:
+            return action
         return "discovery.read"
     if intent == "action":
         action = str(decision.get("action") or "").strip()
         if action in _LEAD_MUTATION_TOOLS:
+            return action
+        if action in _CAMPAIGN_MUTATION_TOOLS:
+            return action
+        if action in _OUTREACH_MUTATION_TOOLS:
+            return action
+        if action in _INBOX_MUTATION_TOOLS:
             return action
     return None
 
@@ -173,6 +343,11 @@ async def execute_copilot_tool(
     session_token: str,
     decision: dict[str, Any],
     discovery_runner: Callable[..., Awaitable[dict[str, Any]]],
+    campaign_runner: Callable[..., Awaitable[dict[str, Any]]] | None = None,
+    outreach_runner: Callable[..., Awaitable[dict[str, Any]]] | None = None,
+    inbox_runner: Callable[..., Awaitable[dict[str, Any]]] | None = None,
+    knowledge_runner: Callable[..., Awaitable[dict[str, Any]]] | None = None,
+    analytics_runner: Callable[..., Awaitable[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """Execute one validated Discovery tool through existing service boundaries."""
     tool = COPILOT_TOOLS.get(tool_name)
@@ -192,6 +367,86 @@ async def execute_copilot_tool(
                 session_token,
             ),
         }
+
+    if tool_name in CAMPAIGN_TOOLS:
+        if campaign_runner is None:
+            return {
+                "ok": False,
+                "status": "unavailable",
+                "tool": tool_name,
+                "reason": "Campaign operations are not available in this session.",
+            }
+        return await campaign_runner(
+            tool_name,
+            user_id,
+            workspace_id,
+            session_token,
+            decision,
+        )
+
+    if tool_name in OUTREACH_TOOLS:
+        if outreach_runner is None:
+            return {
+                "ok": False,
+                "status": "unavailable",
+                "tool": tool_name,
+                "reason": "Outreach operations are not available in this session.",
+            }
+        return await outreach_runner(
+            tool_name,
+            user_id,
+            workspace_id,
+            session_token,
+            decision,
+        )
+
+    if tool_name in INBOX_TOOLS:
+        if inbox_runner is None:
+            return {
+                "ok": False,
+                "status": "unavailable",
+                "tool": tool_name,
+                "reason": "Inbox operations are not available in this session.",
+            }
+        return await inbox_runner(
+            tool_name,
+            user_id,
+            workspace_id,
+            session_token,
+            decision,
+        )
+
+    if tool_name in KNOWLEDGE_TOOLS:
+        if knowledge_runner is None:
+            return {
+                "ok": False,
+                "status": "unavailable",
+                "tool": tool_name,
+                "reason": "Knowledge retrieval is not available in this session.",
+            }
+        return await knowledge_runner(
+            tool_name,
+            user_id,
+            workspace_id,
+            session_token,
+            decision,
+        )
+
+    if tool_name in ANALYTICS_TOOLS:
+        if analytics_runner is None:
+            return {
+                "ok": False,
+                "status": "unavailable",
+                "tool": tool_name,
+                "reason": "Analytics are not available in this session.",
+            }
+        return await analytics_runner(
+            tool_name,
+            user_id,
+            workspace_id,
+            session_token,
+            decision,
+        )
 
     active_search = decision.get("active_search") or {}
     page_context = decision.get("page_context") or {}

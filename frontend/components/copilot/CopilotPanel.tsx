@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo } from "react";
-import { useCopilot, type CopilotMessage } from "../../contexts/CopilotContext";
+import { useCopilot, type CopilotMessage, type LeadOperationResult, type CampaignOperationResult } from "../../contexts/CopilotContext";
 import QuickReplies from "./QuickReplies";
 import SuggestedActions from "./SuggestedActions";
 import CopilotComposer from "./CopilotComposer";
@@ -11,12 +11,104 @@ import { STATE_LABELS, CLARIFICATION_PROMPT, CLARIFICATION_REPLIES, idleQuickRep
 function MessageBubble({ message, onAction }: { message: CopilotMessage; onAction: (action: Parameters<ReturnType<typeof useCopilot>["executeAction"]>[0]) => void }) {
   const user = message.role === "user";
   const tool = message.role === "tool";
+  const result = message.data?.result as LeadOperationResult | undefined;
+  const leadTool = typeof message.data?.tool === "string" && message.data.tool.startsWith("lead.");
+  const campaignResult = message.data?.result as CampaignOperationResult | undefined;
+  const campaignTool = typeof message.data?.tool === "string" && message.data.tool.startsWith("campaign.");
+  const outreachResult = message.data?.result as { draft?: Record<string, unknown>; drafts?: Array<Record<string, unknown>> } | undefined;
+  const outreachTool = typeof message.data?.tool === "string" && message.data.tool.startsWith("outreach.");
+  const inboxResult = message.data?.result as { conversation?: Record<string, unknown>; summary?: Record<string, unknown>; generation?: Record<string, unknown>; messages?: Array<Record<string, unknown>> } | undefined;
+  const inboxTool = typeof message.data?.tool === "string" && message.data.tool.startsWith("inbox.");
+  const knowledgeResult = message.data?.result as { items?: Array<Record<string, unknown>>; sources?: Array<Record<string, unknown>> } | undefined;
+  const knowledgeTool = typeof message.data?.tool === "string" && message.data.tool.startsWith("knowledge.");
+  const analyticsResult = message.data?.result as { metrics?: Record<string, unknown>; campaigns?: Array<Record<string, unknown>> } | undefined;
+  const analyticsTool = typeof message.data?.tool === "string" && message.data.tool.startsWith("analytics.");
   return (
     <div className={`flex ${user ? "justify-end" : "justify-start"}`}>
       <div className={`${user ? "max-w-[84%] bg-primary text-on-primary rounded-2xl rounded-br-md" : "max-w-[92%]"} ${tool ? "w-full rounded-xl border border-outline-variant/10 bg-surface-container-low/50 px-3.5 py-3" : "px-4 py-3"}`}>
         {!user && tool && <div className="flex items-center gap-2 mb-1.5 text-label-sm text-primary"><span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />Working</div>}
         {!user && !tool && <div className="flex items-center gap-2 mb-1.5 text-label-sm text-on-surface-variant/50"><span className="w-5 h-5 rounded-md bg-primary/10 text-primary flex items-center justify-center"><Icon name="smart_toy" className="text-xs" /></span>Loqi</div>}
         <p className={`whitespace-pre-wrap text-body-sm leading-relaxed ${user ? "" : "text-on-surface"}`}>{message.content}</p>
+        {!user && leadTool && result && Array.isArray(result.leads) && result.leads.length > 0 && (
+          <div className="mt-3 space-y-1.5" data-testid="copilot-lead-results">
+            {result.leads.map((lead, index) => {
+              const name = String(lead.name || [lead.first_name, lead.last_name].filter(Boolean).join(" ") || lead.company || `Lead ${index + 1}`);
+              const detail = [lead.title, lead.company, lead.location_label || lead.city].filter(Boolean).map(String).join(" · ");
+              return (
+                <div key={String(lead.id || index)} className="rounded-lg border border-outline-variant/10 bg-surface-container-low/50 px-3 py-2">
+                  <p className="text-body-sm font-medium text-on-surface">{index + 1}. {name}</p>
+                  {detail && <p className="text-label-sm text-on-surface-variant/60 mt-0.5">{detail}</p>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {!user && campaignTool && campaignResult && (
+          <div className="mt-3 space-y-1.5" data-testid="copilot-campaign-results">
+            {(campaignResult.campaigns || []).map((campaign, index) => (
+              <div key={String(campaign.id || index)} className="rounded-lg border border-outline-variant/10 bg-surface-container-low/50 px-3 py-2">
+                <p className="text-body-sm font-medium text-on-surface">{String(campaign.name || `Campaign ${index + 1}`)}</p>
+                <p className="text-label-sm text-on-surface-variant/60 mt-0.5">{String(campaign.status || "planning")} · {Number(campaign.lead_count || 0)} leads</p>
+              </div>
+            ))}
+            {campaignResult.campaign && (
+              <div className="rounded-lg border border-outline-variant/10 bg-surface-container-low/50 px-3 py-2">
+                <p className="text-body-sm font-medium text-on-surface">{String(campaignResult.campaign.name || "Campaign")}</p>
+                <p className="text-label-sm text-on-surface-variant/60 mt-0.5">{String(campaignResult.campaign.status || "planning")} · {Number(campaignResult.campaign.lead_count || 0)} leads</p>
+              </div>
+            )}
+            {campaignResult.drafts && <p className="text-label-sm text-on-surface-variant/60">{campaignResult.drafts.length} draft(s)</p>}
+          </div>
+        )}
+        {!user && outreachTool && outreachResult && (
+          <div className="mt-3 space-y-1.5" data-testid="copilot-outreach-results">
+            {(outreachResult.drafts || (outreachResult.draft ? [outreachResult.draft] : [])).map((draft, index) => (
+              <div key={String(draft.id || index)} className="rounded-lg border border-outline-variant/10 bg-surface-container-low/50 px-3 py-2">
+                <p className="text-body-sm font-medium text-on-surface">{String(draft.subject || `Draft ${index + 1}`)}</p>
+                <p className="text-label-sm text-on-surface-variant/60 mt-0.5">{String(draft.status || "pending")}{draft.text ? ` · ${String(draft.text).slice(0, 120)}` : ""}</p>
+              </div>
+            ))}
+          </div>
+        )}
+        {!user && inboxTool && inboxResult && (
+          <div className="mt-3 space-y-1.5" data-testid="copilot-inbox-results">
+            {inboxResult.summary && <div className="rounded-lg border border-outline-variant/10 bg-surface-container-low/50 px-3 py-2"><p className="text-label-sm text-on-surface-variant/70">{String(inboxResult.summary.last_summary || inboxResult.summary.next_action || "Conversation summary available")}</p></div>}
+            {inboxResult.generation && <div className="rounded-lg border border-outline-variant/10 bg-surface-container-low/50 px-3 py-2"><p className="text-body-sm font-medium text-on-surface">Reply draft</p><p className="text-label-sm text-on-surface-variant/60 mt-0.5">{String((((inboxResult.generation.variants as Array<Record<string, unknown>> | undefined)?.[0]?.drafts as Array<Record<string, unknown>> | undefined)?.[0]?.content) || "Draft generated")}</p></div>}
+            {inboxResult.conversation && <p className="text-label-sm text-on-surface-variant/60">{String(inboxResult.conversation.subject || "Conversation")}</p>}
+          </div>
+        )}
+        {!user && knowledgeTool && knowledgeResult && (knowledgeResult.items?.length || knowledgeResult.sources?.length) ? (
+          <div className="mt-3 space-y-1.5" data-testid="copilot-knowledge-results">
+            {(knowledgeResult.items || []).map((item, index) => (
+              <div key={String(item.id || index)} className="rounded-lg border border-outline-variant/10 bg-surface-container-low/50 px-3 py-2">
+                <p className="text-body-sm font-medium text-on-surface">{String(item.title || "Knowledge")}</p>
+                <p className="text-label-sm text-on-surface-variant/60 mt-0.5">{String(item.summary || item.category || "Workspace context")}</p>
+              </div>
+            ))}
+            {(knowledgeResult.sources || []).map((source, index) => (
+              <div key={String(source.id || `source-${index}`)} className="rounded-lg border border-outline-variant/10 bg-surface-container-low/50 px-3 py-2">
+                <p className="text-body-sm font-medium text-on-surface">{String(source.title || "Knowledge source")}</p>
+                <p className="text-label-sm text-on-surface-variant/60 mt-0.5">{String(source.reference || source.content || "Workspace source")}</p>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {!user && analyticsTool && analyticsResult && (
+          <div className="mt-3 space-y-1.5" data-testid="copilot-analytics-results">
+            {Object.entries(analyticsResult.metrics || {}).map(([key, value]) => (
+              <div key={key} className="flex items-center justify-between rounded-lg border border-outline-variant/10 bg-surface-container-low/50 px-3 py-2">
+                <span className="text-label-sm text-on-surface-variant/65">{key.replaceAll("_", " ")}</span>
+                <span className="text-body-sm font-semibold text-on-surface">{typeof value === "object" ? JSON.stringify(value) : String(value)}</span>
+              </div>
+            ))}
+            {(analyticsResult.campaigns || []).map((campaign, index) => (
+              <div key={String(campaign.id || index)} className="rounded-lg border border-outline-variant/10 bg-surface-container-low/50 px-3 py-2">
+                <p className="text-body-sm font-medium text-on-surface">{String(campaign.name || "Campaign")}</p>
+                <p className="text-label-sm text-on-surface-variant/60 mt-0.5">{String(campaign.lead_count || 0)} leads</p>
+              </div>
+            ))}
+          </div>
+        )}
         {!user && message.actions && message.actions.length > 0 && <SuggestedActions actions={message.actions} onExecute={onAction} />}
       </div>
     </div>

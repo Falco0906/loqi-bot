@@ -24,6 +24,7 @@ import { draftBucket, DraftBucket } from "../../lib/draft-lifecycle";
 import { usePageContext } from "../../hooks/usePageContext";
 import { useActionHandlers } from "../../hooks/useActionHandlers";
 import { useWorkspaceSearch } from "../../contexts/SearchContext";
+import { useCopilot } from "../../contexts/CopilotContext";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
@@ -130,6 +131,7 @@ export default function DraftReviewWorkspace() {
   const { query: searchQuery } = useWorkspaceSearch();
   const [testRecipient, setTestRecipient] = useState("");
   const aiEndRef = useRef<HTMLDivElement>(null);
+  const { outreachResult } = useCopilot();
 
   const testRecipientEnabled =
     process.env.NEXT_PUBLIC_DEV_MODE === "true" || process.env.NODE_ENV === "development";
@@ -140,14 +142,6 @@ export default function DraftReviewWorkspace() {
       setExpandedCampaigns(new Set([campaignParam]));
     }
   }, [campaignParam]);
-
-  usePageContext("Draft Review", {
-    drafts_count: drafts.length,
-    selected_index: selectedIndex,
-    filter_campaign: filterCampaign,
-    filter_status: filterStatus,
-    selected_name: (drafts[selectedIndex]?.lead as Record<string, unknown>)?.name as string | null ?? null,
-  });
 
   useActionHandlers({
     approve: handleApprove,
@@ -248,6 +242,12 @@ export default function DraftReviewWorkspace() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  useEffect(() => {
+    if (!outreachResult) return;
+    invalidateDraftCaches();
+    void fetchData();
+  }, [outreachResult, fetchData]);
 
   const campaignMap = new Map<string, string>();
   for (const c of campaigns) {
@@ -358,6 +358,19 @@ export default function DraftReviewWorkspace() {
 
   const selected = allSortedDrafts[selectedIndex]?.draft || null;
   const selectedCampaignId = allSortedDrafts[selectedIndex]?.campaignId || null;
+  usePageContext("Draft Review", {
+    drafts_count: drafts.length,
+    selected_index: selectedIndex,
+    filter_campaign: filterCampaign,
+    filter_status: filterStatus,
+    selected_name: (selected?.lead as Record<string, unknown>)?.name as string | null ?? null,
+    draft_id: selected?.id || "",
+    campaign_id: selectedCampaignId || filterCampaign || "",
+    resource_context: {
+      draftId: selected?.id || undefined,
+      campaignId: selectedCampaignId || filterCampaign || undefined,
+    },
+  });
   const selectedLeadEmail = ((selected?.lead?.email as string) || "").trim();
   const noRecipientEmail = !!selected && !selectedLeadEmail;
 

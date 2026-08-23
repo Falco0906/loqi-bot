@@ -23,6 +23,192 @@ class TestHealth:
 
 
 class TestCopilotOperationBoundary:
+    def test_analytics_actions_select_read_tools(self):
+        from services.copilot_tools import select_copilot_tool
+
+        assert select_copilot_tool({"intent": "read", "action": "analytics.workspace.summary"}) == "analytics.workspace.summary"
+        assert select_copilot_tool({"intent": "read", "action": "analytics.campaign.summary"}) == "analytics.campaign.summary"
+        assert select_copilot_tool({"intent": "read", "action": "analytics.leads.summary"}) == "analytics.leads.summary"
+
+    @pytest.mark.asyncio
+    async def test_analytics_workspace_returns_authoritative_snapshot_metrics(self, monkeypatch):
+        monkeypatch.setattr(
+            "services.workspace_state.load_workspace_state",
+            lambda *_args, **_kwargs: {"campaigns": [{"id": "c-1", "name": "Outbound", "lead_count": 12, "status": "planning"}], "drafts": []},
+        )
+        monkeypatch.setattr(
+            "services.workspace_snapshot.build_snapshot",
+            lambda *_args, **_kwargs: {"total_leads": 12, "campaign_count": 1, "drafts": {"total": 0, "pending": 0, "approved": 0}, "campaigns_ready": 0, "campaigns_draft_review": 0, "campaigns": [{"id": "c-1", "name": "Outbound", "lead_count": 12}], "analysis": {}},
+        )
+        result = await main_module._run_copilot_analytics(
+            "analytics.workspace.summary", "owner-1", "workspace-1", "session-1", {"page_context": {}},
+        )
+        assert result["ok"] is True
+        assert result["result"]["metrics"]["total_leads"] == 12
+        assert result["result"]["metrics"]["campaign_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_analytics_campaign_requires_real_selected_campaign(self, monkeypatch):
+        monkeypatch.setattr(
+            "services.workspace_state.load_workspace_state",
+            lambda *_args, **_kwargs: {"campaigns": [], "drafts": []},
+        )
+        result = await main_module._run_copilot_analytics(
+            "analytics.campaign.summary", "owner-1", "workspace-1", "session-1", {"page_context": {}},
+        )
+        assert result["ok"] is False
+        assert result["status"] == "unavailable"
+        assert "No campaign" in result["reason"]
+
+    def test_knowledge_actions_select_read_tools(self):
+        from services.copilot_tools import select_copilot_tool
+
+        assert select_copilot_tool({"intent": "read", "action": "knowledge.search"}) == "knowledge.search"
+        assert select_copilot_tool({"intent": "read", "action": "knowledge.read"}) == "knowledge.read"
+
+    @pytest.mark.asyncio
+    async def test_knowledge_search_returns_canonical_retrieval(self, monkeypatch):
+        from services.knowledge.context_adapter import KnowledgePromptContext
+
+        async def fake_retrieve(*_args, **_kwargs):
+            return KnowledgePromptContext(
+                query="ICP",
+                categories=("icp",),
+                items=[{"id": "k-1", "title": "ICP", "category": "icp", "summary": "Mid-market operators"}],
+                sources=[],
+            )
+
+        monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", fake_retrieve)
+        result = await main_module._run_copilot_knowledge(
+            "knowledge.search", "owner-1", "workspace-1", "session-1",
+            {"user_message": "what is our ICP?", "knowledge_categories": ["icp"], "page_context": {}},
+        )
+        assert result["ok"] is True
+        assert result["result"]["items"][0]["id"] == "k-1"
+
+    @pytest.mark.asyncio
+    async def test_knowledge_empty_result_is_explicit_not_fabricated(self, monkeypatch):
+        from services.knowledge.context_adapter import KnowledgePromptContext
+
+        async def fake_retrieve(*_args, **_kwargs):
+            return KnowledgePromptContext(query="unknown", items=[], sources=[])
+
+        monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", fake_retrieve)
+        result = await main_module._run_copilot_knowledge(
+            "knowledge.search", "owner-1", "workspace-1", "session-1",
+            {"user_message": "what do we know about unknown?", "page_context": {}},
+        )
+        assert result["ok"] is True
+        assert result["status"] == "empty"
+        assert result["result"]["items"] == []
+        assert "No matching Knowledge" in result["reason"]
+
+    def test_inbox_actions_select_existing_contract(self):
+        from services.copilot_tools import select_copilot_tool
+
+        assert select_copilot_tool({"intent": "read", "action": "inbox.conversation.read"}) == "inbox.conversation.read"
+        assert select_copilot_tool({"intent": "read", "action": "inbox.conversation.summary"}) == "inbox.conversation.summary"
+        assert select_copilot_tool({"intent": "read", "action": "inbox.reply.generate"}) == "inbox.reply.generate"
+        assert select_copilot_tool({"intent": "action", "action": "inbox.reply.send"}) == "inbox.reply.send"
+
+    @pytest.mark.asyncio
+    async def test_inbox_read_returns_authoritative_conversation_data(self, monkeypatch):
+        from services.conversations.conversation_models import Conversation
+        from services.conversations.conversation_store import conversation_store
+
+        convo = Conversation(conversation_id="conversation-1", owner_id="owner-1", subject="Question about pricing")
+        monkeypatch.setattr(conversation_store, "get_conversation", lambda _cid: convo)
+        monkeypatch.setattr(conversation_store, "get_messages_for_conversation", lambda _cid: [])
+        result = await main_module._run_copilot_inbox(
+            "inbox.conversation.read", "owner-1", "workspace-1", "session-1",
+            {"conversation_id": "conversation-1", "page_context": {}},
+        )
+        assert result["ok"] is True
+        assert result["result"]["conversation"]["conversation_id"] == "conversation-1"
+        assert result["result"]["conversation"]["subject"] == "Question about pricing"
+
+    @pytest.mark.asyncio
+    async def test_inbox_send_requires_confirmation_before_existing_send_route(self, monkeypatch):
+        from services.conversations.conversation_models import Conversation
+        from services.conversations.conversation_store import conversation_store
+
+        convo = Conversation(conversation_id="conversation-1", owner_id="owner-1")
+        monkeypatch.setattr(conversation_store, "get_conversation", lambda _cid: convo)
+        called = False
+
+        async def must_not_send(*_args, **_kwargs):
+            nonlocal called
+            called = True
+
+        monkeypatch.setattr(main_module, "send_conversation_reply_route", must_not_send)
+        result = await main_module._run_copilot_inbox(
+            "inbox.reply.send", "owner-1", "workspace-1", "session-1",
+            {"conversation_id": "conversation-1", "reply_body": "Thanks"},
+        )
+        assert result["ok"] is False
+        assert result["status"] == "confirmation_required"
+        assert called is False
+
+    def test_outreach_actions_select_existing_contract(self):
+        from services.copilot_tools import select_copilot_tool
+
+        assert select_copilot_tool({"intent": "read", "action": "outreach.drafts.read"}) == "outreach.drafts.read"
+        assert select_copilot_tool({"intent": "action", "action": "outreach.draft.refine"}) == "outreach.draft.refine"
+        assert select_copilot_tool({"intent": "action", "action": "outreach.draft.send"}) == "outreach.draft.send"
+
+    @pytest.mark.asyncio
+    async def test_outreach_read_uses_owned_workspace_drafts(self, monkeypatch):
+        monkeypatch.setattr(
+            "services.workspace_state.load_drafts_only",
+            lambda _user, _workspace: [{"id": "draft-1", "campaign_id": "campaign-1", "subject": "Hello", "text": "Hi there", "status": "pending"}],
+        )
+        result = await main_module._run_copilot_outreach(
+            "outreach.drafts.read", "owner-1", "workspace-1", "session-1",
+            {"page_context": {"campaign_id": "campaign-1"}},
+        )
+        assert result["ok"] is True
+        assert result["result"]["drafts"][0]["id"] == "draft-1"
+
+    @pytest.mark.asyncio
+    async def test_outreach_send_and_schedule_require_explicit_confirmation(self, monkeypatch):
+        monkeypatch.setattr(
+            "services.workspace_state.load_drafts_only",
+            lambda _user, _workspace: [{"id": "draft-1", "subject": "Hello", "text": "Hi", "status": "pending"}],
+        )
+        for tool in ("outreach.draft.send", "outreach.draft.schedule"):
+            result = await main_module._run_copilot_outreach(
+                tool, "owner-1", "workspace-1", "session-1", {"draft_id": "draft-1"},
+            )
+            assert result["ok"] is False
+            assert result["status"] == "confirmation_required"
+
+    @pytest.mark.asyncio
+    async def test_outreach_endpoint_returns_authoritative_draft_result(self, monkeypatch):
+        monkeypatch.setattr(
+            "services.conversational_response_generator.decide_copilot_intent",
+            lambda *_args, **_kwargs: {"intent": "read", "action": "outreach.drafts.read", "search_context": {}, "reason": "read drafts"},
+        )
+        monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
+        monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
+        monkeypatch.setattr(
+            "services.knowledge.context_adapter.retrieve_knowledge_context",
+            lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}),
+        )
+        monkeypatch.setattr("services.workspace_state.ensure_workspace", lambda _user_id: "workspace-1")
+
+        async def fake_outreach_runner(*_args, **_kwargs):
+            return {"ok": True, "status": "completed", "tool": "outreach.drafts.read", "result": {"drafts": [{"id": "draft-1", "subject": "Hello"}]}}
+
+        monkeypatch.setattr(main_module, "_run_copilot_outreach", fake_outreach_runner)
+        request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
+        payload = main_module.SendWebMessageRequest(
+            text="show my drafts",
+            copilot=main_module.CopilotContextModel(current_page="Outreach", page_context={"campaign_id": "campaign-1"}, message_history=[]),
+        )
+        result = await main_module.post_web_session_message("session-1", payload, request)
+        assert result["messages"][0]["data"]["tool"] == "outreach.drafts.read"
+        assert result["messages"][0]["data"]["result"]["drafts"][0]["id"] == "draft-1"
+
     def test_discovery_title_is_natural_and_separate_from_provider_query(self):
         title = main_module._discovery_title_from_search_context
         assert title({"industry": ["cafe"]}) == "Cafe leads"
@@ -144,6 +330,48 @@ class TestCopilotOperationBoundary:
         assert select_copilot_tool(owners) == "lead.filter"
         assert owners["filters"] == {"title": "restaurant owner"}
 
+    def test_campaign_intents_select_existing_campaign_tools(self):
+        from services.copilot_tools import select_copilot_tool
+
+        assert select_copilot_tool({"intent": "read", "action": "campaign.list"}) == "campaign.list"
+        assert select_copilot_tool({"intent": "read", "action": "campaign.drafts"}) == "campaign.drafts"
+        assert select_copilot_tool({"intent": "action", "action": "campaign.create"}) == "campaign.create"
+        assert select_copilot_tool({"intent": "action", "action": "campaign.plan"}) == "campaign.plan"
+        assert select_copilot_tool({"intent": "action", "action": "campaign.generate_drafts"}) == "campaign.generate_drafts"
+
+    @pytest.mark.asyncio
+    async def test_campaign_operation_returns_authoritative_result(self, monkeypatch):
+        monkeypatch.setattr(
+            "services.conversational_response_generator.decide_copilot_intent",
+            lambda *_args, **_kwargs: {"intent": "read", "action": "campaign.list", "search_context": {}, "reason": "list campaigns"},
+        )
+        monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
+        monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
+        monkeypatch.setattr(
+            "services.knowledge.context_adapter.retrieve_knowledge_context",
+            lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}),
+        )
+        monkeypatch.setattr("services.workspace_state.ensure_workspace", lambda _user_id: "workspace-1")
+
+        async def fake_campaign_runner(*_args, **_kwargs):
+            return {
+                "ok": True,
+                "status": "completed",
+                "tool": "campaign.list",
+                "result": {"campaigns": [{"id": "c-1", "name": "Restaurant outreach", "status": "planning", "lead_count": 5}]},
+            }
+
+        monkeypatch.setattr(main_module, "_run_copilot_campaign", fake_campaign_runner)
+        request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
+        payload = main_module.SendWebMessageRequest(
+            text="show my campaigns",
+            copilot=main_module.CopilotContextModel(current_page="Campaigns", message_history=[]),
+        )
+        result = await main_module.post_web_session_message("session-1", payload, request)
+        assert result["intent"] == "read"
+        assert result["messages"][0]["data"]["tool"] == "campaign.list"
+        assert result["messages"][0]["data"]["result"]["campaigns"][0]["id"] == "c-1"
+
     @pytest.mark.asyncio
     async def test_lead_read_filter_and_rank_use_owned_discovery(self, monkeypatch):
         from services.copilot_tools import execute_copilot_tool
@@ -215,6 +443,50 @@ class TestCopilotOperationBoundary:
         )
         assert completed["ok"] is True
         assert calls == [("u-1", "wl-1", True)]
+
+    @pytest.mark.asyncio
+    async def test_endpoint_lead_rank_returns_authoritative_visible_result(self, monkeypatch):
+        monkeypatch.setattr(
+            "services.conversational_response_generator.decide_copilot_intent",
+            lambda *_args, **_kwargs: {
+                "intent": "read", "action": "lead.rank", "sort": "best", "limit": 1,
+                "search_context": {}, "reason": "rank active Discovery",
+            },
+        )
+        monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
+        monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
+        monkeypatch.setattr(
+            "services.knowledge.context_adapter.retrieve_knowledge_context",
+            lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}),
+        )
+        monkeypatch.setattr("services.workspace_state.ensure_workspace", lambda _user_id: "workspace-1")
+        monkeypatch.setattr(
+            "services.discovery.get_discovery",
+            lambda *_args: {
+                "id": "d-1", "status": "completed", "discovery_companies": [],
+                "discovery_leads": [
+                    {"lead_id": "wl-1", "rank": 1, "match_score": 0.95,
+                     "workspace_lead": {"id": "wl-1", "title": "Owner", "lead": {"name": "Best Lead"}}},
+                    {"lead_id": "wl-2", "rank": 2, "match_score": 0.4,
+                     "workspace_lead": {"id": "wl-2", "title": "Founder", "lead": {"name": "Other Lead"}}},
+                ],
+            },
+        )
+        request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
+        payload = main_module.SendWebMessageRequest(
+            text="find the best 5",
+            copilot=main_module.CopilotContextModel(
+                current_page="Discovery",
+                active_search={"discovery_id": "d-1"},
+                message_history=[],
+            ),
+        )
+        result = await main_module.post_web_session_message("session-1", payload, request)
+        message = result["messages"][0]
+        assert result["intent"] == "read"
+        assert message["data"]["tool"] == "lead.rank"
+        assert message["data"]["result"]["discovery_id"] == "d-1"
+        assert [lead["id"] for lead in message["data"]["result"]["leads"]] == ["wl-1"]
 
     @pytest.mark.asyncio
     async def test_endpoint_conversation_and_read_never_create_discovery(self, monkeypatch):

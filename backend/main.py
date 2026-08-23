@@ -2215,6 +2215,464 @@ async def _run_copilot_discovery(
     )
 
 
+async def _run_copilot_campaign(
+    tool_name: str,
+    user_id: str,
+    workspace_id: str,
+    session_token: str,
+    decision: dict[str, Any],
+) -> dict[str, Any]:
+    """Campaign tool adapter over the existing workspace and job services."""
+    from services.workspace_state import (
+        append_event,
+        load_campaign_state,
+        load_workspace_state,
+        persist_campaign_lead_awaited,
+        persist_campaign_row,
+        persist_campaign_update_awaited,
+    )
+    from services.workspace_snapshot import enrich_campaigns
+
+    page_context = decision.get("page_context") or {}
+    campaign_id = str(
+        decision.get("campaign_id")
+        or page_context.get("campaign_id")
+        or page_context.get("active_campaign_id")
+        or ""
+    ).strip()
+
+    def enriched(campaigns: list[dict[str, Any]], drafts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return enrich_campaigns(campaigns, drafts)
+
+    if tool_name == "campaign.list":
+        state = await asyncio.to_thread(load_workspace_state, user_id, False, workspace_id)
+        campaigns = state.get("campaigns") or []
+        drafts = state.get("drafts") or []
+        return {"ok": True, "status": "completed", "tool": tool_name, "result": {"campaigns": enriched(campaigns, drafts)}}
+
+    if not campaign_id and tool_name != "campaign.create":
+        return {"ok": False, "status": "unavailable", "tool": tool_name, "reason": "No active campaign is selected."}
+
+    if tool_name in {"campaign.read", "campaign.drafts"}:
+        campaign = await asyncio.to_thread(load_campaign_state, user_id, campaign_id, workspace_id=workspace_id)
+        if not campaign:
+            return {"ok": False, "status": "failed", "tool": tool_name, "reason": "The selected campaign is not available in this workspace."}
+        drafts = await asyncio.to_thread(
+            lambda: [d for d in load_workspace_state(user_id, False, workspace_id).get("drafts", []) if d.get("campaign_id") == campaign_id]
+        )
+        result = {"campaign": enriched([campaign], drafts)[0], "drafts": drafts}
+        if tool_name == "campaign.drafts":
+            result = {"campaign_id": campaign_id, "drafts": drafts}
+        return {"ok": True, "status": "completed", "tool": tool_name, "result": result}
+
+    if tool_name == "campaign.create":
+        campaign_input = decision.get("campaign") or {}
+        if not isinstance(campaign_input, dict):
+            campaign_input = {}
+        active_search = decision.get("active_search") or {}
+        discovery_id = str(campaign_input.get("discovery_id") or active_search.get("discovery_id") or "").strip()
+        leads: list[dict[str, Any]] = []
+        if discovery_id:
+            from services.copilot_tools import _discovery_leads, _requested_leads
+            from services.discovery import get_discovery
+            discovery = await asyncio.to_thread(get_discovery, discovery_id, workspace_id)
+            if discovery:
+                leads = _requested_leads(discovery, decision)
+        now = datetime.now(timezone.utc).isoformat()
+        campaign = {
+            "id": str(uuid.uuid4()),
+            "name": str(campaign_input.get("name") or "New campaign").strip(),
+            "objective": str(campaign_input.get("objective") or "").strip(),
+            "search_query": str(campaign_input.get("search_query") or "").strip(),
+            "discovery_id": discovery_id,
+            "lead_count": len(leads),
+            "leads": leads,
+            "status": "planning",
+            "strategy": campaign_input.get("strategy") if isinstance(campaign_input.get("strategy"), dict) else None,
+            "created_at": now,
+            "updated_at": now,
+        }
+        if not await persist_campaign_row(user_id, campaign, workspace_id=workspace_id):
+            return {"ok": False, "status": "failed", "tool": tool_name, "reason": "Campaign could not be persisted."}
+        for lead in leads:
+            if not await persist_campaign_lead_awaited(user_id, campaign["id"], lead, workspace_id=workspace_id):
+                return {"ok": False, "status": "failed", "tool": tool_name, "reason": "Campaign was created but a lead could not be persisted."}
+        append_event(user_id, "campaign.created", {"campaign": campaign})
+        await _maybe_auto_strategy(session_token, user_id, campaign["id"], campaign["objective"], campaign)
+        saved = await asyncio.to_thread(load_campaign_state, user_id, campaign["id"], workspace_id=workspace_id) or campaign
+        return {"ok": True, "status": "completed", "tool": tool_name, "result": {"campaign": saved}}
+
+    target = await asyncio.to_thread(load_campaign_state, user_id, campaign_id, workspace_id=workspace_id)
+    if not target:
+        return {"ok": False, "status": "failed", "tool": tool_name, "reason": "The selected campaign is not available in this workspace."}
+
+    if tool_name == "campaign.refine":
+        requested = decision.get("campaign_updates") or decision.get("campaign") or {}
+        updates = {key: requested[key] for key in ("name", "objective", "strategy") if key in requested}
+        if not updates:
+            return {"ok": False, "status": "unavailable", "tool": tool_name, "reason": "No campaign changes were specified."}
+        if not await persist_campaign_update_awaited(user_id, campaign_id, updates, workspace_id=workspace_id):
+            return {"ok": False, "status": "failed", "tool": tool_name, "reason": "Campaign changes could not be persisted."}
+        updated = await asyncio.to_thread(load_campaign_state, user_id, campaign_id, workspace_id=workspace_id) or {**target, **updates}
+        return {"ok": True, "status": "completed", "tool": tool_name, "result": {"campaign": updated}}
+
+    if tool_name == "campaign.plan":
+        objective = str(target.get("objective") or "").strip()
+        if not objective:
+            return {"ok": False, "status": "failed", "tool": tool_name, "reason": "Campaign objective is required before planning."}
+        if not (target.get("leads") or []):
+            return {"ok": False, "status": "failed", "tool": tool_name, "reason": "Research prospects before planning the campaign."}
+        force = bool(decision.get("force"))
+        strategy = target.get("strategy") if isinstance(target.get("strategy"), dict) else None
+        if strategy and not force and str(strategy.get("objective") or strategy.get("campaign_objective") or "").strip() == objective:
+            return {"ok": True, "status": "completed", "tool": tool_name, "result": {"campaign": target, "reused": True}}
+        job_id, status = await _enqueue_strategy_job(session_token, user_id, campaign_id, objective, target)
+        return {"ok": True, "status": "accepted", "tool": tool_name, "operation": {"kind": tool_name, "campaign_id": campaign_id, "job_id": job_id, "status": status}, "result": {"campaign": target}}
+
+    if tool_name == "campaign.generate_drafts":
+        leads = target.get("leads") or []
+        if not leads:
+            return {"ok": False, "status": "failed", "tool": tool_name, "reason": "No leads found in the campaign."}
+        active_job = next((job for job in batch_jobs.values() if job.get("campaign_id") == campaign_id and job.get("status") == "processing"), None)
+        if active_job:
+            batch_id = str(active_job.get("batch_id") or "")
+            total = int(active_job.get("total") or len(leads))
+        else:
+            batch_id = str(uuid.uuid4())
+            total = len(leads)
+            _create_batch_job(batch_id, campaign_id, total)
+            started_at = datetime.now(timezone.utc).isoformat()
+            if not await persist_campaign_update_awaited(user_id, campaign_id, {"generation": {"batch_id": batch_id, "total": total, "completed": 0, "status": "processing", "started_at": started_at}}, workspace_id=workspace_id):
+                batch_jobs.pop(batch_id, None)
+                return {"ok": False, "status": "failed", "tool": tool_name, "reason": "Draft generation could not be started."}
+            _launch_batch_task(session_token, batch_id, leads, user_id)
+        return {"ok": True, "status": "accepted", "tool": tool_name, "operation": {"kind": tool_name, "campaign_id": campaign_id, "batch_id": batch_id, "status": "processing", "total": total}, "result": {"campaign": target}}
+
+    return {"ok": False, "status": "unsupported", "tool": tool_name}
+
+
+async def _run_copilot_outreach(
+    tool_name: str,
+    user_id: str,
+    workspace_id: str,
+    session_token: str,
+    decision: dict[str, Any],
+) -> dict[str, Any]:
+    """Thin Copilot adapter over the canonical workspace/outbound draft paths."""
+    from services.workspace_state import load_drafts_only, persist_draft_update_awaited
+
+    page = decision.get("page_context") or {}
+    draft_id = str(decision.get("draft_id") or page.get("draft_id") or page.get("active_draft_id") or "").strip()
+    campaign_id = str(decision.get("campaign_id") or page.get("campaign_id") or page.get("active_campaign_id") or "").strip()
+    drafts = await asyncio.to_thread(load_drafts_only, user_id, workspace_id)
+    if campaign_id:
+        drafts = [draft for draft in drafts if str(draft.get("campaign_id") or "") == campaign_id]
+    selected_ids = decision.get("draft_ids") or page.get("selected_draft_ids") or []
+    if isinstance(selected_ids, list) and selected_ids:
+        drafts = [draft for draft in drafts if str(draft.get("id")) in {str(item) for item in selected_ids}]
+    if draft_id:
+        drafts = [draft for draft in drafts if str(draft.get("id")) == draft_id]
+
+    if tool_name == "outreach.drafts.read":
+        return {"ok": True, "status": "completed", "tool": tool_name,
+                "result": {"drafts": drafts, "count": len(drafts), "campaign_id": campaign_id}}
+    if not drafts and tool_name != "outreach.draft.generate":
+        return {"ok": False, "status": "unavailable", "tool": tool_name,
+                "reason": "No owned draft matches the current Copilot context."}
+
+    if tool_name == "outreach.draft.refine":
+        edit_request = str(decision.get("edit_request") or decision.get("reason") or "").strip()
+        if not edit_request:
+            return {"ok": False, "status": "unavailable", "tool": tool_name, "reason": "Tell me how to refine the draft."}
+        target = drafts[0]
+        previous = str(target.get("text") or target.get("body") or "")
+        rewrite = await asyncio.to_thread(
+            execute_rewrite, previous, "custom", target.get("lead") or {}, edit_request,
+        )
+        updated_text = str(getattr(rewrite, "text", "") or previous)
+        if not await persist_draft_update_awaited(user_id, str(target.get("id")), {"body": updated_text, "text": updated_text, "status": "pending"}, workspace_id=workspace_id):
+            return {"ok": False, "status": "failed", "tool": tool_name, "reason": "Draft refinement could not be persisted."}
+        target = {**target, "text": updated_text, "body": updated_text, "status": "pending"}
+        await _emit_draft_event(user_id, "draft.updated", draft_id=str(target.get("id")), campaign_id=str(target.get("campaign_id") or ""))
+        return {"ok": True, "status": "completed", "tool": tool_name, "result": {"draft": target, "drafts": [target]}}
+
+    if tool_name == "outreach.draft.generate":
+        if not campaign_id:
+            return {"ok": False, "status": "unavailable", "tool": tool_name, "reason": "Select a campaign before generating drafts."}
+        # Reuse the campaign's existing batch job and draft persistence path;
+        # this does not create a second outreach pipeline.
+        result = await _run_copilot_campaign(
+            "campaign.generate_drafts", user_id, workspace_id, session_token,
+            {**decision, "campaign_id": campaign_id},
+        )
+        return {**result, "tool": tool_name}
+
+    target = drafts[0]
+    target_id = str(target.get("id") or "")
+    if tool_name in {"outreach.draft.approve", "outreach.draft.schedule", "outreach.draft.send"} and not decision.get("confirmed"):
+        return {"ok": False, "status": "confirmation_required", "tool": tool_name,
+                "reason": "Please explicitly confirm before approving, scheduling, or sending this draft."}
+
+    from services.outbound.draft_store import draft_store as outbound_store
+    outbound = outbound_store.get(target_id)
+    if outbound is None:
+        _sync_draft_to_outbound(target, session_token, owner_id=user_id)
+        outbound = outbound_store.get(target_id)
+    if outbound is None or not _outbound_draft_owned_by(outbound, user_id):
+        return {"ok": False, "status": "failed", "tool": tool_name, "reason": "The draft is not owned by this workspace."}
+
+    if tool_name == "outreach.draft.approve":
+        approved = outbound_store.approve(target_id)
+        if not approved:
+            return {"ok": False, "status": "failed", "tool": tool_name, "reason": "Draft approval failed."}
+        await persist_draft_update_awaited(user_id, target_id, {"status": "approved"}, workspace_id=workspace_id)
+        await _emit_draft_event(user_id, "draft.approved", draft_id=target_id, campaign_id=str(target.get("campaign_id") or ""))
+        return {"ok": True, "status": "completed", "tool": tool_name, "result": {"draft": _outbound_to_legacy_draft(approved)}}
+
+    provider_id = _get_outbound_provider_for_draft(outbound, user_id)
+    if not provider_id:
+        return {"ok": False, "status": "failed", "tool": tool_name, "reason": "No authorized Gmail provider is available."}
+    if tool_name == "outreach.draft.schedule":
+        from services.outbound.outbound_scheduler import outbound_scheduler
+        send_at = str(decision.get("send_at") or "").strip()
+        result = outbound_scheduler.schedule(target_id, provider_id, send_at) if send_at else {"ok": False, "error": "A send time is required."}
+        if result.get("ok"):
+            await persist_draft_update_awaited(user_id, target_id, {"status": "scheduled"}, workspace_id=workspace_id)
+            await _emit_draft_event(user_id, "draft.scheduled", draft_id=target_id, campaign_id=str(target.get("campaign_id") or ""))
+    else:
+        result = outbound_executor.execute("send_reply", {
+            "provider_id": provider_id, "draft_id": target_id,
+            "conversation_id": outbound.conversation_id, "thread_id": outbound.thread_id,
+            "workflow_id": outbound.workflow_id, "subject": outbound.subject, "body": outbound.body,
+            "recipient": {"email": outbound.recipient.email, "name": outbound.recipient.name},
+            "sender": {"email": outbound.sender.email, "name": outbound.sender.name},
+        })
+        if result.get("ok"):
+            outbound_store.mark_sent(target_id)
+            await persist_draft_update_awaited(user_id, target_id, {"status": "sent"}, workspace_id=workspace_id)
+            await _emit_draft_event(user_id, "draft.sent", draft_id=target_id, campaign_id=str(target.get("campaign_id") or ""))
+    if not result.get("ok"):
+        return {"ok": False, "status": "failed", "tool": tool_name, "reason": result.get("error", "Outreach operation failed.")}
+    refreshed = outbound_store.get(target_id) or outbound
+    return {"ok": True, "status": "completed", "tool": tool_name,
+            "result": {"draft": _outbound_to_legacy_draft(refreshed), "operation": result}}
+
+
+async def _run_copilot_inbox(
+    tool_name: str,
+    user_id: str,
+    workspace_id: str,
+    session_token: str,
+    decision: dict[str, Any],
+    request: Request | None = None,
+) -> dict[str, Any]:
+    """Copilot adapter over the canonical conversation and reply services."""
+    from services.conversations.conversation_store import conversation_store
+    from services.conversation_intelligence.intelligence_pipeline import IntelligencePipeline
+    from services.intent_detector import detect_intents
+    from services.reasoning.reasoning_pipeline import get_pipeline as get_reasoning_pipeline
+
+    page = decision.get("page_context") or {}
+    conversation_id = str(
+        decision.get("conversation_id")
+        or page.get("conversation_id")
+        or page.get("active_conversation_id")
+        or page.get("thread_id")
+        or ""
+    ).strip()
+    convo = conversation_store.get_conversation(conversation_id) if conversation_id else None
+    if not convo or not _conversation_owned_by(convo, user_id):
+        return {"ok": False, "status": "unavailable", "tool": tool_name,
+                "reason": "No owned Inbox conversation is selected."}
+    messages = conversation_store.get_messages_for_conversation(conversation_id)
+    latest = messages[-1] if messages else None
+    latest_text = (latest.body or latest.body_preview or "") if latest else ""
+    subject = (latest.subject if latest else "") or convo.subject
+
+    if tool_name == "inbox.conversation.read":
+        return {"ok": True, "status": "completed", "tool": tool_name,
+                "result": {"conversation": convo.to_dict(), "messages": [m.to_dict() for m in messages]}}
+    if tool_name == "inbox.conversation.summary":
+        return {"ok": True, "status": "completed", "tool": tool_name,
+                "result": {"conversation_id": conversation_id, "summary": convo.summary.to_dict(), "status": convo.status.value}}
+
+    intelligence = None
+    if tool_name in {"inbox.conversation.analyze", "inbox.conversation.recommend", "inbox.reply.generate"}:
+        intelligence = IntelligencePipeline().analyze_message(
+            message_body=latest_text, lead_id=conversation_id, subject=subject,
+        )
+    if tool_name == "inbox.conversation.analyze":
+        reasoning = get_reasoning_pipeline().reason(intelligence)
+        return {"ok": True, "status": "completed", "tool": tool_name,
+                "result": {"conversation_id": conversation_id, "intelligence": intelligence.to_dict(), "reasoning": reasoning.to_dict()}}
+    if tool_name == "inbox.conversation.recommend":
+        signals = detect_signals(latest_text)
+        recommendation = recommend_followup(
+            detect_intents(latest_text), signals, ConversationStage.ENGAGED,
+        )
+        return {"ok": True, "status": "completed", "tool": tool_name,
+                "result": {"conversation_id": conversation_id, "recommendation": recommendation.model_dump()}}
+    if tool_name == "inbox.reply.generate":
+        from services.reply_generation.generation_pipeline import GenerationPipeline
+        from services.reply_generation.generation_models import GenerationStyle
+        knowledge_context = {}
+        try:
+            from services.knowledge.context_adapter import retrieve_knowledge_context
+            retrieved = await retrieve_knowledge_context(
+                user_id, query=" ".join(part for part in ("reply", subject, latest_text[:500]) if part),
+                categories=["company", "messaging", "sales_offer"], limit=8,
+            )
+            knowledge_context = retrieved.to_dict()
+        except Exception as error:
+            log.warning("Copilot Inbox Knowledge retrieval skipped: %s", error)
+        reasoning = get_reasoning_pipeline().reason(intelligence)
+        recent = []
+        for message in messages[-3:]:
+            preview = message.body_preview or (message.body or "")[:200]
+            if preview:
+                recent.append(f"[{'Prospect' if message.direction == 'inbound' else 'You'}]: {preview}")
+        result = await asyncio.to_thread(
+            GenerationPipeline().generate,
+            intelligence=intelligence, reasoning=reasoning,
+            styles=[GenerationStyle.PROFESSIONAL], variant_count=1,
+            latest_messages=recent,
+            instruction=str(decision.get("edit_request") or "").strip() or None,
+            knowledge_context=knowledge_context,
+        )
+        return {"ok": True, "status": "completed", "tool": tool_name,
+                "result": {"conversation_id": conversation_id, "generation": result.to_dict()}}
+    if tool_name == "inbox.reply.send":
+        if not decision.get("confirmed"):
+            return {"ok": False, "status": "confirmation_required", "tool": tool_name,
+                    "reason": "Please explicitly confirm before sending this reply."}
+        if not decision.get("reply_body"):
+            return {"ok": False, "status": "unavailable", "tool": tool_name,
+                    "reason": "A reply body is required before sending."}
+        if request is None:
+            return {"ok": False, "status": "failed", "tool": tool_name, "reason": "Authenticated Inbox send context is unavailable."}
+        try:
+            sent = await send_conversation_reply_route(
+                session_token, conversation_id,
+                SendConversationReplyRequest(body=decision["reply_body"]), request,
+            )
+        except HTTPException as error:
+            return {"ok": False, "status": "failed", "tool": tool_name, "reason": str(error.detail)}
+        return {"ok": True, "status": "completed", "tool": tool_name, "result": sent}
+    return {"ok": False, "status": "unsupported", "tool": tool_name}
+
+
+async def _run_copilot_knowledge(
+    tool_name: str,
+    user_id: str,
+    workspace_id: str,
+    session_token: str,
+    decision: dict[str, Any],
+) -> dict[str, Any]:
+    """Read-only Copilot adapter over the canonical Knowledge service."""
+    from services.knowledge.context_adapter import retrieve_knowledge_context
+    from services.knowledge.service import KnowledgeService, item_to_dict
+
+    page = decision.get("page_context") or {}
+    query = str(decision.get("knowledge_query") or decision.get("user_message") or "").strip()
+    context_parts = []
+    for key in ("company_name", "company", "lead_name", "lead_company", "campaign_name"):
+        value = page.get(key)
+        if value and str(value).strip() not in query:
+            context_parts.append(str(value).strip())
+    if context_parts:
+        query = " ".join([query, *context_parts]).strip()
+    categories = decision.get("knowledge_categories") or []
+    if not isinstance(categories, list):
+        categories = []
+
+    if tool_name == "knowledge.read" and decision.get("knowledge_item_id"):
+        item = await KnowledgeService().get_item(workspace_id, decision["knowledge_item_id"])
+        if item is None:
+            return {"ok": False, "status": "failed", "tool": tool_name, "reason": "Knowledge item not found in this workspace."}
+        return {"ok": True, "status": "completed", "tool": tool_name,
+                "result": {"items": [item_to_dict(item)], "sources": [], "query": query}}
+
+    context = await retrieve_knowledge_context(
+        user_id, query=query, categories=categories, limit=8,
+    )
+    result = context.to_dict()
+    result["context"] = {"page": page, "workspace_id": workspace_id}
+    if not result.get("items") and not result.get("sources"):
+        return {"ok": True, "status": "empty", "tool": tool_name, "result": result,
+                "reason": "No matching Knowledge was found in this workspace."}
+    return {"ok": True, "status": "completed", "tool": tool_name, "result": result}
+
+
+async def _run_copilot_analytics(
+    tool_name: str,
+    user_id: str,
+    workspace_id: str,
+    session_token: str,
+    decision: dict[str, Any],
+) -> dict[str, Any]:
+    """Read-only adapter over the existing workspace snapshot aggregations."""
+    from services.workspace_state import load_workspace_state, load_campaign_state
+    from services.workspace_snapshot import build_snapshot, enrich_campaigns
+
+    page = decision.get("page_context") or {}
+    campaign_id = str(
+        decision.get("campaign_id")
+        or page.get("campaign_id")
+        or page.get("active_campaign_id")
+        or ""
+    ).strip()
+    state = await asyncio.to_thread(load_workspace_state, user_id, False, workspace_id)
+    campaigns = state.get("campaigns") or []
+    drafts = state.get("drafts") or []
+    enriched = enrich_campaigns(campaigns, drafts)
+    total_leads = sum(int(c.get("lead_count") or 0) for c in campaigns)
+
+    if tool_name == "analytics.campaign.summary":
+        if not campaign_id:
+            return {"ok": False, "status": "unavailable", "tool": tool_name, "reason": "No campaign is selected for this metric."}
+        campaign = await asyncio.to_thread(load_campaign_state, user_id, campaign_id, workspace_id=workspace_id)
+        if not campaign:
+            return {"ok": False, "status": "failed", "tool": tool_name, "reason": "The selected campaign is not available in this workspace."}
+        target = next((item for item in enriched if str(item.get("id")) == campaign_id), campaign)
+        result = {"campaign": target, "metrics": {
+            "lead_count": target.get("lead_count", 0),
+            "pending_drafts": target.get("pending_drafts", 0),
+            "approved_drafts": target.get("approved_drafts", 0),
+            "sent_drafts": target.get("sent_drafts", 0),
+            "status": target.get("status", ""),
+            "current_step": target.get("current_step", ""),
+            "updated_at": target.get("updated_at", ""),
+        }}
+        return {"ok": True, "status": "completed", "tool": tool_name, "result": result}
+
+    snapshot = await asyncio.to_thread(
+        build_snapshot, session_token, campaigns, drafts, total_leads, False, user_id,
+    )
+    if tool_name == "analytics.leads.summary":
+        selected = [c for c in enriched if not campaign_id or str(c.get("id")) == campaign_id]
+        if campaign_id and not selected:
+            return {"ok": False, "status": "failed", "tool": tool_name, "reason": "The selected campaign is not available in this workspace."}
+        return {"ok": True, "status": "completed", "tool": tool_name, "result": {
+            "campaign_id": campaign_id,
+            "lead_count": sum(int(c.get("lead_count") or 0) for c in selected) if campaign_id else snapshot.get("total_leads", total_leads),
+            "campaigns": [{"id": c.get("id"), "name": c.get("name"), "lead_count": c.get("lead_count", 0)} for c in selected],
+        }}
+
+    if tool_name == "analytics.workspace.summary":
+        return {"ok": True, "status": "completed", "tool": tool_name, "result": {
+            "metrics": {
+                "total_leads": snapshot.get("total_leads", total_leads),
+                "campaign_count": snapshot.get("campaign_count", len(campaigns)),
+                "drafts": snapshot.get("drafts", {}),
+                "campaigns_ready": snapshot.get("campaigns_ready", 0),
+                "campaigns_draft_review": snapshot.get("campaigns_draft_review", 0),
+            },
+            "campaigns": snapshot.get("campaigns", []),
+            "analysis": snapshot.get("analysis", {}),
+        }}
+    return {"ok": False, "status": "unsupported", "tool": tool_name}
+
+
 def _copilot_read_message(result: dict) -> str:
     status = str(result.get("status") or "")
     if status != "completed":
@@ -3019,6 +3477,7 @@ async def post_web_session_message(
         )
         decision = {
             **decision,
+            "user_message": payload.text,
             "active_search": payload.copilot.active_search or {},
             "page_context": payload.copilot.page_context or {},
             "current_page": payload.copilot.current_page or "",
@@ -3041,6 +3500,11 @@ async def post_web_session_message(
                     session_token=session_token,
                     decision=decision,
                     discovery_runner=_run_copilot_discovery,
+                    campaign_runner=_run_copilot_campaign,
+                    outreach_runner=_run_copilot_outreach,
+                    inbox_runner=lambda *args: _run_copilot_inbox(*args, request=request),
+                    knowledge_runner=_run_copilot_knowledge,
+                    analytics_runner=_run_copilot_analytics,
                 )
             except Exception as error:
                 log.exception("Copilot tool failed tool=%s", tool_name)
@@ -3050,6 +3514,166 @@ async def post_web_session_message(
                     "tool": tool_name,
                     "reason": f"{tool_name} failed: {error}",
                 }
+            if tool_name.startswith("campaign."):
+                if tool_result.get("ok"):
+                    result = tool_result.get("result") or {}
+                    campaigns = result.get("campaigns") or []
+                    campaign = result.get("campaign") or {}
+                    drafts = result.get("drafts") or []
+                    if tool_name == "campaign.list":
+                        text = f"You have {len(campaigns)} campaign(s) in this workspace."
+                    elif tool_name == "campaign.drafts":
+                        text = f"I found {len(drafts)} draft(s) for this campaign."
+                    elif campaign:
+                        text = f"Campaign “{campaign.get('name') or 'Untitled campaign'}” is ready in your workspace."
+                    else:
+                        text = f"{tool_name.replace('.', ' ').capitalize()} completed."
+                    response: dict[str, Any] = {
+                        "ok": True,
+                        "intent": decision.get("intent"),
+                        "messages": [_message(
+                            role="assistant", message_type="text", text=text,
+                            data={"tool": tool_name, "result": result, "operation": tool_result.get("operation")},
+                        )],
+                        "events": [{"type": "tool.completed", "tool": tool_name, "result": result}],
+                    }
+                    if tool_result.get("operation"):
+                        response["operation"] = tool_result["operation"]
+                    return response
+                return {
+                    "ok": False,
+                    "intent": decision.get("intent"),
+                    "messages": [_message(
+                        role="assistant", message_type="tool",
+                        text=str(tool_result.get("reason") or "Campaign operation failed."),
+                        data={"tool": tool_name, "status": tool_result.get("status", "failed")},
+                    )],
+                    "events": [{"type": "tool.failed", "tool": tool_name}],
+                    "operation": {"kind": tool_name, "status": tool_result.get("status", "failed"), "error": tool_result.get("reason")},
+                }
+
+            if tool_name.startswith("outreach."):
+                if tool_result.get("ok"):
+                    result = tool_result.get("result") or {}
+                    drafts = result.get("drafts") or ([] if not result.get("draft") else [result.get("draft")])
+                    if tool_name == "outreach.drafts.read":
+                        text = f"I found {len(drafts)} draft(s) in the current workspace."
+                    elif tool_name == "outreach.draft.generate":
+                        text = "Draft generation has started for this campaign."
+                    else:
+                        text = f"{tool_name.replace('.', ' ').capitalize()} completed."
+                    response = {
+                        "ok": True,
+                        "intent": decision.get("intent"),
+                        "messages": [_message(
+                            role="assistant", message_type="text", text=text,
+                            data={"tool": tool_name, "result": result, "operation": result.get("operation")},
+                        )],
+                        "events": [{"type": "tool.completed", "tool": tool_name, "result": result}],
+                    }
+                    if result.get("operation"):
+                        response["operation"] = result["operation"]
+                    return response
+                return {
+                    "ok": False,
+                    "intent": decision.get("intent"),
+                    "messages": [_message(
+                        role="assistant", message_type="tool",
+                        text=str(tool_result.get("reason") or "Outreach operation failed."),
+                        data={"tool": tool_name, "status": tool_result.get("status", "failed")},
+                    )],
+                    "events": [{"type": "tool.failed", "tool": tool_name}],
+                    "operation": {"kind": tool_name, "status": tool_result.get("status", "failed"), "error": tool_result.get("reason")},
+                }
+
+            if tool_name.startswith("inbox."):
+                if tool_result.get("ok"):
+                    result = tool_result.get("result") or {}
+                    if tool_name == "inbox.conversation.summary":
+                        summary = result.get("summary") or {}
+                        text = str(summary.get("last_summary") or "I found the current conversation summary.")
+                    elif tool_name == "inbox.reply.generate":
+                        text = "I drafted a reply for the current conversation."
+                    elif tool_name == "inbox.reply.send":
+                        text = "Reply sent successfully."
+                    else:
+                        text = f"{tool_name.replace('.', ' ').capitalize()} completed."
+                    return {
+                        "ok": True,
+                        "intent": decision.get("intent"),
+                        "messages": [_message(
+                            role="assistant", message_type="text", text=text,
+                            data={"tool": tool_name, "result": result},
+                        )],
+                        "events": [{"type": "tool.completed", "tool": tool_name, "result": result}],
+                    }
+                return {
+                    "ok": False,
+                    "intent": decision.get("intent"),
+                    "messages": [_message(
+                        role="assistant", message_type="tool",
+                        text=str(tool_result.get("reason") or "Inbox operation failed."),
+                        data={"tool": tool_name, "status": tool_result.get("status", "failed")},
+                    )],
+                    "events": [{"type": "tool.failed", "tool": tool_name}],
+                    "operation": {"kind": tool_name, "status": tool_result.get("status", "failed"), "error": tool_result.get("reason")},
+                }
+
+            if tool_name.startswith("knowledge."):
+                if tool_result.get("ok"):
+                    result = tool_result.get("result") or {}
+                    found = len(result.get("items") or []) + len(result.get("sources") or [])
+                    if found:
+                        text = f"I found {found} matching Knowledge entr{'y' if found == 1 else 'ies'} in your workspace."
+                    else:
+                        text = "I couldn't find matching Knowledge in your workspace, so I won't infer an answer."
+                    return {
+                        "ok": True,
+                        "intent": decision.get("intent"),
+                        "messages": [_message(
+                            role="assistant", message_type="text", text=text,
+                            data={"tool": tool_name, "result": result, "grounded": bool(found)},
+                        )],
+                        "events": [{"type": "tool.completed", "tool": tool_name, "result": result}],
+                    }
+                return {
+                    "ok": False,
+                    "intent": decision.get("intent"),
+                    "messages": [_message(
+                        role="assistant", message_type="tool",
+                        text=str(tool_result.get("reason") or "Knowledge retrieval failed."),
+                        data={"tool": tool_name, "status": tool_result.get("status", "failed")},
+                    )],
+                    "events": [{"type": "tool.failed", "tool": tool_name}],
+                    "operation": {"kind": tool_name, "status": tool_result.get("status", "failed"), "error": tool_result.get("reason")},
+                }
+
+            if tool_name.startswith("analytics."):
+                if tool_result.get("ok"):
+                    result = tool_result.get("result") or {}
+                    metrics = result.get("metrics") or {}
+                    text = f"I found {len(metrics)} authoritative metric field(s) for this view." if metrics else "The analytics result contains no metric fields for this context."
+                    return {
+                        "ok": True,
+                        "intent": decision.get("intent"),
+                        "messages": [_message(
+                            role="assistant", message_type="text", text=text,
+                            data={"tool": tool_name, "result": result, "authoritative": True},
+                        )],
+                        "events": [{"type": "tool.completed", "tool": tool_name, "result": result}],
+                    }
+                return {
+                    "ok": False,
+                    "intent": decision.get("intent"),
+                    "messages": [_message(
+                        role="assistant", message_type="tool",
+                        text=str(tool_result.get("reason") or "Analytics are unavailable for this context."),
+                        data={"tool": tool_name, "status": tool_result.get("status", "failed")},
+                    )],
+                    "events": [{"type": "tool.failed", "tool": tool_name}],
+                    "operation": {"kind": tool_name, "status": tool_result.get("status", "failed"), "error": tool_result.get("reason")},
+                }
+
             if tool_name == "discovery.read" or tool_name.startswith("lead."):
                 if tool_result.get("ok"):
                     result = tool_result.get("result") or {}

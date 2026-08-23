@@ -14,6 +14,8 @@ import {
   sendConversationReply,
   sendConversationFollowUp,
 } from "../../../../lib/api";
+import { usePageContext } from "../../../../hooks/usePageContext";
+import { useCopilot } from "../../../../contexts/CopilotContext";
 import {
   classLabel,
   classTone,
@@ -49,6 +51,12 @@ export default function ConversationWorkspacePage({ params }: { params: Params }
   const [sending, setSending] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [testRecipient, setTestRecipient] = useState("");
+  const { inboxResult } = useCopilot();
+
+  usePageContext("Conversation", {
+    conversation_id: id,
+    resource_context: { conversationId: id },
+  });
 
   const testRecipientEnabled =
     process.env.NEXT_PUBLIC_DEV_MODE === "true" || process.env.NODE_ENV === "development";
@@ -115,6 +123,11 @@ export default function ConversationWorkspacePage({ params }: { params: Params }
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!inboxResult || String(inboxResult.conversation_id || inboxResult.conversation?.conversation_id || "") !== id) return;
+    void load();
+  }, [inboxResult, id, load]);
 
   /* Primary action mode from the actual conversation state/history:
      - follow_up: no inbound reply yet and a follow-up is due → FOLLOW-UP

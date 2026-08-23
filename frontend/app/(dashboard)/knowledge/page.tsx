@@ -7,6 +7,7 @@ import EmptyState from "../../../components/shared/EmptyState";
 import Icon from "../../../components/shared/Icon";
 import { toast } from "../../../components/shared/Toast";
 import { usePageContext } from "../../../hooks/usePageContext";
+import { useCopilot } from "../../../contexts/CopilotContext";
 import {
   archiveKnowledgeItem,
   archiveKnowledgeSource,
@@ -185,8 +186,14 @@ export default function KnowledgePage() {
   const [sourceForm, setSourceForm] = useState<SourceForm>(emptySourceForm());
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const { knowledgeResult } = useCopilot();
 
-  usePageContext("Knowledge", { items: items.length, sources: sources.length });
+  usePageContext("Knowledge", {
+    items: items.length,
+    sources: sources.length,
+    knowledge: { query: search },
+    resource_context: { knowledge: { query: search } },
+  });
 
   useEffect(() => {
     try {
@@ -217,6 +224,10 @@ export default function KnowledgePage() {
     if (sessionToken) void load(sessionToken);
     else setLoading(false);
   }, [sessionToken, load]);
+
+  useEffect(() => {
+    if (sessionToken && knowledgeResult) void load(sessionToken);
+  }, [sessionToken, knowledgeResult, load]);
 
   const visibleItems = useMemo(() => {
     const query = search.trim().toLowerCase();

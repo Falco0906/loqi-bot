@@ -7,6 +7,8 @@ import Icon from "../../../components/shared/Icon";
 import { toast } from "../../../components/shared/Toast";
 import WorkspaceContainer from "../../../components/layout/WorkspaceContainer";
 import { useTellLoqi } from "../../../hooks/useTellLoqi";
+import { usePageContext } from "../../../hooks/usePageContext";
+import { useCopilot } from "../../../contexts/CopilotContext";
 import { useActionHandlers } from "../../../hooks/useActionHandlers";
 import { useWorkspaceSearch } from "../../../contexts/SearchContext";
 import { buildResearchUrl, campaignAttachContext } from "../../../lib/discovery-mode";
@@ -23,7 +25,32 @@ export default function CampaignsPage() {
   // successful authoritative response proved the dataset is empty.
   const [authoritativeEmpty, setAuthoritativeEmpty] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const { campaignResult } = useCopilot();
+  usePageContext("Campaigns", {
+    campaign_ids: campaigns.map((campaign) => String(campaign.id || "")).filter(Boolean),
+    resource_context: {},
+  });
   const fetchGeneration = useRef(0);
+
+  useEffect(() => {
+    if (!campaignResult) return;
+    if (Array.isArray(campaignResult.campaigns)) {
+      setCampaigns(campaignResult.campaigns);
+      setAuthoritativeEmpty(campaignResult.campaigns.length === 0);
+    }
+    if (campaignResult.campaign) {
+      const campaign = campaignResult.campaign;
+      setCampaigns((current) => {
+        const id = String(campaign.id || "");
+        if (!id) return current;
+        const exists = current.some((item) => String(item.id || "") === id);
+        return exists
+          ? current.map((item) => String(item.id || "") === id ? { ...item, ...campaign } : item)
+          : [campaign, ...current];
+      });
+      setAuthoritativeEmpty(false);
+    }
+  }, [campaignResult]);
 
   useEffect(() => {
     const token = (() => {

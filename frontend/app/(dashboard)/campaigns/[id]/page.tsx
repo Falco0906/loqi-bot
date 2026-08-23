@@ -9,6 +9,8 @@ import { fetchCampaign, invalidateMissionControlCache } from "../../../../lib/re
 import { swrFetch, peekCache, scopedKey, invalidateClientCache } from "../../../../lib/client-cache";
 import type { CampaignData, CampaignLaunchProgress } from "../../../../lib/domain";
 import { useTellLoqi } from "../../../../hooks/useTellLoqi";
+import { usePageContext } from "../../../../hooks/usePageContext";
+import { useCopilot } from "../../../../contexts/CopilotContext";
 import { useActionHandlers } from "../../../../hooks/useActionHandlers";
 import { toast } from "../../../../components/shared/Toast";
 import {
@@ -114,7 +116,22 @@ export default function CampaignDetailPage() {
     if (fresh) mutate(fresh);
     return fresh;
   }, [loadCampaign, mutate, campaignKey]);
+  const { campaignResult, outreachResult } = useCopilot();
+  useEffect(() => {
+    const updatedId = String(campaignResult?.campaign?.id || campaignResult?.campaign_id || "");
+    if (updatedId === campaignId) void refreshCampaign();
+  }, [campaignResult, campaignId, refreshCampaign]);
+  useEffect(() => {
+    if (!outreachResult) return;
+    const drafts = outreachResult.drafts || (outreachResult.draft ? [outreachResult.draft] : []);
+    const matches = drafts.some((draft) => String(draft.campaign_id || outreachResult.campaign_id || "") === campaignId);
+    if (matches || String(outreachResult.campaign_id || "") === campaignId) void refreshCampaign();
+  }, [outreachResult, campaignId, refreshCampaign]);
   const tellLoqi = useTellLoqi("CampaignDetail", { campaignId });
+  usePageContext("CampaignDetail", {
+    campaign_id: campaignId,
+    resource_context: { campaignId },
+  });
   const token = typeof window !== "undefined" ? localStorage.getItem("loqi_active_session_token") : null;
   const [strategyBusy, setStrategyBusy] = useState(false);
   // PR-P1.4: generateStrategy's poll loop must not keep running (and keep

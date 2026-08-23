@@ -44,6 +44,7 @@ import type {
   ActionHandler,
 } from "../lib/actionRegistry";
 import type { MCBriefingData } from "../lib/domain";
+import { extractCopilotCapabilityResult, mergeCopilotResourceContext } from "../lib/copilot-integration";
 
 export type { CopilotAction, ActionType, ActionHandler };
 
@@ -64,7 +65,76 @@ export type CopilotMessage = {
   content: string;
   createdAt: number;
   actions?: CopilotAction[];
+  data?: Record<string, unknown>;
 };
+
+export type LeadOperationResult = {
+  discovery_id: string;
+  status: string;
+  lead_count: number;
+  leads: Array<Record<string, unknown>>;
+};
+
+export type CampaignOperationResult = {
+  campaign_id?: string;
+  campaign?: Record<string, unknown>;
+  campaigns?: Array<Record<string, unknown>>;
+  drafts?: Array<Record<string, unknown>>;
+};
+
+export type OutreachOperationResult = {
+  draft?: Record<string, unknown>;
+  drafts?: Array<Record<string, unknown>>;
+  campaign_id?: string;
+  operation?: Record<string, unknown>;
+};
+
+export type InboxOperationResult = {
+  conversation_id?: string;
+  conversation?: Record<string, unknown>;
+  messages?: Array<Record<string, unknown>>;
+  summary?: Record<string, unknown>;
+  intelligence?: Record<string, unknown>;
+  recommendation?: Record<string, unknown>;
+  generation?: Record<string, unknown>;
+};
+
+export type KnowledgeOperationResult = {
+  query?: string;
+  categories?: string[];
+  items?: Array<Record<string, unknown>>;
+  sources?: Array<Record<string, unknown>>;
+};
+
+export type AnalyticsOperationResult = {
+  metrics?: Record<string, unknown>;
+  campaigns?: Array<Record<string, unknown>>;
+  campaign?: Record<string, unknown>;
+  campaign_id?: string;
+  lead_count?: number;
+};
+
+export type CopilotResourceContext = {
+  discoveryId?: string;
+  selectedLeadIds?: string[];
+  campaignId?: string;
+  draftId?: string;
+  conversationId?: string;
+  knowledge?: { category?: string; itemId?: string; query?: string };
+  analytics?: { scope?: string; campaignId?: string; campaignIds?: string[] };
+};
+
+function isLeadOperationResult(value: unknown): value is LeadOperationResult {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Record<string, unknown>;
+  return typeof result.discovery_id === "string" && Array.isArray(result.leads);
+}
+
+function isCampaignOperationResult(value: unknown): value is CampaignOperationResult {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Record<string, unknown>;
+  return Boolean(result.campaign || result.campaigns || result.drafts || result.campaign_id);
+}
 
 export type CopilotChat = {
   id: string;
@@ -72,6 +142,13 @@ export type CopilotChat = {
   updatedAt: number;
   messages: CopilotMessage[];
   activeSearch?: ActiveSearch | null;
+  leadResult?: LeadOperationResult | null;
+  campaignResult?: CampaignOperationResult | null;
+  outreachResult?: OutreachOperationResult | null;
+  inboxResult?: InboxOperationResult | null;
+  knowledgeResult?: KnowledgeOperationResult | null;
+  analyticsResult?: AnalyticsOperationResult | null;
+  resourceContext?: CopilotResourceContext | null;
 };
 
 export type ActiveSearch = {
@@ -94,6 +171,13 @@ type CopilotState = {
   chats: CopilotChat[];
   messages: CopilotMessage[];
   activeSearch: ActiveSearch | null;
+  leadResult: LeadOperationResult | null;
+  campaignResult: CampaignOperationResult | null;
+  outreachResult: OutreachOperationResult | null;
+  inboxResult: InboxOperationResult | null;
+  knowledgeResult: KnowledgeOperationResult | null;
+  analyticsResult: AnalyticsOperationResult | null;
+  resourceContext: CopilotResourceContext | null;
 };
 
 type AgentOperation = {
@@ -107,6 +191,12 @@ type AgentTurn = {
   intent?: "conversation" | "discovery" | "discovery_refinement" | "read" | "action" | "clarification";
   operation?: AgentOperation;
   error?: string;
+  leadResult?: LeadOperationResult;
+  campaignResult?: CampaignOperationResult;
+  outreachResult?: OutreachOperationResult;
+  inboxResult?: InboxOperationResult;
+  knowledgeResult?: KnowledgeOperationResult;
+  analyticsResult?: AnalyticsOperationResult;
 };
 
 type CopilotActions = {
@@ -255,6 +345,13 @@ export function CopilotProvider({
   const [chats, setChats] = useState<CopilotChat[]>([]);
   const [messages, setMessages] = useState<CopilotMessage[]>([]);
   const [activeSearch, setActiveSearchState] = useState<ActiveSearch | null>(null);
+  const [leadResult, setLeadResult] = useState<LeadOperationResult | null>(null);
+  const [campaignResult, setCampaignResult] = useState<CampaignOperationResult | null>(null);
+  const [outreachResult, setOutreachResult] = useState<OutreachOperationResult | null>(null);
+  const [inboxResult, setInboxResult] = useState<InboxOperationResult | null>(null);
+  const [knowledgeResult, setKnowledgeResult] = useState<KnowledgeOperationResult | null>(null);
+  const [analyticsResult, setAnalyticsResult] = useState<AnalyticsOperationResult | null>(null);
+  const [resourceContext, setResourceContext] = useState<CopilotResourceContext | null>(null);
   const activeSearchRef = useRef<ActiveSearch | null>(null);
 
   const appendMessage = useCallback((message: Omit<CopilotMessage, "id" | "createdAt">) => {
@@ -293,6 +390,13 @@ export function CopilotProvider({
         setMessages(active.messages || []);
         activeSearchRef.current = active.activeSearch || null;
         setActiveSearchState(active.activeSearch || null);
+        setLeadResult(active.leadResult || null);
+        setCampaignResult(active.campaignResult || null);
+        setOutreachResult(active.outreachResult || null);
+        setInboxResult(active.inboxResult || null);
+        setKnowledgeResult(active.knowledgeResult || null);
+        setAnalyticsResult(active.analyticsResult || null);
+        setResourceContext(active.resourceContext || null);
       }
     } catch { /* corrupted snapshot — start fresh */ }
   }, []);
@@ -307,11 +411,18 @@ export function CopilotProvider({
         updatedAt: Date.now(),
         messages,
         activeSearch,
+        leadResult,
+        campaignResult,
+        outreachResult,
+        inboxResult,
+        knowledgeResult,
+        analyticsResult,
+        resourceContext,
       };
       const withoutCurrent = previous.filter((chat) => chat.id !== activeChatId);
       return [current, ...withoutCurrent].slice(0, 20);
     });
-  }, [activeChatId, messages, activeSearch]);
+  }, [activeChatId, messages, activeSearch, leadResult, campaignResult, outreachResult, inboxResult, knowledgeResult, analyticsResult, resourceContext]);
 
   useEffect(() => {
     try {
@@ -324,6 +435,28 @@ export function CopilotProvider({
     // after setPageContext() in the same handler — sees the fresh page.
     pageContextRef.current = ctx;
     setPageContextState(ctx);
+    if (ctx?.data) {
+      const data = ctx.data;
+      if (data.resource_context && typeof data.resource_context === "object") {
+        // Page context is a partial update. Preserve the active Copilot resource
+        // when navigating through list pages that have no selected resource.
+        setResourceContext((previous) => ({
+          ...previous,
+          ...(data.resource_context as CopilotResourceContext),
+        }));
+        return;
+      }
+      setResourceContext((previous) => ({
+        ...previous,
+        discoveryId: String(data.discovery_id || data.discoveryId || previous?.discoveryId || "") || undefined,
+        selectedLeadIds: Array.isArray(data.selected_lead_ids) ? data.selected_lead_ids.map(String) : previous?.selectedLeadIds,
+        campaignId: String(data.campaign_id || data.campaignId || previous?.campaignId || "") || undefined,
+        draftId: String(data.draft_id || data.draftId || previous?.draftId || "") || undefined,
+        conversationId: String(data.conversation_id || data.conversationId || previous?.conversationId || "") || undefined,
+        knowledge: data.knowledge && typeof data.knowledge === "object" ? data.knowledge as CopilotResourceContext["knowledge"] : previous?.knowledge,
+        analytics: data.analytics && typeof data.analytics === "object" ? data.analytics as CopilotResourceContext["analytics"] : previous?.analytics,
+      }));
+    }
   }, []);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -336,7 +469,7 @@ export function CopilotProvider({
       const response = await copilotMessage(getTokenForActions(), {
         text,
         currentPage: pageContextRef.current?.page,
-        pageContext: pageContextRef.current?.data,
+        pageContext: mergeCopilotResourceContext(pageContextRef.current?.data, resourceContext),
         availableActions: AGENT_ACTION_TYPES,
         messageHistory: conversation.slice(-12).map((message) => ({ role: message.role, text: message.content })),
         activeSearch: activeSearchRef.current || undefined,
@@ -345,11 +478,35 @@ export function CopilotProvider({
       if (response.operation?.kind === "search_discovery") {
         return { intent: response.intent, operation: response.operation };
       }
-      const generated = response.messages?.find((message) => message.role === "assistant")?.text?.trim();
+      const assistantMessage = response.messages?.find((message) => message.role === "assistant");
+      const generated = assistantMessage?.text?.trim();
       if (!generated) return { intent: response.intent, error: response.ok ? undefined : "Copilot operation failed" };
       const parsed = parseAgentResponse(generated);
-      appendMessage({ role: "assistant", content: parsed.content || generated, actions: parsed.actions });
-      return { intent: response.intent, error: response.ok ? undefined : generated };
+      const messageData = assistantMessage?.data;
+      const rawTool = typeof messageData?.tool === "string" ? messageData.tool : "";
+      const rawResult = messageData?.result;
+      const leadResult = rawTool.startsWith("lead.") && isLeadOperationResult(rawResult)
+        ? rawResult
+        : undefined;
+      const campaignResult = rawTool.startsWith("campaign.") && isCampaignOperationResult(rawResult)
+        ? rawResult
+        : undefined;
+      const capabilityResult = extractCopilotCapabilityResult(rawTool, rawResult);
+      const outreachResult = rawTool.startsWith("outreach.") && capabilityResult
+        ? capabilityResult as OutreachOperationResult : undefined;
+      const inboxResult = rawTool.startsWith("inbox.") && capabilityResult
+        ? capabilityResult as InboxOperationResult : undefined;
+      const knowledgeResult = rawTool.startsWith("knowledge.") && capabilityResult
+        ? capabilityResult as KnowledgeOperationResult : undefined;
+      const analyticsResult = rawTool.startsWith("analytics.") && capabilityResult
+        ? capabilityResult as AnalyticsOperationResult : undefined;
+      appendMessage({
+        role: "assistant",
+        content: parsed.content || generated,
+        actions: parsed.actions,
+        data: messageData,
+      });
+      return { intent: response.intent, error: response.ok ? undefined : generated, leadResult, campaignResult, outreachResult, inboxResult, knowledgeResult, analyticsResult };
     } catch (error) {
       // The operational task owns success/failure. A generation outage must
       // never turn a real job into a false success or block its execution.
@@ -359,7 +516,7 @@ export function CopilotProvider({
       };
     }
     return {};
-  }, [appendMessage]);
+  }, [appendMessage, resourceContext]);
 
   useEffect(() => {
     return () => {
@@ -541,6 +698,10 @@ export function CopilotProvider({
           };
           activeSearchRef.current = activeContext;
           setActiveSearchState(activeContext);
+          setResourceContext((previous) => ({
+            ...previous,
+            discoveryId: operation.discovery_id,
+          }));
           discoveryId = operation.discovery_id;
           jobId = operation.job_id;
           console.info(`[discovery] agent accepted discovery=${discoveryId.slice(0, 8)} job=${jobId.slice(0, 8)}`);
@@ -872,6 +1033,42 @@ export function CopilotProvider({
         // response as a product task.
         if (turn.intent) {
           busyRef.current = false;
+          if (turn.leadResult) {
+            setLeadResult(turn.leadResult);
+            setResourceContext((previous) => ({ ...previous, discoveryId: turn.leadResult?.discovery_id }));
+          }
+          if (turn.campaignResult) {
+            setCampaignResult(turn.campaignResult);
+            const campaign = turn.campaignResult.campaign;
+            setResourceContext((previous) => ({
+              ...previous,
+              campaignId: String(turn.campaignResult?.campaign_id || campaign?.id || previous?.campaignId || "") || undefined,
+            }));
+          }
+          if (turn.outreachResult) {
+            setOutreachResult(turn.outreachResult);
+            const draft = turn.outreachResult.draft || turn.outreachResult.drafts?.[0];
+            setResourceContext((previous) => ({
+              ...previous,
+              draftId: String(draft?.id || previous?.draftId || "") || undefined,
+              campaignId: String(turn.outreachResult?.campaign_id || draft?.campaign_id || previous?.campaignId || "") || undefined,
+            }));
+          }
+          if (turn.inboxResult) {
+            setInboxResult(turn.inboxResult);
+            setResourceContext((previous) => ({
+              ...previous,
+              conversationId: String(turn.inboxResult?.conversation_id || turn.inboxResult?.conversation?.conversation_id || previous?.conversationId || "") || undefined,
+            }));
+          }
+          if (turn.knowledgeResult) setKnowledgeResult(turn.knowledgeResult);
+          if (turn.analyticsResult) {
+            setAnalyticsResult(turn.analyticsResult);
+            setResourceContext((previous) => ({
+              ...previous,
+              campaignId: String(turn.analyticsResult?.campaign_id || turn.analyticsResult?.campaign?.id || previous?.campaignId || "") || undefined,
+            }));
+          }
           setRecentTask(null);
           setConversationState(turn.error ? "failed" : "idle");
           return;
@@ -892,13 +1089,12 @@ export function CopilotProvider({
     (replyId: string) => {
       const reply = CLARIFICATION_REPLIES.find((r) => r.id === replyId);
       if (!reply || busyRef.current) return;
-      const kind = resolveTaskKind(reply.instruction, pageContextRef.current?.page);
-      if (kind === "unknown") return;
-      sessionRef.current += 1;
-      transition({ type: "answer" });
-      beginTask(kind, reply.instruction);
+      // Clarification replies are ordinary Copilot turns. The backend must
+      // classify the answer; the legacy local task classifier is not allowed
+      // to convert it directly into a product task.
+      void startTask(reply.instruction);
     },
-    [transition, beginTask],
+    [startTask],
   );
 
   const acknowledge = useCallback(() => {
@@ -917,6 +1113,13 @@ export function CopilotProvider({
     setActiveGroupId(null);
     setRecentTask(null);
     setMessages([]);
+    setLeadResult(null);
+    setCampaignResult(null);
+    setOutreachResult(null);
+    setInboxResult(null);
+    setKnowledgeResult(null);
+    setAnalyticsResult(null);
+    setResourceContext(null);
     activeSearchRef.current = null;
     setActiveSearchState(null);
     setConversationState("idle");
@@ -930,6 +1133,13 @@ export function CopilotProvider({
     const id = nextChatId();
     setActiveChatId(id);
     setMessages([]);
+    setLeadResult(null);
+    setCampaignResult(null);
+    setOutreachResult(null);
+    setInboxResult(null);
+    setKnowledgeResult(null);
+    setAnalyticsResult(null);
+    setResourceContext(null);
     activeSearchRef.current = null;
     setActiveSearchState(null);
     setGroups([]);
@@ -946,6 +1156,13 @@ export function CopilotProvider({
     setMessages(chat.messages || []);
     activeSearchRef.current = chat.activeSearch || null;
     setActiveSearchState(chat.activeSearch || null);
+    setLeadResult(chat.leadResult || null);
+    setCampaignResult(chat.campaignResult || null);
+    setOutreachResult(chat.outreachResult || null);
+    setInboxResult(chat.inboxResult || null);
+    setKnowledgeResult(chat.knowledgeResult || null);
+    setAnalyticsResult(chat.analyticsResult || null);
+    setResourceContext(chat.resourceContext || null);
     setGroups([]);
     setActiveGroupId(null);
     setRecentTask(null);
@@ -985,6 +1202,13 @@ export function CopilotProvider({
     chats,
     messages,
     activeSearch,
+    leadResult,
+    campaignResult,
+    outreachResult,
+    inboxResult,
+    knowledgeResult,
+    analyticsResult,
+    resourceContext,
   };
 
   return (

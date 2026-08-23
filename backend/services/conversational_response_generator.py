@@ -76,7 +76,7 @@ def decide_copilot_intent(
     _log(f"COPILOT_INTENT_ROUTER_ENTER message_chars={len(user_message)} history_len={len(message_history or [])}")
     system = (
         "You are Loqi's intent and goal router. Return JSON only with keys intent, mode, action, "
-        "search_context, lead_ids, filters, sort, limit, campaign_id, confirmed, reason. Omit fields that do not apply.\n"
+        "search_context, lead_ids, filters, sort, limit, campaign_id, draft_id, draft_ids, conversation_id, knowledge_query, knowledge_categories, knowledge_item_id, analytics_scope, edit_request, send_at, reply_body, confirmed, reason. Omit fields that do not apply.\n"
         "Allowed intent values: conversation, discovery, discovery_refinement, read, action, clarification.\n"
         "Use conversation for greetings, acknowledgements, and ordinary chat.\n"
         "Use discovery for a new explicit request to find/source/provide leads, prospects, or companies.\n"
@@ -91,6 +91,28 @@ def decide_copilot_intent(
         "For lead operations, include lead_ids when the user refers to selected leads, filters for field filters, "
         "sort for ranking, campaign_id for attaching, and confirmed=true only when the user explicitly confirms "
         "a requested mutation. Never invent lead IDs; resolve references from active_search and page context.\n"
+        "For campaign operations, set action to campaign.list/read/drafts for reads, campaign.create for creating "
+        "a campaign from current leads, campaign.refine for explicit changes to the active campaign, campaign.plan "
+        "for strategy planning, and campaign.generate_drafts for drafting outreach. Include campaign_id and a "
+        "structured campaign or campaign_updates object when needed. Use the active campaign/page context for "
+        "references such as 'this campaign' or 'these leads'.\n"
+        "For outreach/draft operations, set action to outreach.drafts.read to inspect drafts, "
+        "outreach.draft.generate to start existing draft generation, outreach.draft.refine to rewrite a draft, "
+        "outreach.draft.approve to approve, outreach.draft.schedule to schedule, or outreach.draft.send to send. "
+        "Include draft_id, campaign_id, edit_request, send_at, and confirmed as applicable. Sending and scheduling "
+        "always require explicit confirmation; never infer confirmation. Resolve draft references from page context.\n"
+        "For Inbox/conversation operations, set action to inbox.conversation.read/summary/analyze/recommend, "
+        "inbox.reply.generate, or inbox.reply.send. Include conversation_id and reply_body when applicable. "
+        "Reading, summarizing, analyzing, recommending, and generating a reply never send anything. Sending "
+        "must use the existing reply path and requires confirmed=true from an explicit user confirmation.\n"
+        "For Knowledge requests, use knowledge.search for grounded workspace Knowledge retrieval and knowledge.read "
+        "when reading a specific item. Include knowledge_query and optional knowledge_categories (company, icp, "
+        "messaging, sales_offer). Use current page/company/lead/campaign context to focus the query when available. "
+        "Never claim Knowledge was used when retrieval returns no items or sources.\n"
+        "For Analytics requests, use only read-only registered tools: analytics.workspace.summary, "
+        "analytics.campaign.summary, or analytics.leads.summary. Use campaign_id from the current page/context "
+        "when the user asks about a specific campaign. Return only metrics present in the authoritative result; "
+        "do not infer rates, totals, trends, or performance when the backend does not provide them.\n"
         "Use clarification only when the user's goal is genuinely ambiguous.\n"
         "CRITICAL: active_search is context, not an instruction. It must never turn an unrelated message "
         "such as 'hi' into discovery or discovery_refinement. Only use it for an explicit refinement or read request.\n"
@@ -103,6 +125,18 @@ def decide_copilot_intent(
         "- active Discovery + 'find the best 5' -> {intent:'read', action:'lead.rank', sort:'best'}\n"
         "- active Discovery + 'show the strongest leads' -> {intent:'read', action:'lead.rank', sort:'best'}\n"
         "- active Discovery + 'only restaurant owners' -> {intent:'read', action:'lead.filter', filters:{...}}\n"
+        "- 'show my campaigns' -> {intent:'read', action:'campaign.list'}\n"
+        "- 'create a campaign for these leads' -> {intent:'action', action:'campaign.create', campaign:{...}}\n"
+        "- active campaign + 'draft outreach for these' -> {intent:'action', action:'campaign.generate_drafts'}\n"
+        "- 'show my drafts' -> {intent:'read', action:'outreach.drafts.read'}\n"
+        "- 'make this draft shorter' -> {intent:'action', action:'outreach.draft.refine', draft_id:'...'}\n"
+        "- 'summarize this conversation' -> {intent:'read', action:'inbox.conversation.summary'}\n"
+        "- 'draft a reply to this' -> {intent:'read', action:'inbox.reply.generate'}\n"
+        "- 'send that reply' -> {intent:'action', action:'inbox.reply.send', confirmed:true}\n"
+        "- 'what is our ICP?' -> {intent:'read', action:'knowledge.search', knowledge_categories:['icp']}\n"
+        "- 'what do we know about this company?' -> {intent:'read', action:'knowledge.search'}\n"
+        "- 'how are my campaigns performing?' -> {intent:'read', action:'analytics.workspace.summary'}\n"
+        "- active campaign + 'show performance' -> {intent:'read', action:'analytics.campaign.summary'}\n"
         "These examples describe goals and tool selection; infer the structured filter from the available lead "
         "schema and context. Do not copy message text into a Discovery query.\n"
     )
@@ -156,6 +190,19 @@ def decide_copilot_intent(
         "sort": str(decision.get("sort") or "").strip(),
         "limit": int(decision["limit"]) if str(decision.get("limit") or "").isdigit() else None,
         "campaign_id": str(decision.get("campaign_id") or "").strip(),
+        "draft_id": str(decision.get("draft_id") or "").strip(),
+        "draft_ids": [str(item).strip() for item in (decision.get("draft_ids") or []) if str(item).strip()],
+        "conversation_id": str(decision.get("conversation_id") or "").strip(),
+        "edit_request": str(decision.get("edit_request") or "").strip(),
+        "send_at": str(decision.get("send_at") or "").strip(),
+        "reply_body": str(decision.get("reply_body") or decision.get("body") or "").strip(),
+        "knowledge_query": str(decision.get("knowledge_query") or "").strip(),
+        "knowledge_categories": [str(item).strip() for item in (decision.get("knowledge_categories") or []) if str(item).strip()],
+        "knowledge_item_id": str(decision.get("knowledge_item_id") or decision.get("item_id") or "").strip(),
+        "analytics_scope": str(decision.get("analytics_scope") or "").strip(),
+        "campaign": decision.get("campaign") if isinstance(decision.get("campaign"), dict) else {},
+        "campaign_updates": decision.get("campaign_updates") if isinstance(decision.get("campaign_updates"), dict) else {},
+        "force": bool(decision.get("force")),
         "confirmed": bool(decision.get("confirmed")),
         "reason": str(decision.get("reason") or "").strip(),
     }

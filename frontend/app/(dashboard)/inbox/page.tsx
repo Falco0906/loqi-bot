@@ -9,6 +9,8 @@ import { fetchInbox, type InboxData } from "../../../lib/repositories";
 import { swrFetch, peekCache, scopedKey } from "../../../lib/client-cache";
 import { setNavState, getNavState } from "../../../lib/nav-state";
 import { useTellLoqi } from "../../../hooks/useTellLoqi";
+import { usePageContext } from "../../../hooks/usePageContext";
+import { useCopilot } from "../../../contexts/CopilotContext";
 import { useWorkspaceSearch } from "../../../contexts/SearchContext";
 import {
   attentionTone,
@@ -51,6 +53,16 @@ export default function InboxPage() {
 
   const rows = useMemo(() => data?.rows ?? [], [data]);
   const tellLoqi = useTellLoqi("Inbox", { decisionCount: rows.length });
+  const { inboxResult } = useCopilot();
+  usePageContext("Inbox", {
+    conversation_ids: rows.map((row) => row.id),
+    decisionCount: rows.length,
+    resource_context: {},
+  });
+
+  useEffect(() => {
+    if (inboxResult) void retry();
+  }, [inboxResult, retry]);
 
   /* List filtering */
   const classifications = useMemo(() => {

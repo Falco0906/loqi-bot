@@ -60,6 +60,21 @@ export type RecentTask = {
   actions: CopilotAction[];
 };
 
+export type CopilotMessage = {
+  id: string;
+  role: "user" | "assistant" | "tool";
+  content: string;
+  createdAt: number;
+  actions?: CopilotAction[];
+};
+
+export type CopilotChat = {
+  id: string;
+  title: string;
+  updatedAt: number;
+  messages: CopilotMessage[];
+};
+
 type CopilotState = {
   open: boolean;
   pageContext: PageContext | null;
@@ -67,6 +82,9 @@ type CopilotState = {
   groups: TaskGroup[];
   activeGroupId: string | null;
   recentTask: RecentTask | null;
+  activeChatId: string;
+  chats: CopilotChat[];
+  messages: CopilotMessage[];
 };
 
 type CopilotActions = {
@@ -79,6 +97,8 @@ type CopilotActions = {
   startTask: (text: string) => boolean;
   answerClarification: (replyId: string) => void;
   acknowledge: () => void;
+  newChat: () => void;
+  switchChat: (chatId: string) => void;
 };
 
 const CopilotStateContext = createContext<CopilotState | null>(null);
@@ -103,6 +123,8 @@ export function useCopilotActions(): CopilotActions {
 
 let groupSeq = 0;
 let stepSeq = 0;
+let chatSeq = 0;
+let messageSeq = 0;
 
 function nextGroupId() {
   groupSeq += 1;
@@ -112,6 +134,16 @@ function nextGroupId() {
 function nextStepId() {
   stepSeq += 1;
   return `stp-${stepSeq}`;
+}
+
+function nextChatId() {
+  chatSeq += 1;
+  return `chat-${Date.now()}-${chatSeq}`;
+}
+
+function nextMessageId() {
+  messageSeq += 1;
+  return `msg-${Date.now()}-${messageSeq}`;
 }
 
 function makeGroup(kind: TaskKind, title: string, instruction: string): TaskGroup {
@@ -177,6 +209,16 @@ export function CopilotProvider({
     } catch { /* quota/private mode — persistence is best-effort */ }
   }, []);
   const [recentTask, setRecentTask] = useState<RecentTask | null>(null);
+  const [activeChatId, setActiveChatId] = useState(() => nextChatId());
+  const [chats, setChats] = useState<CopilotChat[]>([]);
+  const [messages, setMessages] = useState<CopilotMessage[]>([]);
+
+  const appendMessage = useCallback((message: Omit<CopilotMessage, "id" | "createdAt">) => {
+    setMessages((previous) => [
+      ...previous,
+      { ...message, id: nextMessageId(), createdAt: Date.now() },
+    ]);
+  }, []);
 
   const pageContextRef = useRef<PageContext | null>(null);
 
@@ -193,6 +235,42 @@ export function CopilotProvider({
       }
     } catch { /* corrupted snapshot — start fresh */ }
   }, []);
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("loqi_copilot_chats");
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { activeChatId?: string; chats?: CopilotChat[] };
+      if (!Array.isArray(parsed.chats)) return;
+      setChats(parsed.chats.slice(0, 20));
+      const active = parsed.chats.find((chat) => chat.id === parsed.activeChatId) || parsed.chats[0];
+      if (active) {
+        setActiveChatId(active.id);
+        setMessages(active.messages || []);
+      }
+    } catch { /* corrupted snapshot — start fresh */ }
+  }, []);
+
+  useEffect(() => {
+    if (messages.length === 0 && chats.length === 0) return;
+    setChats((previous) => {
+      const title = messages.find((message) => message.role === "user")?.content || "New conversation";
+      const current: CopilotChat = {
+        id: activeChatId,
+        title: title.slice(0, 65),
+        updatedAt: Date.now(),
+        messages,
+      };
+      const withoutCurrent = previous.filter((chat) => chat.id !== activeChatId);
+      return [current, ...withoutCurrent].slice(0, 20);
+    });
+  }, [activeChatId, messages]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem("loqi_copilot_chats", JSON.stringify({ activeChatId, chats }));
+    } catch { /* quota/private mode — persistence is best-effort */ }
+  }, [activeChatId, chats]);
 
   const setPageContext = useCallback((ctx: PageContext | null) => {
     // Keep the ref in sync synchronously so startTask() — called immediately
@@ -320,23 +398,29 @@ export function CopilotProvider({
         summary,
         actions: completionActions(task, primaryPath, extraActions ?? null),
       });
+      appendMessage({
+        role: "assistant",
+        content: summary,
+        actions: completionActions(task, primaryPath, extraActions ?? null),
+      });
       setGroups((prev) =>
         prev.map((g) => (g.id === groupId ? g : { ...g, collapsed: true })),
       );
       transition({ type: "work_finished" });
     },
-    [finishGroup, transition],
+    [finishGroup, transition, appendMessage],
   );
 
   const failWork = useCallback(
     (groupId: string, summary: string) => {
       busyRef.current = false;
       finishGroup(groupId, summary, "error");
+      appendMessage({ role: "assistant", content: summary });
       // Failure is a distinct terminal state. The generic work_finished
       // transition would incorrectly render the completed/DONE surface.
       setConversationState("failed");
     },
-    [finishGroup],
+    [finishGroup, appendMessage],
   );
 
   const navigateTo = useCallback(
@@ -678,6 +762,8 @@ export function CopilotProvider({
       if (!trimmed) return false;
       if (busyRef.current) return false;
 
+      appendMessage({ role: "user", content: trimmed });
+
       const kind = resolveTaskKind(trimmed, pageContextRef.current?.page);
       if (kind === "unknown") {
         // Never drop an instruction silently: route unclassified input into
@@ -692,7 +778,7 @@ export function CopilotProvider({
       beginTask(kind, trimmed);
       return true;
     },
-    [transition, beginTask],
+    [transition, beginTask, appendMessage],
   );
 
   const answerClarification = useCallback(
@@ -723,9 +809,35 @@ export function CopilotProvider({
     setGroups([]);
     setActiveGroupId(null);
     setRecentTask(null);
+    setMessages([]);
     setConversationState("idle");
     try { sessionStorage.removeItem("loqi_copilot_conversation"); } catch { /* noop */ }
   }, [stopPolling]);
+
+  const newChat = useCallback(() => {
+    sessionRef.current += 1;
+    stopPolling();
+    busyRef.current = false;
+    const id = nextChatId();
+    setActiveChatId(id);
+    setMessages([]);
+    setGroups([]);
+    setActiveGroupId(null);
+    setRecentTask(null);
+    setConversationState("idle");
+  }, [stopPolling]);
+
+  const switchChat = useCallback((chatId: string) => {
+    if (busyRef.current) return;
+    const chat = chats.find((item) => item.id === chatId);
+    if (!chat) return;
+    setActiveChatId(chat.id);
+    setMessages(chat.messages || []);
+    setGroups([]);
+    setActiveGroupId(null);
+    setRecentTask(null);
+    setConversationState("idle");
+  }, [chats]);
 
   // PR-4.5: persist on every conversation change (bounded by persistConversation).
   useEffect(() => {
@@ -743,8 +855,10 @@ export function CopilotProvider({
       startTask,
       answerClarification,
       acknowledge,
+      newChat,
+      switchChat,
     }),
-    [clear, executeAction, registerHandler, unregisterHandler, startTask, answerClarification, acknowledge],
+    [clear, executeAction, registerHandler, unregisterHandler, startTask, answerClarification, acknowledge, newChat, switchChat],
   );
 
   const state: CopilotState = {
@@ -754,6 +868,9 @@ export function CopilotProvider({
     groups,
     activeGroupId,
     recentTask,
+    activeChatId,
+    chats,
+    messages,
   };
 
   return (

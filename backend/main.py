@@ -2129,11 +2129,30 @@ class CopilotContextModel(BaseModel):
     page_context: dict | None = None
     available_actions: list[str] | None = None
     message_history: list[dict] | None = None
+    active_search: dict | None = None
 
 
 class SendWebMessageRequest(BaseModel):
     text: str
     copilot: CopilotContextModel | None = None
+
+
+def _discovery_query_from_search_context(search_context: dict) -> str:
+    """Build the provider query from the validated structured search state."""
+    industries = [str(v).strip() for v in search_context.get("industry", []) if str(v).strip()]
+    decision_makers = [str(v).strip().replace("_", " ") for v in search_context.get("decision_makers", []) if str(v).strip()]
+    locations = [str(v).strip() for v in search_context.get("location", []) if str(v).strip()]
+    parts: list[str] = []
+    if industries:
+        parts.append("industries: " + ", ".join(industries))
+    if decision_makers:
+        parts.append("decision makers: " + ", ".join(decision_makers))
+    if locations:
+        parts.append("locations: " + ", ".join(locations))
+    quantity = search_context.get("quantity")
+    if isinstance(quantity, int) and quantity > 0:
+        parts.append(f"quantity: {quantity}")
+    return "Find leads matching " + "; ".join(parts) if parts else "Find leads"
 
 
 def _register_outbound_providers() -> None:
@@ -2873,6 +2892,9 @@ async def post_web_session_message(
             )
 
     if payload.copilot is not None:
+        # Copilot conversation state is supplied explicitly by the Copilot
+        # surface. Do not hydrate it from legacy conversations/user_messages;
+        # those fields belong exclusively to ConversationEngine callers.
         log.info(
             "COPILOT_REQUEST path=post_web_session_message page=%s text_chars=%s",
             payload.copilot.current_page or "(unset)",
@@ -2921,14 +2943,20 @@ async def post_web_session_message(
             payload.text,
             workspace_context=workspace_context,
             message_history=payload.copilot.message_history,
+            active_search=payload.copilot.active_search,
         )
-        if decision.get("intent") == "lead_discovery" and decision.get("query"):
-            log.info("COPILOT_DISCOVERY_DECISION query_chars=%s", len(str(decision["query"])))
+        if decision.get("intent") == "lead_discovery" and decision.get("search_context"):
+            search_context = decision["search_context"]
+            discovery_query = _discovery_query_from_search_context(search_context)
+            log.info(
+                "COPILOT_DISCOVERY_DECISION mode=%s context=%s query_chars=%s",
+                decision.get("mode"), search_context, len(discovery_query),
+            )
             try:
                 log.info("COPILOT_DISCOVERY_TOOL_ENTER tool=_create_search_run")
                 started = await _create_search_run(
                     str(summary.get("user_id") or ""),
-                    str(decision["query"]),
+                    discovery_query,
                     session_token,
                 )
                 log.info(
@@ -2937,19 +2965,19 @@ async def post_web_session_message(
                     started.get("job_id", ""),
                 )
             except Exception as error:
-                log.exception("Copilot Discovery tool failed query=%r", decision.get("query"))
+                log.exception("Copilot Discovery tool failed context=%s", search_context)
                 raise HTTPException(status_code=502, detail=f"Discovery tool failed: {error}") from error
             operation_message = _message(
                 role="assistant",
                 message_type="tool",
                 text="I’m starting a Discovery search and will report back when the results are persisted.",
-                data={"operation": "search_discovery", **started},
+                data={"operation": "search_discovery", "search_context": search_context, **started},
             )
             return {
                 "ok": True,
                 "messages": [operation_message],
                 "events": [{"type": "tool.started", "operation": "search_discovery", **started}],
-                "operation": {"kind": "search_discovery", **started},
+                "operation": {"kind": "search_discovery", "search_context": search_context, **started},
             }
         from services.conversational_response_generator import generate_copilot_response
         # PR-P1.2: generate_copilot_response performs a synchronous OpenAI

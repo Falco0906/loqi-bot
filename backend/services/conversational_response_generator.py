@@ -70,28 +70,33 @@ def decide_copilot_intent(
     *,
     workspace_context: dict | None = None,
     message_history: list[dict] | None = None,
+    active_search: dict | None = None,
 ) -> dict:
     """Make the agent's intent/tool decision before response generation."""
     _log(f"COPILOT_INTENT_ROUTER_ENTER message_chars={len(user_message)} history_len={len(message_history or [])}")
     system = (
-        "You are Loqi's action router. Return JSON only with keys intent, query, reason.\n"
+        "You are Loqi's action router. Return JSON only with keys intent, mode, search_context, reason.\n"
         "Allowed intent values: lead_discovery, informational, clarification.\n"
+        "mode is new or refine.\n"
         "Use lead_discovery when the user asks Loqi to find, source, get, or provide leads, prospects, or companies.\n"
         "A request such as 'I need restaurant leads' is an explicit operation, not a question about personas.\n"
         "Use informational for questions or advice, clarification only when genuinely ambiguous.\n"
-        "For follow-ups, use prior user requests and active workspace state: location and quantity changes are\n"
-        "refinements of an active lead_discovery request. For lead_discovery, query must be a complete natural-language\n"
-        "Discovery query including inherited context and the refinement. Never claim job completion.\n"
+        "For follow-ups, use active_search and prior context: location, decision-maker, and quantity changes are\n"
+        "refinements of an active lead_discovery request. search_context must be structured JSON with only these\n"
+        "fields: industry (list of strings), location (list of strings), decision_makers (list of strings),\n"
+        "quantity (integer or null). Preserve existing fields during refine and add only requested changes.\n"
+        "For an independent request, use mode=new and replace the prior context. Never claim job completion.\n"
     )
     user = json.dumps({
         "message": user_message,
         "history": (message_history or [])[-12:],
+        "active_search": active_search or {},
         "workspace_context": workspace_context or {},
     }, ensure_ascii=False, default=str)
     raw = _send_openai_request(system, user, timeout=20)
     if not raw:
         _log("COPILOT_INTENT_ROUTER_EMPTY reason=model_unavailable_or_error")
-        return {"intent": "clarification", "query": "", "reason": "Intent router unavailable"}
+        return {"intent": "clarification", "mode": "new", "search_context": {}, "reason": "Intent router unavailable"}
     try:
         cleaned = raw.strip()
         if cleaned.startswith("```"):
@@ -99,16 +104,28 @@ def decide_copilot_intent(
         decision = json.loads(cleaned)
     except (TypeError, ValueError, json.JSONDecodeError):
         _log(f"Copilot intent router returned invalid JSON: {raw[:200]}")
-        return {"intent": "clarification", "query": "", "reason": "Invalid intent decision"}
+        return {"intent": "clarification", "mode": "new", "search_context": {}, "reason": "Invalid intent decision"}
     if not isinstance(decision, dict) or decision.get("intent") not in {"lead_discovery", "informational", "clarification"}:
         _log("COPILOT_INTENT_ROUTER_INVALID decision_shape=true")
-        return {"intent": "clarification", "query": "", "reason": "Invalid intent decision"}
+        return {"intent": "clarification", "mode": "new", "search_context": {}, "reason": "Invalid intent decision"}
+    raw_context = decision.get("search_context") or {}
+    if not isinstance(raw_context, dict):
+        raw_context = {}
+    def _string_list(value):
+        return [str(item).strip() for item in (value or []) if str(item).strip()]
+    context = {
+        "industry": _string_list(raw_context.get("industry")),
+        "location": _string_list(raw_context.get("location")),
+        "decision_makers": _string_list(raw_context.get("decision_makers")),
+        "quantity": int(raw_context["quantity"]) if str(raw_context.get("quantity") or "").isdigit() else None,
+    }
     normalized = {
         "intent": decision["intent"],
-        "query": str(decision.get("query") or "").strip(),
+        "mode": "refine" if decision.get("mode") == "refine" else "new",
+        "search_context": context,
         "reason": str(decision.get("reason") or "").strip(),
     }
-    _log(f"COPILOT_INTENT_ROUTER_DECISION intent={normalized['intent']} query_chars={len(normalized['query'])}")
+    _log(f"COPILOT_INTENT_ROUTER_DECISION intent={normalized['intent']} mode={normalized['mode']} context={context}")
     return normalized
 
 

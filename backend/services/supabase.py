@@ -755,9 +755,12 @@ def log_conversation(user_id: str, role: str, message: str) -> None:
             "role": role,
             "message": message,
         }
-        _log(f"log_conversation input payload: {payload}")
+        _log(
+            "log_conversation input: "
+            f"user_id={user_id} role={role} chars={len(message or '')}"
+        )
         result = client.table("conversations").insert(payload).execute()
-        _log(f"log_conversation success: {result.data}")
+        _log(f"log_conversation success: rows={len(getattr(result, 'data', None) or [])}")
     except Exception as error:
         _log(f"log_conversation error: {error}")
 
@@ -832,7 +835,16 @@ def get_session_context(user_id: str) -> dict:
     if selected_lead:
         context["selected_lead_id"] = selected_lead.get("id")
 
-    _log(f"get_session_context success: {context}")
+    user_chars = sum(len(message) for message in user_messages)
+    assistant_chars = sum(len(message) for message in assistant_messages)
+    row_ids = [str(row.get("id")) for row in active_rows if row.get("id")][-5:]
+    _log(
+        "get_session_context success: "
+        f"user_id={user_id} started_at={boundary_time!r} "
+        f"user_count={len(user_messages)} assistant_count={len(assistant_messages)} "
+        f"user_chars={user_chars} assistant_chars={assistant_chars} "
+        f"selected_lead={bool(context.get('selected_lead_id'))} recent_row_ids={row_ids}"
+    )
     return context
 
 
@@ -1001,7 +1013,10 @@ def clear_session_context(
         if since_timestamp:
             query = query.gt("created_at", since_timestamp)
         result = query.in_("status", ["pending", "selected"]).execute()
-        _log(f"clear_session_context success: {getattr(result, 'data', None) or []}")
+        _log(
+            "clear_session_context success: "
+            f"rows={len(getattr(result, 'data', None) or [])}"
+        )
     except Exception as error:
         _log(f"clear_session_context error: {error}")
 

@@ -71,6 +71,14 @@ export type CopilotChat = {
   title: string;
   updatedAt: number;
   messages: CopilotMessage[];
+  activeSearch?: ActiveSearch | null;
+};
+
+export type ActiveSearch = {
+  industry: string[];
+  location: string[];
+  decision_makers: string[];
+  quantity: number | null;
 };
 
 type CopilotState = {
@@ -83,12 +91,14 @@ type CopilotState = {
   activeChatId: string;
   chats: CopilotChat[];
   messages: CopilotMessage[];
+  activeSearch: ActiveSearch | null;
 };
 
 type AgentOperation = {
   kind: "search_discovery";
   discovery_id: string;
   job_id: string;
+  search_context: ActiveSearch;
 };
 
 type AgentTurn = { operation?: AgentOperation; error?: string };
@@ -238,6 +248,8 @@ export function CopilotProvider({
   const [activeChatId, setActiveChatId] = useState(() => nextChatId());
   const [chats, setChats] = useState<CopilotChat[]>([]);
   const [messages, setMessages] = useState<CopilotMessage[]>([]);
+  const [activeSearch, setActiveSearchState] = useState<ActiveSearch | null>(null);
+  const activeSearchRef = useRef<ActiveSearch | null>(null);
 
   const appendMessage = useCallback((message: Omit<CopilotMessage, "id" | "createdAt">) => {
     setMessages((previous) => [
@@ -273,6 +285,8 @@ export function CopilotProvider({
       if (active) {
         setActiveChatId(active.id);
         setMessages(active.messages || []);
+        activeSearchRef.current = active.activeSearch || null;
+        setActiveSearchState(active.activeSearch || null);
       }
     } catch { /* corrupted snapshot — start fresh */ }
   }, []);
@@ -286,11 +300,12 @@ export function CopilotProvider({
         title: title.slice(0, 65),
         updatedAt: Date.now(),
         messages,
+        activeSearch,
       };
       const withoutCurrent = previous.filter((chat) => chat.id !== activeChatId);
       return [current, ...withoutCurrent].slice(0, 20);
     });
-  }, [activeChatId, messages]);
+  }, [activeChatId, messages, activeSearch]);
 
   useEffect(() => {
     try {
@@ -319,6 +334,7 @@ export function CopilotProvider({
         pageContext: pageContextRef.current?.data,
         availableActions: AGENT_ACTION_TYPES,
         messageHistory: conversation.slice(-12).map((message) => ({ role: message.role, text: message.content })),
+        activeSearch: activeSearchRef.current || undefined,
       });
       if (sessionRef.current !== requestSession || !response.ok) return {};
       if (response.operation) return { operation: response.operation };
@@ -508,6 +524,8 @@ export function CopilotProvider({
         const turn = await agentTurn;
         const operation = turn?.operation;
         if (operation?.kind === "search_discovery") {
+          activeSearchRef.current = operation.search_context;
+          setActiveSearchState(operation.search_context);
           discoveryId = operation.discovery_id;
           jobId = operation.job_id;
           console.info(`[discovery] agent accepted discovery=${discoveryId.slice(0, 8)} job=${jobId.slice(0, 8)}`);
@@ -875,6 +893,8 @@ export function CopilotProvider({
     setActiveGroupId(null);
     setRecentTask(null);
     setMessages([]);
+    activeSearchRef.current = null;
+    setActiveSearchState(null);
     setConversationState("idle");
     try { sessionStorage.removeItem("loqi_copilot_conversation"); } catch { /* noop */ }
   }, [stopPolling]);
@@ -886,6 +906,8 @@ export function CopilotProvider({
     const id = nextChatId();
     setActiveChatId(id);
     setMessages([]);
+    activeSearchRef.current = null;
+    setActiveSearchState(null);
     setGroups([]);
     setActiveGroupId(null);
     setRecentTask(null);
@@ -898,6 +920,8 @@ export function CopilotProvider({
     if (!chat) return;
     setActiveChatId(chat.id);
     setMessages(chat.messages || []);
+    activeSearchRef.current = chat.activeSearch || null;
+    setActiveSearchState(chat.activeSearch || null);
     setGroups([]);
     setActiveGroupId(null);
     setRecentTask(null);
@@ -936,6 +960,7 @@ export function CopilotProvider({
     activeChatId,
     chats,
     messages,
+    activeSearch,
   };
 
   return (

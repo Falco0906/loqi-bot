@@ -27,9 +27,9 @@ class TestCopilotOperationBoundary:
         from services.conversational_response_generator import decide_copilot_intent
 
         decisions = iter([
-            '{"intent":"lead_discovery","query":"restaurant leads","reason":"explicit operation"}',
-            '{"intent":"lead_discovery","query":"restaurant leads in Hyderabad","reason":"location refinement"}',
-            '{"intent":"lead_discovery","query":"restaurant leads in Hyderabad, 100 leads","reason":"quantity refinement"}',
+            '{"intent":"lead_discovery","mode":"new","search_context":{"industry":["restaurants"],"location":[],"decision_makers":[],"quantity":null}}',
+            '{"intent":"lead_discovery","mode":"refine","search_context":{"industry":["restaurants"],"location":["Hyderabad"],"decision_makers":[],"quantity":null}}',
+            '{"intent":"lead_discovery","mode":"refine","search_context":{"industry":["restaurants"],"location":["Hyderabad"],"decision_makers":[],"quantity":100}}',
         ])
         monkeypatch.setattr(
             "services.conversational_response_generator._send_openai_request",
@@ -40,8 +40,8 @@ class TestCopilotOperationBoundary:
         second = decide_copilot_intent("Make it Hyderabad", message_history=history)
         third = decide_copilot_intent("Actually give me 100", message_history=history + [{"role": "user", "text": "Make it Hyderabad"}])
         assert [first["intent"], second["intent"], third["intent"]] == ["lead_discovery"] * 3
-        assert second["query"] == "restaurant leads in Hyderabad"
-        assert "100" in third["query"]
+        assert second["search_context"]["location"] == ["Hyderabad"]
+        assert third["search_context"]["quantity"] == 100
 
     @pytest.mark.asyncio
     async def test_endpoint_returns_real_discovery_operation_for_explicit_request(self, monkeypatch):
@@ -50,7 +50,7 @@ class TestCopilotOperationBoundary:
 
         async def fake_create_search_run(user_id, query, session):
             assert user_id == "owner-1"
-            assert query == "I need new restaurant leads"
+            assert query == "Find leads matching industries: restaurants"
             assert session == "session-1"
             return {"discovery_id": "discovery-1", "job_id": "job-1", "status": "queued"}
 
@@ -58,7 +58,8 @@ class TestCopilotOperationBoundary:
             "services.conversational_response_generator.decide_copilot_intent",
             lambda *_args, **_kwargs: {
                 "intent": "lead_discovery",
-                "query": "I need new restaurant leads",
+                "mode": "new",
+                "search_context": {"industry": ["restaurants"], "location": [], "decision_makers": [], "quantity": None},
                 "reason": "explicit operation",
             },
         )
@@ -96,7 +97,7 @@ class TestCopilotOperationBoundary:
         )
         monkeypatch.setattr(
             "services.conversational_response_generator.decide_copilot_intent",
-            lambda *_args, **_kwargs: {"intent": "lead_discovery", "query": "restaurant leads", "reason": "explicit operation"},
+            lambda *_args, **_kwargs: {"intent": "lead_discovery", "mode": "new", "search_context": {"industry": ["restaurants"], "location": [], "decision_makers": [], "quantity": None}, "reason": "explicit operation"},
         )
         async def empty_knowledge(*_args, **_kwargs):
             return SimpleNamespace(to_dict=lambda: {"items": [], "sources": []})

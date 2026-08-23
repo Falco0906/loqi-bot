@@ -237,6 +237,12 @@ export async function copilotMessage(
     pageContext?: Record<string, unknown>;
     availableActions?: string[];
     messageHistory?: Array<{ role: string; text: string }>;
+    activeSearch?: {
+      industry: string[];
+      location: string[];
+      decision_makers: string[];
+      quantity: number | null;
+    };
   },
 ) {
   return fetchWithRetry<{
@@ -248,6 +254,12 @@ export async function copilotMessage(
       kind: "search_discovery";
       discovery_id: string;
       job_id: string;
+      search_context: {
+        industry: string[];
+        location: string[];
+        decision_makers: string[];
+        quantity: number | null;
+      };
     };
   }>(
     `${API_BASE}/api/web/session/_/messages`,
@@ -265,6 +277,7 @@ export async function copilotMessage(
             page_context: params.pageContext,
             available_actions: params.availableActions,
             message_history: params.messageHistory,
+            active_search: params.activeSearch,
           },
         }),
     },

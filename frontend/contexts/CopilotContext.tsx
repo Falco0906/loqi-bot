@@ -332,9 +332,11 @@ export function CopilotProvider({
     (groupId: string, summary: string) => {
       busyRef.current = false;
       finishGroup(groupId, summary, "error");
-      transition({ type: "work_finished" });
+      // Failure is a distinct terminal state. The generic work_finished
+      // transition would incorrectly render the completed/DONE surface.
+      setConversationState("failed");
     },
-    [finishGroup, transition],
+    [finishGroup],
   );
 
   const navigateTo = useCallback(

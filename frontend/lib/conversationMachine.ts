@@ -1,7 +1,7 @@
 import type { CopilotAction } from "./actionRegistry";
 import { normalizeDiscoveryRequest } from "./discovery-request";
 
-export type ConversationState = "idle" | "clarification" | "working" | "completed";
+export type ConversationState = "idle" | "clarification" | "working" | "completed" | "failed";
 
 export type StepStatus = "pending" | "active" | "done" | "error";
 
@@ -47,6 +47,7 @@ const TRANSITIONS: Record<ConversationState, Record<TransitionEvent["type"], Con
   clarification: { instruction: "working", answer: "working", work_started: "clarification", work_finished: "clarification", acknowledge: "idle" },
   working: { instruction: "working", answer: "working", work_started: "working", work_finished: "completed", acknowledge: "idle" },
   completed: { instruction: "working", answer: "completed", work_started: "completed", work_finished: "completed", acknowledge: "idle" },
+  failed: { instruction: "working", answer: "failed", work_started: "working", work_finished: "failed", acknowledge: "idle" },
 };
 
 export function nextState(from: ConversationState, event: TransitionEvent): ConversationState {
@@ -122,6 +123,7 @@ export const STATE_LABELS: Record<ConversationState, string> = {
   clarification: "Clarifying",
   working: "Working",
   completed: "Done",
+  failed: "Failed",
 };
 
 export type QuickReplyOption = {

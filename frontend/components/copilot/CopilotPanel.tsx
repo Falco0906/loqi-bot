@@ -135,6 +135,8 @@ export default function CopilotPanel({ width = 380, variant = "sidebar" }: { wid
                     ? "bg-warning/10 text-warning"
                     : conversationState === "completed"
                       ? "bg-success/10 text-success"
+                      : conversationState === "failed"
+                        ? "bg-error/10 text-error"
                       : "bg-surface-high/60 text-on-surface-variant/60"
               }`}
             >
@@ -156,7 +158,7 @@ export default function CopilotPanel({ width = 380, variant = "sidebar" }: { wid
           </div>
         </div>
 
-      {(conversationState === "idle" || conversationState === "completed") && (
+      {(conversationState === "idle" || conversationState === "completed" || conversationState === "failed") && (
         <>
           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
             {groups.length === 0 && (
@@ -209,6 +211,14 @@ export default function CopilotPanel({ width = 380, variant = "sidebar" }: { wid
                 </button>
               </div>
             )}
+            {conversationState === "failed" && (
+              <div className="rounded-xl border border-error/15 bg-error/5 px-3.5 py-3">
+                <p className="text-body-sm text-error font-semibold mb-1">The task failed</p>
+                <p className="text-body-sm text-on-surface-variant leading-relaxed">
+                  {groups.find((group) => group.id === activeGroupId)?.summary || "The requested operation could not be completed."}
+                </p>
+              </div>
+            )}
             <ActivityFeed groups={groups} activeGroupId={activeGroupId} />
           </div>
           {conversationState === "idle" && (
@@ -224,6 +234,14 @@ export default function CopilotPanel({ width = 380, variant = "sidebar" }: { wid
             <div className="shrink-0 px-4 pt-1 pb-0.5">
               <div className="flex items-center gap-2 text-label-sm text-on-surface-variant/40">
                 <span className="w-1.5 h-1.5 rounded-full bg-success/60" />
+                Loqi OS
+              </div>
+            </div>
+          )}
+          {conversationState === "failed" && (
+            <div className="shrink-0 px-4 pt-1 pb-0.5">
+              <div className="flex items-center gap-2 text-label-sm text-error/60">
+                <span className="w-1.5 h-1.5 rounded-full bg-error/60" />
                 Loqi OS
               </div>
             </div>

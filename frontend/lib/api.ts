@@ -244,6 +244,11 @@ export async function copilotMessage(
     messages: LoqiMessage[];
     events: unknown[];
     session_token?: string;
+    operation?: {
+      kind: "search_discovery";
+      discovery_id: string;
+      job_id: string;
+    };
   }>(
     `${API_BASE}/api/web/session/_/messages`,
     {

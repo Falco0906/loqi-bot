@@ -6,6 +6,8 @@ Fixtures are in conftest.py.
 """
 
 import pytest
+import main as main_module
+from types import SimpleNamespace
 
 
 class TestHealth:
@@ -18,6 +20,35 @@ class TestHealth:
         body = resp.json()
         assert "status" in body
         assert "version" in body
+
+
+class TestCopilotOperationBoundary:
+    @pytest.mark.asyncio
+    async def test_endpoint_returns_real_discovery_operation_for_explicit_request(self, monkeypatch):
+        async def fake_knowledge(*_args, **_kwargs):
+            return SimpleNamespace(to_dict=lambda: {"items": [], "sources": []})
+
+        async def fake_create_search_run(user_id, query, session):
+            assert user_id == "owner-1"
+            assert query == "I need new restaurant leads"
+            assert session == "session-1"
+            return {"discovery_id": "discovery-1", "job_id": "job-1", "status": "queued"}
+
+        monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
+        monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
+        monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", fake_knowledge)
+        monkeypatch.setattr(main_module, "_create_search_run", fake_create_search_run)
+
+        request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
+        payload = main_module.SendWebMessageRequest(
+            text="I need new restaurant leads",
+            copilot=main_module.CopilotContextModel(current_page="Mission Control", message_history=[]),
+        )
+        result = await main_module.post_web_session_message("session-1", payload, request)
+
+        assert result["operation"]["kind"] == "search_discovery"
+        assert result["operation"]["discovery_id"] == "discovery-1"
+        assert result["operation"]["job_id"] == "job-1"
 
 
 class TestSessionCreation:
@@ -157,6 +188,44 @@ class TestStructuredContext:
         assert data["ok"] is True
         assert len(data["messages"]) > 0
         assert data["messages"][-1]["role"] == "assistant"
+
+    def test_explicit_lead_request_starts_canonical_discovery_job(self, client, session_token, monkeypatch):
+        calls = []
+
+        async def fake_create_search_run(user_id, query, session):
+            calls.append((user_id, query, session))
+            return {"discovery_id": "discovery-1", "job_id": "job-1", "status": "queued"}
+
+        monkeypatch.setattr(main_module, "_create_search_run", fake_create_search_run)
+        resp = client.post(
+            f"/api/web/session/{session_token}/messages",
+            json={
+                "text": "I need new restaurant leads",
+                "copilot": {
+                    "current_page": "Mission Control",
+                    "message_history": [],
+                },
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["operation"] == {
+            "kind": "search_discovery",
+            "discovery_id": "discovery-1",
+            "job_id": "job-1",
+            "status": "queued",
+        }
+        assert calls and calls[0][1] == "I need new restaurant leads"
+
+    def test_lead_followups_are_refinements(self):
+        assert main_module._copilot_discovery_query(
+            "Make it Hyderabad",
+            [{"role": "user", "text": "I need restaurant leads"}],
+        ) == "I need restaurant leads; refinement: Make it Hyderabad"
+        assert main_module._copilot_discovery_query(
+            "Actually give me 100",
+            [{"role": "user", "text": "I need restaurant leads"}],
+        ) == "I need restaurant leads; refinement: Actually give me 100"
 
 
 class TestUnknownSession:

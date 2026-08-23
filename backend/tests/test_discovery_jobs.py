@@ -301,9 +301,8 @@ class TestDiscoveryEntity:
         else:
             pytest.fail("search workflow did not reach completed status")
 
-        # The runner flips the job to completed BEFORE awaiting on_complete, so
-        # finalize_discovery may still be linking leads/companies. Poll the
-        # discovery until it reaches a terminal state (up to 90s).
+        # The runner publishes job completion only after finalize_discovery has
+        # linked leads and companies. Poll defensively for terminal state.
         finalized = None
         for _ in range(90):
             await asyncio.sleep(1)

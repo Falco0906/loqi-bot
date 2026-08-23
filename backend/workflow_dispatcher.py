@@ -210,7 +210,10 @@ async def run_search_workflow(job: Job, on_progress) -> dict:
         persist_partial,
     )
 
-    if result.get("ok") and result.get("leads"):
+    # The first-result hook already persisted the provider batch. Inserting
+    # the same final batch again doubled Copilot's reported lead count and
+    # could make result reads disagree with the finalized Discovery.
+    if result.get("ok") and result.get("leads") and leads_found["n"] == 0:
         storage = JobStorage()
         storage.store_search_results(job.id, result["leads"])
 

@@ -12,8 +12,6 @@ import {
 } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { ApiError, copilotMessage, getJob, getJobResults } from "../lib/api";
-import { searchDiscoveryAction } from "../lib/copilot-actions";
-import { normalizeDiscoveryRequest } from "../lib/discovery-request";
 import {
   fetchBriefing,
   fetchDiscoveryFresh,
@@ -86,6 +84,14 @@ type CopilotState = {
   chats: CopilotChat[];
   messages: CopilotMessage[];
 };
+
+type AgentOperation = {
+  kind: "search_discovery";
+  discovery_id: string;
+  job_id: string;
+};
+
+type AgentTurn = { operation?: AgentOperation };
 
 type CopilotActions = {
   setOpen: (v: boolean) => void;
@@ -304,7 +310,7 @@ export function CopilotProvider({
   const sessionRef = useRef(0);
   const activeGroupTitleRef = useRef("");
 
-  const askAgent = useCallback(async (text: string, conversation: CopilotMessage[], requestSession: number) => {
+  const askAgent = useCallback(async (text: string, conversation: CopilotMessage[], requestSession: number): Promise<AgentTurn> => {
     appendMessage({ role: "tool", content: "Reviewing your request and current Loqi context…" });
     try {
       const response = await copilotMessage(getTokenForActions(), {
@@ -314,15 +320,18 @@ export function CopilotProvider({
         availableActions: AGENT_ACTION_TYPES,
         messageHistory: conversation.slice(-12).map((message) => ({ role: message.role, text: message.content })),
       });
-      if (sessionRef.current !== requestSession || !response.ok) return;
+      if (sessionRef.current !== requestSession || !response.ok) return {};
+      if (response.operation) return { operation: response.operation };
       const generated = response.messages?.find((message) => message.role === "assistant")?.text?.trim();
-      if (!generated) return;
+      if (!generated) return {};
       const parsed = parseAgentResponse(generated);
       appendMessage({ role: "assistant", content: parsed.content || generated, actions: parsed.actions });
+      return {};
     } catch {
       // The operational task owns success/failure. A generation outage must
       // never turn a real job into a false success or block its execution.
     }
+    return {};
   }, [appendMessage]);
 
   useEffect(() => {
@@ -490,21 +499,19 @@ export function CopilotProvider({
   }, [router]);
 
   const runResearch = useCallback(
-    async (groupId: string, instruction: string) => {
+    async (groupId: string, instruction: string, agentTurn?: Promise<AgentTurn>) => {
       const mySession = sessionRef.current;
       let discoveryId: string | null = null;
       let jobId: string | null = null;
       try {
-        // PR-4.5: canonical Discovery action — same operation as the
-        // Discovery search box, with deterministic query normalization.
-        console.info(`[discovery] copilot action start chars=${instruction.length}`);
-        const action = await searchDiscoveryAction(getTokenForActions(), instruction, "sidebar");
-        if (action) {
-          discoveryId = action.discoveryId;
-          jobId = action.jobId;
-          console.info(`[discovery] accepted discovery=${discoveryId.slice(0, 8)} job=${jobId.slice(0, 8)}`);
+        const operation = (await agentTurn)?.operation;
+        if (operation?.kind === "search_discovery") {
+          discoveryId = operation.discovery_id;
+          jobId = operation.job_id;
+          console.info(`[discovery] agent accepted discovery=${discoveryId.slice(0, 8)} job=${jobId.slice(0, 8)}`);
         } else {
-          console.warn("[discovery] canonical action returned null (auth/session)");
+          failWork(groupId, "I couldn't start the Discovery operation.");
+          return;
         }
       } catch {
         failWork(groupId, "Research couldn't start. Please try again.");
@@ -551,6 +558,10 @@ export function CopilotProvider({
           // not report a false persistence failure during normal finalization.
           for (let attempt = 0; attempt < 60; attempt += 1) {
             const discovery = await fetchDiscoveryFresh(discoveryId);
+            if (!discovery) {
+              failWork(groupId, "Discovery completed but its results could not be retrieved.");
+              return;
+            }
             if (discovery?.status === "completed") {
               persisted = true;
               break;
@@ -577,7 +588,7 @@ export function CopilotProvider({
           // A terminal job with an unavailable result is not a successful
           // Copilot operation. Keep the failure visible instead of showing
           // DONE/View results for a run whose requested output was not read.
-          failWork(groupId, "Discovery completed but its results could not be loaded.");
+          failWork(groupId, "Discovery completed but its results could not be retrieved.");
         }
       };
 
@@ -764,10 +775,10 @@ export function CopilotProvider({
   );
 
   const runTask = useCallback(
-    (kind: TaskKind, groupId: string, instruction: string) => {
+    (kind: TaskKind, groupId: string, instruction: string, agentTurn?: Promise<AgentTurn>) => {
       switch (kind) {
         case "research":
-          void runResearch(groupId, instruction);
+          void runResearch(groupId, instruction, agentTurn);
           break;
         case "briefing":
           void runBriefingTask(groupId);
@@ -784,7 +795,7 @@ export function CopilotProvider({
   );
 
   const beginTask = useCallback(
-    (kind: TaskKind, instruction: string) => {
+    (kind: TaskKind, instruction: string, agentTurn?: Promise<AgentTurn>) => {
       const group = makeGroup(kind, taskTitle(kind, instruction), instruction);
       const groupId = group.id;
       activeGroupTitleRef.current = group.title;
@@ -792,7 +803,7 @@ export function CopilotProvider({
       setActiveGroupId(groupId);
       setRecentTask(null);
       busyRef.current = true;
-      runTask(kind, groupId, instruction);
+      runTask(kind, groupId, instruction, agentTurn);
     },
     [runTask],
   );
@@ -807,7 +818,7 @@ export function CopilotProvider({
       appendMessage({ role: "user", content: trimmed });
 
       const requestSession = sessionRef.current + 1;
-      void askAgent(trimmed, previousMessages, requestSession);
+      const agentTurn = askAgent(trimmed, previousMessages, requestSession);
 
       let kind = resolveTaskKind(trimmed, pageContextRef.current?.page);
       // Preserve the active operation across natural follow-ups such as
@@ -828,7 +839,7 @@ export function CopilotProvider({
       }
       sessionRef.current = requestSession;
       transition({ type: "instruction", kind });
-      beginTask(kind, trimmed);
+      beginTask(kind, trimmed, agentTurn);
       return true;
     },
     [transition, beginTask, appendMessage, askAgent, messages],

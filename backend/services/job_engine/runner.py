@@ -62,6 +62,36 @@ class BackgroundRunner:
 
             result = await runner_fn(job, on_progress)
             if result.get("ok"):
+                # Discovery finalization is part of successful execution, not
+                # a best-effort afterthought. Publish COMPLETED only after
+                # the linked Discovery and persisted leads are authoritative.
+                if on_complete:
+                    try:
+                        finalized = await on_complete(job)
+                        if finalized is False:
+                            error = "Discovery results could not be persisted"
+                            await asyncio.to_thread(
+                                self._storage.update_job,
+                                job.id,
+                                status=JobStatus.FAILED,
+                                stage="Failed",
+                                error_message=error,
+                                completed_at=datetime.now(timezone.utc),
+                            )
+                            await notify_off_loop("failed", "Failed", 0, error)
+                            return
+                    except Exception as e:
+                        error = f"Discovery finalization failed: {e}"
+                        await asyncio.to_thread(
+                            self._storage.update_job,
+                            job.id,
+                            status=JobStatus.FAILED,
+                            stage="Failed",
+                            error_message=error,
+                            completed_at=datetime.now(timezone.utc),
+                        )
+                        await notify_off_loop("failed", "Failed", 0, error)
+                        return
                 await asyncio.to_thread(
                     self._storage.update_job,
                     job.id,
@@ -72,11 +102,6 @@ class BackgroundRunner:
                     completed_at=datetime.now(timezone.utc),
                 )
                 await notify_off_loop("completed", "Complete", 100)
-                if on_complete:
-                    try:
-                        await on_complete(job)
-                    except Exception as e:
-                        _log(f"job {job.id} on_complete hook failed: {e}")
             else:
                 await asyncio.to_thread(
                     self._storage.update_job,

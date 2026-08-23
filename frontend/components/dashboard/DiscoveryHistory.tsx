@@ -6,8 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import AppPage from "../primitives/AppPage";
 import WorkspaceContainer from "../layout/WorkspaceContainer";
 import { useData } from "../../lib/hooks/use-data";
-import { fetchDiscoveryList, peekCachedDiscoveryList } from "../../lib/repositories";
-import { useTellLoqi } from "../../hooks/useTellLoqi";
+import { fetchDiscoveryList, peekCachedDiscoveryList, startDiscoverySearch } from "../../lib/repositories";
 import { toast } from "../shared/Toast";
 import { useWorkspaceSearch } from "../../contexts/SearchContext";
 import { setNavState } from "../../lib/nav-state";
@@ -97,10 +96,31 @@ export default function DiscoveryHistory() {
   const attachMode = !!attachContext?.campaignId;
   const [attachAttempt, setAttachAttempt] = useState(0);
   const [attachState, setAttachState] = useState<"idle" | "starting" | "failed">("idle");
+  const [inputQuery, setInputQuery] = useState("");
   const { data, loading, error, retry } = useData(fetchDiscoveryList, {
     initial: peekCachedDiscoveryList(),
   });
-  const tellLoqi = useTellLoqi("Discovery", {});
+  const [searching, setSearching] = useState(false);
+
+  const submitDiscoverySearch = async (rawQuery: string) => {
+    const query = rawQuery.trim();
+    if (!query || searching) return;
+    setSearching(true);
+    try {
+      const started = await startDiscoverySearch(query);
+      if (!started) {
+        toast("error", "Could not start the discovery");
+        return;
+      }
+      // The detail route owns the existing researching/progress view, live
+      // polling, SSE refreshes, and final results for this new run.
+      router.push(discoveryDetailUrl(started.discoveryId, null));
+    } catch {
+      toast("error", "Could not start the discovery");
+    } finally {
+      setSearching(false);
+    }
+  };
 
   useEffect(() => {
     if (!attachMode || !attachContext || !attachContext.campaignId) return;
@@ -377,19 +397,22 @@ export default function DiscoveryHistory() {
                 className="w-full border-none p-0 focus:ring-0 text-lg placeholder:text-on-surface-variant/30 resize-none bg-transparent outline-none"
                 placeholder="Start a new discovery, e.g. 'AI startups'…"
                 rows={1}
-                value={tellLoqi.text}
-                onChange={(e) => tellLoqi.setText(e.target.value)}
+                value={inputQuery}
+                onChange={(e) => setInputQuery(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
-                    void tellLoqi.submit().then((handled) => { if (!handled) toast("error", "Copilot is busy — wait for the current task or clear it."); });
+                    void submitDiscoverySearch(inputQuery);
                   }
                 }}
               />
               <button
                 type="button"
-                disabled={tellLoqi.sending || !tellLoqi.text.trim()}
-                onClick={() => void tellLoqi.submit()}
+                disabled={searching}
+                onClick={(e) => {
+                  const textarea = e.currentTarget.parentElement?.querySelector("textarea");
+                  void submitDiscoverySearch(textarea?.value || "");
+                }}
                 className="bg-primary text-on-primary w-10 h-10 rounded-full flex items-center justify-center hover:opacity-80 transition-opacity shrink-0 disabled:opacity-40"
               >
                 <span className="material-symbols-outlined text-sm">arrow_upward</span>
@@ -399,14 +422,14 @@ export default function DiscoveryHistory() {
           <div className="mt-4 flex justify-center gap-3 overflow-x-auto no-scrollbar">
             <button
               type="button"
-              onClick={() => void tellLoqi.submit("Find Series A fintech companies in cross-border payments.").then((handled) => { if (!handled) toast("error", "Copilot is busy — try again in a moment."); })}
+              onClick={() => void submitDiscoverySearch("Find Series A fintech companies in cross-border payments.")}
               className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
             >
               FIND SERIES A FINTECH
             </button>
             <button
               type="button"
-              onClick={() => void tellLoqi.submit("Shift focus to healthcare SaaS companies.").then((handled) => { if (!handled) toast("error", "Copilot is busy — try again in a moment."); })}
+              onClick={() => void submitDiscoverySearch("Shift focus to healthcare SaaS companies.")}
               className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
             >
               SHIFT TO HEALTHCARE

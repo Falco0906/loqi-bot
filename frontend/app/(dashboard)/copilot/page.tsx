@@ -9,8 +9,6 @@
  */
 
 import { useEffect } from "react";
-import WorkspaceContainer from "../../../components/layout/WorkspaceContainer";
-import AppPage from "../../../components/primitives/AppPage";
 import CopilotPanel from "../../../components/copilot/CopilotPanel";
 import { usePageTitle } from "../../../hooks/usePageTitle";
 
@@ -21,14 +19,8 @@ export default function CopilotPage() {
   // the workspace instead. The layout hides the duplicate sidebar instance
   // for /copilot (see DashboardLayout isCopilotPage).
   return (
-    <WorkspaceContainer>
-      <AppPage>
-        <div className="mx-auto w-full max-w-3xl h-full flex flex-col" data-copilot-page>
-          <div className="h-full min-h-0">
-            <CopilotPanel variant="page" />
-          </div>
-        </div>
-      </AppPage>
-    </WorkspaceContainer>
+    <div className="h-[calc(100vh-4rem)] w-full min-w-0 overflow-hidden" data-copilot-page>
+      <CopilotPanel variant="page" />
+    </div>
   );
 }

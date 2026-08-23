@@ -55,6 +55,7 @@ from services.conversation_engine import ConversationEngine, _message
 from services.google_auth import exchange_code_for_tokens
 from services.supabase import save_google_tokens
 from services.telegram import send_message
+from services.operations.diagnostics import get_build_metadata
 from services.campaign_planner import analyze_campaigns
 from workflows import run_workflow
 from services.job_engine import job_manager
@@ -2713,6 +2714,7 @@ def health():
     return {
         "status": "healthy",
         "version": "v2",
+        "build": get_build_metadata(),
         "uptime": int(time.time() - _start_time),
         "database": "configured" if os.getenv("SUPABASE_URL") else "unconfigured",
         "providers": "ready",
@@ -2867,6 +2869,11 @@ async def post_web_session_message(
         )
 
     if payload.copilot and payload.copilot.current_page:
+        log.info(
+            "COPILOT_REQUEST path=post_web_session_message page=%s text_chars=%s",
+            payload.copilot.current_page,
+            len(payload.text or ""),
+        )
         workspace_context = _build_copilot_workspace_context(
             session_token,
             current_page=payload.copilot.current_page,
@@ -2912,11 +2919,18 @@ async def post_web_session_message(
             message_history=payload.copilot.message_history,
         )
         if decision.get("intent") == "lead_discovery" and decision.get("query"):
+            log.info("COPILOT_DISCOVERY_DECISION query_chars=%s", len(str(decision["query"])))
             try:
+                log.info("COPILOT_DISCOVERY_TOOL_ENTER tool=_create_search_run")
                 started = await _create_search_run(
                     str(summary.get("user_id") or ""),
                     str(decision["query"]),
                     session_token,
+                )
+                log.info(
+                    "COPILOT_DISCOVERY_TOOL_RETURN discovery_id=%s job_id=%s",
+                    started.get("discovery_id", ""),
+                    started.get("job_id", ""),
                 )
             except Exception as error:
                 log.exception("Copilot Discovery tool failed query=%r", decision.get("query"))

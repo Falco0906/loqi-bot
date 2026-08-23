@@ -72,6 +72,7 @@ def decide_copilot_intent(
     message_history: list[dict] | None = None,
 ) -> dict:
     """Make the agent's intent/tool decision before response generation."""
+    _log(f"COPILOT_INTENT_ROUTER_ENTER message_chars={len(user_message)} history_len={len(message_history or [])}")
     system = (
         "You are Loqi's action router. Return JSON only with keys intent, query, reason.\n"
         "Allowed intent values: lead_discovery, informational, clarification.\n"
@@ -89,6 +90,7 @@ def decide_copilot_intent(
     }, ensure_ascii=False, default=str)
     raw = _send_openai_request(system, user, timeout=20)
     if not raw:
+        _log("COPILOT_INTENT_ROUTER_EMPTY reason=model_unavailable_or_error")
         return {"intent": "clarification", "query": "", "reason": "Intent router unavailable"}
     try:
         cleaned = raw.strip()
@@ -99,12 +101,15 @@ def decide_copilot_intent(
         _log(f"Copilot intent router returned invalid JSON: {raw[:200]}")
         return {"intent": "clarification", "query": "", "reason": "Invalid intent decision"}
     if not isinstance(decision, dict) or decision.get("intent") not in {"lead_discovery", "informational", "clarification"}:
+        _log("COPILOT_INTENT_ROUTER_INVALID decision_shape=true")
         return {"intent": "clarification", "query": "", "reason": "Invalid intent decision"}
-    return {
+    normalized = {
         "intent": decision["intent"],
         "query": str(decision.get("query") or "").strip(),
         "reason": str(decision.get("reason") or "").strip(),
     }
+    _log(f"COPILOT_INTENT_ROUTER_DECISION intent={normalized['intent']} query_chars={len(normalized['query'])}")
+    return normalized
 
 
 RESPONSE_VARIATIONS = {

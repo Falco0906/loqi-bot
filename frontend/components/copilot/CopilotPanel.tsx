@@ -66,6 +66,44 @@ export default function CopilotPanel({ width = 380, variant = "sidebar" }: { wid
 
   const working = conversationState === "working";
 
+  const history = (
+    <aside className={variant === "page"
+      ? "w-60 shrink-0 border-r border-outline-variant/10 bg-surface-container-low/30 flex flex-col"
+      : "hidden"}>
+      <div className="flex items-center justify-between px-3 py-3 border-b border-outline-variant/10">
+        <span className="text-label-sm uppercase tracking-wider text-on-surface-variant/60 font-semibold">
+          Chats
+        </span>
+        <button
+          type="button"
+          onClick={clear}
+          className="p-1 rounded-md text-on-surface-variant/50 hover:text-on-surface hover:bg-surface-high/60"
+          aria-label="New chat"
+          title="New chat"
+        >
+          <Icon name="edit_square" className="text-sm" />
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-2 space-y-1">
+        {groups.length === 0 ? (
+          <p className="px-2 py-3 text-label-sm text-on-surface-variant/45">No conversations yet</p>
+        ) : (
+          [...groups].reverse().map((group) => (
+            <div
+              key={group.id}
+              className={`rounded-lg px-2.5 py-2 ${group.id === activeGroupId ? "bg-primary/10" : "hover:bg-surface-high/40"}`}
+            >
+              <p className="truncate text-body-sm text-on-surface font-medium">{group.title}</p>
+              <p className="mt-0.5 text-[10px] uppercase tracking-wider text-on-surface-variant/45">
+                {group.status === "complete" ? "Completed" : group.status === "error" ? "Failed" : "In progress"}
+              </p>
+            </div>
+          ))
+        )}
+      </div>
+    </aside>
+  );
+
   return (
     <div
       className={variant === "page"
@@ -76,9 +114,11 @@ export default function CopilotPanel({ width = 380, variant = "sidebar" }: { wid
       aria-label="Loqi OS"
     >
       <div
-        className="w-[380px] max-w-[92vw] shrink-0 h-full flex flex-col overflow-hidden border-l border-outline-variant/15 shadow-glass"
-        style={{ width }}
+        className={`${variant === "page" ? "w-full" : "w-[380px] max-w-[92vw] border-l border-outline-variant/15 shadow-glass"} shrink-0 h-full flex overflow-hidden`}
+        style={variant === "page" ? undefined : { width }}
       >
+        {history}
+        <div className="flex-1 min-w-0 h-full flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-outline-variant/10 shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-primary/15 flex items-center justify-center">
@@ -234,6 +274,7 @@ export default function CopilotPanel({ width = 380, variant = "sidebar" }: { wid
         </>
       )}
       </div>
+        </div>
     </div>
   );
 }

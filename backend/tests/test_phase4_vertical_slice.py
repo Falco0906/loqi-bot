@@ -197,3 +197,50 @@ def test_vertical_slice_lifecycle(pipeline, monkeypatch):
     # PR-4: first-result event published for the user (discovery.leads).
     lead_events = [e for e in captured["events"] if e["type"] == "discovery.leads"]
     assert lead_events and lead_events[-1]["progress"] == 3
+
+
+def test_provider_success_returns_results_to_workflow(monkeypatch):
+    """A successful provider response must not fall through as ``None``.
+
+    This guards the exact boundary that feeds the persistence/job lifecycle:
+    provider ``ok=True`` → ``search_with_expansion`` ``ok=True`` with leads.
+    The following vertical-slice test verifies those leads persist and the
+    workflow reaches completion.
+    """
+    import services.lead_provider as lead_provider
+
+    leads = [
+        {"lead_id": "restaurant-1", "name": "Restaurant Lead", "provider": "fake"},
+    ]
+
+    class FakeProvider:
+        pass
+
+    monkeypatch.setattr(lead_provider, "get_provider", lambda: FakeProvider())
+    monkeypatch.setattr(
+        lead_provider,
+        "_apply_discovery_context",
+        lambda icp, context: icp,
+    )
+    monkeypatch.setattr(
+        "services.icp_extractor.extract_structured_icp",
+        lambda query: None,
+    )
+    monkeypatch.setattr(
+        "services.search_expansion.expand_search_intent",
+        lambda service, target, icp: {"search_queries": ["restaurant owner"]},
+    )
+    monkeypatch.setattr(
+        "services.providers.base_provider.search_leads_with_retry",
+        lambda provider, *, icp, search_expansion, limit: {
+            "ok": True,
+            "provider": "fake",
+            "leads": leads,
+        },
+    )
+
+    result = lead_provider.search_with_expansion("restaurant leads", "")
+
+    assert result["ok"] is True
+    assert result["source"] == "fake"
+    assert result["leads"] == leads

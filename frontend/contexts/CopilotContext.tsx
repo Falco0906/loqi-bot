@@ -431,17 +431,11 @@ export function CopilotProvider({
             discoveryPath,
           );
         } catch {
-          // The job is already terminal at this point. A transient results
-          // read or prefetch failure must not rewrite a completed Discovery
-          // as STOPPED; the Discovery page remains authoritative and will
-          // load its persisted results directly.
           if (sessionRef.current !== mySession) return;
-          try {
-            addStep(groupId, "Discovery completed. Open it to review the results.", "done");
-            completeWork(groupId, "research", "Your Discovery is ready to review.", discoveryPath);
-          } catch {
-            // Preserve the terminal job state even if the UI update is gone.
-          }
+          // A terminal job with an unavailable result is not a successful
+          // Copilot operation. Keep the failure visible instead of showing
+          // DONE/View results for a run whose requested output was not read.
+          failWork(groupId, "Discovery completed but its results could not be loaded.");
         }
       };
 

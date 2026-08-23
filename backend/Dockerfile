@@ -17,7 +17,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY requirements-prod.txt ./
+COPY backend/requirements-prod.txt ./requirements-prod.txt
 RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel \
     && pip wheel --no-cache-dir --wheel-dir /wheels -r requirements-prod.txt
 
@@ -38,8 +38,11 @@ RUN pip install --no-cache-dir /wheels/*.whl \
     && rm -rf /wheels
 
 # Application code only (no tests, no venv, no local state).
-COPY main.py workflows.py workflow_dispatcher.py entrypoint.py ./
-COPY services ./services
+# The build context is the repository root so the provider-agnostic synthetic
+# dataset is present in the production image alongside the backend.
+COPY backend/main.py backend/workflows.py backend/workflow_dispatcher.py backend/entrypoint.py ./
+COPY backend/services ./services
+COPY synthetic ./synthetic
 
 # Non-root runtime user + writable data dir for persisted conversation state.
 RUN useradd --create-home --uid 10001 appuser \

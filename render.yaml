@@ -2,6 +2,9 @@ services:
   - type: web
     name: loqi-backend
     runtime: python
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    # The synthetic provider dataset lives at the repository root. Build from
+    # the repository root so production contains the same provider assets as
+    # the local vertical-slice runtime.
+    rootDir: .
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT

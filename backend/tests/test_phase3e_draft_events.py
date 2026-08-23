@@ -35,14 +35,15 @@ class _StubOutbound:
 def capture(monkeypatch):
     events: list[tuple[str, dict]] = []
 
-    async def fake_publish(user_id, event_type, data=None, *, job_id="", status="", progress=None):
+    async def fake_publish(self, user_id, event_type, data=None,
+                           job_id="", status="", progress=None):
         events.append((user_id, {"type": event_type, **(data or {})}))
         return True
 
     # Patch the singleton INSTANCE (not just the class): guarantees the
     # helper's `from services.events_bus import event_bus` binding hits it.
     import services.events_bus as eb
-    monkeypatch.setattr(eb.event_bus, "publish_user_event", fake_publish)
+    monkeypatch.setattr(eb.EventBus, "publish_user_event", staticmethod(fake_publish))
     return events
 
 
@@ -125,7 +126,7 @@ def test_draft_sent_event_published_and_scoped(monkeypatch, capture):
     resp = asyncio.run(run_send())
     assert resp.get("ok") is True, resp
 
-    types = [e["type"] for _, e in capture]
+    types = [e["type"] for _, e in capture] if isinstance(capture[0], tuple) else [e["type"] for e in capture]
     assert "draft.sent" in types
     # scoped to owner only
     assert all(uid == OWNER for uid, _ in capture)

@@ -50,8 +50,10 @@ export async function searchDiscoveryAction(
   rawInput: string,
   surface: ActionSurface,
 ): Promise<DiscoveryAction | null> {
+  console.info(`[copilot-action] normalize input="${rawInput.slice(0, 60)}"`);
   const normalized = normalizeDiscoveryRequest(rawInput);
   const query = normalized.cleanedQuery || rawInput.trim();
+  console.info(`[copilot-action] normalized target="${normalized.target}" cleanedQuery="${query}"`);
 
   // Structured observability — identifiers only, no secrets.
   console.info(
@@ -61,8 +63,10 @@ export async function searchDiscoveryAction(
 
   const started = await startDiscoverySearch(query);
   if (!started) {
-    return null; // caller surfaces actionable failure (auth/session)
+    console.error("[copilot-action] startDiscoverySearch returned null — auth/session failure");
+    return null;
   }
+  console.info(`[copilot-action] accepted discovery=${started.discoveryId.slice(0,8)} job=${started.jobId.slice(0,8)}`);
 
   return {
     kind: "search_discovery",

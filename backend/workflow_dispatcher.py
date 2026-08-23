@@ -68,9 +68,16 @@ def _search_with_progress(
 
     result = search_with_expansion(
         service, target, plan=plan, context=discovery_context,
-        on_partial_results=on_results,
     )
     on_stage(3)
+
+    # PR-4: first-result hook fires AFTER stage ticks so the "N leads found"
+    # progress write isn't immediately overwritten by a later stage label.
+    if on_results and result.get("leads"):
+        try:
+            on_results(result["leads"])
+        except Exception as error:
+            print(f"[workflow_dispatcher] first-result persistence failed: {error}")
 
     on_stage(4)
 
@@ -139,31 +146,47 @@ async def run_search_workflow(job: Job, on_progress) -> dict:
     rank_offset = {"n": 0}
     leads_found = {"n": 0}
 
-    async def persist_partial(leads: list) -> None:
+    def persist_partial(leads: list) -> None:
+        """Runs INSIDE the executor thread (no event loop) — sync by design."""
         try:
             from services.discovery import update_discovery_progress
-            from services.redis_client import hash_token  # noqa: F401
-            from services import events_bus
             ranked = []
             for lead in leads:
                 rank_offset["n"] += 1
                 ranked.append({**lead, "_rank": rank_offset["n"]})
-            await asyncio.to_thread(_store_batch, job.id, ranked)
+            JobStorage().append_search_results(job.id, ranked)
             leads_found["n"] += len(ranked)
             if job.discovery_id:
-                await update_discovery_progress(
+                # async helper; we're on a worker thread with no running
+                # loop, so drive it with a dedicated loop.
+                asyncio.run(update_discovery_progress(
                     job.discovery_id,
                     f"{leads_found['n']} leads found",
                     min(99, 10 + leads_found["n"]),
+                ))
+            # PR-4: notify the SSE/event layer (best-effort). We're on a
+            # worker thread with no loop; hand off to the main loop if one
+            # is running, otherwise publish inline via a fresh loop.
+            from services.events_bus import EventBus
+            bus = EventBus()
+
+            async def _publish():
+                await bus.publish_user_event(
+                    job.user_id, "discovery.leads",
+                    {"discovery_id": job.discovery_id or ""},
+                    job_id=job.id,
+                    status="running",
+                    progress=leads_found["n"],
                 )
-            from services.events_bus import event_bus as _bus
-            await _bus.publish_user_event(
-                job.user_id, "discovery.leads",
-                {"discovery_id": job.discovery_id or ""},
-                job_id=job.id,
-                status="running",
-                progress=leads_found["n"],
-            )
+
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop is not None:
+                loop.create_task(_publish())
+            else:
+                asyncio.run(_publish())
         except Exception as error:
             print(f"[workflow_dispatcher] partial persistence failed: {error}")
 

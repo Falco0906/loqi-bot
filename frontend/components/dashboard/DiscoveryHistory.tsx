@@ -8,6 +8,7 @@ import WorkspaceContainer from "../layout/WorkspaceContainer";
 import { useData } from "../../lib/hooks/use-data";
 import { fetchDiscoveryList, peekCachedDiscoveryList } from "../../lib/repositories";
 import { useTellLoqi } from "../../hooks/useTellLoqi";
+import { toast } from "../shared/Toast";
 import { useWorkspaceSearch } from "../../contexts/SearchContext";
 import { setNavState } from "../../lib/nav-state";
 import {
@@ -112,9 +113,21 @@ export default function DiscoveryHistory() {
     });
     (async () => {
       let existing = "";
+      let existingAt = 0;
       try {
         existing = sessionStorage.getItem(key) || "";
+        existingAt = Number(sessionStorage.getItem(key + "_at") || "0");
       } catch {
+        existing = "";
+      }
+      const staleMs = Date.now() - existingAt;
+      const STALE_AFTER_MS = 15 * 60 * 1000;
+      if (existing && staleMs > STALE_AFTER_MS) {
+        console.log("[kickoff] attach guard expired", { age_ms: staleMs });
+        try {
+          sessionStorage.removeItem(key);
+          sessionStorage.removeItem(key + "_at");
+        } catch { /* noop */ }
         existing = "";
       }
       console.log("[kickoff] DiscoveryHistory attach effect: sessionStorage read", {
@@ -143,6 +156,7 @@ export default function DiscoveryHistory() {
         }
         try {
           sessionStorage.setItem(key, discoveryId);
+          sessionStorage.setItem(key + "_at", String(Date.now()));
           console.log("[kickoff] DiscoveryHistory attach effect: stored discoveryId", discoveryId);
         } catch {
           /* non-fatal */
@@ -368,7 +382,7 @@ export default function DiscoveryHistory() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
-                    void tellLoqi.submit();
+                    void tellLoqi.submit().then((handled) => { if (!handled) toast("error", "Copilot is busy — wait for the current task or clear it."); });
                   }
                 }}
               />
@@ -385,14 +399,14 @@ export default function DiscoveryHistory() {
           <div className="mt-4 flex justify-center gap-3 overflow-x-auto no-scrollbar">
             <button
               type="button"
-              onClick={() => void tellLoqi.submit("Find Series A fintech companies in cross-border payments.")}
+              onClick={() => void tellLoqi.submit("Find Series A fintech companies in cross-border payments.").then((handled) => { if (!handled) toast("error", "Copilot is busy — try again in a moment."); })}
               className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
             >
               FIND SERIES A FINTECH
             </button>
             <button
               type="button"
-              onClick={() => void tellLoqi.submit("Shift focus to healthcare SaaS companies.")}
+              onClick={() => void tellLoqi.submit("Shift focus to healthcare SaaS companies.").then((handled) => { if (!handled) toast("error", "Copilot is busy — try again in a moment."); })}
               className="whitespace-nowrap text-on-surface-variant/60 hover:text-primary transition-colors border border-outline-variant/10 rounded-full px-4 py-1.5 bg-surface-container-low text-[10px] uppercase tracking-wider font-semibold"
             >
               SHIFT TO HEALTHCARE

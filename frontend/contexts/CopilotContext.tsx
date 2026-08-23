@@ -368,10 +368,14 @@ export function CopilotProvider({
       try {
         // PR-4.5: canonical Discovery action — same operation as the
         // Discovery search box, with deterministic query normalization.
+        console.info(`[discovery] copilot action start chars=${instruction.length}`);
         const action = await searchDiscoveryAction(getTokenForActions(), instruction, "sidebar");
         if (action) {
           discoveryId = action.discoveryId;
           jobId = action.jobId;
+          console.info(`[discovery] accepted discovery=${discoveryId.slice(0, 8)} job=${jobId.slice(0, 8)}`);
+        } else {
+          console.warn("[discovery] canonical action returned null (auth/session)");
         }
       } catch {
         failWork(groupId, "Research couldn't start. Please try again.");

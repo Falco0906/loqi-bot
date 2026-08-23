@@ -202,10 +202,18 @@ export default function Sidebar({
     >
       {/* Logo + search */}
       <div className={`shrink-0 pt-6 pb-1 ${collapsed ? "px-3" : "px-4"}`}>
-        <div className={collapsed ? "flex justify-center" : "px-2"}>
-          <span className={`font-serif text-primary tracking-tight leading-none ${collapsed ? "text-headline-md" : "text-headline-sm"}`}>
-            {collapsed ? "L" : "Loqi"}
-          </span>
+        <div className={collapsed ? "flex justify-center" : "flex items-center gap-2.5 px-2"}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/logo.png"
+            alt="Loqi"
+            className={`${collapsed ? "w-7 h-7" : "w-6 h-6"} shrink-0 rounded-md`}
+          />
+          {!collapsed && (
+            <span className="font-serif text-primary tracking-tight leading-none text-headline-sm">
+              Loqi
+            </span>
+          )}
         </div>
         {!collapsed && (
           <label className="mt-4 flex items-center gap-2 rounded-lg border border-outline-variant/20 bg-surface-lowest px-3 py-2 transition-colors focus-within:border-primary/50">

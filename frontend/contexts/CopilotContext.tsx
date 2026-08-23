@@ -332,7 +332,6 @@ export function CopilotProvider({
   const activeGroupTitleRef = useRef("");
 
   const askAgent = useCallback(async (text: string, conversation: CopilotMessage[], requestSession: number): Promise<AgentTurn> => {
-    appendMessage({ role: "tool", content: "Reviewing your request and current Loqi context…" });
     try {
       const response = await copilotMessage(getTokenForActions(), {
         text,
@@ -855,8 +854,11 @@ export function CopilotProvider({
 
       const requestSession = sessionRef.current + 1;
       sessionRef.current = requestSession;
+      // Keep the composer guarded while intent is being resolved, but do not
+      // expose a task/activity state before the backend returns an operation.
+      busyRef.current = true;
+      setRecentTask(null);
       const agentTurn = askAgent(trimmed, previousMessages, requestSession);
-      setConversationState("working");
       void (async () => {
         const turn = await agentTurn;
         if (sessionRef.current !== requestSession) return;

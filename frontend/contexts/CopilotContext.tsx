@@ -16,6 +16,7 @@ import { searchDiscoveryAction } from "../lib/copilot-actions";
 import { normalizeDiscoveryRequest } from "../lib/discovery-request";
 import {
   fetchBriefing,
+  fetchDiscoveryFresh,
   prefetchDiscovery,
   prefetchDiscoveryList,
   prefetchMissionControl,
@@ -363,7 +364,6 @@ export function CopilotProvider({
 
   const runResearch = useCallback(
     async (groupId: string, instruction: string) => {
-      const task = TASKS.research;
       const mySession = sessionRef.current;
       let discoveryId: string | null = null;
       let jobId: string | null = null;
@@ -414,20 +414,31 @@ export function CopilotProvider({
           if (matches > 0 && matches < found) addStep(groupId, `${matches} match your ICP.`, "done");
 
           markCurrentStep(groupId, "done");
-          addStep(groupId, `Preparing ${task.workspaceLabel}…`, "active");
-          await prepareDestination("research", discoveryId!);
+          // Job completion precedes Discovery finalization in the backend.
+          // Wait for the linked entity to become authoritative before
+          // telling Copilot the requested operation succeeded.
+          let persisted = false;
+          for (let attempt = 0; attempt < 20; attempt += 1) {
+            const discovery = await fetchDiscoveryFresh(discoveryId);
+            if (discovery?.status === "completed") {
+              persisted = true;
+              break;
+            }
+            if (discovery?.status === "failed" || discovery?.status === "cancelled") break;
+            await new Promise((resolve) => setTimeout(resolve, 250));
+          }
+          if (!persisted) {
+            failWork(groupId, "Discovery results could not be persisted.");
+            return;
+          }
           if (sessionRef.current !== mySession) return;
-          markCurrentStep(groupId, "done");
-          addStep(groupId, `Opening ${task.workspaceLabel}…`, "active");
-          navigateTo(discoveryPath);
-          markCurrentStep(groupId, "done");
-          addStep(groupId, "Ready for review.", "done");
+          await prepareDestination("research", discoveryId);
+          if (sessionRef.current !== mySession) return;
+          addStep(groupId, "Discovery completed and results are ready.", "done");
           completeWork(
             groupId,
             "research",
-            found > 0
-              ? `Found ${found} compan${found === 1 ? "y" : "ies"} worth reviewing.`
-              : "No new prospects matched your ICP this time.",
+            `Done — I found ${found} lead${found === 1 ? "" : "s"}.`,
             discoveryPath,
           );
         } catch {
@@ -478,7 +489,7 @@ export function CopilotProvider({
         }
       }, 1500);
     },
-    [addStep, markCurrentStep, failWork, completeWork, navigateTo, prepareDestination, stopPolling],
+    [addStep, markCurrentStep, failWork, completeWork, prepareDestination, fetchDiscoveryFresh, stopPolling],
   );
 
   const runBriefingTask = useCallback(

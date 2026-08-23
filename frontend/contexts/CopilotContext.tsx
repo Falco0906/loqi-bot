@@ -179,8 +179,6 @@ export function CopilotProvider({
 
   const pageContextRef = useRef<PageContext | null>(null);
 
-  const setPageContext = useCallback((ctx: PageContext | null) => {
-  
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem("loqi_copilot_conversation");
@@ -192,7 +190,9 @@ export function CopilotProvider({
       }
     } catch { /* corrupted snapshot — start fresh */ }
   }, []);
-  // Keep the ref in sync synchronously so startTask() — called immediately
+
+  const setPageContext = useCallback((ctx: PageContext | null) => {
+    // Keep the ref in sync synchronously so startTask() — called immediately
     // after setPageContext() in the same handler — sees the fresh page.
     pageContextRef.current = ctx;
     setPageContextState(ctx);

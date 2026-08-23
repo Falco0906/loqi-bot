@@ -37,6 +37,10 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let attempt = 0;
 let running = false;
 let currentToken: string | null = null;
+// A rejected token must not be retried by a later effect/start call until the
+// caller explicitly stops the stream (normally on logout) or a new token is
+// available.
+let authFailedToken: string | null = null;
 
 const MAX_BACKOFF_MS = 30_000;
 
@@ -70,6 +74,11 @@ export function onServerEvent(handler: Handler): () => void {
 export function startEventStream(): void {
   const token = getToken();
   if (!token) return;
+  if (authFailedToken === token) {
+    debug("auth previously failed for this token; waiting for logout or token refresh");
+    return;
+  }
+  if (authFailedToken !== null && authFailedToken !== token) authFailedToken = null;
   if (running && currentToken === token) return;
   if (running) stopEventStream();
   running = true;
@@ -81,6 +90,7 @@ export function startEventStream(): void {
 export function stopEventStream(): void {
   running = false;
   currentToken = null;
+  authFailedToken = null;
   attempt = 0;
   if (reconnectTimer !== null) {
     clearTimeout(reconnectTimer);
@@ -131,6 +141,7 @@ async function streamOnce(token: string): Promise<boolean> {
       // with the same token would 401-loop forever.
       debug(`auth failed status=${res.status} stopping stream`);
       dispatch({ type: "auth.failed" });
+      authFailedToken = token;
       running = false;
       currentToken = null;
       return false;

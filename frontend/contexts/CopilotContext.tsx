@@ -399,11 +399,12 @@ export function CopilotProvider({
         if (completed) return;
         completed = true;
         stopPolling();
+        let found = 0;
         try {
           const results = await getJobResults(jobId);
           if (sessionRef.current !== mySession) return;
           const leads = Array.isArray(results.leads) ? results.leads : [];
-          const found = leads.length;
+          found = leads.length;
           const scores = leads
             .map((l) => leadScore(l as Record<string, unknown>))
             .filter((s): s is number => s !== null);
@@ -430,7 +431,17 @@ export function CopilotProvider({
             discoveryPath,
           );
         } catch {
-          failWork(groupId, "Research stopped early — nothing was changed.");
+          // The job is already terminal at this point. A transient results
+          // read or prefetch failure must not rewrite a completed Discovery
+          // as STOPPED; the Discovery page remains authoritative and will
+          // load its persisted results directly.
+          if (sessionRef.current !== mySession) return;
+          try {
+            addStep(groupId, "Discovery completed. Open it to review the results.", "done");
+            completeWork(groupId, "research", "Your Discovery is ready to review.", discoveryPath);
+          } catch {
+            // Preserve the terminal job state even if the UI update is gone.
+          }
         }
       };
 
@@ -446,10 +457,10 @@ export function CopilotProvider({
           const stage = job.stage ?? "";
           if (stage && stage !== lastStage) {
             lastStage = stage;
-            if (stage === "Complete") {
+            if (job.status === "completed") {
               markCurrentStep(groupId, "done");
               void finish();
-            } else if (stage === "Failed" || stage === "Cancelled") {
+            } else if (job.status === "failed" || job.status === "cancelled") {
               stopPolling();
               failWork(groupId, "Research stopped early — nothing was changed.");
             } else if (!RESEARCH_SKIPPED_STAGES.has(stage)) {

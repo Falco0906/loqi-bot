@@ -33,8 +33,7 @@ export default function InboxPage() {
     return swrFetch<InboxData>(
       inboxKey,
       async () => {
-        const result = await fetchInbox();
-        return (result ?? { ok: false, rows: [] }) as InboxData;
+        return fetchInbox();
       },
     );
   }, [inboxKey]);

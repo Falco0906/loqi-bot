@@ -150,8 +150,15 @@ class TestDurableSentStatus:
 
 
 class TestSendDraftGuard:
+    @staticmethod
+    def _canonical_guard(monkeypatch, draft):
+        async def resolve(*_args, **_kwargs):
+            return "owner-1", "workspace-1", {"id": draft.id, "status": draft.status.value}, draft
+        monkeypatch.setattr(main_module, "_require_canonical_outbound_draft", resolve)
+
     async def test_D_send_draft_on_sent_returns_ok_false_without_executor(self, monkeypatch):
         draft = _sent_outbound_draft(DraftStatus.SENT)
+        self._canonical_guard(monkeypatch, draft)
         calls: list = []
 
         def fake_execute(action_type: str, params: dict):
@@ -168,6 +175,7 @@ class TestSendDraftGuard:
 
     async def test_D2_send_draft_on_sending_returns_ok_false_without_executor(self, monkeypatch):
         draft = _sent_outbound_draft(DraftStatus.SENDING)
+        self._canonical_guard(monkeypatch, draft)
         calls: list = []
 
         def fake_execute(action_type: str, params: dict):
@@ -188,10 +196,12 @@ class TestSendDraftGuard:
         monkeypatch.setattr(main_module, "_workspace_owner", _fake_owner("owner-1"))
         monkeypatch.setattr(
             main_module, "_workspace_drafts",
-            lambda uid, tok="": [{"id": "d-durable-sent", "status": "sent"}],
+            lambda uid, tok="", **_kwargs: [{"id": "d-durable-sent", "status": "sent"}],
         )
         monkeypatch.setattr(main_module, "_sync_draft_to_outbound",
                             lambda draft, tok: synced.append(draft))
+        outbound = _sent_outbound_draft(DraftStatus.SENT)
+        self._canonical_guard(monkeypatch, outbound)
 
         result = await main_module.send_draft("token", "d-durable-sent", MagicMock())
 

@@ -8,6 +8,17 @@ import { saveCampaign } from "../../../../lib/api";
 import { toast } from "../../../../components/shared/Toast";
 import { invalidateClientCache, scopedKey } from "../../../../lib/client-cache";
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
+const HANDOFF_TTL_MS = 30 * 60 * 1000;
+
+const campaignLeadHandoffKey = (sessionToken: string, discoveryId: string) =>
+  `loqi_pending_campaign_leads:${sessionToken}:${discoveryId}`;
+
+type CampaignLeadHandoff = {
+  discovery_id: string;
+  session_token: string;
+  created_at: number;
+  leads: Record<string, unknown>[];
+};
 
 export default function NewCampaignPage() {
   const router = useRouter();
@@ -21,20 +32,30 @@ export default function NewCampaignPage() {
 
   useEffect(() => {
     const discoveryEntry = Boolean(discoveryId && searchParams?.get("return") === "discovery");
+    const token = localStorage.getItem(ACTIVE_SESSION_KEY) || "";
     if (!discoveryEntry) {
-      // Pending leads are an explicit Discovery -> Campaign handoff only.
-      // A fresh Campaigns-page entry must never inherit that transient state.
-      sessionStorage.removeItem("loqi_pending_campaign_leads");
       setPendingLeads([]);
       return;
     }
     try {
-      const raw = sessionStorage.getItem("loqi_pending_campaign_leads");
-      if (raw) setPendingLeads(JSON.parse(raw) as Record<string, unknown>[]);
+      const key = campaignLeadHandoffKey(token, discoveryId);
+      const raw = sessionStorage.getItem(key);
+      const handoff = raw ? JSON.parse(raw) as CampaignLeadHandoff : null;
+      const valid = handoff
+        && handoff.discovery_id === discoveryId
+        && handoff.session_token === token
+        && Date.now() - handoff.created_at >= 0
+        && Date.now() - handoff.created_at <= HANDOFF_TTL_MS
+        && Array.isArray(handoff.leads);
+      if (valid) setPendingLeads(handoff.leads);
+      else {
+        sessionStorage.removeItem(key);
+        setPendingLeads([]);
+      }
     } catch {
       setPendingLeads([]);
     }
-  }, []);
+  }, [discoveryId, searchParams]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -61,7 +82,7 @@ export default function NewCampaignPage() {
       toast("success", "Campaign created — research prospects next");
       // PR-3C: new campaign must not be hidden by a cached campaigns list.
       invalidateClientCache(scopedKey(token, "campaigns"));
-      sessionStorage.removeItem("loqi_pending_campaign_leads");
+      sessionStorage.removeItem(campaignLeadHandoffKey(token, discoveryId));
       router.push(`/campaigns/${id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Campaign setup failed");
@@ -89,7 +110,11 @@ export default function NewCampaignPage() {
             </label>
             {error && <p className="text-sm text-error">{error}</p>}
             <div className="flex gap-3 pt-3">
-              <button type="button" onClick={() => router.push("/campaigns")} className="rounded-lg border border-outline-variant/20 px-5 py-2.5 text-sm">Cancel</button>
+              <button type="button" onClick={() => {
+                const token = localStorage.getItem(ACTIVE_SESSION_KEY) || "";
+                if (token && discoveryId) sessionStorage.removeItem(campaignLeadHandoffKey(token, discoveryId));
+                router.push("/campaigns");
+              }} className="rounded-lg border border-outline-variant/20 px-5 py-2.5 text-sm">Cancel</button>
               <button type="submit" disabled={saving} className="rounded-lg bg-primary px-6 py-2.5 text-sm font-semibold text-on-primary disabled:opacity-50">{saving ? "Creating…" : "Create Campaign"}</button>
             </div>
           </form>

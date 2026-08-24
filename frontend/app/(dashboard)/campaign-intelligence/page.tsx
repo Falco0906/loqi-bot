@@ -26,6 +26,7 @@ export default function CampaignIntelligencePage() {
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [campaigns, setCampaigns] = useState<CampaignInfo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const { analyticsResult } = useCopilot();
 
   const activeCampaignList = campaigns.filter((c) => c.status !== "archived" && c.status !== "completed");
@@ -60,17 +61,29 @@ export default function CampaignIntelligencePage() {
 
   useEffect(() => {
     if (!sessionToken) return;
-    setLoading(true);
-    getCampaignSummary(sessionToken).then((res) => {
-      if (res.ok) setCampaigns(res.campaigns);
-    }).catch(() => {}).finally(() => setLoading(false));
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await getCampaignSummary(sessionToken);
+        if (!res.ok) throw new Error("Campaign metrics could not be loaded.");
+        setCampaigns(res.campaigns);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Campaign metrics could not be loaded.");
+      } finally {
+        setLoading(false);
+      }
+    };
+    void load();
   }, [sessionToken]);
 
   useEffect(() => {
     if (!sessionToken || !analyticsResult) return;
     void getCampaignSummary(sessionToken).then((res) => {
-      if (res.ok) setCampaigns(res.campaigns);
-    }).catch(() => {});
+      if (!res.ok) throw new Error("Campaign metrics could not be refreshed.");
+      setCampaigns(res.campaigns);
+      setError(null);
+    }).catch((cause) => setError(cause instanceof Error ? cause.message : "Campaign metrics could not be refreshed."));
   }, [sessionToken, analyticsResult]);
 
   const activeCampaigns = campaigns.filter((c) => c.status !== "archived" && c.status !== "completed");
@@ -135,6 +148,17 @@ export default function CampaignIntelligencePage() {
           {[1, 2, 3, 4].map((i) => (
             <div key={i} className="h-32 rounded-2xl bg-surface-lowest border border-outline-variant/10 animate-skeleton-pulse" />
           ))}
+        </div>
+      </PageContainer>
+    );
+  }
+
+  if (error) {
+    return (
+      <PageContainer>
+        <div className="flex min-h-[300px] flex-col items-center justify-center gap-4 text-center">
+          <p className="text-body-md text-error">{error}</p>
+          <button className="text-label-sm font-bold text-primary" onClick={() => window.location.reload()}>Retry</button>
         </div>
       </PageContainer>
     );

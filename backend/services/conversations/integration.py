@@ -6,6 +6,7 @@ Reuses existing outbound events and does not duplicate outbound history.
 
 from __future__ import annotations
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Optional
 from services.conversations.conversation_models import (
@@ -39,6 +40,7 @@ def create_conversation_from_send(
     workflow_id: str = "",
     lead_id: str = "",
     owner_id: str = "",
+    workspace_id: str = "",
 ) -> Conversation:
     """Create a conversation after an outbound email is sent.
 
@@ -51,6 +53,13 @@ def create_conversation_from_send(
         logger.info("[conversations] Conversation already exists for thread %s: %s",
                      external_thread_id[:12], existing.conversation_id[:12])
         return existing
+
+    if not workspace_id:
+        if (os.getenv("ENVIRONMENT") or os.getenv("APP_ENV") or "development").strip().lower() == "production":
+            raise RuntimeError("workspace_id is required for durable conversations")
+        # Test/development only: retain old callers without allowing a
+        # production tenant record to be written without a workspace.
+        workspace_id = f"development:{owner_id or 'unknown'}"
 
     convo = Conversation(
         provider_id=provider_id,
@@ -67,6 +76,7 @@ def create_conversation_from_send(
         lead_id=lead_id,
         owner_id=owner_id,
         summary=None,
+        metadata={"workspace_id": workspace_id},
     )
 
     conversation_store.create_conversation(convo)

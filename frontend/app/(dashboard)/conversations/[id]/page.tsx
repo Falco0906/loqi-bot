@@ -86,10 +86,15 @@ export default function ConversationWorkspacePage({ params }: { params: Params }
         setConversation(convRes.conversation);
       } else {
         setError("Conversation not found");
+        return;
+      }
+
+      if (!eventsRes.ok || !msgsRes.ok || !reasonRes.ok) {
+        throw new Error("Conversation details could not be fully loaded. Please retry.");
       }
 
       setTimeline(
-        (eventsRes.ok ? eventsRes.events : [])
+        eventsRes.events
           .slice(-10)
           .map((e: Record<string, unknown>) => ({
             time: str(e.timestamp || ""),
@@ -99,7 +104,7 @@ export default function ConversationWorkspacePage({ params }: { params: Params }
       );
 
       setMessages(
-        (msgsRes.ok ? msgsRes.messages : []).map((m: Record<string, unknown>) => ({
+        msgsRes.messages.map((m: Record<string, unknown>) => ({
           name: m.direction === "inbound"
             ? str(m.from_name || m.from_email || "Contact")
             : str(m.to_name || m.to_email || "You"),
@@ -109,9 +114,7 @@ export default function ConversationWorkspacePage({ params }: { params: Params }
         })),
       );
 
-      setReasoning(
-        reasonRes.ok ? (reasonRes.reasoning as Record<string, unknown> | null) : null,
-      );
+      setReasoning(reasonRes.reasoning as Record<string, unknown> | null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load conversation");
     } finally {

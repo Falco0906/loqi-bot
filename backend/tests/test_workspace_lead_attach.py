@@ -146,6 +146,12 @@ class _FakeCampaignRepo:
     async def list_for_workspace(self, workspace_id: str):
         return self.rows.all()
 
+    async def get_for_workspace(self, entity_id: str, workspace_id: str):
+        campaign = self.rows.get(entity_id)
+        if campaign is not None and campaign.workspace_id == workspace_id:
+            return campaign
+        return None
+
 
 class _FakeDraftRepo:
     async def list_for_workspace(self, workspace_id: str):
@@ -282,3 +288,20 @@ async def test_failed_persist_reports_false(monkeypatch):
 
 async def test_direct_persist_returns_bool(env):
     assert await _persist_campaign_lead_row("user-1", "campaign-1", _company_attach()) is True
+
+
+async def test_campaign_lead_uses_the_supplied_workspace_not_owner_default(env, monkeypatch):
+    calls: list[str] = []
+
+    async def workspace_for_request(_user_id: str, *, workspace_id: str = "", **_kwargs) -> str:
+        calls.append(workspace_id)
+        return workspace_id or "ws-default"
+
+    monkeypatch.setattr(workspace_state, "_async_workspace", workspace_for_request)
+
+    # campaign-1 belongs to ws-1; attaching through a selected ws-2 request
+    # must fail instead of silently writing to the owner's default workspace.
+    assert await workspace_state.persist_campaign_lead_awaited(
+        "user-1", "campaign-1", _company_attach(), workspace_id="ws-2",
+    ) is False
+    assert calls == ["ws-2"]

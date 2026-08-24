@@ -518,10 +518,13 @@ function inboxRowFromConversation(c: Record<string, unknown>): InboxConversation
   };
 }
 
-export async function fetchInbox(): Promise<InboxData | null> {
+export async function fetchInbox(): Promise<InboxData> {
   const token = getToken();
-  if (!token) return null;
+  if (!token) throw new Error("Your session is unavailable. Please sign in again.");
   const raw = await listConversations(token);
+  if (!raw || raw.ok !== true || !Array.isArray(raw.conversations)) {
+    throw new Error("Inbox data could not be loaded.");
+  }
   const conversations = Array.isArray(raw.conversations)
     ? raw.conversations
     : [];

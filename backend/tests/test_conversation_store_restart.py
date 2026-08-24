@@ -37,6 +37,10 @@ CONTACT_EMAIL = "jordan@bella-vista.com"
 
 @pytest.fixture(autouse=True)
 def _clean_simulator(monkeypatch, tmp_path):
+    # Restart-roundtrip tests intentionally exercise the local development
+    # fallback; production uses the Supabase conversation snapshot table.
+    monkeypatch.setattr(persistence, "_client", lambda: None)
+    monkeypatch.setattr(persistence, "STATE_FILE", str(tmp_path / "conversations.json"))
     monkeypatch.delenv("SIMULATE_REPLIES", raising=False)
     monkeypatch.delenv("SIMULATE_ACCELERATED", raising=False)
     monkeypatch.delenv("SIMULATE_REPLY_MULTIPLIER", raising=False)

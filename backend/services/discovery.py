@@ -276,8 +276,10 @@ async def finalize_discovery(job) -> bool:
         from services.workspace_state import _normalize_lead
 
         ws_lead_ids: list[str] = []
+        normalized_leads: list[dict] = []
         seen: set[str] = set()
         providers: dict[str, int] = {}
+        normalization_errors: list[str] = []
         for lead in leads:
             provider = str(lead.get("provider") or lead.get("source") or "search")
             providers[provider] = providers.get(provider, 0) + 1
@@ -285,20 +287,45 @@ async def finalize_discovery(job) -> bool:
                 ws_lead_id = await _normalize_lead(workspace_id, lead)
             except Exception as e:
                 _log(f"finalize_discovery normalize lead skipped: {e}")
+                normalization_errors.append(str(e))
                 continue
             if ws_lead_id and ws_lead_id not in seen:
                 seen.add(ws_lead_id)
                 ws_lead_ids.append(ws_lead_id)
+                normalized_leads.append(lead)
+            elif not ws_lead_id:
+                normalization_errors.append("Lead normalization returned no canonical workspace lead")
     except Exception as e:
         _log(f"finalize_discovery failed: {e}")
         if row:
             await asyncio.to_thread(mark_discovery_status, str(row["id"]), "failed", str(e))
         return False
 
-    linked = await asyncio.to_thread(_link_leads, discovery_id, leads, ws_lead_ids)
+    linked = await asyncio.to_thread(_link_leads, discovery_id, normalized_leads, ws_lead_ids)
     companies_linked = await asyncio.to_thread(
         _link_companies, discovery_id, workspace_id, ws_lead_ids
     )
+
+    if normalization_errors or linked is None or companies_linked is None:
+        reasons = normalization_errors[:3]
+        if linked is None:
+            reasons.append("Discovery lead links could not be persisted")
+        if companies_linked is None:
+            reasons.append("Discovery company links could not be persisted")
+        error = "; ".join(reasons) or "Discovery persistence failed"
+        summary = {
+            "error": error,
+            "provider_lead_count": len(leads),
+            "persisted_lead_count": len(ws_lead_ids),
+            "persistence": "partial_failed",
+        }
+        await asyncio.to_thread(mark_discovery_status, discovery_id, "failed", error)
+        try:
+            client = get_supabase_client()
+            client.table("discoveries").update({"summary": summary}).eq("id", discovery_id).execute()
+        except Exception:
+            pass
+        return False
 
     company_count = lead_count = 0
     if companies_linked is not None:

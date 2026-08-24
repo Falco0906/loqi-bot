@@ -14,6 +14,7 @@ Fixtures (client, session_token, mock OpenAI) come from conftest.py.
 import asyncio
 import json
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -77,6 +78,16 @@ def authenticated_session(client, monkeypatch):
 
     monkeypatch.setattr(
         "services.identity.api.get_authenticated_user_id", fake_auth
+    )
+
+    async def fake_current_auth(_request):
+        # The bootstrap endpoint uses the canonical identity dependency, not
+        # the later session-token resolver.  Keep the created web session and
+        # every Discovery request bound to this same test identity.
+        return SimpleNamespace(user_id=user_id, session_id="discovery-test-session")
+
+    monkeypatch.setattr(
+        "services.identity.dependencies.get_current_auth", fake_current_auth,
     )
 
     resp = client.post(

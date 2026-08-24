@@ -39,6 +39,9 @@ const EXECUTION_STAGES = [
   "Preparing recommendations",
 ];
 
+const campaignLeadHandoffKey = (sessionToken: string, discoveryId: string) =>
+  `loqi_pending_campaign_leads:${sessionToken}:${discoveryId}`;
+
 function stageIndexFor(label: string | undefined): number {
   if (!label) return -1;
   return EXECUTION_STAGES.findIndex((stage) => label.startsWith(stage));
@@ -626,7 +629,15 @@ export default function DiscoveryDetailWorkspace({ discoveryId }: { discoveryId:
         throw new Error("One or more lead approvals could not be persisted");
       }
       if (!campaignId) {
-        sessionStorage.setItem("loqi_pending_campaign_leads", JSON.stringify(leads.map(leadPayload)));
+        sessionStorage.setItem(
+          campaignLeadHandoffKey(token, discoveryId),
+          JSON.stringify({
+            discovery_id: discoveryId,
+            session_token: token,
+            created_at: Date.now(),
+            leads: leads.map(leadPayload),
+          }),
+        );
         router.push(`/campaigns/new?return=discovery&discovery=${encodeURIComponent(discoveryId)}`);
         return;
       }

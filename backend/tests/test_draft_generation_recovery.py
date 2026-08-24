@@ -65,9 +65,12 @@ def _draft(campaign_id: str, batch_id: str | None = None, **overrides) -> dict:
 
 
 @pytest.fixture(autouse=True)
-def _clean_stores():
+def _clean_stores(monkeypatch):
     batch_jobs.clear()
     _draft_batch_tasks.clear()
+    async def workspace(*_args, **_kwargs):
+        return "workspace-1"
+    monkeypatch.setattr(main_module, "_resolved_workspace_id_or_default", workspace)
     yield
     batch_jobs.clear()
     _draft_batch_tasks.clear()
@@ -78,11 +81,11 @@ def fake_persist(monkeypatch):
     """Persist campaign updates in-memory; assertable from the test."""
     updates: list[tuple[str, str, dict]] = []
 
-    def fake(user_id: str, campaign_id: str, payload: dict) -> bool:
+    def fake(user_id: str, campaign_id: str, payload: dict, **_kwargs) -> bool:
         updates.append((user_id, campaign_id, payload))
         return True
 
-    async def fake_awaited(user_id: str, campaign_id: str, payload: dict) -> bool:
+    async def fake_awaited(user_id: str, campaign_id: str, payload: dict, **_kwargs) -> bool:
         updates.append((user_id, campaign_id, payload))
         return True
 
@@ -218,7 +221,8 @@ class TestGenerationStatus:
         monkeypatch.setattr(
             main_module, "_workspace_owner", _fake_owner("owner-1"))
         monkeypatch.setattr(
-            main_module, "_workspace_campaigns", lambda uid, tok="": [campaign])
+            main_module, "_workspace_campaigns", lambda uid, tok="", **_kwargs: [campaign])
+        monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
         monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": [])
 
         result = await main_module.campaign_generation_status("token", campaign["id"], MagicMock())
@@ -242,7 +246,8 @@ class TestGenerationStatus:
         monkeypatch.setattr(
             main_module, "_workspace_owner", _fake_owner("owner-1"))
         monkeypatch.setattr(
-            main_module, "_workspace_campaigns", lambda uid, tok="": [campaign])
+            main_module, "_workspace_campaigns", lambda uid, tok="", **_kwargs: [campaign])
+        monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
         monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": [])
 
         result = await main_module.campaign_generation_status("token", campaign["id"], MagicMock())
@@ -257,7 +262,7 @@ class TestGenerationStatus:
         monkeypatch.setattr(
             main_module, "_workspace_owner", _fake_owner("owner-1"))
         monkeypatch.setattr(
-            main_module, "_workspace_campaigns", lambda uid, tok="": [])
+            main_module, "_workspace_campaigns", lambda uid, tok="", **_kwargs: [])
 
         result = await main_module.campaign_generation_status("token", "nope", MagicMock())
 
@@ -285,6 +290,7 @@ class TestGenerateDraftsGuard:
             main_module, "_workspace_owner", _fake_owner("owner-1"))
         monkeypatch.setattr(
             main_module, "_workspace_campaigns", lambda uid, tok="": [campaign])
+        monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
         launched: list = []
         monkeypatch.setattr(main_module, "_launch_batch_task",
                             lambda *args, **kwargs: launched.append(args))
@@ -304,6 +310,7 @@ class TestGenerateDraftsGuard:
             main_module, "_workspace_owner", _fake_owner("owner-1"))
         monkeypatch.setattr(
             main_module, "_workspace_campaigns", lambda uid, tok="": [campaign])
+        monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
         monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": [])
         launched: list = []
         monkeypatch.setattr(main_module, "_launch_batch_task",
@@ -328,6 +335,7 @@ class TestGenerateDraftsGuard:
             main_module, "_workspace_owner", _fake_owner("owner-1"))
         monkeypatch.setattr(
             main_module, "_workspace_campaigns", lambda uid, tok="": [campaign])
+        monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
         monkeypatch.setattr(main_module, "_launch_batch_task",
                             lambda *args, **kwargs: None)
 
@@ -360,9 +368,9 @@ class TestStartupRecovery:
         ).limit(1).execute.return_value = MagicMock(data=[{
             "settings": {"generation": {"status": "processing", "batch_id": "batch-1"}},
         }])
-        client.table("workflow_sessions").select("id, user_id").in_(
+        client.table("workspaces").select("id, owner_user_id").in_(
             "id", ["ws-1"]
-        ).execute.return_value = MagicMock(data=[{"id": "ws-1", "user_id": "owner-1"}])
+        ).execute.return_value = MagicMock(data=[{"id": "ws-1", "owner_user_id": "owner-1"}])
         monkeypatch.setattr(
             "services.supabase.get_supabase_client", lambda: client)
         monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": [])

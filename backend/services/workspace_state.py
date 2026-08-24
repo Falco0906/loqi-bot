@@ -331,6 +331,51 @@ async def persist_campaign_row(user_id: str, campaign: dict[str, Any], workspace
         return False
 
 
+async def delete_campaign_row_awaited(user_id: str, campaign_id: str, workspace_id: str = "") -> bool:
+    """Compensate a campaign creation whose required lead links failed.
+
+    ``campaign_leads`` cascades from the campaign row, so this removes every
+    link created by the failed request while preserving workspace leads.
+    """
+    if not campaign_id:
+        return False
+    try:
+        workspace = await _async_workspace(user_id, workspace_id=workspace_id)
+        if not workspace:
+            return False
+        repo = CampaignRepository()
+        if await repo.get_for_workspace(campaign_id, workspace) is None:
+            return False
+        return await repo.delete(campaign_id)
+    except Exception as error:
+        print(f"[workspace_state] campaign compensation failed: {error}")
+        return False
+
+
+async def remove_campaign_lead_links_awaited(
+    user_id: str, campaign_id: str, lead_ids: list[str], workspace_id: str = "",
+) -> bool:
+    """Compensate required campaign-link writes without touching workspace leads."""
+    if not campaign_id or not lead_ids:
+        return True
+    try:
+        workspace = await _async_workspace(user_id, workspace_id=workspace_id)
+        repo = CampaignRepository()
+        if not workspace or await repo.get_for_workspace(campaign_id, workspace) is None:
+            return False
+        client = CampaignLeadRepository()._client()
+        if client is None:
+            return False
+        unique_ids = list(dict.fromkeys(str(value) for value in lead_ids if value))
+        await asyncio.to_thread(
+            lambda: client.table("campaign_leads").delete()
+            .eq("campaign_id", campaign_id).in_("lead_id", unique_ids).execute()
+        )
+        remaining = await CampaignLeadRepository().list_for_campaign(campaign_id)
+        return not any(link.lead_id in set(unique_ids) for link in remaining)
+    except Exception as error:
+        print(f"[workspace_state] campaign link compensation failed: {error}")
+        return False
 async def _write_campaign_row(user_id: str, campaign: dict[str, Any],
                               workspace_id: str = "") -> None:
     workspace_id = await _async_workspace(user_id, workspace_id=workspace_id)
@@ -759,8 +804,16 @@ async def _persist_campaign_lead_id_row(
     lead: dict[str, Any],
     workspace_id: str = "",
 ) -> str | None:
-    workspace = await _async_workspace(user_id)
+    # The endpoint has already resolved and authorized the selected workspace.
+    # Never silently fall back to the owner's default workspace here: that
+    # would attach a correctly-authorized campaign to a lead in another
+    # workspace for multi-workspace users.
+    workspace = await _async_workspace(user_id, workspace_id=workspace_id)
     if not workspace:
+        return None
+    campaign_repo = CampaignRepository()
+    campaign = await campaign_repo.get_for_workspace(campaign_id, workspace)
+    if campaign is None:
         return None
     try:
         lead_id = await _normalize_lead(workspace, lead)
@@ -1055,7 +1108,8 @@ async def persist_draft_awaited(user_id: str, draft: dict[str, Any], workspace_i
     never double-persist.
     """
     try:
-        await _write_draft_row(user_id, draft)
+        if not await _write_draft_row(user_id, draft, workspace_id=workspace_id):
+            return False
     except Exception as error:
         print(f"[workspace_state] draft write failed: {error}")
         return False
@@ -1071,14 +1125,14 @@ async def persist_draft_awaited(user_id: str, draft: dict[str, Any], workspace_i
     return True
 
 
-async def _write_draft_row(user_id: str, draft: dict[str, Any], workspace_id: str = "") -> None:
+async def _write_draft_row(user_id: str, draft: dict[str, Any], workspace_id: str = "") -> bool:
     workspace = await _async_workspace(user_id, workspace_id=workspace_id)
     if not workspace:
-        return
+        return False
     repo = DraftRepository()
     existing = await repo.get(str(draft.get("id")))
     if existing is not None:
-        return
+        return existing.workspace_id == workspace
     lead_snapshot = draft.get("lead") if isinstance(draft.get("lead"), dict) else {}
     meta: dict[str, Any] = {}
     for key in ("batch_id", "lead_intelligence", "company_intelligence", "strategy", "generation_metadata", "evidence_trace"):
@@ -1104,6 +1158,7 @@ async def _write_draft_row(user_id: str, draft: dict[str, Any], workspace_id: st
         created_at=draft.get("created_at") or datetime.now(timezone.utc),
     )
     await repo.save(entity)
+    return True
 
 
 def persist_draft_update(user_id: str, draft_id: str, updates: dict[str, Any]) -> bool:
@@ -1120,7 +1175,8 @@ async def persist_draft_update_awaited(user_id: str, draft_id: str, updates: dic
     if not draft_id:
         return False
     try:
-        await _update_draft_row(user_id, draft_id, updates, workspace_id=workspace_id)
+        if not await _update_draft_row(user_id, draft_id, updates, workspace_id=workspace_id):
+            return False
     except Exception as error:
         print(f"[workspace_state] draft update failed: {error}")
         return False
@@ -1136,16 +1192,16 @@ async def persist_draft_update_awaited(user_id: str, draft_id: str, updates: dic
     return True
 
 
-async def _update_draft_row(user_id: str, draft_id: str, updates: dict[str, Any], workspace_id: str = "") -> None:
+async def _update_draft_row(user_id: str, draft_id: str, updates: dict[str, Any], workspace_id: str = "") -> bool:
     repo = DraftRepository()
     entity = await repo.get(draft_id)
     if entity is None:
-        return
+        return False
     # SaaS-2.4: never update a draft outside the caller's workspace (defense in
     # depth below the endpoint-level gate). Same safe silent no-op.
     resolved = await _async_workspace(user_id, workspace_id=workspace_id)
     if not resolved or entity.workspace_id != resolved:
-        return
+        return False
     for key in ("subject", "status", "tone", "length", "body"):
         if updates.get(key) is not None:
             setattr(entity, key, str(updates[key]))
@@ -1157,6 +1213,7 @@ async def _update_draft_row(user_id: str, draft_id: str, updates: dict[str, Any]
         entity.reply_state = str(updates["reply_state"])
     entity.updated_at = datetime.now(timezone.utc)
     await repo.save(entity)
+    return True
 
 
 # ─── Canonical reads (events fallback) ────────────────────────────────

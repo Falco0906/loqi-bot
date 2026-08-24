@@ -126,13 +126,9 @@ class ConversationStore:
             logger.info("persistence_rehydration_absent category=conversations")
             return
         if data is None:
-            self._restore_from_snapshot({})
-            logger.warning(
-                "persistence_rehydration_degraded category=conversations "
-                "status=%s store_reset=empty preserved=yes",
-                status.value,
+            raise RuntimeError(
+                f"Durable conversation persistence could not be loaded (status={status.value})"
             )
-            return
         self._restore_from_snapshot(data)
         self._seed_communication_mappings()
         logger.info(
@@ -145,13 +141,21 @@ class ConversationStore:
         try:
             with self._persist_lock:
                 self._sequence += 1
-                persistence.save(self.to_snapshot())
+                versions = persistence.save(self.to_snapshot())
+                for conversation_id, version in versions.items():
+                    conversation = self._conversations.get(conversation_id)
+                    if conversation is not None:
+                        conversation.metadata["_persistence_version"] = version
         except Exception as e:
             logger.error(
                 "persistence_write_failed category=conversations error_type=%s",
                 type(e).__name__,
                 exc_info=True,
             )
+            # Conversation mutations are user-visible Inbox state. Returning
+            # success after this failure would lose replies on restart, so the
+            # caller must surface the durable-write failure explicitly.
+            raise
 
     # ── Conversation CRUD ──
 
@@ -232,6 +236,7 @@ class ConversationStore:
         msg_ids = [mid for mid, m in self._messages.items() if m.conversation_id == conversation_id]
         for mid in msg_ids:
             self._messages.pop(mid, None)
+        persistence.delete_conversation(conversation_id)
         self._persist()
         return True
 

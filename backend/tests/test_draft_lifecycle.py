@@ -38,6 +38,13 @@ def _fake_owner(owner_id: str):
     return fake_owner
 
 
+def _fake_workspace(workspace_id: str = "workspace-1"):
+    async def fake_workspace(request, owner_id: str) -> str:
+        return workspace_id
+
+    return fake_workspace
+
+
 @pytest.fixture(autouse=True)
 def _clean_outbound_store():
     outbound_draft_store._drafts.clear()
@@ -63,16 +70,22 @@ class TestApprovalLifecycle:
     async def test_A_approved_draft_toggle_still_works(self, monkeypatch):
         drafts = [{"id": "d-ap", "status": "approved", "campaign_id": None}]
         state = {"drafts": drafts, "campaigns": []}
-        persisted: list[tuple[str, str, dict]] = []
+        persisted: list[tuple[str, str, dict, str]] = []
 
-        async def fake_persist(user_id: str, draft_id: str, updates: dict) -> bool:
-            persisted.append((user_id, draft_id, updates))
+        async def fake_persist(
+            user_id: str, draft_id: str, updates: dict, workspace_id: str = ""
+        ) -> bool:
+            persisted.append((user_id, draft_id, updates, workspace_id))
             return True
 
         monkeypatch.setattr(main_module, "_workspace_owner", _fake_owner("owner-1"))
         monkeypatch.setattr(
+            main_module, "_resolved_workspace_id_or_default",
+            _fake_workspace(),
+        )
+        monkeypatch.setattr(
             workspace_state, "load_workspace_state",
-            lambda uid, include_details=False: state,
+            lambda uid, include_details=False, workspace_id="": state,
         )
         monkeypatch.setattr(
             workspace_state, "persist_draft_update_awaited", fake_persist)
@@ -82,13 +95,20 @@ class TestApprovalLifecycle:
         assert result["ok"] is True
         assert result["draft"]["status"] == "pending"
         assert persisted[-1][2]["status"] == "pending"
+        assert persisted[-1][3] == "workspace-1"
 
     async def test_B_approve_sent_draft_rejected_409(self, monkeypatch):
         drafts = [{"id": "d-sent", "status": "sent", "campaign_id": None}]
         monkeypatch.setattr(main_module, "_workspace_owner", _fake_owner("owner-1"))
         monkeypatch.setattr(
+            main_module, "_resolved_workspace_id_or_default",
+            _fake_workspace(),
+        )
+        monkeypatch.setattr(
             workspace_state, "load_workspace_state",
-            lambda uid, include_details=False: {"drafts": drafts, "campaigns": []},
+            lambda uid, include_details=False, workspace_id="": {
+                "drafts": drafts, "campaigns": []
+            },
         )
 
         with pytest.raises(Exception) as exc_info:
@@ -100,13 +120,72 @@ class TestApprovalLifecycle:
         drafts = [{"id": "d-sending", "status": "sending", "campaign_id": None}]
         monkeypatch.setattr(main_module, "_workspace_owner", _fake_owner("owner-1"))
         monkeypatch.setattr(
+            main_module, "_resolved_workspace_id_or_default",
+            _fake_workspace(),
+        )
+        monkeypatch.setattr(
             workspace_state, "load_workspace_state",
-            lambda uid, include_details=False: {"drafts": drafts, "campaigns": []},
+            lambda uid, include_details=False, workspace_id="": {
+                "drafts": drafts, "campaigns": []
+            },
         )
 
         with pytest.raises(Exception) as exc_info:
             await main_module.approve_draft("token", "d-sending", MagicMock())
         assert getattr(exc_info.value, "status_code", None) == 409
+
+    async def test_C_pending_approval_returns_and_preserves_other_drafts(self, monkeypatch):
+        drafts = [
+            {
+                "id": "d-pending",
+                "status": "pending",
+                "campaign_id": "campaign-1",
+                "lead": {"name": "First lead"},
+            },
+            {
+                "id": "d-other",
+                "status": "pending",
+                "campaign_id": "campaign-1",
+                "lead": {"name": "Other lead"},
+            },
+        ]
+        state = {"drafts": drafts, "campaigns": [{"id": "campaign-1"}]}
+        persisted: list[tuple[str, str, dict, str]] = []
+        emitted = AsyncMock()
+
+        async def fake_persist(
+            user_id: str, draft_id: str, updates: dict, workspace_id: str = ""
+        ) -> bool:
+            persisted.append((user_id, draft_id, updates, workspace_id))
+            return True
+
+        monkeypatch.setattr(main_module, "_workspace_owner", _fake_owner("owner-1"))
+        monkeypatch.setattr(
+            main_module, "_resolved_workspace_id_or_default",
+            _fake_workspace(),
+        )
+        monkeypatch.setattr(
+            workspace_state, "load_workspace_state",
+            lambda uid, include_details=False, workspace_id="": state,
+        )
+        monkeypatch.setattr(
+            workspace_state, "persist_draft_update_awaited", fake_persist
+        )
+        monkeypatch.setattr(main_module, "_sync_draft_to_outbound", lambda *args, **kwargs: None)
+        monkeypatch.setattr(main_module, "_call_outbound_approval", lambda *args, **kwargs: None)
+        monkeypatch.setattr(main_module, "_emit_draft_event", emitted)
+        monkeypatch.setattr(main_module, "publish", lambda *args, **kwargs: None)
+
+        result = await main_module.approve_draft("token", "d-pending", MagicMock())
+
+        assert result["ok"] is True
+        assert result["draft"]["status"] == "approved"
+        assert persisted == [
+            ("owner-1", "d-pending", {"status": "approved"}, "workspace-1")
+        ]
+        assert drafts[1]["status"] == "pending"
+        emitted.assert_awaited_once()
+        assert emitted.await_args.kwargs["campaign_id"] == "campaign-1"
 
 
 class TestDurableSentStatus:

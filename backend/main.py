@@ -4344,8 +4344,11 @@ async def _emit_draft_event(user_id: str, event_type: str, *, draft_id: str = ""
 async def approve_draft(session_token: str, draft_id: str, request: Request):
     session_token = _session_token_from_request(request)
     owner_id = await _workspace_owner(request, session_token)
+    workspace_id = await _resolved_workspace_id_or_default(request, owner_id)
     from services.workspace_state import load_workspace_state
-    state = await asyncio.to_thread(load_workspace_state, owner_id, include_details=False)
+    state = await asyncio.to_thread(
+        load_workspace_state, owner_id, include_details=False, workspace_id=workspace_id,
+    )
     durable_drafts = state["drafts"]
     durable_target = next((d for d in durable_drafts if d.get("id") == draft_id), None)
     if durable_target:
@@ -4353,9 +4356,12 @@ async def approve_draft(session_token: str, draft_id: str, request: Request):
             raise HTTPException(status_code=409, detail="Draft already sent")
         new_status = "approved" if durable_target.get("status") != "approved" else "pending"
         from services.workspace_state import persist_draft_update_awaited
-        if not await persist_draft_update_awaited(owner_id, draft_id, {"status": new_status}):
+        if not await persist_draft_update_awaited(
+            owner_id, draft_id, {"status": new_status}, workspace_id=workspace_id,
+        ):
             raise HTTPException(status_code=503, detail="Draft approval could not be persisted")
         durable_target["status"] = new_status
+        campaign_id = durable_target.get("campaign_id")
         if new_status == "approved":
             _sync_draft_to_outbound(durable_target, session_token, owner_id=owner_id)
             _call_outbound_approval(draft_id, durable_target)
@@ -4365,7 +4371,6 @@ async def approve_draft(session_token: str, draft_id: str, request: Request):
                 campaign_id=str(campaign_id or ""),
                 lead_name=(durable_target.get("lead") or {}).get("name", ""),
             )
-        campaign_id = durable_target.get("campaign_id")
         current_step = None
         pending_in_campaign = 0
         if campaign_id:

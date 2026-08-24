@@ -6364,13 +6364,24 @@ async def save_campaign(session_token: str, payload: SaveCampaignRequest, reques
         _campaign_timing("campaign_persist_failed")
         raise HTTPException(status_code=503, detail="Campaign could not be persisted")
     _campaign_timing("campaign_persisted")
-    failed_leads = 0
-    for index, lead in enumerate(leads, start=1):
-        if not await persist_campaign_lead_awaited(owner_id, campaign["id"], lead, workspace_id=ws_id):
-            failed_leads += 1
-            _campaign_timing(f"lead_link_failed:{index}")
-        else:
-            _campaign_timing(f"lead_link_persisted:{index}")
+    # Lead normalization/linking is independent per selected lead.  Keep the
+    # canonical repository helper and the all-or-nothing compensation below,
+    # but do not make the request pay the Supabase round-trip cost four times
+    # serially (the previous path could exceed the frontend's request window).
+    async def _persist_selected_lead(index: int, lead: dict[str, Any]) -> bool:
+        persisted = await persist_campaign_lead_awaited(
+            owner_id, campaign["id"], lead, workspace_id=ws_id,
+        )
+        _campaign_timing(
+            f"lead_link_{'persisted' if persisted else 'failed'}:{index}"
+        )
+        return persisted
+
+    lead_results = await asyncio.gather(*(
+        _persist_selected_lead(index, lead)
+        for index, lead in enumerate(leads, start=1)
+    ))
+    failed_leads = sum(1 for persisted in lead_results if not persisted)
     if failed_leads:
         compensated = await delete_campaign_row_awaited(
             owner_id, campaign["id"], workspace_id=ws_id,

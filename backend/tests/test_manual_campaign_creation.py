@@ -13,6 +13,8 @@ async def test_manual_campaign_returns_after_four_selected_leads_are_durable(mon
 
     attached: list[str] = []
     persisted: dict = {}
+    active_links = 0
+    max_active_links = 0
     strategy_started = asyncio.Event()
     release_strategy = asyncio.Event()
 
@@ -21,7 +23,12 @@ async def test_manual_campaign_returns_after_four_selected_leads_are_durable(mon
         return True
 
     async def persist_lead(_owner, _campaign_id, lead, workspace_id=""):
+        nonlocal active_links, max_active_links
+        active_links += 1
+        max_active_links = max(max_active_links, active_links)
+        await asyncio.sleep(0.05)
         attached.append(str(lead["id"]))
+        active_links -= 1
         return True
 
     async def blocked_strategy(*_args, **_kwargs):
@@ -62,6 +69,7 @@ async def test_manual_campaign_returns_after_four_selected_leads_are_durable(mon
     assert [lead["id"] for lead in response["campaign"]["leads"]] == [f"workspace-lead-{index}" for index in range(1, 5)]
     assert attached == [f"workspace-lead-{index}" for index in range(1, 5)]
     assert persisted["id"] == response["campaign"]["id"]
+    assert max_active_links == 4
 
     # The response is not held hostage by strategy setup.
     await asyncio.wait_for(strategy_started.wait(), timeout=0.2)

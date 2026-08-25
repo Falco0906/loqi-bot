@@ -7,7 +7,6 @@ import Topbar from "../../components/layout/Topbar";
 import CopilotPanel from "../../components/copilot/CopilotPanel";
 import BackendOffline from "../../components/error/BackendOffline";
 import ToastContainer from "../../components/shared/Toast";
-import BetaAccessModal from "../../components/shared/BetaAccessModal";
 import CommandBar from "../../components/layout/CommandBar";
 import { useBackendHealth } from "../../hooks/useBackendHealth";
 import { useAuth } from "../../hooks/useAuth";
@@ -25,14 +24,12 @@ import { ProspectRegistryProvider } from "../../contexts/ProspectRegistryProvide
 
 const COPILOT_PANEL_WIDTH = 380;
 const HIGHLIGHT_PAGES = ["/mission-control", "/knowledge", "/strategic-update", "/settings"];
-const BETA_NOTICE_KEY = "loqi_beta_access_acknowledged";
 
 function DashboardShell({ children }: { children: React.ReactNode }) {
   const [isCommandBarOpen, setIsCommandBarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarDragging, setSidebarDragging] = useState(false);
   const [sidebarPreview, setSidebarPreview] = useState(SIDEBAR_EXPANDED_WIDTH);
-  const [showBetaNotice, setShowBetaNotice] = useState(false);
 
   const { open: copilotOpen } = useCopilot();
 
@@ -142,16 +139,6 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     }
   }, [isAuthenticated, isLoading, user, router]);
 
-  useEffect(() => {
-    if (isLoading || !isAuthenticated || healthy !== true) return;
-    setShowBetaNotice(window.localStorage.getItem(BETA_NOTICE_KEY) !== "true");
-  }, [healthy, isAuthenticated, isLoading]);
-
-  function acknowledgeBetaNotice() {
-    window.localStorage.setItem(BETA_NOTICE_KEY, "true");
-    setShowBetaNotice(false);
-  }
-
   if (isLoading || !isAuthenticated) {
     return (
       <div className="flex h-full items-center justify-center bg-obsidian">
@@ -179,7 +166,6 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   return (
     <>
       <CommandBar isOpen={isCommandBarOpen} onClose={() => setIsCommandBarOpen(false)} />
-      {showBetaNotice && <BetaAccessModal onContinue={acknowledgeBetaNotice} />}
       <div className="flex h-full overflow-hidden">
         <Sidebar
           collapsed={sidebarCollapsed}

@@ -1,12 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, type KeyboardEvent, type PointerEvent } from "react";
+import { useCallback, useRef, type KeyboardEvent, type PointerEvent } from "react";
 import { usePathname } from "next/navigation";
 import Icon from "../shared/Icon";
 import { useAuth } from "../../hooks/useAuth";
-import { useWorkspaceSearch } from "../../contexts/SearchContext";
-import { pageConfig } from "./Topbar";
+import { useCopilot } from "../../contexts/CopilotContext";
 
 const navigation = [
   { label: "Mission Control", href: "/mission-control", icon: "dashboard" },
@@ -63,17 +62,8 @@ export default function Sidebar({
 }: Props) {
   const pathname = usePathname();
   const { user } = useAuth();
-  const { query, setQuery } = useWorkspaceSearch();
+  const { setOpen } = useCopilot();
   const dragState = useRef<{ startX: number; fromExpanded: boolean } | null>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const pendingSearchFocus = useRef(false);
-
-  useEffect(() => {
-    if (!collapsed && pendingSearchFocus.current) {
-      pendingSearchFocus.current = false;
-      searchInputRef.current?.focus();
-    }
-  }, [collapsed]);
 
   const displayName =
     user && "display_name" in user && user.display_name
@@ -195,7 +185,7 @@ export default function Sidebar({
 
   return (
     <aside
-      className={`fixed left-0 top-0 z-30 flex h-full flex-col border-r border-outline-variant/10 bg-surface-container-low/95 backdrop-blur-xl ${
+      className={`fixed left-0 top-0 z-30 flex h-full flex-col border-r border-outline-variant/5 bg-surface-container-low/95 backdrop-blur-xl ${
         dragging ? "" : "transition-[width] duration-200 ease-out"
       }`}
       style={{ width: previewWidth }}
@@ -221,43 +211,26 @@ export default function Sidebar({
           )}
         </div>
         {!collapsed && (
-          <label className="mt-4 flex items-center gap-2 rounded-lg border border-outline-variant/20 bg-surface-lowest px-3 py-2 transition-colors focus-within:border-primary/50">
-            <Icon name="search" className="text-base text-on-surface-variant/50 shrink-0" />
-            <input
-              ref={searchInputRef}
-              type="text"
-              aria-label="Search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={(pathname && pageConfig[pathname]?.searchPlaceholder) || "Search..."}
-              className="min-w-0 flex-1 bg-transparent text-sm text-on-surface outline-none placeholder:text-on-surface-variant/40"
-            />
-            {query && (
-              <button
-                type="button"
-                onClick={() => setQuery("")}
-                aria-label="Clear search"
-                className="shrink-0 text-on-surface-variant/40 hover:text-on-surface transition-colors"
-              >
-                <Icon name="close" className="text-sm" />
-              </button>
-            )}
-          </label>
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            className="mt-4 flex h-9 w-full items-center gap-2 rounded-lg border border-outline-variant/20 bg-surface-lowest px-3 text-left text-sm text-on-surface-variant/70 transition-colors hover:border-primary/35 hover:text-on-surface"
+            aria-label="Open Copilot"
+          >
+            <Icon name="smart_toy" className="shrink-0 text-base text-primary/70" />
+            <span>Ask Loqi...</span>
+          </button>
         )}
         {collapsed && (
           <div className="mt-4 flex justify-center">
             <button
               type="button"
-              onClick={() => {
-                pendingSearchFocus.current = true;
-                onToggleCollapse();
-              }}
-              title="Search"
-              aria-label="Expand sidebar to search"
+              onClick={() => setOpen(true)}
+              title="Open Copilot"
+              aria-label="Open Copilot"
               className="relative w-9 h-9 grid place-items-center rounded-lg text-on-surface-variant/60 hover:text-primary hover:bg-surface-container-high/60 transition-all active:scale-95"
             >
-              <Icon name="search" className="text-xl" />
-              {query.trim() ? <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-primary" /> : null}
+              <Icon name="smart_toy" className="text-xl" />
             </button>
           </div>
         )}

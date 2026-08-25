@@ -5,7 +5,13 @@ import Link from "next/link";
 import AppPage from "../primitives/AppPage";
 import WorkspaceContainer from "../layout/WorkspaceContainer";
 import { useData } from "../../lib/hooks/use-data";
-import { fetchMissionControl, invalidateMissionControlCache, peekCachedMissionControl } from "../../lib/repositories";
+import {
+  fetchBriefing,
+  fetchMissionControl,
+  invalidateMissionControlCache,
+  peekCachedBriefing,
+  peekCachedMissionControl,
+} from "../../lib/repositories";
 import { useTellLoqi } from "../../hooks/useTellLoqi";
 import type { MCIntentionCard, MCHealthSummary, MCTimelineEvent } from "../../lib/domain";
 
@@ -188,8 +194,18 @@ function TimelineSection({ events }: { events: MCTimelineEvent[] }) {
 }
 
 export default function MissionControlDashboard() {
+  const cachedMissionControl = peekCachedMissionControl();
+  const cachedBriefing = peekCachedBriefing();
   const { data: mcData, loading: mcLoading, error: mcError, retry: mcRetry } = useData(fetchMissionControl, {
-    initial: peekCachedMissionControl(),
+    ...(cachedMissionControl ? { initial: cachedMissionControl } : {}),
+  });
+  const {
+    data: briefingData,
+    loading: briefingLoading,
+    error: briefingError,
+    retry: briefingRetry,
+  } = useData(fetchBriefing, {
+    ...(cachedBriefing ? { initial: cachedBriefing } : {}),
   });
   const tellLoqi = useTellLoqi("Mission Control", {
     recommendationCount: mcData?.recommendations.length ?? 0,
@@ -215,11 +231,15 @@ export default function MissionControlDashboard() {
     return () => window.clearInterval(timer);
   }, [mcData?.initialResearchStatus, mcRetry]);
 
-  const loading = mcLoading;
-  const data = mcData;
-  const error = mcError;
+  // The structured briefing is the final Mission Control surface. Do not
+  // expose the summary-layout fallback while that authoritative request is
+  // still pending, even when the summary payload was served from cache.
+  const briefingPending = briefingLoading && !briefingError && !briefingData;
+  const loading = (mcLoading && briefingLoading) || briefingPending;
+  const data = briefingData || mcData;
+  const error = mcError || briefingError;
 
-  if (loading && !data) {
+  if (briefingPending || (loading && !data)) {
     return (
       <WorkspaceContainer>
         <AppPage>
@@ -238,6 +258,7 @@ export default function MissionControlDashboard() {
             <button
               onClick={() => {
                 mcRetry();
+                briefingRetry();
               }}
               className="bg-primary text-on-primary px-6 py-2 rounded-full text-sm font-medium hover:opacity-90 transition-opacity"
             >
@@ -265,23 +286,23 @@ export default function MissionControlDashboard() {
     );
   }
 
-  // Temporarily use the single summary payload; the staged narrative briefing
-  // is intentionally disabled while Mission Control performance is stabilized.
-  const hasBriefing = false;
-  const priorities: MCIntentionCard[] = [];
-  const waiting: MCIntentionCard[] = [];
-  const handled: MCIntentionCard[] = [];
-  const upcoming: MCIntentionCard[] = [];
-  const health: MCHealthSummary | null = null;
-  const timeline: MCTimelineEvent[] = [];
+  // NarrativeBriefing remains intentionally disabled. Its structured briefing
+  // data is still the authoritative source for the current Mission Control UI.
+  const hasBriefing = briefingData !== null;
+  const priorities: MCIntentionCard[] = briefingData?.topPriorities ?? [];
+  const waiting: MCIntentionCard[] = briefingData?.waitingOnYou ?? [];
+  const handled: MCIntentionCard[] = briefingData?.loqiHandled ?? [];
+  const upcoming: MCIntentionCard[] = briefingData?.upcoming ?? [];
+  const health: MCHealthSummary | null = briefingData?.workspaceHealth ?? null;
+  const timeline: MCTimelineEvent[] = briefingData?.timeline ?? [];
 
   // The summary payload carries the research job status and result count used
   // by Mission Control without requiring a second briefing request.
   const mc = mcData;
-  const todayTasks = mc?.tasks ?? [];
-  const recommendations = mc?.recommendations ?? [];
-  const liveActivity = mc?.liveActivity ?? [];
-  const insights = mc?.insights ?? [];
+  const todayTasks = !hasBriefing && mc ? mc.tasks : [];
+  const recommendations = !hasBriefing && mc ? mc.recommendations : [];
+  const liveActivity = !hasBriefing && mc ? mc.liveActivity : [];
+  const insights = !hasBriefing && mc ? mc.insights : [];
   const activeJobLabel = mc?.activeJobLabel ?? null;
   const activeJobProgress = mc?.activeJobProgress ?? null;
   const activeJobTotal = mc?.activeJobTotal ?? null;

@@ -171,7 +171,7 @@ export default function SettingsPage() {
       >
         Beta
       </div>
-      <div className="relative z-10 mx-auto max-w-3xl px-6 py-8 pb-[clamp(4rem,10vw,8rem)]">
+      <div className="relative z-10 mx-auto max-w-3xl py-8 pb-[clamp(4rem,10vw,8rem)]">
       {/* Appearance */}
       <section className="mb-10">
         <h2 className="text-lg font-semibold text-on-surface mb-4">Appearance</h2>

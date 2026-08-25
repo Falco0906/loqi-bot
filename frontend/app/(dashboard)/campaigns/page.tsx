@@ -103,6 +103,24 @@ export default function CampaignsPage() {
     if (sessionToken) invalidateClientCache(scopedKey(sessionToken, "campaigns"));
   }
 
+  function mergeCampaign(campaign: Record<string, unknown>) {
+    const id = String(campaign.id || "");
+    if (!id) return;
+    setCampaigns((current) => {
+      const exists = current.some((item) => String(item.id || "") === id);
+      return exists
+        ? current.map((item) => String(item.id || "") === id ? { ...item, ...campaign } : item)
+        : [campaign, ...current];
+    });
+    setAuthoritativeEmpty(false);
+  }
+
+  function removeCampaign(id: string) {
+    const next = campaigns.filter((campaign) => String(campaign.id || "") !== id);
+    setCampaigns(next);
+    setAuthoritativeEmpty(next.length === 0);
+  }
+
   useEffect(() => {
     fetchCampaigns();
   }, [sessionToken]);
@@ -110,10 +128,11 @@ export default function CampaignsPage() {
   async function handleArchive(id: string) {
     if (!sessionToken) return;
     try {
-      await archiveCampaign(sessionToken, id);
+      const res = await archiveCampaign(sessionToken, id);
+      if (!res.ok || !res.campaign) throw new Error("archive failed");
+      mergeCampaign(res.campaign);
       toast("success", "Campaign archived");
       invalidateCampaigns();
-      fetchCampaigns();
     } catch { toast("error", "Failed to archive campaign"); }
   }
 
@@ -121,20 +140,22 @@ export default function CampaignsPage() {
     const newName = window.prompt("Rename campaign", currentName);
     if (!newName || newName.trim() === currentName || !sessionToken) return;
     try {
-      await updateCampaign(sessionToken, id, { name: newName.trim() });
+      const res = await updateCampaign(sessionToken, id, { name: newName.trim() });
+      if (!res.ok || !res.campaign) throw new Error("rename failed");
+      mergeCampaign(res.campaign);
       toast("success", "Campaign renamed");
       invalidateCampaigns();
-      fetchCampaigns();
     } catch { toast("error", "Failed to rename campaign"); }
   }
 
   async function handleUnarchive(id: string) {
     if (!sessionToken) return;
     try {
-      await updateCampaign(sessionToken, id, { status: "planning" });
+      const res = await updateCampaign(sessionToken, id, { status: "planning" });
+      if (!res.ok || !res.campaign) throw new Error("restore failed");
+      mergeCampaign(res.campaign);
       toast("success", "Campaign restored");
       invalidateCampaigns();
-      fetchCampaigns();
     } catch { toast("error", "Failed to restore campaign"); }
   }
 
@@ -144,9 +165,10 @@ export default function CampaignsPage() {
       const res = await duplicateCampaign(sessionToken, id);
       if (!res.ok) throw new Error("duplicate failed");
       const copy = res.campaign as Record<string, unknown>;
+      if (!copy) throw new Error("duplicate response missing campaign");
+      mergeCampaign(copy);
       toast("success", `Duplicated — ${String(copy.name || "copy")} created`);
       invalidateCampaigns();
-      fetchCampaigns();
     } catch { toast("error", "Failed to duplicate campaign"); }
   }
 
@@ -154,10 +176,11 @@ export default function CampaignsPage() {
     if (!sessionToken) return;
     if (!window.confirm("Delete this campaign? This removes it from your workspace. Its strategy and leads are removed with it.")) return;
     try {
-      await deleteCampaign(sessionToken, id);
+      const res = await deleteCampaign(sessionToken, id);
+      if (!res.ok) throw new Error("delete failed");
+      removeCampaign(id);
       toast("success", "Campaign deleted");
       invalidateCampaigns();
-      fetchCampaigns();
     } catch { toast("error", "Failed to delete campaign"); }
   }
 

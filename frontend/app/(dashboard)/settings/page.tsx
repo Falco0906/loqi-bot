@@ -164,7 +164,14 @@ export default function SettingsPage() {
   const showConnect = shouldShowConnectButton(providers);
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8">
+    <div className="relative min-h-full overflow-hidden">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute bottom-[-0.32em] left-1/2 z-0 -translate-x-1/2 select-none whitespace-nowrap font-serif text-[clamp(12rem,36vw,34rem)] font-medium leading-none tracking-[-0.1em] text-transparent opacity-60 [-webkit-text-stroke:1px_rgba(255,255,255,0.1)]"
+      >
+        Loqi
+      </div>
+      <div className="relative z-10 mx-auto max-w-3xl px-6 py-8 pb-[clamp(12rem,24vw,20rem)]">
       {/* Appearance */}
       <section className="mb-10">
         <h2 className="text-lg font-semibold text-on-surface mb-4">Appearance</h2>
@@ -281,6 +288,7 @@ export default function SettingsPage() {
           </div>
         )}
       </section>
+      </div>
     </div>
   );
 }

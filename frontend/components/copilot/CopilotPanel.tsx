@@ -132,7 +132,7 @@ function MessageBubble({ message, onAction }: { message: CopilotMessage; onActio
   );
 }
 
-export default function CopilotPanel({ width = 380, variant = "sidebar" }: { width?: number; variant?: "sidebar" | "page" }) {
+export default function CopilotPanel({ width = 440, variant = "sidebar" }: { width?: number; variant?: "sidebar" | "page" }) {
   const { open, setOpen, pageContext, executeAction, conversationState, groups, activeGroupId, messages, chats, activeChatId, startTask, answerClarification, newChat, switchChat } = useCopilot();
   const [chatPickerOpen, setChatPickerOpen] = useState(false);
   const chatPickerRef = useRef<HTMLDivElement>(null);
@@ -258,7 +258,7 @@ export default function CopilotPanel({ width = 380, variant = "sidebar" }: { wid
 
   return (
     <div className={variant === "page" ? "h-full w-full flex" : "shrink-0 h-full overflow-hidden flex justify-end bg-surface-lowest transition-[width] duration-200 ease-out"} style={variant === "page" ? undefined : { width: open ? width : 0 }} role="dialog" aria-label="Loqi AI Assistant">
-      <div className={`${variant === "page" ? "w-full" : "w-[380px] max-w-[92vw] border-l border-outline-variant/15 shadow-glass"} h-full flex overflow-hidden`} style={variant === "page" ? undefined : { width }}>
+      <div className={`${variant === "page" ? "w-full" : "w-[440px] max-w-[92vw] border-l border-outline-variant/15 shadow-glass"} h-full flex overflow-hidden`} style={variant === "page" ? undefined : { width }}>
         {history}
         <div className="flex-1 min-w-0 h-full flex flex-col overflow-hidden">
           {conversationHeader}

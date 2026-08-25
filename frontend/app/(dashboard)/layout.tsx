@@ -22,7 +22,7 @@ import {
 import AppPage from "../../components/primitives/AppPage";
 import { ProspectRegistryProvider } from "../../contexts/ProspectRegistryProvider";
 
-const COPILOT_PANEL_WIDTH = 380;
+const COPILOT_PANEL_WIDTH = 440;
 const HIGHLIGHT_PAGES = ["/mission-control", "/knowledge", "/strategic-update", "/settings"];
 
 function DashboardShell({ children }: { children: React.ReactNode }) {

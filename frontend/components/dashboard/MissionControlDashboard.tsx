@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import AppPage from "../primitives/AppPage";
 import WorkspaceContainer from "../layout/WorkspaceContainer";
 import { useData } from "../../lib/hooks/use-data";
 import {
@@ -67,6 +66,9 @@ function IntentionCard({ card }: { card: MCIntentionCard }) {
     card.priority === "high" ? "text-warning" :
     "text-on-surface-variant";
 
+  const isGenericTitle = new Set(["Recommend Action", "Ask User", "Auto Handle", "Follow Up", "Notify"]).has(card.title);
+  const title = isGenericTitle && card.recommendedAction ? card.recommendedAction : card.title;
+
   return (
     <article className="bg-surface-lowest border border-outline-variant/20 rounded-lg px-5 py-5 sm:px-6 transition-colors hover:bg-surface-container-low">
       <div className="flex items-start justify-between mb-3">
@@ -79,12 +81,12 @@ function IntentionCard({ card }: { card: MCIntentionCard }) {
               {Math.round(card.confidence * 100)}% confidence
             </span>
           </div>
-          <h4 className="text-xl font-serif text-on-surface font-normal leading-snug">{card.title}</h4>
+          <h4 className="text-xl font-serif text-on-surface font-normal leading-snug">{title}</h4>
           <p className="text-base font-serif text-on-surface-variant/75 mt-1 leading-relaxed">{card.summary}</p>
         </div>
       </div>
       <EvidencePopover evidence={card.evidence} />
-      {card.recommendedAction && (
+      {card.recommendedAction && !isGenericTitle && (
         <div className="mt-4 pt-3 border-t border-outline-variant/10 flex items-center gap-2">
           <span className="text-[10px] uppercase tracking-widest text-on-surface-variant/45">Recommended</span>
           <span className="text-sm text-primary font-medium">{card.recommendedAction}</span>
@@ -270,9 +272,7 @@ export default function MissionControlDashboard() {
   if (briefingPending || (loading && !data)) {
     return (
       <WorkspaceContainer>
-        <AppPage>
-          <LoadingSkeleton />
-        </AppPage>
+        <LoadingSkeleton />
       </WorkspaceContainer>
     );
   }
@@ -282,20 +282,18 @@ export default function MissionControlDashboard() {
   if ((briefingError && !briefingData) || (error && !data)) {
     return (
       <WorkspaceContainer>
-        <AppPage>
-          <div className="reading-column py-16 text-center">
-            <p className="text-lg text-error mb-4">{error}</p>
-            <button
-              onClick={() => {
-                mcRetry();
-                briefingRetry();
-              }}
-              className="bg-primary text-on-primary px-6 py-2 rounded-full text-sm font-medium hover:opacity-90 transition-opacity"
-            >
-              Retry
-            </button>
-          </div>
-        </AppPage>
+        <div className="reading-column py-16 text-center">
+          <p className="text-lg text-error mb-4">{error}</p>
+          <button
+            onClick={() => {
+              mcRetry();
+              briefingRetry();
+            }}
+            className="bg-primary text-on-primary px-6 py-2 rounded-full text-sm font-medium hover:opacity-90 transition-opacity"
+          >
+            Retry
+          </button>
+        </div>
       </WorkspaceContainer>
     );
   }
@@ -303,15 +301,13 @@ export default function MissionControlDashboard() {
   if (!data) {
     return (
       <WorkspaceContainer>
-        <AppPage>
-          <div className="reading-column py-16 flex flex-col items-center justify-center text-center min-h-[60vh]">
-            <div className="w-16 h-16 rounded-2xl bg-surface-high/30 flex items-center justify-center text-on-surface-variant/40 mb-4">
-              <span className="material-symbols-outlined text-3xl">dashboard</span>
-            </div>
-            <p className="text-lg text-on-surface-variant/80 font-medium">Mission Control is unavailable</p>
-            <p className="mt-1.5 text-sm text-on-surface-variant/50 max-w-sm leading-relaxed">Try again to load your workspace data.</p>
+        <div className="reading-column py-16 flex flex-col items-center justify-center text-center min-h-[60vh]">
+          <div className="w-16 h-16 rounded-2xl bg-surface-high/30 flex items-center justify-center text-on-surface-variant/40 mb-4">
+            <span className="material-symbols-outlined text-3xl">dashboard</span>
           </div>
-        </AppPage>
+          <p className="text-lg text-on-surface-variant/80 font-medium">Mission Control is unavailable</p>
+          <p className="mt-1.5 text-sm text-on-surface-variant/50 max-w-sm leading-relaxed">Try again to load your workspace data.</p>
+        </div>
       </WorkspaceContainer>
     );
   }
@@ -346,8 +342,7 @@ export default function MissionControlDashboard() {
 
   return (
     <WorkspaceContainer>
-      <AppPage>
-        <div className="w-full max-w-7xl mx-auto py-12 lg:py-16 px-6 lg:px-10 pb-48">
+      <div className="w-full max-w-7xl mx-auto py-12 lg:py-16 px-6 lg:px-10">
 
           {/* The briefing content is rendered in one stable pass.  The former
               NarrativeBriefing component remains disabled because it owns the
@@ -451,12 +446,10 @@ export default function MissionControlDashboard() {
 
         </div>
 
-        {/* Tell Loqi — sticky footer */}
-        <div
-          className="fixed bottom-0 z-40 bg-gradient-to-t from-background via-background/95 to-transparent pt-20 pb-6 transition-[left,right] duration-200 ease-out"
-          style={{ left: "var(--sidebar-w, 16rem)", right: "var(--copilot-w, 0px)" }}
-        >
-          <div className="reading-column px-6">
+      {/* Tell Loqi remains the final Mission Control action, in normal document
+          flow so it cannot reserve an empty viewport or cover briefing data. */}
+      <div className="w-full mt-12 lg:mt-16 pb-8">
+          <div className="w-full max-w-7xl mx-auto px-6 lg:px-10">
             <div className="bg-surface-lowest border border-outline-variant/20 rounded-xl p-4 ambient-shadow focus-within:ring-2 focus-within:ring-primary/5 transition-all">
               <label className="text-xs uppercase tracking-widest text-on-surface-variant block mb-2 px-2 font-medium">
                 Tell Loqi...
@@ -509,9 +502,7 @@ export default function MissionControlDashboard() {
               </button>
             </div>
           </div>
-        </div>
-
-      </AppPage>
+      </div>
     </WorkspaceContainer>
   );
 }

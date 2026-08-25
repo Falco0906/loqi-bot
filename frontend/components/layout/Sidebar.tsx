@@ -194,7 +194,7 @@ export default function Sidebar({
         <div className={collapsed ? "flex justify-center" : "flex items-center gap-2.5 px-2"}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/logo.png"
+            src="/android-chrome-512x512.png"
             alt="Loqi"
             className={`${collapsed ? "w-7 h-7" : "w-6 h-6"} shrink-0 rounded-md`}
           />

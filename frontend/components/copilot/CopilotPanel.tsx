@@ -9,7 +9,7 @@ import Icon from "../shared/Icon";
 import { CLARIFICATION_PROMPT, CLARIFICATION_REPLIES, idleQuickReplies, type QuickReplyOption } from "../../lib/conversationMachine";
 
 function LoqiLogo({ className = "" }: { className?: string }) {
-  return <img src="/logo.png" alt="" className={`shrink-0 rounded-md ${className}`} />;
+  return <img src="/android-chrome-512x512.png" alt="" className={`shrink-0 rounded-md ${className}`} />;
 }
 
 function ThinkingIndicator() {

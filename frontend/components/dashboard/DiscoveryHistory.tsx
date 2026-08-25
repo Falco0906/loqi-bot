@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import AppPage from "../primitives/AppPage";
 import WorkspaceContainer from "../layout/WorkspaceContainer";
 import { useData } from "../../lib/hooks/use-data";
-import { fetchDiscoveryList, peekCachedDiscoveryList, startDiscoverySearch } from "../../lib/repositories";
+import { fetchDiscoveryListFresh, startDiscoverySearch } from "../../lib/repositories";
 import { toast } from "../shared/Toast";
 import { useWorkspaceSearch } from "../../contexts/SearchContext";
 import { setNavState } from "../../lib/nav-state";
@@ -97,9 +97,7 @@ export default function DiscoveryHistory() {
   const [attachAttempt, setAttachAttempt] = useState(0);
   const [attachState, setAttachState] = useState<"idle" | "starting" | "failed">("idle");
   const [inputQuery, setInputQuery] = useState("");
-  const { data, loading, error, retry } = useData(fetchDiscoveryList, {
-    initial: peekCachedDiscoveryList(),
-  });
+  const { data, loading, error, retry } = useData(fetchDiscoveryListFresh);
   const [searching, setSearching] = useState(false);
 
   const submitDiscoverySearch = async (rawQuery: string) => {

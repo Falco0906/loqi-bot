@@ -957,7 +957,7 @@ export function workspaceLeadToRecommendation(
 export async function fetchDiscoveryList(): Promise<DiscoveryListItem[] | null> {
   return memoizedFetch(sessionKey("discovery-list"), async () => {
     const token = getToken();
-    if (!token) return null;
+    if (!token) throw new Error("Your session is unavailable. Please sign in again.");
     try {
       const res = await listDiscoveries(token);
       const items = Array.isArray(res.discoveries) ? res.discoveries : [];
@@ -978,10 +978,19 @@ export async function fetchDiscoveryList(): Promise<DiscoveryListItem[] | null> 
         lastRefreshedAt: d.last_refreshed_at ? String(d.last_refreshed_at) : null,
         metadata: d.metadata || {},
       }));
-    } catch {
-      return null;
+    } catch (error) {
+      throw error instanceof Error ? error : new Error("Unable to load Discovery history");
     }
   });
+}
+
+/**
+ * Discovery history is a primary page surface. Always revalidate it on page
+ * entry so an earlier empty response cannot hide searches created elsewhere.
+ */
+export function fetchDiscoveryListFresh(): Promise<DiscoveryListItem[] | null> {
+  fetchCache.delete(sessionKey("discovery-list"));
+  return fetchDiscoveryList();
 }
 
 export function prefetchDiscoveryList(): Promise<DiscoveryListItem[] | null> {

@@ -7514,12 +7514,23 @@ async def delete_campaign(session_token: str, campaign_id: str, request: Request
     """
     owner_id = await _workspace_owner(request, session_token)
     ws_id = await _resolved_workspace_id_or_default(request, owner_id)
-    campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=ws_id)
-    target = next((c for c in campaigns if c.get("id") == campaign_id), None)
-    if not target:
+    # A delete only needs to authorize one canonical campaign. Loading the
+    # complete workspace graph here (campaigns, links, leads, companies and
+    # strategies) made this otherwise small mutation hit the client timeout.
+    from services.persistence.launch import CampaignRepository
+    entity = await CampaignRepository().get_for_workspace(campaign_id, ws_id)
+    if entity is None:
         raise HTTPException(status_code=404, detail="Campaign not found")
-    target["status"] = "deleted"
-    target["updated_at"] = datetime.now(timezone.utc).isoformat()
+    updated_at = datetime.now(timezone.utc).isoformat()
+    target = {
+        "id": entity.id,
+        "name": entity.name,
+        "objective": entity.objective,
+        "status": "deleted",
+        "lead_count": 0,
+        "created_at": entity.created_at.isoformat() if entity.created_at else "",
+        "updated_at": updated_at,
+    }
     from services.workspace_state import persist_campaign_update_awaited
     if not await persist_campaign_update_awaited(owner_id, campaign_id, {"status": "deleted"}, workspace_id=ws_id):
         raise HTTPException(status_code=503, detail="Campaign delete could not be persisted")

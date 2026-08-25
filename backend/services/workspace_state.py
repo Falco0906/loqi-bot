@@ -737,13 +737,14 @@ async def persist_campaign_lead_id_awaited(
 
 async def _update_campaign_row(user_id: str, campaign_id: str, updates: dict[str, Any], workspace_id: str = "") -> None:
     repo = CampaignRepository()
-    entity = await repo.get(campaign_id)
-    if entity is None:
-        return
-    # SaaS-2.4: never update a campaign outside the caller's workspace (defense
-    # in depth below the endpoint-level gate). Same safe silent no-op.
     resolved = await _async_workspace(user_id, workspace_id=workspace_id)
-    if not resolved or entity.workspace_id != resolved:
+    if not resolved:
+        return
+    # SaaS-2.4: resolve and query in one workspace-scoped read. Apart from
+    # enforcing tenant isolation, this avoids the redundant unscoped lookup on
+    # every interactive campaign mutation.
+    entity = await repo.get_for_workspace(campaign_id, resolved)
+    if entity is None:
         return
     for key in ("name", "objective", "status", "search_query", "discovery_id"):
         if updates.get(key) is not None:

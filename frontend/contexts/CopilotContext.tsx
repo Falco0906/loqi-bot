@@ -383,8 +383,11 @@ export function CopilotProvider({
       if (!raw) return;
       const parsed = JSON.parse(raw) as { activeChatId?: string; chats?: CopilotChat[] };
       if (!Array.isArray(parsed.chats)) return;
-      setChats(parsed.chats.slice(0, 20));
-      const active = parsed.chats.find((chat) => chat.id === parsed.activeChatId) || parsed.chats[0];
+      const persistedChats = parsed.chats.filter((chat) =>
+        Array.isArray(chat.messages) && chat.messages.some((message) => message.role === "user"),
+      );
+      setChats(persistedChats.slice(0, 20));
+      const active = persistedChats.find((chat) => chat.id === parsed.activeChatId) || persistedChats[0];
       if (active) {
         setActiveChatId(active.id);
         setMessages(active.messages || []);
@@ -402,7 +405,10 @@ export function CopilotProvider({
   }, []);
 
   useEffect(() => {
-    if (messages.length === 0 && chats.length === 0) return;
+    // A freshly opened chat is transient. Persist it only after the user has
+    // actually sent a message; clicking "Start new chat" repeatedly must not
+    // fill the history with empty conversations.
+    if (!messages.some((message) => message.role === "user" && message.content.trim())) return;
     setChats((previous) => {
       const title = messages.find((message) => message.role === "user")?.content || "New conversation";
       const current: CopilotChat = {

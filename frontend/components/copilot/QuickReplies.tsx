@@ -20,7 +20,7 @@ function QuickReplies({ options, onSelect, variant = "sidebar" }: Props) {
           key={o.id}
           type="button"
           onClick={() => onSelect(o)}
-          className={`${variant === "page" ? "rounded-xl px-4 py-3" : "rounded-xl px-3.5 py-2.5"} w-full text-left border border-outline-variant/15 bg-surface-container-low/70 hover:border-primary/30 hover:bg-surface-high/40 active:scale-[0.98] transition-all group`}
+          className={`${variant === "page" ? "rounded-xl px-4 py-3" : "rounded-xl px-3.5 py-2.5"} w-full text-left border border-on-surface/5 bg-surface-container-low/45 hover:border-on-surface/10 hover:bg-surface-high/40 active:scale-[0.98] transition-all group`}
         >
           <span className="flex items-center justify-between gap-2">
             <span className="text-body-sm text-on-surface font-medium">{o.label}</span>

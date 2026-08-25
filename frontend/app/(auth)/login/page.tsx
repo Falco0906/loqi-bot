@@ -4,6 +4,7 @@ import { useAuth } from "../../../hooks/useAuth";
 import LoginForm from "../../../components/auth/LoginForm";
 import Link from "next/link";
 import { usePageTitle } from "../../../hooks/usePageTitle";
+import AuthBetaGate from "../../../components/auth/AuthBetaGate";
 
 export default function LoginPage() {
   usePageTitle("Login");
@@ -22,7 +23,8 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex w-full flex-col gap-8 animate-fade-in">
+    <AuthBetaGate>
+      <div className="flex w-full flex-col gap-8 animate-fade-in">
       <div className="flex flex-col gap-3 text-center">
         <h1 className="font-['Libre_Caslon_Text'] text-[32px] leading-[1.3] text-[#000000] tracking-tight">
           Sign In
@@ -43,6 +45,7 @@ export default function LoginPage() {
           Sign up
         </Link>
       </p>
-    </div>
+      </div>
+    </AuthBetaGate>
   );
 }

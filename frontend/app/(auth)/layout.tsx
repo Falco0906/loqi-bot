@@ -1,5 +1,4 @@
 import "../globals.css";
-import AuthBetaGate from "../../components/auth/AuthBetaGate";
 
 export const metadata = {
   title: "Loqi — First Meeting",
@@ -33,7 +32,7 @@ export default function AuthLayout({
       
       <main className="pt-32 pb-16 px-6">
         <div className="max-w-[720px] mx-auto">
-          <AuthBetaGate>{children}</AuthBetaGate>
+          {children}
         </div>
       </main>
     </div>

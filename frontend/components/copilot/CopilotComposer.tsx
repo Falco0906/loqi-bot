@@ -27,8 +27,8 @@ function CopilotComposer({ onSend, disabled, placeholder = "Tell Loqi what to do
   }
 
   return (
-    <form onSubmit={handleSubmit} className={`${variant === "page" ? "border-t border-outline-variant/5 px-6 py-5 md:px-10 md:py-7" : "border-t border-outline-variant/10 px-4 py-3"}`}>
-      <div className={`${variant === "page" ? "min-h-20 rounded-2xl bg-surface-container-low/80 px-4 py-3 shadow-lg shadow-black/10 md:px-5 md:py-4" : "rounded-xl bg-surface-lowest px-3 py-1.5"} flex items-end gap-3 border border-outline-variant/20 focus-within:border-primary/40 focus-within:ring-1 focus-within:ring-primary/20 transition-all duration-150`}>
+    <form onSubmit={handleSubmit} className={`${variant === "page" ? "border-t border-on-surface/3 px-6 py-5 md:px-10 md:py-7" : "border-t border-on-surface/5 px-4 py-3"}`}>
+      <div className={`${variant === "page" ? "min-h-20 rounded-2xl bg-surface-container-low/80 px-4 py-3 shadow-lg shadow-black/10 md:px-5 md:py-4" : "rounded-xl bg-surface-lowest px-3 py-1.5"} flex items-end gap-3 border border-on-surface/7 focus-within:border-on-surface/12 focus-within:ring-1 focus-within:ring-primary/15 transition-all duration-150`}>
         <textarea
           ref={inputRef}
           value={value}

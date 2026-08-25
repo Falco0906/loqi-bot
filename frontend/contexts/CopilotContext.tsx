@@ -1034,9 +1034,10 @@ export function CopilotProvider({
 
       const requestSession = sessionRef.current + 1;
       sessionRef.current = requestSession;
-      // Keep the composer guarded while intent is being resolved, but do not
-      // expose a task/activity state before the backend returns an operation.
+      // Keep the composer guarded while intent is being resolved and show only
+      // the lightweight thinking indicator until the backend responds.
       busyRef.current = true;
+      setConversationState("working");
       setRecentTask(null);
       const agentTurn = askAgent(trimmed, previousMessages, requestSession);
       void (async () => {

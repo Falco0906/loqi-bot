@@ -95,6 +95,10 @@ const config: Config = {
           "0%, 100%": { opacity: "0.4" },
           "50%": { opacity: "0.2" },
         },
+        "thinking-dot": {
+          "0%, 100%": { opacity: "0.35", transform: "scale(0.7)" },
+          "50%": { opacity: "1", transform: "scale(1)" },
+        },
       },
       animation: {
         "ping-slow": "ping-slow 2s cubic-bezier(0, 0, 0.2, 1) infinite",
@@ -102,6 +106,7 @@ const config: Config = {
         "slide-up": "slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1)",
         "scale-in": "scale-in 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
         "skeleton-pulse": "skeleton-pulse 1.8s ease-in-out infinite",
+        "thinking-dot": "thinking-dot 1s ease-in-out infinite",
       },
       scale: {
         "102": "1.02",

@@ -8,6 +8,23 @@ import CopilotComposer from "./CopilotComposer";
 import Icon from "../shared/Icon";
 import { CLARIFICATION_PROMPT, CLARIFICATION_REPLIES, idleQuickReplies, type QuickReplyOption } from "../../lib/conversationMachine";
 
+function LoqiLogo({ className = "" }: { className?: string }) {
+  return <img src="/logo.png" alt="" className={`shrink-0 rounded-md ${className}`} />;
+}
+
+function ThinkingIndicator() {
+  return (
+    <div className="flex items-center gap-2 rounded-xl px-3.5 py-3 text-body-sm text-on-surface-variant/65" role="status" aria-label="Loqi is thinking">
+      <LoqiLogo className="h-5 w-5" />
+      <span className="flex items-center gap-1" aria-hidden="true">
+        <span className="h-1.5 w-1.5 rounded-full bg-primary animate-thinking-dot" />
+        <span className="h-1.5 w-1.5 rounded-full bg-primary animate-thinking-dot [animation-delay:150ms]" />
+        <span className="h-1.5 w-1.5 rounded-full bg-primary animate-thinking-dot [animation-delay:300ms]" />
+      </span>
+    </div>
+  );
+}
+
 function MessageBubble({ message, onAction }: { message: CopilotMessage; onAction: (action: Parameters<ReturnType<typeof useCopilot>["executeAction"]>[0]) => void }) {
   const user = message.role === "user";
   const tool = message.role === "tool";
@@ -27,7 +44,7 @@ function MessageBubble({ message, onAction }: { message: CopilotMessage; onActio
     <div className={`flex ${user ? "justify-end" : "justify-start"}`}>
       <div className={`${user ? "max-w-[84%] bg-primary text-on-primary rounded-2xl rounded-br-md" : "max-w-[92%]"} ${tool ? "w-full rounded-xl border border-outline-variant/10 bg-surface-container-low/50 px-3.5 py-3" : "px-4 py-3"}`}>
         {!user && tool && <div className="flex items-center gap-2 mb-1.5 text-label-sm text-primary"><span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />Working</div>}
-        {!user && !tool && <div className="flex items-center gap-2 mb-1.5 text-label-sm text-on-surface-variant/50"><span className="w-5 h-5 rounded-md bg-primary/10 text-primary flex items-center justify-center"><Icon name="smart_toy" className="text-xs" /></span>Loqi</div>}
+        {!user && !tool && <div className="flex items-center gap-2 mb-1.5 text-label-sm text-on-surface-variant/50"><span className="flex h-5 w-5 items-center justify-center rounded-md bg-primary/10"><LoqiLogo className="h-4 w-4" /></span>Loqi</div>}
         <p className={`whitespace-pre-wrap text-body-sm leading-relaxed ${user ? "" : "text-on-surface"}`}>{message.content}</p>
         {!user && leadTool && result && Array.isArray(result.leads) && result.leads.length > 0 && (
           <div className="mt-3 space-y-1.5" data-testid="copilot-lead-results">
@@ -152,6 +169,11 @@ export default function CopilotPanel({ width = 380, variant = "sidebar" }: { wid
     newChat();
   }, [newChat]);
 
+  const continueChat = useCallback((chatId: string) => {
+    switchChat(chatId);
+    setChatPickerOpen(false);
+  }, [switchChat]);
+
   const conversationHeader = (
     <header className={`relative flex shrink-0 items-center justify-between border-b border-outline-variant/10 ${variant === "page" ? "px-6 py-3 md:px-10" : "px-4 py-3"}`}>
       <div ref={chatPickerRef} className="relative min-w-0">
@@ -163,7 +185,7 @@ export default function CopilotPanel({ width = 380, variant = "sidebar" }: { wid
           aria-haspopup="listbox"
         >
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <Icon name="smart_toy" className="text-sm" />
+            <LoqiLogo className="h-4 w-4" />
           </span>
           <span className="truncate">{chatLabel}</span>
           <Icon name="expand_more" className={`shrink-0 text-base text-on-surface-variant/55 transition-transform ${chatPickerOpen ? "rotate-180" : ""}`} />
@@ -241,8 +263,9 @@ export default function CopilotPanel({ width = 380, variant = "sidebar" }: { wid
         <div className="flex-1 min-w-0 h-full flex flex-col overflow-hidden">
           {conversationHeader}
           <main className={`${variant === "page" ? "w-full max-w-5xl mx-auto px-6 md:px-12" : "w-full px-4 md:px-8"} flex-1 overflow-y-auto py-8 md:py-10`}>
-            {messages.length === 0 && <div className="flex min-h-full flex-col items-center justify-center py-12 text-center"><div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary"><Icon name="smart_toy" className="text-2xl" /></div><h1 className="font-serif text-3xl tracking-tight text-on-surface">Loqi AI Assistant</h1><p className="mt-3 max-w-md text-sm leading-6 text-on-surface-variant/65">Your calm, grounded workspace for understanding leads, campaigns, drafts, replies, and outbound performance.</p><div className="mt-8 w-full max-w-3xl"><QuickReplies options={idleOptions} onSelect={handleQuickReply} variant="page" /></div></div>}
+            {messages.length === 0 && <div className="flex min-h-full flex-col items-center justify-center py-12 text-center"><div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10"><LoqiLogo className="h-8 w-8" /></div><h1 className="font-serif text-3xl tracking-tight text-on-surface">Loqi AI Assistant</h1><p className="mt-3 max-w-md text-sm leading-6 text-on-surface-variant/65">Your calm, grounded workspace for understanding leads, campaigns, drafts, replies, and outbound performance.</p><div className="mt-8 w-full max-w-3xl"><QuickReplies options={idleOptions} onSelect={handleQuickReply} variant="page" /></div>{chats.length > 0 && <section className="mt-10 w-full max-w-3xl text-left"><div className="mb-3 flex items-center justify-between px-6 md:px-10"><h2 className="text-label-sm font-semibold uppercase tracking-[0.16em] text-on-surface-variant/45">Continue where you left off</h2><button type="button" onClick={() => setChatPickerOpen(true)} className="text-label-sm text-on-surface-variant/55 transition-colors hover:text-primary">View more</button></div><div className="space-y-1 px-6 md:px-10">{chats.slice(0, 3).map((chat) => <button key={chat.id} type="button" onClick={() => continueChat(chat.id)} className="w-full truncate rounded-lg px-3 py-2.5 text-left text-sm text-on-surface-variant/75 transition-colors hover:bg-surface-high/45 hover:text-on-surface">{chat.title}</button>)}</div></section>}</div>}
             {messages.map((message) => <MessageBubble key={message.id} message={message} onAction={handleAction} />)}
+            {working && <ThinkingIndicator />}
             {working && activeGroupId && <div className="rounded-xl border border-outline-variant/10 bg-surface-container-low/50 px-3.5 py-3 text-body-sm text-on-surface-variant/70"><div className="flex items-center gap-2 text-primary mb-1"><span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />Thinking</div>{groups.find((group) => group.id === activeGroupId)?.steps.at(-1)?.text || "Working on it…"}</div>}
             {conversationState === "clarification" && <div className="rounded-xl border border-outline-variant/10 bg-surface-container-low px-4 py-3 text-body-sm text-on-surface">{CLARIFICATION_PROMPT}</div>}
           </main>

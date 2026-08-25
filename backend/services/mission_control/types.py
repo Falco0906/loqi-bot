@@ -17,6 +17,9 @@ class IntentionCard(BaseModel):
     related_campaign: str | None = None
     related_lead: str | None = None
     reason_code: str = ""
+    link: str = ""
+    time_waiting: str = ""
+    source: str = ""
 
 
 class BriefingSection(BaseModel):
@@ -59,4 +62,8 @@ class BriefingResponse(BaseModel):
     upcoming: list[IntentionCard] = Field(default_factory=list)
     workspace_health: HealthSummary = Field(default_factory=HealthSummary)
     timeline: list[TimelineEvent] = Field(default_factory=list)
+    # These are real recent activity/delta records.  They deliberately stay
+    # separate from the policy-derived intention collections above.
+    what_changed: list[TimelineEvent] = Field(default_factory=list)
+    live_activity: list[TimelineEvent] = Field(default_factory=list)
     all_intentions: list[IntentionCard] = Field(default_factory=list)

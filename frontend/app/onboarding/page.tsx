@@ -603,7 +603,7 @@ function ConversationalDiscovery({
           </div>
           <span className="h-4 w-px bg-[#c4c7c7]/40" />
           <span className="font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] font-medium uppercase tracking-widest text-[#444748]">
-            Continuous Strategy
+            Welcome
           </span>
         </div>
         <div className="flex items-center gap-4">

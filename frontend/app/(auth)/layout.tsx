@@ -24,7 +24,7 @@ export default function AuthLayout({
             </div>
             <span className="h-4 w-px bg-[#4a4549]" />
             <span className="font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] font-medium uppercase tracking-widest text-[#ccc4c9]">
-              Continuous Strategy
+              Welcome
             </span>
           </div>
         </div>

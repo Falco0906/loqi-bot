@@ -243,6 +243,11 @@
     background-color: #e6e2e1 !important;
   }
 
+  .auth-dark button[class*="bg-[#000000]"],
+  .onb-dark button[class*="bg-[#000000]"] {
+    color: #313030 !important;
+  }
+
   .auth-dark [class*="text-[#ffffff]"],
   .onb-dark [class*="text-[#ffffff]"],
   .auth-dark [class*="text-[#000000]"],

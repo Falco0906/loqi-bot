@@ -356,6 +356,8 @@ function intentionCardsFromBackend(cards: BriefingResponse["top_priorities"]): M
     relatedCampaign: c.related_campaign,
     relatedLead: c.related_lead,
     reasonCode: c.reason_code,
+    link: c.link ?? "",
+    timeWaiting: c.time_waiting ?? "",
   }));
 }
 

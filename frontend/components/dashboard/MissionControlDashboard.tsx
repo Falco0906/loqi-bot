@@ -46,9 +46,9 @@ function EvidencePopover({ evidence }: { evidence: MCIntentionCard["evidence"] }
         <div className="absolute top-6 left-0 z-10 bg-surface-lowest border border-outline-variant/20 rounded-lg p-4 shadow-lg min-w-[240px] space-y-2">
           {evidence.map((e, i) => (
             <div key={i} className="text-xs text-on-surface-variant space-y-0.5">
-              <span className="font-medium text-on-surface">{e.reason_code.replace(/_/g, " ")}</span>
+              <span className="font-medium text-on-surface">{(e.reason_code || "workspace signal").replace(/_/g, " ")}</span>
               <div className="flex gap-2">
-                <span>Confidence: {Math.round(e.confidence * 100)}%</span>
+                {Number.isFinite(e.confidence) && <span>Confidence: {Math.round(e.confidence * 100)}%</span>}
                 <span>Source: {e.source}</span>
               </div>
               {e.detail && <p className="italic opacity-60">{e.detail}</p>}
@@ -68,9 +68,18 @@ function IntentionCard({ card }: { card: MCIntentionCard }) {
 
   const isGenericTitle = new Set(["Recommend Action", "Ask User", "Auto Handle", "Follow Up", "Notify"]).has(card.title);
   const title = isGenericTitle && card.recommendedAction ? card.recommendedAction : card.title;
+  const href = card.link.startsWith("/") && !card.link.startsWith("//") ? card.link : "";
 
   return (
-    <article className="bg-surface-lowest border border-outline-variant/20 rounded-lg px-5 py-5 sm:px-6 transition-colors hover:bg-surface-container-low">
+    <article className={`relative bg-surface-lowest border border-outline-variant/20 rounded-lg px-5 py-5 sm:px-6 transition-colors ${href ? "hover:bg-surface-container-low cursor-pointer" : ""}`}>
+      {href && (
+        <Link
+          href={href}
+          aria-label={`${card.recommendedAction || title}: ${title}`}
+          className="absolute inset-0 z-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+        />
+      )}
+      <div className={`relative ${href ? "z-[1] pointer-events-none" : ""}`}>
       <div className="flex items-start justify-between mb-3">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
@@ -85,13 +94,24 @@ function IntentionCard({ card }: { card: MCIntentionCard }) {
           <p className="text-base font-serif text-on-surface-variant/75 mt-1 leading-relaxed">{card.summary}</p>
         </div>
       </div>
-      <EvidencePopover evidence={card.evidence} />
+      <div className={href ? "pointer-events-auto relative z-10" : ""}>
+        <EvidencePopover evidence={card.evidence} />
+      </div>
       {card.recommendedAction && !isGenericTitle && (
         <div className="mt-4 pt-3 border-t border-outline-variant/10 flex items-center gap-2">
-          <span className="text-[10px] uppercase tracking-widest text-on-surface-variant/45">Recommended</span>
-          <span className="text-sm text-primary font-medium">{card.recommendedAction}</span>
+          {href ? (
+            <span className="inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-on-primary">
+              {card.recommendedAction} <span aria-hidden="true" className="ml-1">→</span>
+            </span>
+          ) : (
+            <>
+              <span className="text-[10px] uppercase tracking-widest text-on-surface-variant/45">Recommended</span>
+              <span className="text-sm text-primary font-medium">{card.recommendedAction}</span>
+            </>
+          )}
         </div>
       )}
+      </div>
     </article>
   );
 }

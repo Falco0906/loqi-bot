@@ -67,6 +67,8 @@ export type MCIntentionCard = {
   relatedCampaign: string | null;
   relatedLead: string | null;
   reasonCode: string;
+  link: string;
+  timeWaiting: string;
 };
 
 export type MCBriefing = {

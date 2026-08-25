@@ -1880,6 +1880,9 @@ export type IntentionCard = {
   related_campaign: string | null;
   related_lead: string | null;
   reason_code: string;
+  link?: string;
+  time_waiting?: string;
+  source?: string;
 };
 
 export type BriefingSection = {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import WorkspaceContainer from "../layout/WorkspaceContainer";
 import { useData } from "../../lib/hooks/use-data";
@@ -161,66 +161,100 @@ function HealthSection({ health }: { health: MCHealthSummary }) {
 }
 
 function TimelineSection({ events }: { events: MCTimelineEvent[] }) {
-  if (events.length === 0) return null;
   return (
     <section className="space-y-4 pt-2 border-t border-outline-variant/10">
       <h3 className="text-xs uppercase tracking-widest text-on-surface-variant opacity-60 font-medium">
         Timeline
       </h3>
-      <div className="relative ml-1 border-l border-outline-variant/10 space-y-0">
-        {events.slice(0, 10).map((event) => (
-          <div key={event.id} className="relative pl-4 pb-4 last:pb-0">
-            <span className="absolute -left-[3px] top-1.5 w-1.5 h-1.5 rounded-full bg-outline-variant/60" />
-            <div className="min-w-0">
-              <p className="text-sm text-on-surface-variant/80 leading-relaxed">{event.description}</p>
-              <p className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider mt-1">
-                {event.actor} &middot; {event.category}
-              </p>
+      {events.length === 0 ? (
+        <EmptyRegion>No workspace events yet.</EmptyRegion>
+      ) : (
+        <div className="relative ml-1 border-l border-outline-variant/10 space-y-0">
+          {events.slice(0, 10).map((event) => (
+            <div key={event.id} className="relative pl-4 pb-4 last:pb-0">
+              <span className="absolute -left-[3px] top-1.5 w-1.5 h-1.5 rounded-full bg-outline-variant/60" />
+              <div className="min-w-0">
+                <p className="text-sm text-on-surface-variant/80 leading-relaxed">{event.description}</p>
+                <p className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider mt-1">
+                  {event.actor} &middot; {event.category}
+                </p>
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
 
+function EmptyRegion({ children }: { children: ReactNode }) {
+  return <p className="text-sm text-on-surface-variant/50 leading-relaxed">{children}</p>;
+}
+
 function HandledSection({ cards }: { cards: MCIntentionCard[] }) {
-  if (cards.length === 0) return null;
   return (
     <section className="bg-surface-lowest border border-outline-variant/10 rounded-lg p-5 sm:p-6">
       <h3 className="text-xs uppercase tracking-widest text-on-surface-variant/60 font-medium mb-5">
         Loqi Handled
       </h3>
-      <ul className="space-y-4">
-        {cards.map((card) => (
-          <li key={card.id} className="flex items-start gap-3">
-            <span className="material-symbols-outlined text-[18px] leading-6 text-primary/55">check</span>
-            <div className="min-w-0">
-              <p className="font-serif text-base text-on-surface">{card.title}</p>
-              <p className="text-xs text-on-surface-variant/55 mt-0.5">{card.summary}</p>
-            </div>
-          </li>
-        ))}
-      </ul>
+      {cards.length === 0 ? (
+        <EmptyRegion>No automated work completed since your last briefing.</EmptyRegion>
+      ) : (
+        <ul className="space-y-4">
+          {cards.map((card) => (
+            <li key={card.id} className="flex items-start gap-3">
+              <span className="material-symbols-outlined text-[18px] leading-6 text-primary/55">check</span>
+              <div className="min-w-0">
+                <p className="font-serif text-base text-on-surface">{card.title}</p>
+                <p className="text-xs text-on-surface-variant/55 mt-0.5">{card.summary}</p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
 
 function WhatChangedSection({ activity }: { activity: MCLiveActivity[] }) {
-  if (activity.length === 0) return null;
   return (
     <section className="bg-surface-lowest border border-outline-variant/10 rounded-lg p-5 sm:p-6">
       <h3 className="text-xs uppercase tracking-widest text-on-surface-variant/60 font-medium mb-5">
         What Changed
       </h3>
-      <ul className="space-y-0">
-        {activity.slice(0, 4).map((item, index) => (
-          <li key={`${item.timestamp}-${item.text}-${index}`} className="py-3 first:pt-0 last:pb-0 border-b last:border-b-0 border-outline-variant/10">
-            <p className="font-serif text-base text-on-surface">{item.text}</p>
-            {item.timestamp && <p className="text-[10px] uppercase tracking-wider text-on-surface-variant/45 mt-1">{item.timestamp}</p>}
-          </li>
-        ))}
-      </ul>
+      {activity.length === 0 ? (
+        <EmptyRegion>No material workspace changes since your last visit.</EmptyRegion>
+      ) : (
+        <ul className="space-y-0">
+          {activity.slice(0, 4).map((item, index) => (
+            <li key={`${item.timestamp}-${item.text}-${index}`} className="py-3 first:pt-0 last:pb-0 border-b last:border-b-0 border-outline-variant/10">
+              <p className="font-serif text-base text-on-surface">{item.text}</p>
+              {item.timestamp && <p className="text-[10px] uppercase tracking-wider text-on-surface-variant/45 mt-1">{item.timestamp}</p>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function UpcomingSection({ cards }: { cards: MCIntentionCard[] }) {
+  return (
+    <section className="bg-surface-lowest border border-outline-variant/10 rounded-lg p-5 sm:p-6">
+      <h3 className="text-xs uppercase tracking-widest text-on-surface-variant/60 font-medium mb-5">Upcoming</h3>
+      {cards.length === 0 ? (
+        <EmptyRegion>No scheduled follow-ups or notifications.</EmptyRegion>
+      ) : (
+        <div className="space-y-4">
+          {cards.slice(0, 4).map((card) => (
+            <div key={card.id} className="border-b border-outline-variant/10 pb-4 last:border-b-0 last:pb-0">
+              <p className="font-serif text-base text-on-surface">{card.title}</p>
+              <p className="text-sm text-on-surface-variant/65 mt-1 leading-relaxed">{card.summary}</p>
+              <EvidencePopover evidence={card.evidence} />
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -402,45 +436,32 @@ export default function MissionControlDashboard() {
 
           <div className={copilotOpen ? "flex flex-col gap-10 lg:gap-12" : "grid grid-cols-1 xl:grid-cols-12 gap-10 xl:gap-8 2xl:gap-12"}>
             <main className={copilotOpen ? "space-y-10 lg:space-y-12 min-w-0" : "xl:col-span-8 space-y-10 lg:space-y-12 min-w-0"}>
-              {attentionCards.length > 0 && (
-                <section className="space-y-5">
-                  <div className="flex items-end justify-between gap-4">
-                    <h2 className="font-serif text-3xl md:text-4xl text-on-surface leading-tight font-normal">Needs your attention</h2>
-                    <span className="material-symbols-outlined text-error/80 text-[22px] mb-1">warning</span>
-                  </div>
+              <section className="space-y-5">
+                <div className="flex items-end justify-between gap-4">
+                  <h2 className="font-serif text-3xl md:text-4xl text-on-surface leading-tight font-normal">Needs your attention</h2>
+                  <span className="material-symbols-outlined text-error/80 text-[22px] mb-1">warning</span>
+                </div>
+                {attentionCards.length === 0 ? (
+                  <EmptyRegion>Nothing requires your attention right now.</EmptyRegion>
+                ) : (
                   <div className="space-y-3">
                     {attentionCards.slice(0, 4).map((card) => (
                       <IntentionCard key={card.id} card={card} />
                     ))}
                   </div>
-                </section>
-              )}
+                )}
+              </section>
 
-              {(handled.length > 0 || liveActivity.length > 0) && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-6">
-                  <HandledSection cards={handled} />
-                  <WhatChangedSection activity={liveActivity} />
-                </div>
-              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-6">
+                <HandledSection cards={handled} />
+                <WhatChangedSection activity={liveActivity} />
+              </div>
             </main>
 
             <aside className={copilotOpen ? "space-y-8 lg:space-y-10 min-w-0" : "xl:col-span-4 xl:pt-16 space-y-8 lg:space-y-10 min-w-0"}>
-              {upcoming.length > 0 && (
-                <section className="bg-surface-lowest border border-outline-variant/10 rounded-lg p-5 sm:p-6">
-                  <h3 className="text-xs uppercase tracking-widest text-on-surface-variant/60 font-medium mb-5">Upcoming</h3>
-                  <div className="space-y-4">
-                    {upcoming.slice(0, 4).map((card) => (
-                      <div key={card.id} className="border-b border-outline-variant/10 pb-4 last:border-b-0 last:pb-0">
-                        <p className="font-serif text-base text-on-surface">{card.title}</p>
-                        <p className="text-sm text-on-surface-variant/65 mt-1 leading-relaxed">{card.summary}</p>
-                        <EvidencePopover evidence={card.evidence} />
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              )}
+              <UpcomingSection cards={upcoming} />
               {health && <HealthSection health={health} />}
-              {timeline.length > 0 && <TimelineSection events={timeline} />}
+              <TimelineSection events={timeline} />
             </aside>
           </div>
 

@@ -5,7 +5,6 @@ import { useCallback, useRef, type KeyboardEvent, type PointerEvent } from "reac
 import { usePathname } from "next/navigation";
 import Icon from "../shared/Icon";
 import { useAuth } from "../../hooks/useAuth";
-import { useCopilot } from "../../contexts/CopilotContext";
 
 const navigation = [
   { label: "Mission Control", href: "/mission-control", icon: "dashboard" },
@@ -13,7 +12,6 @@ const navigation = [
   { label: "Campaigns", href: "/campaigns", icon: "campaign" },
   { label: "Draft Review", href: "/draft", icon: "draft" },
   { label: "Inbox", href: "/inbox", icon: "inbox" },
-  { label: "Copilot", href: "/copilot", icon: "smart_toy" },
 ];
 
 const utilityPages = [
@@ -62,7 +60,6 @@ export default function Sidebar({
 }: Props) {
   const pathname = usePathname();
   const { user } = useAuth();
-  const { setOpen } = useCopilot();
   const dragState = useRef<{ startX: number; fromExpanded: boolean } | null>(null);
 
   const displayName =
@@ -211,27 +208,25 @@ export default function Sidebar({
           )}
         </div>
         {!collapsed && (
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
+          <Link
+            href="/copilot"
             className="mt-4 flex h-9 w-full items-center gap-2 rounded-lg border border-outline-variant/20 bg-surface-lowest px-3 text-left text-sm text-on-surface-variant/70 transition-colors hover:border-primary/35 hover:text-on-surface"
-            aria-label="Open Copilot"
+            aria-label="Open Copilot page"
           >
             <Icon name="smart_toy" className="shrink-0 text-base text-primary/70" />
-            <span>Ask Loqi...</span>
-          </button>
+            <span>Copilot</span>
+          </Link>
         )}
         {collapsed && (
           <div className="mt-4 flex justify-center">
-            <button
-              type="button"
-              onClick={() => setOpen(true)}
+            <Link
+              href="/copilot"
               title="Open Copilot"
-              aria-label="Open Copilot"
+              aria-label="Open Copilot page"
               className="relative w-9 h-9 grid place-items-center rounded-lg text-on-surface-variant/60 hover:text-primary hover:bg-surface-container-high/60 transition-all active:scale-95"
             >
               <Icon name="smart_toy" className="text-xl" />
-            </button>
+            </Link>
           </div>
         )}
       </div>

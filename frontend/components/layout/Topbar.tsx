@@ -24,7 +24,7 @@ export default function Topbar() {
   const config = pageConfig[pathname] ?? { title: "", searchPlaceholder: "Search..." };
   const { open, setOpen } = useCopilot();
   const { query, setQuery } = useWorkspaceSearch();
-  const copilotAvailable = pathname !== "/draft";
+  const copilotAvailable = pathname !== "/draft" && !pathname.startsWith("/copilot");
 
   // PR: tab title follows the current page ("Campaigns — Loqi"). Uses the
   // already-computed route config — no fetches, no added latency.

@@ -19,7 +19,8 @@ class TestHealth:
         resp = client.get("/health")
         body = resp.json()
         assert "status" in body
-        assert "version" in body
+        # The operations router owns /health and intentionally exposes only
+        # liveness. Build metadata is available from /version.
 
 
 class TestCopilotOperationBoundary:
@@ -251,6 +252,130 @@ class TestCopilotOperationBoundary:
         )
         assert response == "I’m here to help with your Loqi workspace. What would you like to work on?"
         assert "campaign" not in response.lower()
+
+    def test_read_response_is_grounded_in_authoritative_result(self, monkeypatch):
+        from services.conversational_response_generator import generate_copilot_response
+
+        captured = {}
+
+        def fake_openai(system, user, **_kwargs):
+            captured["system"] = system
+            return "Fact: Campaign Alpha has 12 leads and 3 drafts pending review. Recommendation: review the oldest draft first."
+
+        monkeypatch.setattr(
+            "services.conversational_response_generator._send_openai_request",
+            fake_openai,
+        )
+        response = generate_copilot_response(
+            "How is Campaign Alpha doing?",
+            copilot_context={
+                "intent": "read",
+                "mvp_read_only": True,
+                "authoritative_tool": "analytics.campaign.summary",
+                "authoritative_result": {"metrics": {"lead_count": 12, "pending_drafts": 3}},
+                "workspace_context": {},
+            },
+        )
+        assert "Campaign Alpha" in response
+        assert "lead_count" in captured["system"]
+        assert "MVP READ-ONLY MODE" in captured["system"]
+
+    @pytest.mark.parametrize(
+        ("question", "action"),
+        [
+            ("How is my campaign performing?", "analytics.workspace.summary"),
+            ("Which replies need attention?", "inbox.conversation.recommend"),
+            ("What should I change in my outreach?", "outreach.drafts.read"),
+            ("Rewrite this draft", "outreach.drafts.read"),
+        ],
+    )
+    def test_strategic_questions_select_read_capabilities(self, monkeypatch, question, action):
+        from services.conversational_response_generator import decide_copilot_intent
+
+        monkeypatch.setattr(
+            "services.conversational_response_generator._send_openai_request",
+            lambda *_args, **_kwargs: (
+                '{"intent":"read","action":"%s","search_context":{}}' % action
+            ),
+        )
+        decision = decide_copilot_intent(question, message_history=[])
+        assert decision["intent"] == "read"
+        assert decision["action"] == action
+
+    def test_clear_strategic_questions_use_bounded_local_classification(self):
+        from services.conversational_response_generator import classify_copilot_read_question
+
+        ctx = {"campaign_id": "campaign-1", "draft_id": "draft-1", "conversation_id": "conversation-1"}
+        active = {"discovery_id": "discovery-1"}
+        assert classify_copilot_read_question("How is my campaign performing?", page_context=ctx)["action"] == "analytics.campaign.summary"
+        assert classify_copilot_read_question("Which replies need attention?")["action"] == "inbox.conversation.recommend"
+        assert classify_copilot_read_question("Which leads should I prioritize?", active_search=active)["action"] == "lead.rank"
+        assert classify_copilot_read_question("Rewrite this draft.", page_context=ctx)["action"] == "outreach.drafts.read"
+        assert classify_copilot_read_question("What happened with this prospect?", page_context=ctx)["action"] == "inbox.conversation.analyze"
+        assert classify_copilot_read_question(
+            "Why?", page_context=ctx,
+            message_history=[{"role": "user", "text": "How is my campaign performing?"}],
+        )["action"] == "analytics.campaign.summary"
+        assert classify_copilot_read_question(
+            "What should I change in my outreach?", page_context=ctx,
+        )["action"] == "analytics.campaign.summary"
+        assert classify_copilot_read_question(
+            "What should I do next?", page_context=ctx,
+        )["action"] == "analytics.campaign.summary"
+
+    @pytest.mark.asyncio
+    async def test_reply_attention_retrieval_uses_persisted_summaries_without_n_plus_one_reads(self, monkeypatch):
+        class Candidate:
+            conversation_id = "conversation-1"
+            subject = "Pricing question"
+            status = SimpleNamespace(value="replied")
+            summary = SimpleNamespace(to_dict=lambda: {
+                "company": "Acme", "contact_name": "Alex", "interest_level": "high",
+                "last_summary": "Asked about pricing", "next_action": "Reply with options",
+                "key_points": ["Pricing"],
+            })
+
+        class Store:
+            def list_conversations(self, limit=50):
+                assert limit == 50
+                return [Candidate()]
+
+            def get_messages_for_conversation(self, *_args, **_kwargs):
+                raise AssertionError("reply attention must not read every conversation's messages")
+
+        import services.conversations.conversation_store as conversation_module
+        monkeypatch.setattr(conversation_module, "conversation_store", Store())
+        monkeypatch.setattr(main_module, "_conversation_owned_by", lambda *_args: True)
+        result = await main_module._run_copilot_inbox(
+            "inbox.conversation.recommend", "owner-1", "workspace-1", "session-1", {},
+        )
+        assert result["ok"] is True
+        assert result["result"]["count"] == 1
+        assert result["result"]["conversations"][0]["next_action"] == "Reply with options"
+
+    @pytest.mark.asyncio
+    async def test_mutating_tool_is_not_executed_by_mvp_endpoint(self, monkeypatch):
+        monkeypatch.setattr(
+            "services.conversational_response_generator.decide_copilot_intent",
+            lambda *_args, **_kwargs: {
+                "intent": "action", "action": "campaign.create", "search_context": {},
+            },
+        )
+        monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
+        monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
+        monkeypatch.setattr(
+            "services.knowledge.context_adapter.retrieve_knowledge_context",
+            lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}),
+        )
+        monkeypatch.setattr(main_module, "_run_copilot_campaign", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("mutation must not execute")))
+        request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
+        payload = main_module.SendWebMessageRequest(
+            text="create a campaign for these leads",
+            copilot=main_module.CopilotContextModel(current_page="Campaigns", message_history=[]),
+        )
+        result = await main_module.post_web_session_message("session-1", payload, request)
+        assert result["ok"] is False
+        assert result["messages"][0]["data"]["status"] == "read_only_mvp"
 
     @pytest.mark.asyncio
     async def test_tool_boundary_does_not_execute_for_conversation_or_read(self, monkeypatch):
@@ -798,13 +923,11 @@ class TestStructuredContext:
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        assert body["operation"] == {
-            "kind": "search_discovery",
-            "discovery_id": "discovery-1",
-            "job_id": "job-1",
-            "status": "queued",
-        }
-        assert calls and calls[0][1] == "I need new restaurant leads"
+        assert body["operation"]["kind"] == "search_discovery"
+        assert body["operation"]["discovery_id"] == "discovery-1"
+        assert body["operation"]["job_id"] == "job-1"
+        assert body["operation"]["status"] == "queued"
+        assert calls and calls[0][1] == "Find leads matching industries: restaurants"
 
 class TestUnknownSession:
     def test_unknown_session_returns_valid_response(self, client):

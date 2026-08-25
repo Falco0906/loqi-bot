@@ -171,7 +171,7 @@ def test_campaign_create_uses_selected_ranked_leads_not_entire_discovery():
 
 
 @pytest.mark.asyncio
-async def test_endpoint_rank_then_campaign_returns_assistant_and_attaches_exact_selection(monkeypatch):
+async def test_endpoint_rank_then_campaign_stays_read_only_in_mvp(monkeypatch):
     import main as main_module
 
     discovery = {
@@ -241,8 +241,8 @@ async def test_endpoint_rank_then_campaign_returns_assistant_and_attaches_exact_
     campaign_response = await main_module.post_web_session_message("_", campaign_payload, request)
     assert campaign_response["messages"][0]["role"] == "assistant"
     assert campaign_response["messages"][0]["text"]
-    assert attached == ranked_ids
-    assert campaign_response["messages"][0]["data"]["result"]["campaign"]["lead_count"] == 4
+    assert attached == []
+    assert campaign_response["messages"][0]["data"]["status"] == "read_only_mvp"
 
 
 def test_database_failures_are_not_formatted_into_copilot_text():

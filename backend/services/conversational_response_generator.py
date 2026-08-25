@@ -1,6 +1,7 @@
 import json
 import os
 import random
+import re
 from typing import Optional
 
 import requests
@@ -113,6 +114,13 @@ def decide_copilot_intent(
         "analytics.campaign.summary, or analytics.leads.summary. Use campaign_id from the current page/context "
         "when the user asks about a specific campaign. Return only metrics present in the authoritative result; "
         "do not infer rates, totals, trends, or performance when the backend does not provide them.\n"
+        "Strategic read examples: 'which replies need attention?' -> inbox.conversation.recommend; "
+        "'why is this campaign underperforming?' -> analytics.campaign.summary; "
+        "'which leads should I prioritize?' -> lead.rank when a Discovery is selected; "
+        "'what should I change in my outreach?' -> outreach.drafts.read or analytics.campaign.summary "
+        "using the current campaign/draft context; 'rewrite this draft' -> outreach.drafts.read and propose "
+        "a rewrite in the conversational answer without persisting or sending it; "
+        "'what happened with this prospect?' -> inbox.conversation.analyze/read using the selected conversation.\n"
         "Use clarification only when the user's goal is genuinely ambiguous.\n"
         "CRITICAL: active_search is context, not an instruction. It must never turn an unrelated message "
         "such as 'hi' into discovery or discovery_refinement. Only use it for an explicit refinement or read request.\n"
@@ -129,7 +137,7 @@ def decide_copilot_intent(
         "- 'create a campaign for these leads' -> {intent:'action', action:'campaign.create', campaign:{...}}\n"
         "- active campaign + 'draft outreach for these' -> {intent:'action', action:'campaign.generate_drafts'}\n"
         "- 'show my drafts' -> {intent:'read', action:'outreach.drafts.read'}\n"
-        "- 'make this draft shorter' -> {intent:'action', action:'outreach.draft.refine', draft_id:'...'}\n"
+        "- 'make this draft shorter' or 'rewrite this draft' -> {intent:'read', action:'outreach.drafts.read', draft_id:'...'}\n"
         "- 'summarize this conversation' -> {intent:'read', action:'inbox.conversation.summary'}\n"
         "- 'draft a reply to this' -> {intent:'read', action:'inbox.reply.generate'}\n"
         "- 'send that reply' -> {intent:'action', action:'inbox.reply.send', confirmed:true}\n"
@@ -216,6 +224,84 @@ def decide_copilot_intent(
         }
     _log(f"COPILOT_INTENT_ROUTER_DECISION intent={normalized['intent']} mode={normalized['mode']} context={context}")
     return normalized
+
+
+def classify_copilot_read_question(
+    user_message: str,
+    *,
+    page_context: dict | None = None,
+    active_search: dict | None = None,
+    message_history: list[dict] | None = None,
+) -> dict | None:
+    """Route clear MVP read questions without a second model call.
+
+    This is deliberately narrow: it only handles unambiguous read/analyze
+    requests and returns ``None`` for discovery, mutations, and ambiguous
+    requests, which continue through the existing structured router.
+    Resource IDs come from server-supplied page/search context; the question
+    text is never used to fabricate an identifier.
+    """
+    text = " ".join(str(user_message or "").lower().split())
+    page = page_context or {}
+    active = active_search or {}
+    campaign_id = str(page.get("campaign_id") or page.get("active_campaign_id") or "").strip()
+    draft_id = str(page.get("draft_id") or page.get("active_draft_id") or "").strip()
+    conversation_id = str(
+        page.get("conversation_id") or page.get("active_conversation_id") or page.get("thread_id") or ""
+    ).strip()
+    discovery_id = str(active.get("discovery_id") or page.get("discovery_id") or "").strip()
+
+    # Short follow-ups inherit only the immediately preceding read subject.
+    history = message_history or []
+    prior = " ".join(
+        str(item.get("text") or item.get("content") or "").lower()
+        for item in history[-4:]
+        if item.get("role") == "user"
+    )
+    subject = f"{text} {prior}".strip()
+    result = {
+        "intent": "read",
+        "mode": "new",
+        "search_context": {},
+        "action": "",
+        "campaign_id": campaign_id,
+        "draft_id": draft_id,
+        "conversation_id": conversation_id,
+        "reason": "bounded MVP read classification",
+    }
+
+    if re.search(r"\b(repl(?:y|ies)|inbox|prospect conversations?)\b", subject) and re.search(r"attention|follow.?up|urgent|need", subject):
+        result["action"] = "inbox.conversation.recommend"
+        return result
+    if re.search(r"\b(what happened|history|conversation|prospect)\b", text):
+        result["action"] = "inbox.conversation.analyze" if conversation_id else "inbox.conversation.recommend"
+        return result
+    if re.search(r"\b(rewrite|review|improve|shorter|better messaging|draft)\b", text):
+        result["action"] = "outreach.drafts.read"
+        return result
+    if re.search(r"\b(leads?|prospects?)\b", text) and re.search(r"prioriti[sz]|best|strongest|top|focus", text):
+        if not discovery_id:
+            return None
+        result["action"] = "lead.rank"
+        result["sort"] = "best"
+        return result
+    if re.search(r"\b(underperform\w*|perform\w*|performance|metrics?|results?)\b", subject) and re.search(r"campaign|outreach", subject):
+        result["action"] = "analytics.campaign.summary" if campaign_id else "analytics.workspace.summary"
+        return result
+    if re.search(r"\b(what should i do next|next step|what should i change|change in my outreach)\b", text):
+        result["action"] = "analytics.campaign.summary" if campaign_id else "analytics.workspace.summary"
+        return result
+    if text in {"why", "why?", "how so", "tell me more"} and prior:
+        if re.search(r"campaign|performance|underperform", prior):
+            result["action"] = "analytics.campaign.summary" if campaign_id else "analytics.workspace.summary"
+            return result
+        if re.search(r"draft|outreach|messaging", prior):
+            result["action"] = "outreach.drafts.read"
+            return result
+        if re.search(r"reply|prospect|conversation", prior):
+            result["action"] = "inbox.conversation.analyze" if conversation_id else "inbox.conversation.recommend"
+            return result
+    return None
 
 
 RESPONSE_VARIATIONS = {
@@ -902,19 +988,18 @@ def generate_copilot_response(
     message_history = ctx.get("message_history") or []
 
     system = (
-        "You are Loqi OS — the unified AI operating layer for the user's outbound workspace.\n"
-        "You understand intent, use the supplied workspace/Knowledge context, and help operate Loqi.\n"
-        "You may explain, ask one focused clarification, retrieve context, or recommend an action.\n"
+        "You are Loqi's Strategic Assistant for the user's outbound workspace.\n"
+        "You answer questions, analyze the supplied Loqi data, and make clearly labeled recommendations.\n"
         "Do not claim that an action was executed, completed, or failed: the application reports\n"
         "those states from the real operation. Never invent leads, campaign state, inbox events,\n"
-        "or results that are not present in the supplied context.\n\n"
+        "metrics, or results that are not present in the supplied context.\n\n"
         "Core principles:\n"
-        "- Answer directly, then keep thinking: after answering, reason about the next logical step.\n"
-        "- Notice things proactively: scan the workspace for patterns, bottlenecks, or opportunities the user hasn't asked about.\n"
+        "- Answer the question directly using the supplied facts.\n"
+        "- Separate facts from interpretation: use 'Fact:' and 'Recommendation:' when both are present.\n"
+        "- Recommendations must be grounded in the supplied records and must not imply that a mutation occurred.\n"
         "- Never say \"There are\", \"The workspace contains\", \"Please provide more context\", or \"How can I help you today?\".\n"
-        "- Chain work: when the user asks about one thing, offer to do the next step too.\n"
-        "- Speak like an experienced operator: \"I'd focus on...\", \"The quickest win is...\", \"You're ready to...\", \"I also noticed...\"\n"
-        "- After you answer, include 2-4 specific follow-up options as action buttons. Never ask \"Can you clarify?\" — instead offer concrete choices.\n"
+        "- Speak like an experienced operator, but say when evidence is missing.\n"
+        "- Do not add action buttons or suggest that a state-changing tool ran unless the user explicitly asks for it.\n"
         "- Keep responses concise (2-5 sentences). Use short paragraphs.\n"
         "- When user says \"this\" or \"it\", infer the referent from context or the last thing you discussed.\n\n"
         f"Page-aware behavior:\n"
@@ -929,12 +1014,16 @@ def generate_copilot_response(
         f"- Tailor everything to this page. If the user is on a Campaign page, do NOT talk about Discovery search results.\n"
         f"- If the user is on Draft Review, do NOT talk about finding leads.\n"
         f"- Reference things visible on the current page first, then mention related things elsewhere.\n\n"
-        f"Action format: <<action:label:action_type>> (e.g. <<action:Select All:select_all>>)\n"
-        f"Navigation format: <<action:label:/path>> (e.g. <<action:Discovery:/discovery>>)\n"
-        f"Include 2-4 specific action or navigation buttons at the end of your response.\n"
-        f"Good navigation targets: /campaigns, /draft, /discovery, /mission-control, /campaign-intelligence, /campaigns/{{id}}\n"
-        f"Good action types: generate_strategy, launch_campaign, view_drafts, open_campaign, duplicate_campaign, delete_campaign, add_leads, approve_all, generate_drafts, select_all, search\n"
     )
+
+    if ctx.get("mvp_read_only"):
+        system += (
+            "\nMVP READ-ONLY MODE:\n"
+            "- Use only the authoritative tool result below for claims about the user's data.\n"
+            "- Do not propose or imply campaign creation, draft approval, sending, scheduling, or other mutations.\n"
+            "- If the result is empty or unavailable, say that plainly; do not fill the gap from general knowledge.\n"
+            "- Keep the response conversational and useful, with facts first and recommendations only when supported.\n"
+        )
 
     if available_actions:
         system += "\nAvailable actions on this page:\n"
@@ -947,6 +1036,15 @@ def generate_copilot_response(
     wc = ctx.get("workspace_context", {})
     snapshot = wc.get("snapshot", {})
     analysis = wc.get("analysis", {})
+
+    authoritative_result = ctx.get("authoritative_result")
+    if authoritative_result is not None:
+        system += (
+            "\n--- Authoritative Tool Result ---\n"
+            f"Tool: {ctx.get('authoritative_tool', 'read')}\n"
+            "This structured result is the source of truth for this answer.\n"
+            f"{json.dumps(authoritative_result, ensure_ascii=False, default=str)[:18000]}\n"
+        )
 
     knowledge_context = wc.get("knowledge_context")
     if knowledge_context:

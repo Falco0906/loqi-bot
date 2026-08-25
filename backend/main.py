@@ -1119,8 +1119,47 @@ async def _reconcile_stale_search_jobs() -> int:
 
 
 def _build_copilot_workspace_context(session_token: str, current_page: str | None = None, page_context: dict | None = None, conversation_id: str | None = None, user_id: str | None = None) -> dict:
-    campaigns = campaign_store.get(session_token, [])
-    drafts = draft_store.get(session_token, [])
+    # Copilot is a read/analyze surface. Its workspace context must come from
+    # the canonical workspace projection so a reload, another tab, or a
+    # previous session cannot leave the assistant reasoning over stale
+    # session-local campaign/draft state.
+    campaigns = []
+    drafts = []
+    if user_id:
+        try:
+            from services.workspace_state import load_workspace_state
+            state = load_workspace_state(user_id, include_details=False)
+            campaigns = state.get("campaigns") or []
+            drafts = state.get("drafts") or []
+            # Legacy sessions may still have an event-projected view while
+            # canonical backfill is incomplete. Prefer canonical data, but
+            # retain that existing projection only when it is the sole source
+            # available; never merge the two sources.
+            if not campaigns and not drafts:
+                campaigns = campaign_store.get(session_token, [])
+                drafts = draft_store.get(session_token, [])
+        except Exception as error:
+            log.warning("Copilot canonical workspace context unavailable: %s", error)
+    if not campaigns and not drafts and not user_id:
+        campaigns = campaign_store.get(session_token, [])
+        drafts = draft_store.get(session_token, [])
+    # Scope the prompt-facing operational set to the active resource. The
+    # canonical loaders remain authoritative; this only prevents unrelated
+    # campaigns/drafts from becoming retrieval context for the turn.
+    page_context = page_context or {}
+    active_campaign_id = str(
+        page_context.get("campaign_id") or page_context.get("active_campaign_id") or ""
+    ).strip()
+    active_draft_id = str(
+        page_context.get("draft_id") or page_context.get("active_draft_id") or ""
+    ).strip()
+    if active_campaign_id:
+        campaigns = [c for c in campaigns if str(c.get("id") or "") == active_campaign_id]
+        drafts = [d for d in drafts if str(d.get("campaign_id") or "") == active_campaign_id]
+    if active_draft_id:
+        drafts = [d for d in drafts if str(d.get("id") or "") == active_draft_id]
+    campaigns = campaigns[:20]
+    drafts = drafts[:50]
     total_leads = sum(c.get("lead_count", 0) or 0 for c in campaigns)
     from services.workspace_snapshot import build_snapshot
     snapshot = build_snapshot(session_token, campaigns, drafts, total_leads, user_id=user_id)
@@ -2585,6 +2624,40 @@ async def _run_copilot_inbox(
         or ""
     ).strip()
     convo = conversation_store.get_conversation(conversation_id) if conversation_id else None
+    if not convo and tool_name == "inbox.conversation.recommend":
+        # Workspace-level attention questions do not require a selected
+        # thread. Conversation summaries are already maintained by the
+        # durable Inbox store, so do not fan out into message reads or run
+        # intelligence once per conversation here.
+        attention = []
+        for candidate in conversation_store.list_conversations(limit=50):
+            if not _conversation_owned_by(candidate, user_id):
+                continue
+            summary = candidate.summary.to_dict() if candidate.summary else {}
+            needs_attention = (
+                candidate.status.value in {"replied", "follow_up_pending", "follow_up_ready", "interested"}
+                or bool(summary.get("next_action"))
+                or bool(summary.get("last_summary"))
+            )
+            if not needs_attention:
+                continue
+            attention.append({
+                "conversation_id": candidate.conversation_id,
+                "subject": candidate.subject,
+                "status": candidate.status.value,
+                "company": summary.get("company", ""),
+                "contact_name": summary.get("contact_name", ""),
+                "interest_level": summary.get("interest_level", "unknown"),
+                "summary": summary.get("last_summary", ""),
+                "next_action": summary.get("next_action", ""),
+                "key_points": (summary.get("key_points") or [])[:5],
+            })
+        return {
+            "ok": True,
+            "status": "completed",
+            "tool": tool_name,
+            "result": {"conversations": attention[:10], "count": len(attention[:10])},
+        }
     if not convo or not _conversation_owned_by(convo, user_id):
         return {"ok": False, "status": "unavailable", "tool": tool_name,
                 "reason": "No owned Inbox conversation is selected."}
@@ -2786,6 +2859,33 @@ def _copilot_read_message(result: dict) -> str:
     return (
         f"The Discovery found {leads} lead{'s' if leads != 1 else ''}"
         f" across {companies} compan{'ies' if companies != 1 else 'y'}."
+    )
+
+
+async def _copilot_grounded_response_text(
+    user_message: str,
+    decision: dict,
+    workspace_context: dict,
+    tool_name: str,
+    result: dict,
+) -> str:
+    """Explain an authoritative read result without inventing workspace facts."""
+    from services.conversational_response_generator import generate_copilot_response
+
+    return await asyncio.to_thread(
+        generate_copilot_response,
+        user_message=user_message,
+        copilot_context={
+            "intent": decision.get("intent"),
+            "current_page": decision.get("current_page", ""),
+            "page_context": decision.get("page_context") or {},
+            "message_history": decision.get("message_history") or [],
+            "workspace_context": workspace_context,
+            "authoritative_tool": tool_name,
+            "authoritative_result": result,
+            "mvp_read_only": True,
+        },
+        context={"user_id": "", "service": "", "target": ""},
     )
 
 
@@ -3540,18 +3640,6 @@ async def post_web_session_message(
             page_context=payload.copilot.page_context,
             user_id=summary.get("user_id"),
         )
-        # Use the canonical Knowledge adapter for every agent turn. This is
-        # additive context for the existing generator; it does not create a
-        # second memory or retrieval system.
-        try:
-            from services.knowledge.context_adapter import retrieve_knowledge_context
-            knowledge = await retrieve_knowledge_context(
-                str(summary.get("user_id") or ""),
-                query=payload.text,
-            )
-            workspace_context["knowledge_context"] = knowledge.to_dict()
-        except Exception as error:
-            log.warning("Copilot Knowledge retrieval unavailable: %s", error)
         analysis = workspace_context.get("analysis", {})
         snapshot = workspace_context.get("snapshot", {})
         cf = analysis.get("current_focus", {})
@@ -3571,24 +3659,71 @@ async def post_web_session_message(
             f"timeline_events={len(snapshot.get('timeline', []))} "
             f"memory_action={snapshot.get('memory', {}).get('last_action', 'none')}"
         )
-        from services.conversational_response_generator import decide_copilot_intent
-        decision = await asyncio.to_thread(
+        from services.conversational_response_generator import (
+            classify_copilot_read_question,
             decide_copilot_intent,
-            payload.text,
-            workspace_context=workspace_context,
-            message_history=payload.copilot.message_history,
-            active_search=payload.copilot.active_search,
         )
+        decision = classify_copilot_read_question(
+            payload.text,
+            page_context=payload.copilot.page_context,
+            active_search=payload.copilot.active_search,
+            message_history=payload.copilot.message_history,
+        )
+        if decision is None:
+            decision = await asyncio.to_thread(
+                decide_copilot_intent,
+                payload.text,
+                workspace_context=workspace_context,
+                message_history=payload.copilot.message_history,
+                active_search=payload.copilot.active_search,
+            )
         decision = {
             **decision,
             "user_message": payload.text,
+            "message_history": payload.copilot.message_history or [],
             "active_search": payload.copilot.active_search or {},
             "page_context": payload.copilot.page_context or {},
             "current_page": payload.copilot.current_page or "",
         }
+        # Retrieval follows classification: operational records were loaded
+        # structurally above, while semantic Knowledge is added only for a
+        # question that can benefit from it. Knowledge tools return their own
+        # authoritative result and therefore do not need a second retrieval.
+        if (
+            decision.get("intent") in {"read", "clarification"}
+            and not str(decision.get("action") or "").startswith("knowledge.")
+            and decision.get("action") != "inbox.reply.generate"
+        ):
+            try:
+                from services.knowledge.context_adapter import retrieve_knowledge_context
+                knowledge = await retrieve_knowledge_context(
+                    str(summary.get("user_id") or ""),
+                    query=str(decision.get("knowledge_query") or payload.text),
+                    categories=decision.get("knowledge_categories") or None,
+                )
+                workspace_context["knowledge_context"] = knowledge.to_dict()
+            except Exception as error:
+                log.warning("Copilot semantic Knowledge retrieval unavailable: %s", error)
         from services.copilot_tools import execute_copilot_tool, select_copilot_tool
         tool_name = select_copilot_tool(decision)
         if tool_name:
+            # MVP Copilot is a strategic read/analyze assistant. Keep
+            # state-changing capabilities behind their existing product UI
+            # until each action has a separately verified confirmation and
+            # reconciliation path. Read tools still execute against the
+            # canonical services below.
+            from services.copilot_tools import COPILOT_TOOLS
+            if not COPILOT_TOOLS[tool_name].read_only and tool_name not in {"discovery.search", "discovery.refine"}:
+                return {
+                    "ok": False,
+                    "intent": decision.get("intent"),
+                    "messages": [_message(
+                        role="assistant", message_type="text",
+                        text="I can analyze that in Copilot, but state-changing actions still need to be completed from the relevant Loqi workspace view.",
+                        data={"tool": tool_name, "status": "read_only_mvp"},
+                    )],
+                    "events": [{"type": "tool.unavailable", "tool": tool_name}],
+                }
             user_id = str(summary.get("user_id") or "")
             from services.workspace_state import ensure_workspace
             workspace_id = await asyncio.to_thread(ensure_workspace, user_id)
@@ -3627,9 +3762,13 @@ async def post_web_session_message(
                     campaign = result.get("campaign") or {}
                     drafts = result.get("drafts") or []
                     if tool_name == "campaign.list":
-                        text = f"You have {len(campaigns)} campaign(s) in this workspace."
+                        text = await _copilot_grounded_response_text(
+                            payload.text, decision, workspace_context, tool_name, result,
+                        )
                     elif tool_name == "campaign.drafts":
-                        text = f"I found {len(drafts)} draft(s) for this campaign."
+                        text = await _copilot_grounded_response_text(
+                            payload.text, decision, workspace_context, tool_name, result,
+                        )
                     elif campaign:
                         text = f"Campaign “{campaign.get('name') or 'Untitled campaign'}” is ready in your workspace."
                     else:
@@ -3663,7 +3802,9 @@ async def post_web_session_message(
                     result = tool_result.get("result") or {}
                     drafts = result.get("drafts") or ([] if not result.get("draft") else [result.get("draft")])
                     if tool_name == "outreach.drafts.read":
-                        text = f"I found {len(drafts)} draft(s) in the current workspace."
+                        text = await _copilot_grounded_response_text(
+                            payload.text, decision, workspace_context, tool_name, result,
+                        )
                     elif tool_name == "outreach.draft.generate":
                         text = "Draft generation has started for this campaign."
                     else:
@@ -3695,11 +3836,10 @@ async def post_web_session_message(
             if tool_name.startswith("inbox."):
                 if tool_result.get("ok"):
                     result = tool_result.get("result") or {}
-                    if tool_name == "inbox.conversation.summary":
-                        summary = result.get("summary") or {}
-                        text = str(summary.get("last_summary") or "I found the current conversation summary.")
-                    elif tool_name == "inbox.reply.generate":
-                        text = "I drafted a reply for the current conversation."
+                    if tool_name != "inbox.reply.send":
+                        text = await _copilot_grounded_response_text(
+                            payload.text, decision, workspace_context, tool_name, result,
+                        )
                     elif tool_name == "inbox.reply.send":
                         text = "Reply sent successfully."
                     else:
@@ -3730,7 +3870,9 @@ async def post_web_session_message(
                     result = tool_result.get("result") or {}
                     found = len(result.get("items") or []) + len(result.get("sources") or [])
                     if found:
-                        text = f"I found {found} matching Knowledge entr{'y' if found == 1 else 'ies'} in your workspace."
+                        text = await _copilot_grounded_response_text(
+                            payload.text, decision, workspace_context, tool_name, result,
+                        )
                     else:
                         text = "I couldn't find matching Knowledge in your workspace, so I won't infer an answer."
                     return {
@@ -3758,7 +3900,9 @@ async def post_web_session_message(
                 if tool_result.get("ok"):
                     result = tool_result.get("result") or {}
                     metrics = result.get("metrics") or {}
-                    text = f"I found {len(metrics)} authoritative metric field(s) for this view." if metrics else "The analytics result contains no metric fields for this context."
+                    text = await _copilot_grounded_response_text(
+                        payload.text, decision, workspace_context, tool_name, result,
+                    ) if metrics else "The analytics result contains no metric fields for this context."
                     return {
                         "ok": True,
                         "intent": decision.get("intent"),
@@ -3784,9 +3928,13 @@ async def post_web_session_message(
                 if tool_result.get("ok"):
                     result = tool_result.get("result") or {}
                     if tool_name == "discovery.read":
-                        text = _copilot_read_message(result)
+                        text = await _copilot_grounded_response_text(
+                            payload.text, decision, workspace_context, tool_name, result,
+                        )
                     elif tool_name in {"lead.read", "lead.filter", "lead.rank"}:
-                        text = f"I found {result.get('lead_count', 0)} lead(s) in the active Discovery."
+                        text = await _copilot_grounded_response_text(
+                            payload.text, decision, workspace_context, tool_name, result,
+                        )
                     else:
                         text = f"{tool_name.replace('.', ' ').capitalize()} completed for {len(result.get('leads') or [])} lead(s)."
                     return {
@@ -3871,6 +4019,7 @@ async def post_web_session_message(
                 **(payload.copilot.model_dump()),
                 "intent": decision.get("intent"),
                 "workspace_context": workspace_context,
+                "mvp_read_only": True,
             },
             context={
                 "user_id": summary.get("user_id"),

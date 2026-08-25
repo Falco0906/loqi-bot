@@ -107,9 +107,18 @@ class MissionControlService:
 
         briefing_section = self._build_briefing_section(brief, snapshot, analysis)
 
-        top_priorities = self._filter_intentions(
-            active_intentions, priority_filter={"critical", "high"}
-        )
+        # ``RECOMMEND_ACTION`` is the non-blocking work Loqi has identified
+        # for the user.  It still needs a visible home in the briefing even
+        # when its policy priority is ``normal``; otherwise it appears only
+        # as an opaque timeline event and the primary briefing sections are
+        # empty despite an actionable workspace signal.
+        top_priority_intentions = [
+            intention
+            for intention in active_intentions
+            if intention.priority.value in {"critical", "high"}
+            or intention.type == IntentionType.RECOMMEND_ACTION
+        ]
+        top_priorities = self._filter_intentions(top_priority_intentions)
         waiting_on_you = self._filter_intentions(
             active_intentions, type_filter={IntentionType.ASK_USER}
         )

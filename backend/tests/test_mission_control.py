@@ -153,6 +153,33 @@ class TestMissionControlService:
         assert any(card.reason_code == "low_confidence" for card in result.loqi_handled)
         assert any(card.reason_code == "follow_up_due" for card in result.upcoming)
 
+    def test_normal_recommendations_have_a_top_priority_destination(self, monkeypatch):
+        """An actionable normal-priority policy must not be timeline-only."""
+        monkeypatch.setattr(
+            "services.mission_control.briefing.get_timeline_events",
+            lambda *_args, **_kwargs: [],
+        )
+        analysis = {"workspace_health": {}, "current_focus": {}, "recommended_next_action": {}}
+        prebuilt = {
+            "snapshot": {
+                "campaigns": [],
+                "drafts": {"pending": 1, "approved": 0, "total": 1},
+                "jobs": {},
+                "analysis": analysis,
+                "_delta": {},
+            },
+            "analysis": analysis,
+            "recommendations": [],
+            "brief": {"greeting": "Good morning", "lines": [], "suggestion": ""},
+        }
+
+        result = self.svc.get_briefing("test-token", [], [], prebuilt=prebuilt)
+
+        assert any(
+            card.reason_code == "draft_review_required"
+            for card in result.top_priorities
+        )
+
     def test_signals_from_snapshot(self):
         now = datetime.now(timezone.utc).isoformat()
         snapshot = {

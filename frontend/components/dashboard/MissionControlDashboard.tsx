@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import AppPage from "../primitives/AppPage";
 import WorkspaceContainer from "../layout/WorkspaceContainer";
@@ -13,7 +13,8 @@ import {
   peekCachedMissionControl,
 } from "../../lib/repositories";
 import { useTellLoqi } from "../../hooks/useTellLoqi";
-import type { MCIntentionCard, MCHealthSummary, MCTimelineEvent } from "../../lib/domain";
+import { useCopilot } from "../../contexts/CopilotContext";
+import type { MCIntentionCard, MCHealthSummary, MCLiveActivity, MCTimelineEvent } from "../../lib/domain";
 
 function LoadingSkeleton() {
   return (
@@ -113,7 +114,7 @@ function HealthSection({ health }: { health: MCHealthSummary }) {
             Score: {Math.round(health.confidenceScore * 100)}%
           </span>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+        <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
             <span className="text-[10px] uppercase tracking-wider text-on-surface-variant/50 block">Velocity</span>
             <span className="text-sm font-medium text-on-surface">{health.pipelineVelocity.replace(/_/g, " ")}</span>
@@ -193,7 +194,49 @@ function TimelineSection({ events }: { events: MCTimelineEvent[] }) {
   );
 }
 
+function HandledSection({ cards }: { cards: MCIntentionCard[] }) {
+  if (cards.length === 0) return null;
+  return (
+    <section className="bg-surface-lowest border border-outline-variant/10 rounded-xl p-5 sm:p-6">
+      <h3 className="text-xs uppercase tracking-widest text-on-surface-variant/60 font-medium mb-5">
+        Loqi Handled
+      </h3>
+      <ul className="space-y-4">
+        {cards.map((card) => (
+          <li key={card.id} className="flex items-start gap-3">
+            <span className="material-symbols-outlined text-[18px] leading-6 text-primary/55">check</span>
+            <div className="min-w-0">
+              <p className="font-serif text-base text-on-surface">{card.title}</p>
+              <p className="text-xs text-on-surface-variant/55 mt-0.5">{card.summary}</p>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function WhatChangedSection({ activity }: { activity: MCLiveActivity[] }) {
+  if (activity.length === 0) return null;
+  return (
+    <section className="bg-surface-lowest border border-outline-variant/10 rounded-xl p-5 sm:p-6">
+      <h3 className="text-xs uppercase tracking-widest text-on-surface-variant/60 font-medium mb-5">
+        What Changed
+      </h3>
+      <ul className="space-y-0">
+        {activity.slice(0, 4).map((item, index) => (
+          <li key={`${item.timestamp}-${item.text}-${index}`} className="py-3 first:pt-0 last:pb-0 border-b last:border-b-0 border-outline-variant/10">
+            <p className="font-serif text-base text-on-surface">{item.text}</p>
+            {item.timestamp && <p className="text-[10px] uppercase tracking-wider text-on-surface-variant/45 mt-1">{item.timestamp}</p>}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export default function MissionControlDashboard() {
+  const { open: copilotOpen } = useCopilot();
   const cachedMissionControl = peekCachedMissionControl();
   const cachedBriefing = peekCachedBriefing();
   const { data: mcData, loading: mcLoading, error: mcError, retry: mcRetry } = useData(fetchMissionControl, {
@@ -210,9 +253,6 @@ export default function MissionControlDashboard() {
   const tellLoqi = useTellLoqi("Mission Control", {
     recommendationCount: mcData?.recommendations.length ?? 0,
   });
-
-  const pageRef = useRef<HTMLDivElement>(null);
-  const healthRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const status = mcData?.initialResearchStatus;
@@ -290,7 +330,6 @@ export default function MissionControlDashboard() {
 
   // NarrativeBriefing remains intentionally disabled. Its structured briefing
   // data is still the authoritative source for the current Mission Control UI.
-  const hasBriefing = briefingData !== null;
   const briefing = briefingData?.briefing ?? null;
   const priorities: MCIntentionCard[] = briefingData?.topPriorities ?? [];
   const waiting: MCIntentionCard[] = briefingData?.waitingOnYou ?? [];
@@ -302,42 +341,43 @@ export default function MissionControlDashboard() {
   // The summary payload carries the research job status and result count used
   // by Mission Control without requiring a second briefing request.
   const mc = mcData;
-  const todayTasks = !hasBriefing && mc ? mc.tasks : [];
-  const recommendations = !hasBriefing && mc ? mc.recommendations : [];
-  const liveActivity = !hasBriefing && mc ? mc.liveActivity : [];
-  const insights = !hasBriefing && mc ? mc.insights : [];
+  const liveActivity = mc?.liveActivity ?? [];
   const activeJobLabel = mc?.activeJobLabel ?? null;
   const activeJobProgress = mc?.activeJobProgress ?? null;
-  const activeJobTotal = mc?.activeJobTotal ?? null;
   const initialResearchStatus = mc?.initialResearchStatus ?? null;
   const initialResearchError = mc?.initialResearchError ?? null;
   const initialResearchResultCount = mc?.initialResearchResultCount ?? null;
 
-  const hasNewData = priorities.length > 0 || waiting.length > 0 || handled.length > 0 || upcoming.length > 0;
+  const attentionCards = [
+    ...priorities,
+    ...waiting.filter((card) => !priorities.some((priority) => priority.id === card.id)),
+  ];
 
   return (
     <WorkspaceContainer>
       <AppPage>
-        <div ref={pageRef} className="reading-column py-16 flex flex-col gap-16 pb-48">
+        <div className="w-full max-w-7xl mx-auto py-12 lg:py-16 px-6 lg:px-10 flex flex-col gap-12 lg:gap-16 pb-48">
 
           {/* The briefing content is rendered in one stable pass.  The former
               NarrativeBriefing component remains disabled because it owns the
               staged/progressive animation, not this authoritative content. */}
           {briefing && (
-            <section className="space-y-6">
-              <h1 className="text-4xl md:text-5xl font-serif text-on-surface leading-tight tracking-tight font-normal">
+            <section className="max-w-3xl space-y-4">
+              <h1 className="text-4xl md:text-5xl lg:text-[3.5rem] font-serif text-on-surface leading-[1.08] tracking-tight font-normal">
                 {briefing.greeting || "Good morning"}
               </h1>
-              {briefing.lines.map((line, index) => (
-                <p
-                  key={`${index}-${line}`}
-                  className="text-xl text-on-surface-variant/60 leading-relaxed font-light"
-                >
-                  {line}
-                </p>
-              ))}
+              <div className="space-y-2">
+                {briefing.lines.map((line, index) => (
+                  <p
+                    key={`${index}-${line}`}
+                    className="text-lg md:text-xl font-serif text-on-surface-variant/75 leading-relaxed"
+                  >
+                    {line}
+                  </p>
+                ))}
+              </div>
               {briefing.suggestion && (
-                <p className="text-base text-primary font-medium mt-2">
+                <p className="text-sm text-primary/85 font-medium pt-1">
                   {briefing.suggestion}
                 </p>
               )}
@@ -345,8 +385,8 @@ export default function MissionControlDashboard() {
           )}
 
           {initialResearchStatus && (
-            <section className="space-y-4">
-              <div className="bg-surface-container p-6 rounded-xl border border-outline-variant/10">
+            <section className="max-w-3xl space-y-4">
+              <div className="bg-surface-container-low p-5 rounded-xl border border-outline-variant/10">
                 <div className="flex items-center gap-3 mb-3">
                   <div className={`w-2 h-2 rounded-full ${initialResearchStatus === "failed" ? "bg-error" : initialResearchStatus === "completed" ? "bg-success" : "bg-primary animate-pulse"}`} />
                   <h3 className="text-xs uppercase tracking-widest text-on-surface-variant opacity-60 font-medium">Initial research</h3>
@@ -379,181 +419,49 @@ export default function MissionControlDashboard() {
             </section>
           )}
 
-          {/* Section 2: Top Priorities */}
-          {priorities.length > 0 && (
-            <section className="space-y-4">
-              <h3 className="text-xs uppercase tracking-widest text-on-surface-variant opacity-60 font-medium">
-                Top Priorities
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {priorities.slice(0, 4).map((card) => (
-                  <IntentionCard key={card.id} card={card} />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* Section 3: Waiting On You (ASK_USER) */}
-          {waiting.length > 0 && (
-            <section className="space-y-4">
-              <h3 className="text-xs uppercase tracking-widest text-on-surface-variant opacity-60 font-medium">
-                Waiting On You
-              </h3>
-              <div className="space-y-3">
-                {waiting.map((card) => (
-                  <IntentionCard key={card.id} card={card} />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* Section 4: Loqi Handled (AUTO_HANDLE) */}
-          {handled.length > 0 && (
-            <section className="space-y-4">
-              <h3 className="text-xs uppercase tracking-widest text-on-surface-variant opacity-60 font-medium">
-                Loqi Handled
-              </h3>
-              <div className="space-y-2">
-                {handled.map((card) => (
-                  <div key={card.id} className="flex items-center justify-between py-4 border-b border-outline-variant/10 group">
-                    <div className="flex items-center gap-4">
-                      <span className="material-symbols-outlined text-primary/30 text-lg">check_circle</span>
-                      <div>
-                        <span className="text-base font-serif text-on-surface">{card.title}</span>
-                        <span className="text-xs text-on-surface-variant/50 block">{card.summary} · {Math.round(card.confidence * 100)}% confidence</span>
-                      </div>
-                    </div>
+          <div className={`grid grid-cols-1 gap-10 lg:gap-12 ${copilotOpen ? "xl:grid-cols-1" : "xl:grid-cols-[minmax(0,1.65fr)_minmax(18rem,0.85fr)]"}`}>
+            <div className="space-y-10 lg:space-y-12 min-w-0">
+              {attentionCards.length > 0 && (
+                <section className="space-y-5">
+                  <div className="flex items-end justify-between gap-4">
+                    <h2 className="font-serif text-3xl md:text-4xl text-on-surface leading-tight font-normal">Needs your attention</h2>
+                    <span className="material-symbols-outlined text-error/80 text-[22px] mb-1">warning</span>
                   </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* Section 5: Upcoming (FOLLOW_UP / NOTIFY) */}
-          {upcoming.length > 0 && (
-            <section className="space-y-4">
-              <h3 className="text-xs uppercase tracking-widest text-on-surface-variant opacity-60 font-medium">
-                Upcoming
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {upcoming.slice(0, 4).map((card) => (
-                  <IntentionCard key={card.id} card={card} />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* Legacy fallback sections when new briefing unavailable */}
-
-          {/* Legacy: Today's Focus */}
-          {!hasNewData && todayTasks.length > 0 && (
-            <section className="space-y-6">
-              <h3 className="text-xs uppercase tracking-widest text-on-surface-variant opacity-60 font-medium">
-                Today's Focus
-              </h3>
-              <div className="space-y-4">
-                {todayTasks.map((task) => (
-                  <div key={task.id} className="flex items-center gap-4 group cursor-pointer">
-                    <div className="w-5 h-5 rounded border border-outline-variant/20 flex items-center justify-center">
-                      <span className="material-symbols-outlined text-[14px] opacity-0 group-hover:opacity-100 text-on-surface-variant/40">check</span>
-                    </div>
-                    <span className="text-lg text-on-surface">{task.title}</span>
+                  <div className="space-y-3">
+                    {attentionCards.slice(0, 4).map((card) => (
+                      <IntentionCard key={card.id} card={card} />
+                    ))}
                   </div>
-                ))}
-              </div>
-            </section>
-          )}
+                </section>
+              )}
 
-          {/* Workspace Health */}
-          {health && (
-            <div ref={healthRef}>
-              <HealthSection health={health} />
+              {(handled.length > 0 || liveActivity.length > 0) && (
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 lg:gap-6">
+                  <HandledSection cards={handled} />
+                  <WhatChangedSection activity={liveActivity} />
+                </div>
+              )}
             </div>
-          )}
 
-          {/* Legacy: Where I Need You */}
-          {!hasNewData && recommendations.length > 0 && (
-            <section className="space-y-6">
-              <h3 className="text-xs uppercase tracking-widest text-on-surface-variant opacity-60 font-medium">
-                Where I Need You
-              </h3>
-              <div className="space-y-6">
-                {recommendations.map((rec, i) => (
-                  <div key={i} className="bg-surface-lowest ambient-shadow rounded-xl p-8 border border-outline-variant/10 transition-transform hover:-translate-y-1 duration-300">
-                    <div className="flex justify-between items-start mb-6">
-                      <h4 className="text-2xl font-serif text-on-surface mb-2 font-normal">{rec.observation}</h4>
-                      <Link href={rec.link} className="bg-primary text-on-primary text-sm px-6 py-2 rounded-full hover:opacity-90 transition-opacity font-medium">
-                        {rec.action}
-                      </Link>
-                    </div>
-                    <p className="text-base text-on-surface-variant leading-relaxed">{rec.reason}</p>
+            <aside className="space-y-8 lg:space-y-10 min-w-0">
+              {upcoming.length > 0 && (
+                <section className="bg-surface-lowest border border-outline-variant/10 rounded-xl p-5 sm:p-6">
+                  <h3 className="text-xs uppercase tracking-widest text-on-surface-variant/60 font-medium mb-5">Upcoming</h3>
+                  <div className="space-y-4">
+                    {upcoming.slice(0, 4).map((card) => (
+                      <div key={card.id} className="border-b border-outline-variant/10 pb-4 last:border-b-0 last:pb-0">
+                        <p className="font-serif text-base text-on-surface">{card.title}</p>
+                        <p className="text-sm text-on-surface-variant/65 mt-1 leading-relaxed">{card.summary}</p>
+                        <EvidencePopover evidence={card.evidence} />
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* Legacy: What I Took Care Of */}
-          {!hasNewData && liveActivity.length > 0 && (
-            <section className="space-y-6">
-              <h3 className="text-xs uppercase tracking-widest text-on-surface-variant opacity-60 font-medium">
-                What I Took Care Of
-              </h3>
-              <div className="space-y-0">
-                {liveActivity.map((item, i) => (
-                  <div key={i} className="flex items-center justify-between py-6 border-b border-outline-variant/15 group">
-                    <div className="flex items-center gap-6">
-                      <span className="material-symbols-outlined text-primary/30 group-hover:text-primary transition-colors">
-                        {item.type === "research" ? "travel_explore" : "check_circle"}
-                      </span>
-                      <span className="text-xl font-serif text-on-surface font-normal">{item.text}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* Timeline */}
-          {timeline.length > 0 && (
-            <TimelineSection events={timeline} />
-          )}
-
-          {/* Legacy: Working Right Now */}
-          {!hasNewData && activeJobLabel && (
-            <section className="space-y-6">
-              <div className="bg-surface-container p-8 rounded-xl border border-outline-variant/10">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-2 h-2 bg-primary rounded-full animate-pulse" />
-                  <h3 className="text-xs uppercase tracking-widest text-on-surface-variant opacity-60 font-medium">Working Right Now</h3>
-                </div>
-                <p className="text-2xl font-serif text-on-surface mb-6 font-normal">{activeJobLabel}</p>
-                <div className="flex items-end justify-between mb-2">
-                  <span className="text-sm text-on-surface font-medium">
-                    {activeJobProgress} / {activeJobTotal} completed
-                  </span>
-                  <span className="text-xs text-on-surface-variant">In progress</span>
-                </div>
-                <div className="w-full h-1 bg-surface-container-high rounded-full overflow-hidden">
-                  <div className="h-full bg-primary transition-all duration-1000 ease-in-out" style={{ width: `${(activeJobProgress ?? 0) / (activeJobTotal ?? 100) * 100}%` }} />
-                </div>
-              </div>
-            </section>
-          )}
-
-          {/* Legacy: Intelligence */}
-          {!hasNewData && insights.length > 0 && (
-            <section className="space-y-6">
-              <h3 className="text-xs uppercase tracking-widest text-on-surface-variant opacity-60 font-medium">Intelligence</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {insights.map((insight, i) => (
-                  <div key={i} className="bg-surface-lowest p-6 rounded-lg border border-outline-variant/10 ambient-shadow">
-                    <span className="text-base text-on-surface leading-relaxed italic">&ldquo;{insight.text}&rdquo;</span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
+                </section>
+              )}
+              {health && <HealthSection health={health} />}
+              {timeline.length > 0 && <TimelineSection events={timeline} />}
+            </aside>
+          </div>
 
         </div>
 

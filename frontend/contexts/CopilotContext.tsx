@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter, usePathname } from "next/navigation";
+import { AuthContext } from "./AuthContext";
 import { ApiError, copilotMessage, getJob, getJobResults } from "../lib/api";
 import {
   fetchBriefing,
@@ -314,6 +315,9 @@ export function CopilotProvider({
   children: ReactNode;
 }) {
   const router = useRouter();
+  const auth = useContext(AuthContext);
+  const user = auth?.user;
+  const isAuthenticated = auth?.isAuthenticated ?? false;
   const pathnameRef = useRef<string | null>(null);
   pathnameRef.current = usePathname();
 
@@ -342,6 +346,7 @@ export function CopilotProvider({
   }, []);
   const [recentTask, setRecentTask] = useState<RecentTask | null>(null);
   const [activeChatId, setActiveChatId] = useState(() => nextChatId());
+  const initializedUserRef = useRef<string | null>(null);
   const [chats, setChats] = useState<CopilotChat[]>([]);
   const [messages, setMessages] = useState<CopilotMessage[]>([]);
   const [activeSearch, setActiveSearchState] = useState<ActiveSearch | null>(null);
@@ -1146,6 +1151,16 @@ export function CopilotProvider({
     setRecentTask(null);
     setConversationState("idle");
   }, [stopPolling]);
+
+  useEffect(() => {
+    const userId = user?.id;
+    if (!isAuthenticated || !userId || initializedUserRef.current === userId) return;
+    initializedUserRef.current = userId;
+    // A login establishes a new active Copilot session. Keep the persisted
+    // history available, but never carry an in-memory active conversation
+    // across an authentication boundary.
+    newChat();
+  }, [isAuthenticated, newChat, user?.id]);
 
   const switchChat = useCallback((chatId: string) => {
     if (busyRef.current) return;

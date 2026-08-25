@@ -365,20 +365,6 @@ export function CopilotProvider({
 
   useEffect(() => {
     try {
-      const raw = sessionStorage.getItem("loqi_copilot_conversation");
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed.groups) && parsed.groups.length > 0) {
-        // Do not let late session hydration replace a task submitted during
-        // the first render (the submitted group is the authoritative state).
-        setGroups((current) => current.length > 0 ? current : parsed.groups.slice(0, 3));
-        setActiveGroupId((current) => current ?? parsed.activeGroupId ?? null);
-      }
-    } catch { /* corrupted snapshot — start fresh */ }
-  }, []);
-
-  useEffect(() => {
-    try {
       const raw = sessionStorage.getItem("loqi_copilot_chats");
       if (!raw) return;
       const parsed = JSON.parse(raw) as { activeChatId?: string; chats?: CopilotChat[] };
@@ -387,20 +373,9 @@ export function CopilotProvider({
         Array.isArray(chat.messages) && chat.messages.some((message) => message.role === "user"),
       );
       setChats(persistedChats.slice(0, 20));
-      const active = persistedChats.find((chat) => chat.id === parsed.activeChatId) || persistedChats[0];
-      if (active) {
-        setActiveChatId(active.id);
-        setMessages(active.messages || []);
-        activeSearchRef.current = active.activeSearch || null;
-        setActiveSearchState(active.activeSearch || null);
-        setLeadResult(active.leadResult || null);
-        setCampaignResult(active.campaignResult || null);
-        setOutreachResult(active.outreachResult || null);
-        setInboxResult(active.inboxResult || null);
-        setKnowledgeResult(active.knowledgeResult || null);
-        setAnalyticsResult(active.analyticsResult || null);
-        setResourceContext(active.resourceContext || null);
-      }
+      // History remains available in the picker, but each authenticated app
+      // entry intentionally starts on a clean New chat rather than reopening
+      // the last conversation or its old task state.
     } catch { /* corrupted snapshot — start fresh */ }
   }, []);
 

@@ -132,14 +132,8 @@ export default function CopilotPanel({ width = 380, variant = "sidebar" }: { wid
 
   const history = variant === "page" ? (
     <aside className="flex w-64 shrink-0 flex-col border-r border-on-surface/5 bg-surface-container-low/20">
-      <div className="border-b border-on-surface/5 px-5 py-6">
-        <div className="flex items-center gap-2 text-on-surface">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <Icon name="smart_toy" className="text-base" />
-          </span>
-          <span className="font-serif text-lg tracking-tight">Loqi AI Assistant</span>
-        </div>
-        <div className="mt-6">
+      <div className="px-5 py-6">
+        <div>
           <button type="button" onClick={newChat} className="flex w-full items-center gap-2 rounded-lg border border-on-surface/5 bg-surface-high/45 px-3 py-2 text-left text-sm font-semibold text-on-surface transition-colors hover:bg-surface-high/65" aria-label="Start new chat">
             <Icon name="add" className="text-sm" />
             Start new chat
@@ -174,7 +168,7 @@ export default function CopilotPanel({ width = 380, variant = "sidebar" }: { wid
         <div className="flex-1 min-w-0 h-full flex flex-col overflow-hidden">
           {variant === "sidebar" && <header className="flex items-center justify-between px-4 py-3 border-b border-outline-variant/10 shrink-0"><div className="flex items-center gap-2.5"><div className="w-7 h-7 rounded-lg bg-primary/15 flex items-center justify-center"><Icon name="smart_toy" className="text-[16px] text-primary" /></div><span className="text-body-md text-on-surface font-bold">AI Assistant</span></div><div className="flex items-center gap-1.5"><span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wider font-semibold ${working ? "bg-primary/10 text-primary" : conversationState === "failed" ? "bg-error/10 text-error" : conversationState === "completed" ? "bg-success/10 text-success" : "bg-surface-high/60 text-on-surface-variant/60"}`}><span className={`w-1.5 h-1.5 rounded-full ${working ? "bg-primary animate-pulse" : "bg-current"}`} />{STATE_LABELS[conversationState]}</span><button type="button" onClick={newChat} className="p-1.5 rounded-lg text-on-surface-variant/50 hover:text-on-surface hover:bg-surface-high/60" title="New chat" aria-label="New chat"><Icon name="add" className="text-[18px]" /></button><button type="button" onClick={clear} className="p-1.5 rounded-lg text-on-surface-variant/50 hover:text-on-surface hover:bg-surface-high/60" title="Clear conversation" aria-label="Clear conversation"><Icon name="delete_sweep" className="text-[18px]" /></button></div></header>}
           <main className={`${variant === "page" ? "w-full max-w-5xl mx-auto px-6 md:px-12" : "w-full px-4 md:px-8"} flex-1 overflow-y-auto py-8 md:py-10`}>
-            {messages.length === 0 && <div className="flex min-h-full flex-col items-center justify-center py-12"><div className="w-full max-w-3xl"><QuickReplies options={idleOptions} onSelect={handleQuickReply} variant="page" /></div></div>}
+            {messages.length === 0 && <div className="flex min-h-full flex-col items-center justify-center py-12 text-center"><p className="max-w-md text-sm leading-6 text-on-surface-variant/65">Your calm, grounded workspace for understanding leads, campaigns, drafts, replies, and outbound performance.</p><div className="mt-8 w-full max-w-3xl"><QuickReplies options={idleOptions} onSelect={handleQuickReply} variant="page" /></div></div>}
             {messages.map((message) => <MessageBubble key={message.id} message={message} onAction={handleAction} />)}
             {working && activeGroupId && <div className="rounded-xl border border-outline-variant/10 bg-surface-container-low/50 px-3.5 py-3 text-body-sm text-on-surface-variant/70"><div className="flex items-center gap-2 text-primary mb-1"><span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />Thinking</div>{groups.find((group) => group.id === activeGroupId)?.steps.at(-1)?.text || "Working on it…"}</div>}
             {conversationState === "clarification" && <div className="rounded-xl border border-outline-variant/10 bg-surface-container-low px-4 py-3 text-body-sm text-on-surface">{CLARIFICATION_PROMPT}</div>}

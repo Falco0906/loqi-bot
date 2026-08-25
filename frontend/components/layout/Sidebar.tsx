@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useRef, type KeyboardEvent, type PointerEvent } from "react";
+import { useCallback, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { usePathname } from "next/navigation";
 import Icon from "../shared/Icon";
 import { useAuth } from "../../hooks/useAuth";
@@ -59,7 +59,8 @@ export default function Sidebar({
   onToggleCollapse,
 }: Props) {
   const pathname = usePathname();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+  const [profileOpen, setProfileOpen] = useState(false);
   const dragState = useRef<{ startX: number; fromExpanded: boolean } | null>(null);
   const copilotActive = pathname.startsWith("/copilot");
 
@@ -256,9 +257,15 @@ export default function Sidebar({
       </nav>
 
       {/* Bottom */}
-      <div className={`border-t border-outline-variant/10 py-4 shrink-0 ${collapsed ? "px-3" : "px-6"}`}>
+      <div className={`relative border-t border-outline-variant/10 py-4 shrink-0 ${collapsed ? "px-3" : "px-6"}`}>
         {user && (
-          <div className={`flex items-center gap-3 rounded-lg py-2 ${collapsed ? "justify-center px-0" : "px-2"}`}>
+          <button
+            type="button"
+            onClick={() => setProfileOpen((open) => !open)}
+            aria-expanded={profileOpen}
+            aria-label="Open profile menu"
+            className={`flex w-full items-center gap-3 rounded-lg py-2 text-left transition-colors hover:bg-surface-container-high/50 ${collapsed ? "justify-center px-0" : "px-2"}`}
+          >
             <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-xs font-bold text-on-surface shrink-0">
               {displayName.charAt(0).toUpperCase()}
             </div>
@@ -267,6 +274,19 @@ export default function Sidebar({
                 <p className="text-xs font-medium text-on-surface truncate">{displayName}</p>
               </div>
             )}
+          </button>
+        )}
+        {profileOpen && user && (
+          <div className={`absolute bottom-full z-40 mb-2 rounded-xl border border-outline-variant/15 bg-surface-container-high p-1.5 shadow-xl ${collapsed ? "left-2 right-2" : "left-6 right-6"}`}>
+            <div className="px-2.5 py-2 text-xs text-on-surface-variant/60 truncate">{displayName}</div>
+            <button
+              type="button"
+              onClick={() => void logout()}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-on-surface-variant transition-colors hover:bg-error/10 hover:text-error"
+            >
+              <Icon name="logout" className="text-base" />
+              Log out
+            </button>
           </div>
         )}
         {!collapsed && (

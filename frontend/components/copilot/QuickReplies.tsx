@@ -7,19 +7,20 @@ import type { QuickReplyOption } from "../../lib/conversationMachine";
 type Props = {
   options: QuickReplyOption[];
   onSelect: (option: QuickReplyOption) => void;
+  variant?: "sidebar" | "page";
 };
 
-function QuickReplies({ options, onSelect }: Props) {
+function QuickReplies({ options, onSelect, variant = "sidebar" }: Props) {
   if (options.length === 0) return null;
 
   return (
-    <div className="px-4 pb-3 space-y-2">
+    <div className={variant === "page" ? "grid w-full max-w-3xl grid-cols-1 gap-2 px-6 pb-2 sm:grid-cols-2 md:px-10" : "space-y-2 px-4 pb-3"}>
       {options.map((o) => (
         <button
           key={o.id}
           type="button"
           onClick={() => onSelect(o)}
-          className="w-full text-left rounded-xl border border-outline-variant/15 bg-surface-container-low px-3.5 py-2.5 hover:border-primary/30 hover:bg-surface-high/40 active:scale-[0.98] transition-all group"
+          className={`${variant === "page" ? "rounded-xl px-4 py-3" : "rounded-xl px-3.5 py-2.5"} w-full text-left border border-outline-variant/15 bg-surface-container-low/70 hover:border-primary/30 hover:bg-surface-high/40 active:scale-[0.98] transition-all group`}
         >
           <span className="flex items-center justify-between gap-2">
             <span className="text-body-sm text-on-surface font-medium">{o.label}</span>

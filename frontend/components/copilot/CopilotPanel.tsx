@@ -131,10 +131,38 @@ export default function CopilotPanel({ width = 380, variant = "sidebar" }: { wid
   const working = conversationState === "working";
 
   const history = variant === "page" ? (
-    <aside className="w-60 shrink-0 border-r border-outline-variant/10 bg-surface-container-low/30 flex flex-col">
-      <div className="px-3 py-4 border-b border-outline-variant/10"><div className="flex items-center justify-between mb-3"><span className="text-label-sm uppercase tracking-wider text-on-surface-variant/60 font-semibold">Chats</span><Icon name="chat" className="text-sm text-on-surface-variant/40" /></div><button type="button" onClick={newChat} className="w-full flex items-center gap-2 rounded-lg bg-primary text-on-primary px-3 py-2 text-body-sm font-semibold hover:opacity-90 transition-opacity" aria-label="New chat"><Icon name="add" className="text-sm" />New chat</button></div>
-      <div className="flex-1 overflow-y-auto p-2 space-y-1">
-        {chats.length === 0 ? <p className="px-2 py-3 text-label-sm text-on-surface-variant/45">No conversations yet</p> : chats.map((chat) => <button key={chat.id} type="button" onClick={() => switchChat(chat.id)} className={`w-full text-left rounded-lg px-2.5 py-2 ${chat.id === activeChatId ? "bg-primary/10" : "hover:bg-surface-high/40"}`}><p className="truncate text-body-sm text-on-surface font-medium">{chat.title}</p><p className="mt-0.5 text-[10px] uppercase tracking-wider text-on-surface-variant/45">{chat.messages.length} message{chat.messages.length === 1 ? "" : "s"}</p></button>)}
+    <aside className="flex w-64 shrink-0 flex-col border-r border-outline-variant/8 bg-surface-container-low/20">
+      <div className="border-b border-outline-variant/8 px-5 py-6">
+        <div className="flex items-center gap-2 text-on-surface">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <Icon name="smart_toy" className="text-base" />
+          </span>
+          <span className="font-serif text-lg tracking-tight">Loqi AI Assistant</span>
+        </div>
+        <div className="mt-6">
+          <button type="button" onClick={newChat} className="flex w-full items-center gap-2 rounded-lg bg-primary px-3 py-2 text-left text-sm font-semibold text-on-primary transition-opacity hover:opacity-90" aria-label="Start new chat">
+            <Icon name="add" className="text-sm" />
+            Start new chat
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto px-3 py-5">
+        <div className="mb-3 flex items-center justify-between px-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-on-surface-variant/40">
+          <span>Chats</span>
+          <Icon name="forum" className="text-sm" />
+        </div>
+        {chats.length === 0 ? (
+          <p className="px-2 text-xs leading-5 text-on-surface-variant/40">Your conversations will appear here.</p>
+        ) : (
+          <div className="space-y-0.5">
+            {chats.map((chat) => (
+              <button key={chat.id} type="button" onClick={() => switchChat(chat.id)} className={`w-full rounded-lg px-3 py-2 text-left transition-colors ${chat.id === activeChatId ? "bg-surface-high/70 text-on-surface" : "text-on-surface-variant/70 hover:bg-surface-high/35 hover:text-on-surface"}`}>
+                <p className="truncate text-sm font-medium">{chat.title}</p>
+                <p className="mt-1 text-[10px] uppercase tracking-wider text-on-surface-variant/35">{chat.messages.length} message{chat.messages.length === 1 ? "" : "s"}</p>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </aside>
   ) : null;
@@ -145,13 +173,13 @@ export default function CopilotPanel({ width = 380, variant = "sidebar" }: { wid
         {history}
         <div className="flex-1 min-w-0 h-full flex flex-col overflow-hidden">
           {variant === "sidebar" && <header className="flex items-center justify-between px-4 py-3 border-b border-outline-variant/10 shrink-0"><div className="flex items-center gap-2.5"><div className="w-7 h-7 rounded-lg bg-primary/15 flex items-center justify-center"><Icon name="smart_toy" className="text-[16px] text-primary" /></div><span className="text-body-md text-on-surface font-bold">AI Assistant</span></div><div className="flex items-center gap-1.5"><span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wider font-semibold ${working ? "bg-primary/10 text-primary" : conversationState === "failed" ? "bg-error/10 text-error" : conversationState === "completed" ? "bg-success/10 text-success" : "bg-surface-high/60 text-on-surface-variant/60"}`}><span className={`w-1.5 h-1.5 rounded-full ${working ? "bg-primary animate-pulse" : "bg-current"}`} />{STATE_LABELS[conversationState]}</span><button type="button" onClick={newChat} className="p-1.5 rounded-lg text-on-surface-variant/50 hover:text-on-surface hover:bg-surface-high/60" title="New chat" aria-label="New chat"><Icon name="add" className="text-[18px]" /></button><button type="button" onClick={clear} className="p-1.5 rounded-lg text-on-surface-variant/50 hover:text-on-surface hover:bg-surface-high/60" title="Clear conversation" aria-label="Clear conversation"><Icon name="delete_sweep" className="text-[18px]" /></button></div></header>}
-          <main className={`${variant === "page" ? "max-w-4xl w-full mx-auto" : "w-full"} flex-1 overflow-y-auto px-4 md:px-8 py-8 space-y-6`}>
-            {messages.length === 0 && <div className="h-full min-h-64 flex flex-col items-center justify-center text-center px-6"><div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary mb-4"><Icon name="smart_toy" className="text-2xl" /></div><h1 className="text-xl font-serif text-on-surface mb-2">What can I help you with?</h1><p className="text-body-sm text-on-surface-variant/60 max-w-sm">Ask Loqi to research leads, review campaigns, or summarize what needs your attention.</p></div>}
+          <main className={`${variant === "page" ? "w-full max-w-5xl mx-auto px-6 md:px-12" : "w-full px-4 md:px-8"} flex-1 overflow-y-auto py-8 md:py-10`}>
+            {messages.length === 0 && <div className="flex min-h-full flex-col items-center justify-center py-12 text-center"><div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary"><Icon name="smart_toy" className="text-2xl" /></div><h1 className="font-serif text-3xl tracking-tight text-on-surface">Loqi AI Assistant</h1><p className="mt-3 max-w-md text-sm leading-6 text-on-surface-variant/65">Your calm, grounded workspace for understanding leads, campaigns, drafts, replies, and outbound performance.</p><div className="mt-8 w-full max-w-3xl"><QuickReplies options={idleOptions} onSelect={handleQuickReply} variant="page" /></div></div>}
             {messages.map((message) => <MessageBubble key={message.id} message={message} onAction={handleAction} />)}
             {working && activeGroupId && <div className="rounded-xl border border-outline-variant/10 bg-surface-container-low/50 px-3.5 py-3 text-body-sm text-on-surface-variant/70"><div className="flex items-center gap-2 text-primary mb-1"><span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />Thinking</div>{groups.find((group) => group.id === activeGroupId)?.steps.at(-1)?.text || "Working on it…"}</div>}
             {conversationState === "clarification" && <div className="rounded-xl border border-outline-variant/10 bg-surface-container-low px-4 py-3 text-body-sm text-on-surface">{CLARIFICATION_PROMPT}</div>}
           </main>
-          <div className={`${variant === "page" ? "w-full max-w-4xl mx-auto" : "w-full"} shrink-0`}>{messages.length === 0 && <QuickReplies options={idleOptions} onSelect={handleQuickReply} />}{conversationState === "clarification" && <QuickReplies options={CLARIFICATION_REPLIES} onSelect={handleClarificationReply} />}<CopilotComposer onSend={startTask} disabled={working} placeholder={working ? "Loqi is working…" : "Message Loqi…"} /></div>
+          <div className={`${variant === "page" ? "w-full" : "w-full"} shrink-0`}>{messages.length > 0 && conversationState === "clarification" && <QuickReplies options={CLARIFICATION_REPLIES} onSelect={handleClarificationReply} variant={variant} />}<CopilotComposer onSend={startTask} disabled={working} placeholder={working ? "Loqi is working…" : "Message the AI Assistant…"} variant={variant} /></div>
         </div>
       </div>
     </div>

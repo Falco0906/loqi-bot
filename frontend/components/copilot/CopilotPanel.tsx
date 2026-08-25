@@ -216,7 +216,7 @@ export default function CopilotPanel({ width = 440, variant = "sidebar" }: { wid
           </div>
         )}
       </div>
-      <button type="button" onClick={startNewChat} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-on-surface-variant/60 transition-colors hover:bg-surface-high/45 hover:text-on-surface" title="New chat" aria-label="New chat">
+      <button type="button" onClick={startNewChat} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white transition-colors hover:bg-white/10" title="New chat" aria-label="New chat">
         <Icon name="add" className="text-lg" />
       </button>
     </header>
@@ -225,13 +225,10 @@ export default function CopilotPanel({ width = 440, variant = "sidebar" }: { wid
   const history = variant === "page" ? (
     <aside className="flex w-64 shrink-0 flex-col border-r border-on-surface/5 bg-surface-container-low/20">
       <div className="px-5 py-6">
-        <div className="flex items-center gap-2">
-          <button type="button" onClick={startNewChat} className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-on-surface/5 bg-surface-high/45 px-3 py-2 text-left text-sm font-semibold text-on-surface transition-colors hover:bg-surface-high/65" aria-label="Start new chat">
+        <div>
+          <button type="button" onClick={startNewChat} className="flex w-full items-center gap-2 rounded-lg border border-on-surface/5 bg-surface-high/45 px-3 py-2 text-left text-sm font-semibold text-on-surface transition-colors hover:bg-surface-high/65" aria-label="Start new chat">
             <Icon name="add" className="text-sm" />
-            <span className="truncate">Start new chat</span>
-          </button>
-          <button type="button" onClick={startNewChat} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-on-surface-variant/60 transition-colors hover:bg-surface-high/55 hover:text-on-surface" title="New chat" aria-label="New chat">
-            <Icon name="add" className="text-lg" />
+            Start new chat
           </button>
         </div>
       </div>

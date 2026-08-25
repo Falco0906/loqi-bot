@@ -4,15 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import AppPage from "../primitives/AppPage";
 import WorkspaceContainer from "../layout/WorkspaceContainer";
-import NarrativeBriefing from "../briefing/NarrativeBriefing";
 import { useData } from "../../lib/hooks/use-data";
-import { fetchMissionControl, fetchBriefing, invalidateMissionControlCache, peekCachedMissionControl, peekCachedBriefing } from "../../lib/repositories";
+import { fetchMissionControl, invalidateMissionControlCache, peekCachedMissionControl } from "../../lib/repositories";
 import { useTellLoqi } from "../../hooks/useTellLoqi";
-import { useGuidedScroll } from "../../hooks/useGuidedScroll";
-import { useRevealOnScroll } from "../../hooks/useRevealOnScroll";
-import type { MCIntentionCard, MCHealthSummary, MCTimelineEvent, MCBriefingData } from "../../lib/domain";
-
-const GUIDED_KEY = "loqi_guided_mission_control";
+import type { MCIntentionCard, MCHealthSummary, MCTimelineEvent } from "../../lib/domain";
 
 function LoadingSkeleton() {
   return (
@@ -196,52 +191,12 @@ export default function MissionControlDashboard() {
   const { data: mcData, loading: mcLoading, error: mcError, retry: mcRetry } = useData(fetchMissionControl, {
     initial: peekCachedMissionControl(),
   });
-  const {
-    data: briefingData,
-    loading: briefingLoading,
-    error: briefingError,
-    retry: briefingRetry,
-  } = useData(fetchBriefing, {
-    initial: peekCachedBriefing(),
-  });
   const tellLoqi = useTellLoqi("Mission Control", {
     recommendationCount: mcData?.recommendations.length ?? 0,
   });
 
   const pageRef = useRef<HTMLDivElement>(null);
-  const prioritiesRef = useRef<HTMLDivElement>(null);
-  const waitingRef = useRef<HTMLDivElement>(null);
   const healthRef = useRef<HTMLDivElement>(null);
-  const guidedTimersRef = useRef<number[]>([]);
-  const { scrollToSection } = useGuidedScroll(pageRef);
-  useRevealOnScroll(pageRef);
-
-  const handleBriefingDone = useCallback(() => {
-    let alreadyGuided = false;
-    try {
-      alreadyGuided = localStorage.getItem(GUIDED_KEY) === "1";
-    } catch {}
-    if (alreadyGuided) return;
-
-    const stops = [prioritiesRef, waitingRef, healthRef].filter((r) => r.current);
-    stops.forEach((r, i) => {
-      const timer = window.setTimeout(
-        () => scrollToSection(r.current!, { duration: 1300 }),
-        (i + 1) * 1800,
-      );
-      guidedTimersRef.current.push(timer);
-    });
-    try {
-      localStorage.setItem(GUIDED_KEY, "1");
-    } catch {}
-  }, [scrollToSection]);
-
-  useEffect(() => {
-    return () => {
-      guidedTimersRef.current.forEach((t) => window.clearTimeout(t));
-      guidedTimersRef.current = [];
-    };
-  }, []);
 
   useEffect(() => {
     const status = mcData?.initialResearchStatus;
@@ -260,14 +215,9 @@ export default function MissionControlDashboard() {
     return () => window.clearInterval(timer);
   }, [mcData?.initialResearchStatus, mcRetry]);
 
-  // PR-3D: deterministic state precedence. The narrative briefing is the
-  // primary Mission Control view; the legacy card layout must never flash
-  // while the briefing request is still in flight just because the
-  // mission-control payload was seeded from cache.
-  const briefingPending = briefingLoading && !briefingError && !briefingData;
-  const loading = (mcLoading && briefingLoading) || briefingPending;
-  const data = briefingData || mcData;
-  const error = mcError || briefingError;
+  const loading = mcLoading;
+  const data = mcData;
+  const error = mcError;
 
   if (loading && !data) {
     return (
@@ -288,7 +238,6 @@ export default function MissionControlDashboard() {
             <button
               onClick={() => {
                 mcRetry();
-                briefingRetry();
               }}
               className="bg-primary text-on-primary px-6 py-2 rounded-full text-sm font-medium hover:opacity-90 transition-opacity"
             >
@@ -308,36 +257,31 @@ export default function MissionControlDashboard() {
             <div className="w-16 h-16 rounded-2xl bg-surface-high/30 flex items-center justify-center text-on-surface-variant/40 mb-4">
               <span className="material-symbols-outlined text-3xl">dashboard</span>
             </div>
-            <p className="text-lg text-on-surface-variant/80 font-medium">Loqi is getting oriented</p>
-            <p className="mt-1.5 text-sm text-on-surface-variant/50 max-w-sm leading-relaxed">
-              Your first research session is starting. Loading your briefing shortly.
-            </p>
+            <p className="text-lg text-on-surface-variant/80 font-medium">Mission Control is unavailable</p>
+            <p className="mt-1.5 text-sm text-on-surface-variant/50 max-w-sm leading-relaxed">Try again to load your workspace data.</p>
           </div>
         </AppPage>
       </WorkspaceContainer>
     );
   }
 
-  const hasBriefing = "briefing" in data && "topPriorities" in data;
-  const brief = hasBriefing
-    ? (data as MCBriefingData).briefing
-    : { greeting: "Good morning", lines: (data as typeof mcData)?.brief?.lines ?? [], suggestion: (data as typeof mcData)?.brief?.suggestion ?? "", overallSummary: "", primaryFocus: "", topRecommendation: "" };
+  // Temporarily use the single summary payload; the staged narrative briefing
+  // is intentionally disabled while Mission Control performance is stabilized.
+  const hasBriefing = false;
+  const priorities: MCIntentionCard[] = [];
+  const waiting: MCIntentionCard[] = [];
+  const handled: MCIntentionCard[] = [];
+  const upcoming: MCIntentionCard[] = [];
+  const health: MCHealthSummary | null = null;
+  const timeline: MCTimelineEvent[] = [];
 
-  const priorities = hasBriefing ? (data as MCBriefingData).topPriorities : [];
-  const waiting = hasBriefing ? (data as MCBriefingData).waitingOnYou : [];
-  const handled = hasBriefing ? (data as MCBriefingData).loqiHandled : [];
-  const upcoming = hasBriefing ? (data as MCBriefingData).upcoming : [];
-  const health = hasBriefing ? (data as MCBriefingData).workspaceHealth : null;
-  const timeline = hasBriefing ? (data as MCBriefingData).timeline : [];
-
-  // Keep the legacy Mission Control payload alongside the richer briefing;
-  // it carries the research job status and result count that the briefing
-  // response intentionally does not expose as lead data.
+  // The summary payload carries the research job status and result count used
+  // by Mission Control without requiring a second briefing request.
   const mc = mcData;
-  const todayTasks = !hasBriefing && mc ? mc.tasks : [];
-  const recommendations = !hasBriefing && mc ? mc.recommendations : [];
-  const liveActivity = !hasBriefing && mc ? mc.liveActivity : [];
-  const insights = !hasBriefing && mc ? mc.insights : [];
+  const todayTasks = mc?.tasks ?? [];
+  const recommendations = mc?.recommendations ?? [];
+  const liveActivity = mc?.liveActivity ?? [];
+  const insights = mc?.insights ?? [];
   const activeJobLabel = mc?.activeJobLabel ?? null;
   const activeJobProgress = mc?.activeJobProgress ?? null;
   const activeJobTotal = mc?.activeJobTotal ?? null;
@@ -351,14 +295,6 @@ export default function MissionControlDashboard() {
     <WorkspaceContainer>
       <AppPage>
         <div ref={pageRef} className="reading-column py-16 flex flex-col gap-16 pb-48">
-
-          {/* Section 1: Today's Briefing — Narrative Layer */}
-          <NarrativeBriefing
-            greeting={brief.greeting || "Good morning"}
-            lines={brief.lines}
-            suggestion={brief.suggestion || undefined}
-            onDone={handleBriefingDone}
-          />
 
           {initialResearchStatus && (
             <section className="space-y-4">
@@ -397,7 +333,7 @@ export default function MissionControlDashboard() {
 
           {/* Section 2: Top Priorities */}
           {priorities.length > 0 && (
-            <section ref={prioritiesRef} className="space-y-4 reveal">
+            <section className="space-y-4 reveal">
               <h3 className="text-xs uppercase tracking-widest text-on-surface-variant opacity-60 font-medium">
                 Top Priorities
               </h3>
@@ -411,7 +347,7 @@ export default function MissionControlDashboard() {
 
           {/* Section 3: Waiting On You (ASK_USER) */}
           {waiting.length > 0 && (
-            <section ref={waitingRef} className="space-y-4 reveal">
+            <section className="space-y-4 reveal">
               <h3 className="text-xs uppercase tracking-widest text-on-surface-variant opacity-60 font-medium">
                 Waiting On You
               </h3>

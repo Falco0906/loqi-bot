@@ -171,6 +171,7 @@ def _confidence_label(score: int) -> str:
 def generate_recommendations(
     snapshot: dict,
     force_refresh: bool = False,
+    use_narrative: bool = True,
 ) -> list[dict]:
     """Generate recommendations from a workspace snapshot.
 
@@ -183,12 +184,15 @@ def generate_recommendations(
     global _cache_key
 
     ck = _make_cache_key(snapshot)
-    if not force_refresh and _cache_key == ck and _cache.get("recommendations"):
+    if use_narrative and not force_refresh and _cache_key == ck and _cache.get("recommendations"):
         _log("returning cached recommendations")
         return _cache["recommendations"]
 
     # Step 1: build structured cards from reasoning layer (deterministic)
     structured = _build_structured_recommendations(snapshot)
+
+    if not use_narrative:
+        return structured
 
     # Step 2: refine wording via Narrative Engine (NLG only)
     analysis = snapshot.get("analysis", {})

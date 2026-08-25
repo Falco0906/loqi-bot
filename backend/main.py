@@ -7830,6 +7830,7 @@ async def mission_control_summary(session_token: str, request: Request, onboardi
     from services.mission_control.payload import compute_shared_payload
     payload = await compute_shared_payload(
         owner_id, session_token, summary.get("user_id") if summary else None,
+        include_narrative=False,
     )
     campaigns = payload["campaigns"]
     drafts = payload["drafts"]
@@ -7936,7 +7937,7 @@ async def mission_control_summary(session_token: str, request: Request, onboardi
 
     phases_ms = [round((_mc_t[i + 1] - _mc_t[i]) * 1000) for i in range(len(_mc_t) - 1)]
     log.info("[perf] route=/mission-control owner=%s total_ms=%.0f phases_ms=%s",
-             owner_id[:8], (_time.monotonic() - _t_start) * 1000, phases_ms)
+             owner_id[:8], (time.monotonic() - _t_start) * 1000, phases_ms)
 
     return {
         "ok": True,

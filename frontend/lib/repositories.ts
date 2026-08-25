@@ -313,7 +313,7 @@ export async function fetchMissionControl(): Promise<MCData | null> {
     const token = getToken();
     if (!token) return null;
     const raw = await getMissionControl(token, getUserId() ?? "");
-    if (!raw.ok) return null;
+    if (!raw.ok) throw new Error("Mission Control could not load");
     const job = mcActiveJobFromBackend(raw);
     return {
       brief: mcBriefFromBackend(raw.brief),

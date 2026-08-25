@@ -104,6 +104,7 @@ async def compute_shared_payload(
     owner_id: str,
     session_token: str,
     db_user_id: str | None,
+    include_narrative: bool = True,
 ) -> dict[str, Any]:
     """Load state once and compute {campaigns, drafts, snapshot, analysis,
     recommendations, brief}; dedupe concurrent callers per key."""
@@ -131,6 +132,7 @@ async def compute_shared_payload(
         _content_fingerprint(campaigns, drafts),
         _delta_fingerprint(delta),
         _hour_bucket(),
+        include_narrative,
     )
 
     cached = _payload_cache.get(key)
@@ -151,8 +153,17 @@ async def compute_shared_payload(
                     session_token, campaigns, drafts, total_leads, user_id=db_user_id,
                 )
                 _embed_delta_into_snapshot(snap, delta)
-                recs = generate_recommendations(snap)
-                brf = generate_brief(snap, recs)
+                recs = generate_recommendations(snap, use_narrative=include_narrative)
+                if include_narrative:
+                    brf = generate_brief(snap, recs)
+                else:
+                    hour = datetime.now(timezone.utc).hour
+                    greeting = "Good morning" if hour < 12 else "Good afternoon" if hour < 17 else "Good evening"
+                    lines = [
+                        f"{campaign.get('name', 'Campaign')} has {campaign.get('lead_count', 0)} leads and is {campaign.get('status', 'active')}."
+                        for campaign in campaigns[:3]
+                    ]
+                    brf = {"greeting": greeting, "lines": lines, "suggestion": ""}
                 return {
                     "campaigns": campaigns,
                     "drafts": drafts,

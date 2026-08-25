@@ -12,6 +12,16 @@ function authHeaders(): Record<string, string> {
   }
 }
 
+function briefingHeaders(): Record<string, string> {
+  const headers = authHeaders();
+  try {
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return timezone ? { ...headers, "X-Timezone": timezone } : headers;
+  } catch {
+    return headers;
+  }
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -1918,6 +1928,6 @@ export type BriefingResponse = {
 export async function getBriefing(sessionToken: string, onboardingUserId = "") {
   return fetchWithRetry<BriefingResponse>(
     `${API_BASE}/api/web/session/_/briefing?onboarding_user_id=${encodeURIComponent(onboardingUserId)}`,
-    { headers: authHeaders() },
+    { headers: briefingHeaders() },
   );
 }

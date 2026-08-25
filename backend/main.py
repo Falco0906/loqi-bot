@@ -7992,6 +7992,7 @@ async def briefing_endpoint(session_token: str, request: Request, onboarding_use
     from services.mission_control.payload import compute_shared_payload
     payload = await compute_shared_payload(
         owner_id, session_token, summary.get("user_id") if summary else None,
+        user_timezone=request.headers.get("x-timezone"),
     )
     _mc_phase("shared payload", _mc_t)
 

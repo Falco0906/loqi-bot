@@ -8,6 +8,9 @@ It builds a ``BriefingContext`` from the incoming snapshot + recommendations
 and delegates all natural-language generation to ``NarrativeEngine``.
 """
 
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from services.narrative_engine import BriefingContext, get_engine
 
 
@@ -19,19 +22,42 @@ def _log(msg: str) -> None:
     print(f"[executive_brief] {msg}")
 
 
-def _make_cache_key(snapshot: dict) -> str:
+def normalize_timezone(value: str | None) -> str:
+    """Return a valid IANA timezone without trusting a request header blindly."""
+    candidate = str(value or "UTC").strip()
+    try:
+        ZoneInfo(candidate)
+        return candidate
+    except ZoneInfoNotFoundError:
+        return "UTC"
+
+
+def greeting_for_timezone(user_timezone: str | None, now: datetime | None = None) -> str:
+    """Return a greeting from the user's local time, never the server clock."""
+    local_now = (now or datetime.now(timezone.utc)).astimezone(
+        ZoneInfo(normalize_timezone(user_timezone))
+    )
+    if local_now.hour < 12:
+        return "Good morning"
+    if local_now.hour < 17:
+        return "Good afternoon"
+    return "Good evening"
+
+
+def _make_cache_key(snapshot: dict, user_timezone: str, greeting: str) -> str:
     campaigns = snapshot.get("campaigns", [])
     drafts = snapshot.get("drafts", {})
     tl = snapshot.get("timeline", [])
     delta = snapshot.get("_delta", {})
     dk = delta.get("event_count", 0) if delta else "0"
-    return f"{len(campaigns)}:{drafts.get('pending', 0)}:{drafts.get('approved', 0)}:{len(tl)}:{dk}"
+    return f"{len(campaigns)}:{drafts.get('pending', 0)}:{drafts.get('approved', 0)}:{len(tl)}:{dk}:{user_timezone}:{greeting}"
 
 
 def generate_brief(
     snapshot: dict,
     recommendations: list[dict],
     force_refresh: bool = False,
+    user_timezone: str | None = None,
 ) -> dict:
     """Generate a narrative briefing from the workspace snapshot.
 
@@ -40,19 +66,12 @@ def generate_brief(
     """
     global _cache_key
 
-    ck = _make_cache_key(snapshot)
+    resolved_timezone = normalize_timezone(user_timezone)
+    greeting = greeting_for_timezone(resolved_timezone)
+    ck = _make_cache_key(snapshot, resolved_timezone, greeting)
     if not force_refresh and _cache_key == ck and _cache.get("brief"):
         _log("returning cached brief")
         return _cache["brief"]
-
-    import datetime
-    h = datetime.datetime.now().hour
-    if h < 12:
-        greeting = "Good morning"
-    elif h < 17:
-        greeting = "Good afternoon"
-    else:
-        greeting = "Good evening"
 
     analysis = snapshot.get("analysis", {})
 

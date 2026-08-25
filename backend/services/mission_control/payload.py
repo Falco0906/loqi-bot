@@ -6,13 +6,14 @@ twice (one per endpoint) AND re-ran them on the next visit because the World
 Model acknowledgement consumes the delta that the brief caches key on.
 
 Semantics:
-  * Key = (owner, content fingerprint, delta fingerprint, 4h hour bucket).
+  * Key = (owner, content fingerprint, delta fingerprint, user timezone,
+    greeting period, narrative mode).
   * Content fingerprint covers campaign/draft identity + status — changes only
     when the workspace actually changes.
   * Delta fingerprint covers the "what's new since last view" counts — changes
     once when new events arrive, and once when they are acknowledged, then
     stabilises (no ack-churn).
-  * Hour bucket lets the greeting rotate without recomputing per hour.
+  * Greeting period lets the greeting rotate at the user's local boundaries.
   * In-flight futures dedupe concurrent calls (the frontend fires both
     endpoints in parallel), so the second caller waits on the first instead of
     duplicating the LLM work.
@@ -23,19 +24,15 @@ import asyncio
 import hashlib
 import json
 import time
-from datetime import datetime, timezone
 from typing import Any
 
+from services.executive_brief import greeting_for_timezone, normalize_timezone
 from services.world_model.store import WorkspaceDelta
 
 
 _payload_cache: dict[tuple, dict[str, Any]] = {}
 _inflight: dict[tuple, asyncio.Future] = {}
 _MAX_ENTRIES = 8
-
-
-def _hour_bucket() -> int:
-    return datetime.now(timezone.utc).hour // 4
 
 
 def _content_fingerprint(campaigns: list[dict], drafts: list[dict]) -> str:
@@ -82,8 +79,18 @@ def get_cached_payload(
     campaigns: list[dict],
     drafts: list[dict],
     delta: WorkspaceDelta,
+    user_timezone: str | None = None,
+    include_narrative: bool = True,
 ) -> dict[str, Any] | None:
-    key = (owner_id, _content_fingerprint(campaigns, drafts), _delta_fingerprint(delta), _hour_bucket())
+    resolved_timezone = normalize_timezone(user_timezone)
+    key = (
+        owner_id,
+        _content_fingerprint(campaigns, drafts),
+        _delta_fingerprint(delta),
+        resolved_timezone,
+        greeting_for_timezone(resolved_timezone),
+        include_narrative,
+    )
     return _payload_cache.get(key)
 
 
@@ -93,8 +100,18 @@ def cache_payload(
     drafts: list[dict],
     delta: WorkspaceDelta,
     payload: dict[str, Any],
+    user_timezone: str | None = None,
+    include_narrative: bool = True,
 ) -> None:
-    key = (owner_id, _content_fingerprint(campaigns, drafts), _delta_fingerprint(delta), _hour_bucket())
+    resolved_timezone = normalize_timezone(user_timezone)
+    key = (
+        owner_id,
+        _content_fingerprint(campaigns, drafts),
+        _delta_fingerprint(delta),
+        resolved_timezone,
+        greeting_for_timezone(resolved_timezone),
+        include_narrative,
+    )
     payload["_ts"] = time.monotonic()
     _payload_cache[key] = payload
     _evict()
@@ -105,6 +122,7 @@ async def compute_shared_payload(
     session_token: str,
     db_user_id: str | None,
     include_narrative: bool = True,
+    user_timezone: str | None = None,
 ) -> dict[str, Any]:
     """Load state once and compute {campaigns, drafts, snapshot, analysis,
     recommendations, brief}; dedupe concurrent callers per key."""
@@ -127,11 +145,14 @@ async def compute_shared_payload(
     wm = get_wm_store()
     delta = wm.compute_delta(session_token)
 
+    resolved_timezone = normalize_timezone(user_timezone)
+    greeting = greeting_for_timezone(resolved_timezone)
     key = (
         owner_id,
         _content_fingerprint(campaigns, drafts),
         _delta_fingerprint(delta),
-        _hour_bucket(),
+        resolved_timezone,
+        greeting,
         include_narrative,
     )
 
@@ -155,10 +176,8 @@ async def compute_shared_payload(
                 _embed_delta_into_snapshot(snap, delta)
                 recs = generate_recommendations(snap, use_narrative=include_narrative)
                 if include_narrative:
-                    brf = generate_brief(snap, recs)
+                    brf = generate_brief(snap, recs, user_timezone=resolved_timezone)
                 else:
-                    hour = datetime.now(timezone.utc).hour
-                    greeting = "Good morning" if hour < 12 else "Good afternoon" if hour < 17 else "Good evening"
                     lines = [
                         f"{campaign.get('name', 'Campaign')} has {campaign.get('lead_count', 0)} leads and is {campaign.get('status', 'active')}."
                         for campaign in campaigns[:3]

@@ -188,7 +188,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           style={{
             marginLeft: effectiveSidebarWidth,
             "--sidebar-w": `${effectiveSidebarWidth}px`,
-            "--copilot-w": !isDraftPage && copilotOpen ? `${COPILOT_PANEL_WIDTH}px` : "0px",
+            "--copilot-w": !isDraftPage && !isCopilotPage && copilotOpen ? `${COPILOT_PANEL_WIDTH}px` : "0px",
           } as React.CSSProperties}
         >
           <Topbar />

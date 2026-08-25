@@ -317,7 +317,7 @@ export function CopilotProvider({
   const pathnameRef = useRef<string | null>(null);
   pathnameRef.current = usePathname();
 
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const [pageContext, setPageContextState] = useState<PageContext | null>(null);
   const handlersRef = useRef<Map<ActionType, ActionHandler>>(new Map());
 

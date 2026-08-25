@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 from services.executive_brief import generate_brief
 from services.intentions.engine import IntentionEngine
+from services.intentions.lifecycle import activate
 from services.intentions.models import Intention, IntentionType, LifecycleStatus
 from services.intentions.priority import order_intentions
 from services.narrative_engine import get_engine as get_narrative
@@ -94,6 +95,14 @@ class MissionControlService:
             delta=delta,
         )
         _phase("intentions")
+        # ``evaluate`` deliberately returns newly-created intentions. This
+        # request is the lifecycle boundary that exposes them to the user, so
+        # activate the current evaluation before filtering the response. Do
+        # not use the process-local queue here: it can retain stale intentions
+        # after the underlying workspace state has changed.
+        for intention in intentions:
+            if intention.status == LifecycleStatus.CREATED:
+                activate(intention)
         active_intentions = [i for i in intentions if i.status == LifecycleStatus.ACTIVE]
 
         briefing_section = self._build_briefing_section(brief, snapshot, analysis)

@@ -117,12 +117,48 @@ class TestMissionControlService:
         result = self.svc.get_briefing("test-token", campaigns, drafts)
         assert result.ok is True
 
+    def test_get_briefing_exposes_newly_evaluated_intentions(self, monkeypatch):
+        """The briefing response must expose current policy matches, not only
+        intentions that happen to have already passed through a queue."""
+        monkeypatch.setattr(
+            "services.mission_control.briefing.get_timeline_events",
+            lambda *_args, **_kwargs: [],
+        )
+        analysis = {
+            "workspace_health": {
+                "score": 0.9,
+                "follow_ups_due": 1,
+                "auto_handle_candidates": 1,
+            },
+            "current_focus": {"focus": "Launch Campaign A"},
+            "recommended_next_action": {"title": "Launch Campaign A"},
+        }
+        prebuilt = {
+            "snapshot": {
+                "campaigns": [{"id": "c1", "name": "Campaign A", "current_step": "sending"}],
+                "drafts": {"pending": 0, "approved": 0, "total": 0},
+                "jobs": {"completed": 0},
+                "analysis": analysis,
+                "_delta": {"new_leads": 0, "new_conversations": 0},
+            },
+            "analysis": analysis,
+            "recommendations": [],
+            "brief": {"greeting": "Good morning", "lines": [], "suggestion": ""},
+        }
+
+        result = self.svc.get_briefing("test-token", [], [], prebuilt=prebuilt)
+
+        assert any(card.reason_code == "campaign_ready" for card in result.top_priorities)
+        assert any(card.reason_code == "campaign_ready" for card in result.waiting_on_you)
+        assert any(card.reason_code == "low_confidence" for card in result.loqi_handled)
+        assert any(card.reason_code == "follow_up_due" for card in result.upcoming)
+
     def test_signals_from_snapshot(self):
         now = datetime.now(timezone.utc).isoformat()
         snapshot = {
             "campaigns": [
-                {"id": "c1", "name": "A", "status": "ready"},
-                {"id": "c2", "name": "B", "status": "ready"},
+                {"id": "c1", "name": "A", "status": "planning", "current_step": "sending"},
+                {"id": "c2", "name": "B", "status": "planning", "current_step": "sending"},
             ],
             "drafts": {"pending": 5, "approved": 2, "total": 7},
             "timeline": [],

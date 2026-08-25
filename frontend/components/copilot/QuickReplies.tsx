@@ -14,7 +14,7 @@ function QuickReplies({ options, onSelect, variant = "sidebar" }: Props) {
   if (options.length === 0) return null;
 
   return (
-    <div className={variant === "page" ? "grid w-full max-w-3xl grid-cols-1 gap-2 px-6 pb-2 sm:grid-cols-2 md:px-10" : "space-y-2 px-4 pb-3"}>
+    <div className={variant === "page" ? "mx-auto grid w-full max-w-3xl grid-cols-1 gap-2 px-6 pb-2 sm:grid-cols-2 md:px-10" : "space-y-2 px-4 pb-3"}>
       {options.map((o) => (
         <button
           key={o.id}

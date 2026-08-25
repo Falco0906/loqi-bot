@@ -184,7 +184,6 @@ export default function CopilotPanel({ width = 440, variant = "sidebar" }: { wid
           aria-expanded={chatPickerOpen}
           aria-haspopup="listbox"
         >
-          <LoqiLogo className="h-7 w-7" />
           <span className="truncate">{chatLabel}</span>
           <Icon name="expand_more" className={`shrink-0 text-base text-on-surface-variant/55 transition-transform ${chatPickerOpen ? "rotate-180" : ""}`} />
         </button>
@@ -226,10 +225,13 @@ export default function CopilotPanel({ width = 440, variant = "sidebar" }: { wid
   const history = variant === "page" ? (
     <aside className="flex w-64 shrink-0 flex-col border-r border-on-surface/5 bg-surface-container-low/20">
       <div className="px-5 py-6">
-        <div>
-          <button type="button" onClick={newChat} className="flex w-full items-center gap-2 rounded-lg border border-on-surface/5 bg-surface-high/45 px-3 py-2 text-left text-sm font-semibold text-on-surface transition-colors hover:bg-surface-high/65" aria-label="Start new chat">
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={startNewChat} className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-on-surface/5 bg-surface-high/45 px-3 py-2 text-left text-sm font-semibold text-on-surface transition-colors hover:bg-surface-high/65" aria-label="Start new chat">
             <Icon name="add" className="text-sm" />
-            Start new chat
+            <span className="truncate">Start new chat</span>
+          </button>
+          <button type="button" onClick={startNewChat} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-on-surface-variant/60 transition-colors hover:bg-surface-high/55 hover:text-on-surface" title="New chat" aria-label="New chat">
+            <Icon name="add" className="text-lg" />
           </button>
         </div>
       </div>

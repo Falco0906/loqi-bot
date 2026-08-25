@@ -210,6 +210,75 @@
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
   }
 
+  /* Auth and onboarding are intentionally dark-only surfaces. These scoped
+     overrides keep their existing components intact while preventing the
+     legacy light-palette utilities from fighting the application theme. */
+  .auth-dark,
+  .onb-dark {
+    background-color: #141313 !important;
+    color: #e6e2e1 !important;
+  }
+
+  .auth-dark [class*="bg-[#fdf8f8]"],
+  .onb-dark [class*="bg-[#fdf8f8]"],
+  .auth-dark [class*="bg-[#f5f0eb]"],
+  .onb-dark [class*="bg-[#f5f0eb]"],
+  .auth-dark [class*="bg-[#e8e0d8]"],
+  .onb-dark [class*="bg-[#e8e0d8]"] {
+    background-color: #141313 !important;
+    background-image: none !important;
+  }
+
+  .auth-dark [class*="bg-[#ffffff]"],
+  .onb-dark [class*="bg-[#ffffff]"],
+  .auth-dark [class*="bg-[#ebe7e6]"],
+  .onb-dark [class*="bg-[#ebe7e6]"],
+  .auth-dark [class*="bg-[#F1F1EF]"],
+  .onb-dark [class*="bg-[#F1F1EF]"] {
+    background-color: #1c1b1b !important;
+  }
+
+  .auth-dark [class*="bg-[#000000]"],
+  .onb-dark [class*="bg-[#000000]"] {
+    background-color: #e6e2e1 !important;
+  }
+
+  .auth-dark [class*="text-[#ffffff]"],
+  .onb-dark [class*="text-[#ffffff]"],
+  .auth-dark [class*="text-[#000000]"],
+  .onb-dark [class*="text-[#000000]"],
+  .auth-dark [class*="text-[#1c1b1b]"],
+  .onb-dark [class*="text-[#1c1b1b]"] {
+    color: #e6e2e1 !important;
+  }
+
+  .auth-dark [class*="text-[#444748]"],
+  .onb-dark [class*="text-[#444748]"],
+  .auth-dark [class*="text-[#747878]"],
+  .onb-dark [class*="text-[#747878]"] {
+    color: #ccc4c9 !important;
+  }
+
+  .auth-dark [class*="border-[#c4c7c7]"],
+  .onb-dark [class*="border-[#c4c7c7]"],
+  .auth-dark [class*="border-[#000000]"],
+  .onb-dark [class*="border-[#000000]"] {
+    border-color: #4a4549 !important;
+  }
+
+  .auth-dark input,
+  .onb-dark input,
+  .onb-dark textarea {
+    color: #e6e2e1 !important;
+    caret-color: #e6e2e1;
+  }
+
+  .auth-dark input::placeholder,
+  .onb-dark input::placeholder,
+  .onb-dark textarea::placeholder {
+    color: #8f898e !important;
+  }
+
   .onb-fade-in {
     animation: onbFadeIn 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
     opacity: 0;

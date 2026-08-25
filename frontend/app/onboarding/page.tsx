@@ -315,7 +315,7 @@ export default function OnboardingPage() {
 
   if (authLoading || loadingInitial) {
     return (
-      <main className="relative z-10 w-full min-h-screen onb-surface flex items-center justify-center">
+      <main className="onb-dark relative z-10 w-full min-h-screen onb-surface flex items-center justify-center">
         <div className="text-center">
           <div className="w-8 h-8 border-2 border-[#000000] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
           <p className="font-['Inter'] text-[16px] leading-[1.5] text-[#444748]">Loading...</p>
@@ -326,7 +326,7 @@ export default function OnboardingPage() {
 
   if (initializationError) {
     return (
-      <main className="relative z-10 w-full min-h-screen onb-surface flex items-center justify-center px-6">
+      <main className="onb-dark relative z-10 w-full min-h-screen onb-surface flex items-center justify-center px-6">
         <div className="max-w-[520px] text-center space-y-6">
           <span className="material-symbols-outlined text-[#dc2626] text-4xl">error</span>
           <h1 className="font-['Libre_Caslon_Text'] text-[32px] text-[#1c1b1b]">
@@ -347,7 +347,7 @@ export default function OnboardingPage() {
   }
 
   return (
-    <main className="relative z-10 w-full min-h-screen onb-surface">
+    <main className="onb-dark relative z-10 w-full min-h-screen onb-surface">
       {state === "conversational-discovery" && (
         <ConversationalDiscovery
           onGenerate={handleDiscoveryGenerate}

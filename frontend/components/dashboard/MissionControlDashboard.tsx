@@ -249,7 +249,9 @@ export default function MissionControlDashboard() {
     );
   }
 
-  if (error && !data) {
+  // The briefing is the required Mission Control surface. A cached summary
+  // must not replace it when its authoritative request failed.
+  if ((briefingError && !briefingData) || (error && !data)) {
     return (
       <WorkspaceContainer>
         <AppPage>
@@ -289,6 +291,7 @@ export default function MissionControlDashboard() {
   // NarrativeBriefing remains intentionally disabled. Its structured briefing
   // data is still the authoritative source for the current Mission Control UI.
   const hasBriefing = briefingData !== null;
+  const briefing = briefingData?.briefing ?? null;
   const priorities: MCIntentionCard[] = briefingData?.topPriorities ?? [];
   const waiting: MCIntentionCard[] = briefingData?.waitingOnYou ?? [];
   const handled: MCIntentionCard[] = briefingData?.loqiHandled ?? [];
@@ -316,6 +319,30 @@ export default function MissionControlDashboard() {
     <WorkspaceContainer>
       <AppPage>
         <div ref={pageRef} className="reading-column py-16 flex flex-col gap-16 pb-48">
+
+          {/* The briefing content is rendered in one stable pass.  The former
+              NarrativeBriefing component remains disabled because it owns the
+              staged/progressive animation, not this authoritative content. */}
+          {briefing && (
+            <section className="space-y-6">
+              <h1 className="text-4xl md:text-5xl font-serif text-on-surface leading-tight tracking-tight font-normal">
+                {briefing.greeting || "Good morning"}
+              </h1>
+              {briefing.lines.map((line, index) => (
+                <p
+                  key={`${index}-${line}`}
+                  className="text-xl text-on-surface-variant/60 leading-relaxed font-light"
+                >
+                  {line}
+                </p>
+              ))}
+              {briefing.suggestion && (
+                <p className="text-base text-primary font-medium mt-2">
+                  {briefing.suggestion}
+                </p>
+              )}
+            </section>
+          )}
 
           {initialResearchStatus && (
             <section className="space-y-4">

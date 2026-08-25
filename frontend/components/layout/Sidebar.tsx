@@ -218,7 +218,6 @@ export default function Sidebar({
             }`}
             aria-label="Open AI Assistant page"
           >
-            <Icon name="smart_toy" className={`shrink-0 text-base ${copilotActive ? "text-primary" : "text-on-surface-variant"}`} />
             <span>AI Assistant</span>
           </Link>
         )}
@@ -234,7 +233,7 @@ export default function Sidebar({
                   : "text-on-surface-variant/60 hover:text-on-surface hover:bg-surface-container-high/60"
               }`}
             >
-              <Icon name="smart_toy" className="text-xl" />
+              <span className="text-xs font-bold tracking-tight">AI</span>
             </Link>
           </div>
         )}

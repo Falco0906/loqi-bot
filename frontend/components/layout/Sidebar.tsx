@@ -294,13 +294,18 @@ export default function Sidebar({
           </div>
         )}
         {!collapsed && (
-          <div className="mt-3 flex items-center gap-2 text-[10px] text-on-surface-variant/40">
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="absolute inline-flex h-full w-full animate-ping-slow rounded-full bg-secondary opacity-75" />
-              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-secondary" />
-            </span>
-            All Systems Online
-          </div>
+          <>
+            <div className="mt-3 flex items-center gap-2 text-[10px] text-on-surface-variant/40">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full animate-ping-slow rounded-full bg-secondary opacity-75" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-secondary" />
+              </span>
+              All Systems Online
+            </div>
+            <p className="mt-2 px-0.5 text-[10px] leading-4 text-on-surface-variant/35">
+              Loqi is in beta — some features may change as we improve the experience.
+            </p>
+          </>
         )}
       </div>
     </aside>

@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Mission Control - Loqi</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        "colors": {
+                "inverse-on-surface": "#313030",
+                "outline-variant": "#4a4549",
+                "inverse-primary": "#605e5e",
+                "tertiary-fixed-dim": "#c6c6c7",
+                "on-secondary-container": "#b8b4b3",
+                "error": "#ffb4ab",
+                "on-secondary-fixed": "#1c1b1b",
+                "tertiary-fixed": "#e2e2e2",
+                "primary-fixed-dim": "#cac5c6",
+                "surface-container-highest": "#363434",
+                "inverse-surface": "#e6e2e1",
+                "on-primary": "#313030",
+                "surface-container-lowest": "#0f0e0e",
+                "on-tertiary-fixed": "#1a1c1c",
+                "tertiary": "#ffffff",
+                "surface": "#141313",
+                "primary-fixed": "#e6e1e1",
+                "primary": "#ffffff",
+                "background": "#141313",
+                "surface-dim": "#141313",
+                "on-secondary": "#313030",
+                "on-surface-variant": "#ccc4c9",
+                "surface-bright": "#3a3939",
+                "on-tertiary": "#2f3131",
+                "secondary-fixed": "#e6e2e0",
+                "secondary-container": "#484646",
+                "on-primary-container": "#666464",
+                "tertiary-container": "#e2e2e2",
+                "on-background": "#e6e2e1",
+                "outline": "#242424",
+                "surface-container-high": "#2b2a2a",
+                "surface-container": "#201f1f",
+                "on-surface": "#e6e2e1",
+                "surface-variant": "#363434",
+                "on-secondary-fixed-variant": "#484646",
+                "on-tertiary-container": "#636565",
+                "primary-container": "#e6e1e1",
+                "on-error": "#690005",
+                "on-primary-fixed-variant": "#484647",
+                "secondary": "#c9c6c5",
+                "surface-container-low": "#1c1b1b",
+                "secondary-fixed-dim": "#c9c6c5",
+                "on-primary-fixed": "#1c1b1c",
+                "on-error-container": "#ffdad6",
+                "on-tertiary-fixed-variant": "#454747",
+                "error-container": "#93000a",
+                "surface-tint": "#cac5c6"
+        },
+        "borderRadius": {
+                "DEFAULT": "0.25rem",
+                "lg": "0.5rem",
+                "xl": "0.75rem",
+                "full": "9999px"
+        },
+        "spacing": {
+                "margin-mobile": "16px",
+                "sm": "12px",
+                "xs": "4px",
+                "xl": "80px",
+                "gutter": "24px",
+                "margin-desktop": "64px",
+                "md": "24px",
+                "base": "8px",
+                "lg": "48px"
+        },
+        "fontFamily": {
+                "headline-lg-mobile": [
+                        "Libre Caslon Text"
+                ],
+                "label-sm": [
+                        "Inter"
+                ],
+                "display-lg": [
+                        "Libre Caslon Text"
+                ],
+                "body-lg": [
+                        "Libre Caslon Text"
+                ],
+                "title-md": [
+                        "Libre Caslon Text"
+                ],
+                "headline-lg": [
+                        "Libre Caslon Text"
+                ],
+                "body-md": [
+                        "Libre Caslon Text"
+                ]
+        },
+        "fontSize": {
+                "headline-lg-mobile": [
+                        "28px",
+                        {
+                                "lineHeight": "36px",
+                                "fontWeight": "400"
+                        }
+                ],
+                "label-sm": [
+                        "12px",
+                        {
+                                "lineHeight": "16px",
+                                "letterSpacing": "0.05em",
+                                "fontWeight": "500"
+                        }
+                ],
+                "display-lg": [
+                        "56px",
+                        {
+                                "lineHeight": "64px",
+                                "letterSpacing": "-0.02em",
+                                "fontWeight": "400"
+                        }
+                ],
+                "body-lg": [
+                        "18px",
+                        {
+                                "lineHeight": "28px",
+                                "fontWeight": "400"
+                        }
+                ],
+                "title-md": [
+                        "20px",
+                        {
+                                "lineHeight": "28px",
+                                "fontWeight": "600"
+                        }
+                ],
+                "headline-lg": [
+                        "32px",
+                        {
+                                "lineHeight": "40px",
+                                "fontWeight": "400"
+                        }
+                ],
+                "body-md": [
+                        "16px",
+                        {
+                                "lineHeight": "24px",
+                                "fontWeight": "400"
+                        }
+                ]
+        }
+},
+    },
+  }
+</script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="bg-surface text-on-surface font-body-md min-h-screen flex selection:bg-surface-bright selection:text-primary">
+<!-- SideNavBar -->
+<!-- TopNavBar for Mobile (Visible on md:hidden) -->
+<!-- Main Content Canvas -->
+<main class="flex-grow pt-20 md:pt-0 pb-xl px-margin-mobile md:px-margin-desktop w-full max-w-[1200px] mx-auto min-h-screen">
+<!-- Header Section -->
+<header class="pt-xl pb-md max-w-2xl">
+<h2 class="font-display-lg text-display-lg text-primary mb-sm">Good morning, Faisal.</h2>
+<p class="font-body-lg text-body-lg text-on-surface-variant leading-relaxed">Two campaigns need your attention today. Restaurant Outreach 2 has been waiting on strategy for two days, while three prospects replied overnight. Loqi has already prepared drafts for the replies and added 18 new leads to your active campaigns.</p>
+</header>
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-gutter">
+<!-- Main Column (Needs Attention & Lists) -->
+<div class="lg:col-span-8 space-y-md">
+<!-- Section 1: Needs your attention -->
+<section>
+<div class="mb-4 flex justify-between items-end">
+<div>
+<h3 class="font-headline-lg text-headline-lg text-primary">Needs your attention</h3>
+</div>
+<span class="material-symbols-outlined text-error text-[24px]">warning</span>
+</div>
+<div class="space-y-3">
+<!-- Action Item 1 -->
+<div class="group bg-surface border border-outline rounded p-5 flex flex-col sm:flex-row justify-between sm:items-center gap-4 hover:bg-surface-container transition-colors duration-200">
+<div>
+<h4 class="font-body-lg text-body-lg text-primary mb-1">Restaurant Outreach 2</h4>
+<p class="font-body-md text-body-md text-on-surface-variant">Strategy waiting for 2 days. 43 leads blocked.</p>
+</div>
+<button class="bg-primary text-on-primary font-label-sm text-label-sm py-2 px-4 rounded whitespace-nowrap hover:opacity-90 transition-opacity">
+                                Continue planning
+                            </button>
+</div>
+<!-- Action Item 2 -->
+<div class="group bg-surface border border-outline rounded p-5 flex flex-col sm:flex-row justify-between sm:items-center gap-4 hover:bg-surface-container transition-colors duration-200">
+<div>
+<h4 class="font-body-lg text-body-lg text-primary mb-1">3 prospects replied</h4>
+<p class="font-body-md text-body-md text-on-surface-variant">Two show positive intent. One asking for pricing.</p>
+</div>
+<button class="bg-primary text-on-primary font-label-sm text-label-sm py-2 px-4 rounded whitespace-nowrap hover:opacity-90 transition-colors">
+                                Review replies
+                            </button>
+</div>
+<!-- Action Item 3 -->
+<div class="group bg-surface border border-outline rounded p-5 flex flex-col sm:flex-row justify-between sm:items-center gap-4 hover:bg-surface-container transition-colors duration-200">
+<div>
+<h4 class="font-body-lg text-body-lg text-primary mb-1">Campaign performance dropped</h4>
+<p class="font-body-md text-body-md text-on-surface-variant">Restaurant Outreach response rate fell 28% this week.</p>
+</div>
+<button class="bg-primary text-on-primary font-label-sm text-label-sm py-2 px-4 rounded whitespace-nowrap hover:opacity-90 transition-colors">
+                                Investigate
+                            </button>
+</div>
+</div>
+</section>
+<!-- Secondary Row -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-gutter pt-4">
+<section class="bg-surface border border-outline p-6 rounded"><h3 class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest mb-4">Loqi handled</h3><ul class="space-y-3"><li class="flex items-start gap-3"><span class="material-symbols-outlined text-on-surface-variant text-[18px] mt-0.5">check</span><span class="font-body-md text-body-md text-on-surface">Prepared 6 drafts</span></li><li class="flex items-start gap-3"><span class="material-symbols-outlined text-on-surface-variant text-[18px] mt-0.5">check</span><span class="font-body-md text-body-md text-on-surface">Added 18 qualified leads</span></li><li class="flex items-start gap-3"><span class="material-symbols-outlined text-on-surface-variant text-[18px] mt-0.5">check</span><span class="font-body-md text-body-md text-on-surface">Identified 4 accounts</span></li><li class="flex items-start gap-3"><span class="material-symbols-outlined text-on-surface-variant text-[18px] mt-0.5">check</span><span class="font-body-md text-body-md text-on-surface">Reviewed 23 replies</span></li></ul></section>
+<section class="bg-surface border border-outline p-6 rounded"><h3 class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest mb-4">What changed</h3><ul class="space-y-3"><li class="flex flex-col gap-1 pb-2 border-b border-outline"><span class="font-body-md text-body-md text-on-surface">Response rate increased</span><span class="font-label-sm text-label-sm text-on-surface-variant">Cafe Outreach +14%</span></li><li class="flex flex-col gap-1 pb-2 border-b border-outline"><span class="font-body-md text-body-md text-on-surface">18 new qualified leads</span><span class="font-label-sm text-label-sm text-on-surface-variant">Restaurant Outreach</span></li><li class="flex flex-col gap-1 pb-2"><span class="font-body-md text-body-md text-on-surface">2 campaigns stalled</span></li></ul></section>
+</div>
+</div>
+<!-- Secondary Column (Metrics & Timeline) -->
+<div class="lg:col-span-4 space-y-md lg:mt-xl pt-md lg:pt-2">
+<section class="bg-surface border border-outline p-5 rounded"><h3 class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest mb-4">Upcoming</h3><div class="space-y-4"><div class="flex gap-4"><div class="w-16 flex-shrink-0"><p class="font-label-sm text-label-sm text-on-surface-variant">Tomorrow</p></div><div><p class="font-body-md text-body-md text-on-surface">Restaurant Outreach follow-up</p></div></div><div class="flex gap-4"><div class="w-16 flex-shrink-0"><p class="font-label-sm text-label-sm text-on-surface-variant">Thursday</p></div><div><p class="font-body-md text-body-md text-on-surface-variant">Campaign review</p></div></div></div></section>
+<section class="bg-surface border border-outline p-5 rounded"><h3 class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest mb-4">Workspace health</h3><div class="grid grid-cols-2 gap-4"><div class=""><span class="block font-title-md text-title-md text-primary">30</span><span class="font-label-sm text-label-sm text-on-surface-variant">Active campaigns</span></div><div class=""><span class="block font-title-md text-title-md text-primary">9</span><span class="font-label-sm text-label-sm text-on-surface-variant">Drafts</span></div><div class=""><span class="block font-title-md text-title-md text-primary">14</span><span class="font-label-sm text-label-sm text-on-surface-variant">Stalled</span></div><div class=""><span class="block font-title-md text-title-md text-primary">82%</span><span class="font-label-sm text-label-sm text-on-surface-variant">Lead coverage</span></div></div></section>
+<section class="opacity-50 hover:opacity-100 transition-opacity mt-xl pt-8 border-t border-outline"><h3 class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest mb-4 px-2">Timeline</h3><div class="relative border-l border-outline ml-4 space-y-4 pb-2"><div class="relative pl-4"><div class="absolute left-[calc(-0.25rem-1px)] top-1.5 w-2 h-2 rounded-full bg-outline"></div><p class="font-label-sm text-label-sm text-on-surface-variant">9:42 AM - Prepared 3 reply drafts</p></div><div class="relative pl-4"><div class="absolute left-[calc(-0.25rem-1px)] top-1.5 w-2 h-2 rounded-full bg-outline"></div><p class="font-label-sm text-label-sm text-on-surface-variant">8:15 AM - "Tech Pilots" completed batch send</p></div></div></section></div>
+</div>
+</main>
+</body></html>

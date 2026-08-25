@@ -444,7 +444,7 @@ export default function MissionControlDashboard() {
                 {briefing.greeting || "Good morning"}
               </h1>
               {briefingIntroduction && (
-                <p className="mt-5 text-lg md:text-xl font-serif text-on-surface-variant/75 leading-relaxed">
+                <p className="mt-5 text-lg md:text-xl font-sans text-on-surface-variant/75 leading-relaxed">
                   {briefingIntroduction}
                 </p>
               )}

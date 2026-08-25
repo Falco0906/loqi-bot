@@ -381,7 +381,7 @@ export default function MissionControlDashboard() {
 
           {/* Section 2: Top Priorities */}
           {priorities.length > 0 && (
-            <section className="space-y-4 reveal">
+            <section className="space-y-4">
               <h3 className="text-xs uppercase tracking-widest text-on-surface-variant opacity-60 font-medium">
                 Top Priorities
               </h3>
@@ -395,7 +395,7 @@ export default function MissionControlDashboard() {
 
           {/* Section 3: Waiting On You (ASK_USER) */}
           {waiting.length > 0 && (
-            <section className="space-y-4 reveal">
+            <section className="space-y-4">
               <h3 className="text-xs uppercase tracking-widest text-on-surface-variant opacity-60 font-medium">
                 Waiting On You
               </h3>

@@ -18,7 +18,7 @@ import type { MCIntentionCard, MCHealthSummary, MCLiveActivity, MCTimelineEvent 
 
 function LoadingSkeleton() {
   return (
-    <div className="reading-column py-16 flex flex-col gap-16">
+    <div className="w-full max-w-7xl mx-auto px-6 lg:px-10 py-12 lg:py-16 flex flex-col gap-12">
       {[1, 2, 3, 4].map((i) => (
         <div key={i} className="space-y-4 animate-skeleton-pulse" style={{ animationDelay: `${i * 0.1}s` }}>
           <div className="h-6 w-1/4 bg-surface-high/50 rounded-lg" />
@@ -68,7 +68,7 @@ function IntentionCard({ card }: { card: MCIntentionCard }) {
     "text-on-surface-variant";
 
   return (
-    <div className="bg-surface-lowest ambient-shadow rounded-xl p-6 border border-outline-variant/10 transition-transform hover:-translate-y-0.5 duration-200">
+    <article className="bg-surface-lowest border border-outline-variant/20 rounded-lg px-5 py-5 sm:px-6 transition-colors hover:bg-surface-container-low">
       <div className="flex items-start justify-between mb-3">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
@@ -79,18 +79,18 @@ function IntentionCard({ card }: { card: MCIntentionCard }) {
               {Math.round(card.confidence * 100)}% confidence
             </span>
           </div>
-          <h4 className="text-lg font-serif text-on-surface font-normal">{card.title}</h4>
-          <p className="text-sm text-on-surface-variant mt-1">{card.summary}</p>
+          <h4 className="text-xl font-serif text-on-surface font-normal leading-snug">{card.title}</h4>
+          <p className="text-base font-serif text-on-surface-variant/75 mt-1 leading-relaxed">{card.summary}</p>
         </div>
       </div>
       <EvidencePopover evidence={card.evidence} />
       {card.recommendedAction && (
-        <div className="mt-4 pt-3 border-t border-outline-variant/10">
-          <span className="text-xs text-on-surface-variant/50">Recommended: </span>
+        <div className="mt-4 pt-3 border-t border-outline-variant/10 flex items-center gap-2">
+          <span className="text-[10px] uppercase tracking-widest text-on-surface-variant/45">Recommended</span>
           <span className="text-sm text-primary font-medium">{card.recommendedAction}</span>
         </div>
       )}
-    </div>
+    </article>
   );
 }
 
@@ -105,7 +105,7 @@ function HealthSection({ health }: { health: MCHealthSummary }) {
       <h3 className="text-xs uppercase tracking-widest text-on-surface-variant opacity-60 font-medium">
         Workspace Health
       </h3>
-      <div className="bg-surface-lowest ambient-shadow rounded-xl p-6 border border-outline-variant/10">
+      <div className="bg-surface-lowest rounded-lg p-5 border border-outline-variant/10">
         <div className="flex items-center gap-3 mb-4">
           <span className={`text-lg font-serif font-normal ${color}`}>
             {health.overallHealth.replace(/_/g, " ")}
@@ -160,30 +160,18 @@ function HealthSection({ health }: { health: MCHealthSummary }) {
 
 function TimelineSection({ events }: { events: MCTimelineEvent[] }) {
   if (events.length === 0) return null;
-  const categoryIcon: Record<string, string> = {
-    campaign: "campaign",
-    draft: "description",
-    outreach: "send",
-    intention: "psychiatry",
-    event: "circle",
-    search: "travel_explore",
-    provider: "settings_cloud",
-    system: "settings",
-  };
   return (
-    <section className="space-y-4">
+    <section className="space-y-4 pt-2 border-t border-outline-variant/10">
       <h3 className="text-xs uppercase tracking-widest text-on-surface-variant opacity-60 font-medium">
         Timeline
       </h3>
-      <div className="space-y-1">
+      <div className="relative ml-1 border-l border-outline-variant/10 space-y-0">
         {events.slice(0, 10).map((event) => (
-          <div key={event.id} className="flex items-center gap-4 py-3 border-b border-outline-variant/10 group">
-            <span className="material-symbols-outlined text-[16px] text-on-surface-variant/30 group-hover:text-primary transition-colors">
-              {categoryIcon[event.category] || "circle"}
-            </span>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm text-on-surface truncate">{event.description}</p>
-              <p className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider">
+          <div key={event.id} className="relative pl-4 pb-4 last:pb-0">
+            <span className="absolute -left-[3px] top-1.5 w-1.5 h-1.5 rounded-full bg-outline-variant/60" />
+            <div className="min-w-0">
+              <p className="text-sm text-on-surface-variant/80 leading-relaxed">{event.description}</p>
+              <p className="text-[10px] text-on-surface-variant/40 uppercase tracking-wider mt-1">
                 {event.actor} &middot; {event.category}
               </p>
             </div>
@@ -197,7 +185,7 @@ function TimelineSection({ events }: { events: MCTimelineEvent[] }) {
 function HandledSection({ cards }: { cards: MCIntentionCard[] }) {
   if (cards.length === 0) return null;
   return (
-    <section className="bg-surface-lowest border border-outline-variant/10 rounded-xl p-5 sm:p-6">
+    <section className="bg-surface-lowest border border-outline-variant/10 rounded-lg p-5 sm:p-6">
       <h3 className="text-xs uppercase tracking-widest text-on-surface-variant/60 font-medium mb-5">
         Loqi Handled
       </h3>
@@ -219,7 +207,7 @@ function HandledSection({ cards }: { cards: MCIntentionCard[] }) {
 function WhatChangedSection({ activity }: { activity: MCLiveActivity[] }) {
   if (activity.length === 0) return null;
   return (
-    <section className="bg-surface-lowest border border-outline-variant/10 rounded-xl p-5 sm:p-6">
+    <section className="bg-surface-lowest border border-outline-variant/10 rounded-lg p-5 sm:p-6">
       <h3 className="text-xs uppercase tracking-widest text-on-surface-variant/60 font-medium mb-5">
         What Changed
       </h3>
@@ -352,40 +340,38 @@ export default function MissionControlDashboard() {
     ...priorities,
     ...waiting.filter((card) => !priorities.some((priority) => priority.id === card.id)),
   ];
+  const briefingIntroduction = briefing
+    ? briefing.overallSummary || briefing.lines.join(" ")
+    : "";
 
   return (
     <WorkspaceContainer>
       <AppPage>
-        <div className="w-full max-w-7xl mx-auto py-12 lg:py-16 px-6 lg:px-10 flex flex-col gap-12 lg:gap-16 pb-48">
+        <div className="w-full max-w-7xl mx-auto py-12 lg:py-16 px-6 lg:px-10 pb-48">
 
           {/* The briefing content is rendered in one stable pass.  The former
               NarrativeBriefing component remains disabled because it owns the
               staged/progressive animation, not this authoritative content. */}
           {briefing && (
-            <section className="max-w-3xl space-y-4">
-              <h1 className="text-4xl md:text-5xl lg:text-[3.5rem] font-serif text-on-surface leading-[1.08] tracking-tight font-normal">
+            <header className="max-w-3xl mb-12 lg:mb-16">
+              <h1 className="text-4xl md:text-5xl lg:text-[3.75rem] font-serif text-on-surface leading-[1.04] tracking-tight font-normal">
                 {briefing.greeting || "Good morning"}
               </h1>
-              <div className="space-y-2">
-                {briefing.lines.map((line, index) => (
-                  <p
-                    key={`${index}-${line}`}
-                    className="text-lg md:text-xl font-serif text-on-surface-variant/75 leading-relaxed"
-                  >
-                    {line}
-                  </p>
-                ))}
-              </div>
+              {briefingIntroduction && (
+                <p className="mt-5 text-lg md:text-xl font-serif text-on-surface-variant/75 leading-relaxed">
+                  {briefingIntroduction}
+                </p>
+              )}
               {briefing.suggestion && (
-                <p className="text-sm text-primary/85 font-medium pt-1">
+                <p className="text-sm text-primary/85 font-medium mt-4">
                   {briefing.suggestion}
                 </p>
               )}
-            </section>
+            </header>
           )}
 
           {initialResearchStatus && (
-            <section className="max-w-3xl space-y-4">
+            <section className="max-w-3xl space-y-4 mb-10 lg:mb-12">
               <div className="bg-surface-container-low p-5 rounded-xl border border-outline-variant/10">
                 <div className="flex items-center gap-3 mb-3">
                   <div className={`w-2 h-2 rounded-full ${initialResearchStatus === "failed" ? "bg-error" : initialResearchStatus === "completed" ? "bg-success" : "bg-primary animate-pulse"}`} />
@@ -419,8 +405,8 @@ export default function MissionControlDashboard() {
             </section>
           )}
 
-          <div className={`grid grid-cols-1 gap-10 lg:gap-12 ${copilotOpen ? "xl:grid-cols-1" : "xl:grid-cols-[minmax(0,1.65fr)_minmax(18rem,0.85fr)]"}`}>
-            <div className="space-y-10 lg:space-y-12 min-w-0">
+          <div className={copilotOpen ? "flex flex-col gap-10 lg:gap-12" : "grid grid-cols-1 xl:grid-cols-12 gap-10 xl:gap-8 2xl:gap-12"}>
+            <main className={copilotOpen ? "space-y-10 lg:space-y-12 min-w-0" : "xl:col-span-8 space-y-10 lg:space-y-12 min-w-0"}>
               {attentionCards.length > 0 && (
                 <section className="space-y-5">
                   <div className="flex items-end justify-between gap-4">
@@ -436,16 +422,16 @@ export default function MissionControlDashboard() {
               )}
 
               {(handled.length > 0 || liveActivity.length > 0) && (
-                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 lg:gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-6">
                   <HandledSection cards={handled} />
                   <WhatChangedSection activity={liveActivity} />
                 </div>
               )}
-            </div>
+            </main>
 
-            <aside className="space-y-8 lg:space-y-10 min-w-0">
+            <aside className={copilotOpen ? "space-y-8 lg:space-y-10 min-w-0" : "xl:col-span-4 xl:pt-16 space-y-8 lg:space-y-10 min-w-0"}>
               {upcoming.length > 0 && (
-                <section className="bg-surface-lowest border border-outline-variant/10 rounded-xl p-5 sm:p-6">
+                <section className="bg-surface-lowest border border-outline-variant/10 rounded-lg p-5 sm:p-6">
                   <h3 className="text-xs uppercase tracking-widest text-on-surface-variant/60 font-medium mb-5">Upcoming</h3>
                   <div className="space-y-4">
                     {upcoming.slice(0, 4).map((card) => (

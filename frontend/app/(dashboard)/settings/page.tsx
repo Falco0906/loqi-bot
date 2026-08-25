@@ -167,7 +167,7 @@ export default function SettingsPage() {
     <div className="relative min-h-full overflow-hidden">
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute bottom-[-0.12em] left-1/2 z-0 -translate-x-1/2 select-none whitespace-nowrap font-heading text-[clamp(12rem,36vw,34rem)] font-semibold leading-none tracking-[-0.09em] text-on-surface/[0.035] opacity-70 [-webkit-text-stroke:1px_rgba(255,255,255,0.1)]"
+        className="pointer-events-none absolute bottom-[-0.28em] left-1/2 z-0 -translate-x-1/2 select-none whitespace-nowrap font-heading text-[clamp(12rem,36vw,34rem)] font-semibold leading-none tracking-[-0.09em] text-on-surface/[0.035] opacity-70 [-webkit-text-stroke:1px_rgba(255,255,255,0.1)]"
       >
         Beta
       </div>

@@ -216,8 +216,8 @@ export default function CopilotPanel({ width = 440, variant = "sidebar" }: { wid
           </div>
         )}
       </div>
-      <button type="button" onClick={startNewChat} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/20 bg-white/10 text-white shadow-sm transition-colors hover:bg-white/20" title="New chat" aria-label="New chat">
-        <Icon name="add" className="text-xl text-white" />
+      <button type="button" onClick={startNewChat} className="flex h-8 w-8 shrink-0 items-center justify-center text-white transition-colors hover:text-white/70" title="New chat" aria-label="New chat">
+        <span aria-hidden="true" className="text-2xl font-light leading-none">+</span>
       </button>
     </header>
   );

@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import WorkspaceContainer from "../../../components/layout/WorkspaceContainer";
-import AppPage from "../../../components/primitives/AppPage";
 import EmptyState from "../../../components/shared/EmptyState";
 import Icon from "../../../components/shared/Icon";
 import { toast } from "../../../components/shared/Toast";
@@ -366,26 +365,26 @@ export default function KnowledgePage() {
 
   if (loading) {
     return (
-      <WorkspaceContainer><AppPage><div className="mx-auto w-full max-w-5xl space-y-6 py-8 animate-skeleton-pulse">
+      <WorkspaceContainer><div className="h-full overflow-y-auto"><div className="w-full space-y-6 py-8 animate-skeleton-pulse">
         <div className="h-10 w-48 rounded-lg bg-surface-high/50" />
         <div className="h-4 w-96 max-w-full rounded bg-surface-high/50" />
         {[1, 2, 3].map((key) => <div key={key} className="h-28 rounded-xl bg-surface-lowest" />)}
-      </div></AppPage></WorkspaceContainer>
+      </div></div></WorkspaceContainer>
     );
   }
 
   if (error) {
     return (
-      <WorkspaceContainer><AppPage><div className="mx-auto w-full max-w-5xl py-16">
+      <WorkspaceContainer><div className="h-full overflow-y-auto"><div className="w-full py-16">
         <EmptyState icon="cloud_off" title="Knowledge is unavailable" description={error} action={sessionToken ? { label: "Retry", onClick: () => void load(sessionToken) } : undefined} />
-      </div></AppPage></WorkspaceContainer>
+      </div></div></WorkspaceContainer>
     );
   }
 
   return (
     <WorkspaceContainer>
-      <AppPage className="overflow-y-auto">
-        <div className="mx-auto w-full max-w-5xl space-y-8 py-4 pb-16">
+      <div className="h-full overflow-y-auto">
+        <div className="w-full space-y-8 py-4 pb-16">
           <header className="flex flex-col gap-5 border-b border-outline-variant/10 pb-7 md:flex-row md:items-end md:justify-between">
             <div>
               <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">Knowledge foundation</p>
@@ -434,7 +433,7 @@ export default function KnowledgePage() {
             </section>
           </div>
         </div>
-      </AppPage>
+      </div>
 
       {itemModal !== false && <Modal title={itemModal ? "Edit Knowledge" : "Add Knowledge"} onClose={() => setItemModal(false)}><form onSubmit={saveItem} className="space-y-4"><TypeSelect label="Category" value={itemForm.category} options={CATEGORY_CONFIG.map(({ key, label }) => ({ value: key, label }))} onChange={(value) => setItemForm((form) => ({ ...form, category: value }))} /><TextField label="Title" value={itemForm.title} onChange={(value) => setItemForm((form) => ({ ...form, title: value }))} placeholder="e.g. Core positioning" required /><TextField label="Summary" value={itemForm.summary} onChange={(value) => setItemForm((form) => ({ ...form, summary: value }))} placeholder="A concise explanation future agents can use" multiline /><TextField label="Structured content (JSON)" value={itemForm.content} onChange={(value) => setItemForm((form) => ({ ...form, content: value }))} placeholder={'{"products": ["..."]}'} multiline /><TextField label="Tags" value={itemForm.tags} onChange={(value) => setItemForm((form) => ({ ...form, tags: value }))} placeholder="product, positioning" /><TypeSelect label="Provenance" value={itemForm.source_type} options={ITEM_SOURCE_TYPES} onChange={(value) => setItemForm((form) => ({ ...form, source_type: value }))} /><TextField label="Source ID / reference" value={itemForm.source_id} onChange={(value) => setItemForm((form) => ({ ...form, source_id: value }))} placeholder="Optional source ID" />{formError && <p className="text-xs text-error">{formError}</p>}<div className="flex items-center justify-between gap-3 pt-2">{itemModal ? <button type="button" onClick={() => void removeItem()} className="text-xs font-semibold text-error hover:underline">Archive</button> : <span /> }<div className="flex gap-2"><button type="button" onClick={() => setItemModal(false)} className="rounded-lg border border-outline-variant/20 px-4 py-2 text-xs font-semibold text-on-surface-variant">Cancel</button><button type="submit" disabled={saving} className="rounded-lg bg-primary px-4 py-2 text-xs font-bold text-on-primary disabled:opacity-50">{saving ? "Saving..." : itemModal ? "Save changes" : "Add Knowledge"}</button></div></div></form></Modal>}
 

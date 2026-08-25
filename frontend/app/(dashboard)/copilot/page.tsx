@@ -13,7 +13,7 @@ import CopilotPanel from "../../../components/copilot/CopilotPanel";
 import { usePageTitle } from "../../../hooks/usePageTitle";
 
 export default function CopilotPage() {
-  usePageTitle("Copilot");
+  usePageTitle("AI Assistant");
 
   // The panel normally renders as a fixed side column; on this page it fills
   // the workspace instead. The layout hides the duplicate sidebar instance

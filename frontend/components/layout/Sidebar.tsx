@@ -216,18 +216,18 @@ export default function Sidebar({
                 ? "border-primary/25 bg-surface-container-high/70 text-on-surface"
                 : "border-outline-variant/15 bg-surface-container-high/35 text-on-surface-variant hover:border-outline-variant/30 hover:bg-surface-container-high/55 hover:text-on-surface"
             }`}
-            aria-label="Open Copilot page"
+            aria-label="Open AI Assistant page"
           >
             <Icon name="smart_toy" className={`shrink-0 text-base ${copilotActive ? "text-primary" : "text-on-surface-variant"}`} />
-            <span>Copilot</span>
+            <span>AI Assistant</span>
           </Link>
         )}
         {collapsed && (
           <div className="mt-4 flex justify-center">
             <Link
               href="/copilot"
-              title="Open Copilot"
-              aria-label="Open Copilot page"
+              title="Open AI Assistant"
+              aria-label="Open AI Assistant page"
               className={`relative w-9 h-9 grid place-items-center rounded-lg transition-all active:scale-95 ${
                 copilotActive
                   ? "bg-surface-container-high/70 text-primary"

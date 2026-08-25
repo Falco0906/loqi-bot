@@ -1,19 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import BetaAccessModal from "../shared/BetaAccessModal";
-
-const BETA_NOTICE_KEY = "loqi_beta_access_acknowledged";
 
 export default function AuthBetaGate({ children }: { children: React.ReactNode }) {
   const [showBetaNotice, setShowBetaNotice] = useState(false);
+  const pathname = usePathname();
 
   useEffect(() => {
-    setShowBetaNotice(window.localStorage.getItem(BETA_NOTICE_KEY) !== "true");
-  }, []);
+    setShowBetaNotice(true);
+  }, [pathname]);
 
   function acknowledgeBetaNotice() {
-    window.localStorage.setItem(BETA_NOTICE_KEY, "true");
     setShowBetaNotice(false);
   }
 

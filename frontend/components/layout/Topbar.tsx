@@ -16,7 +16,7 @@ export const pageConfig: Record<string, { title: string; searchPlaceholder: stri
   "/settings": { title: "Settings", searchPlaceholder: "Search..." },
   "/support": { title: "Support", searchPlaceholder: "Search..." },
   "/draft": { title: "Review", searchPlaceholder: "Search..." },
-  "/copilot": { title: "Copilot", searchPlaceholder: "Ask Copilot..." },
+  "/copilot": { title: "AI Assistant", searchPlaceholder: "Search..." },
 };
 
 export default function Topbar() {

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import WorkspaceContainer from "../layout/WorkspaceContainer";
 import { useData } from "../../lib/hooks/use-data";
 import {
@@ -30,30 +31,52 @@ function LoadingSkeleton() {
   );
 }
 
-function EvidencePopover({ evidence }: { evidence: MCIntentionCard["evidence"] }) {
+type EvidenceRecord = Record<string, unknown>;
+
+function isEvidenceRecord(value: unknown): value is EvidenceRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function EvidencePopover({ evidence }: { evidence: unknown }) {
   const [open, setOpen] = useState(false);
-  if (!evidence || evidence.length === 0) return null;
+  const items = Array.isArray(evidence) ? evidence.filter(isEvidenceRecord) : [];
+  if (items.length === 0) return null;
+
+  const toggle = (event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    setOpen((current) => !current);
+  };
+
   return (
-    <div className="relative mt-2">
+    <div className="relative mt-2" onClick={(event) => event.stopPropagation()}>
       <button
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={toggle}
+        aria-expanded={open}
         className="text-xs text-on-surface-variant/50 hover:text-primary transition-colors underline decoration-dotted underline-offset-2"
       >
         Why am I seeing this?
       </button>
       {open && (
         <div className="absolute top-6 left-0 z-10 bg-surface-lowest border border-outline-variant/20 rounded-lg p-4 shadow-lg min-w-[240px] space-y-2">
-          {evidence.map((e, i) => (
+          {items.map((e, i) => {
+            const reasonCode = typeof e.reason_code === "string" ? e.reason_code : "workspace signal";
+            const confidence = typeof e.confidence === "number" && Number.isFinite(e.confidence)
+              ? e.confidence
+              : null;
+            const source = typeof e.source === "string" && e.source ? e.source : "workspace";
+            const detail = typeof e.detail === "string" ? e.detail : "";
+            return (
             <div key={i} className="text-xs text-on-surface-variant space-y-0.5">
-              <span className="font-medium text-on-surface">{(e.reason_code || "workspace signal").replace(/_/g, " ")}</span>
+              <span className="font-medium text-on-surface">{reasonCode.replace(/_/g, " ")}</span>
               <div className="flex gap-2">
-                {Number.isFinite(e.confidence) && <span>Confidence: {Math.round(e.confidence * 100)}%</span>}
-                <span>Source: {e.source}</span>
+                {confidence !== null && <span>Confidence: {Math.round(confidence * 100)}%</span>}
+                <span>Source: {source}</span>
               </div>
-              {e.detail && <p className="italic opacity-60">{e.detail}</p>}
+              {detail && <p className="italic opacity-60">{detail}</p>}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -61,25 +84,38 @@ function EvidencePopover({ evidence }: { evidence: MCIntentionCard["evidence"] }
 }
 
 function IntentionCard({ card }: { card: MCIntentionCard }) {
+  const router = useRouter();
   const priorityColor =
     card.priority === "critical" ? "text-error" :
     card.priority === "high" ? "text-warning" :
     "text-on-surface-variant";
 
-  const isGenericTitle = new Set(["Recommend Action", "Ask User", "Auto Handle", "Follow Up", "Notify"]).has(card.title);
-  const title = isGenericTitle && card.recommendedAction ? card.recommendedAction : card.title;
-  const href = card.link.startsWith("/") && !card.link.startsWith("//") ? card.link : "";
+  const title = card.title;
+  const href = typeof card.link === "string" && card.link.startsWith("/") && !card.link.startsWith("//")
+    ? card.link
+    : "";
+  const navigate = () => {
+    if (href) router.push(href);
+  };
+  const onCardClick = (event: MouseEvent<HTMLElement>) => {
+    if (!href || (event.target as HTMLElement).closest("a, button")) return;
+    navigate();
+  };
+  const onCardKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (!href || event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    navigate();
+  };
 
   return (
-    <article className={`relative bg-surface-lowest border border-outline-variant/20 rounded-lg px-5 py-5 sm:px-6 transition-colors ${href ? "hover:bg-surface-container-low cursor-pointer" : ""}`}>
-      {href && (
-        <Link
-          href={href}
-          aria-label={`${card.recommendedAction || title}: ${title}`}
-          className="absolute inset-0 z-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
-        />
-      )}
-      <div className={`relative ${href ? "z-[1] pointer-events-none" : ""}`}>
+    <article
+      className={`bg-surface-lowest border border-outline-variant/20 rounded-lg px-5 py-5 sm:px-6 transition-colors ${href ? "hover:bg-surface-container-low cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70" : ""}`}
+      onClick={onCardClick}
+      onKeyDown={onCardKeyDown}
+      role={href ? "link" : undefined}
+      tabIndex={href ? 0 : undefined}
+      aria-label={href ? `${card.recommendedAction || title}: ${title}` : undefined}
+    >
       <div className="flex items-start justify-between mb-3">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
@@ -94,15 +130,17 @@ function IntentionCard({ card }: { card: MCIntentionCard }) {
           <p className="text-base font-serif text-on-surface-variant/75 mt-1 leading-relaxed">{card.summary}</p>
         </div>
       </div>
-      <div className={href ? "pointer-events-auto relative z-10" : ""}>
-        <EvidencePopover evidence={card.evidence} />
-      </div>
-      {card.recommendedAction && !isGenericTitle && (
-        <div className="mt-4 pt-3 border-t border-outline-variant/10 flex items-center gap-2">
+      <EvidencePopover evidence={card.evidence} />
+      {card.recommendedAction && (
+        <div className="mt-4 pt-3 border-t border-outline-variant/10 flex items-center justify-between gap-3">
           {href ? (
-            <span className="inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-on-primary">
+            <Link
+              href={href}
+              onClick={(event) => event.stopPropagation()}
+              className="inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-on-primary transition-colors hover:bg-primary/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+            >
               {card.recommendedAction} <span aria-hidden="true" className="ml-1">→</span>
-            </span>
+            </Link>
           ) : (
             <>
               <span className="text-[10px] uppercase tracking-widest text-on-surface-variant/45">Recommended</span>
@@ -111,7 +149,6 @@ function IntentionCard({ card }: { card: MCIntentionCard }) {
           )}
         </div>
       )}
-      </div>
     </article>
   );
 }

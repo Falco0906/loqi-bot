@@ -210,9 +210,14 @@ export default function Sidebar({
             className={`${collapsed ? "w-7 h-7" : "w-6 h-6"} shrink-0 rounded-md`}
           />
           {!collapsed && (
-            <span className="font-serif text-primary tracking-tight leading-none text-headline-sm">
-              Loqi
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="font-serif text-primary tracking-tight leading-none text-headline-sm">
+                Loqi
+              </span>
+              <span className="rounded-full border border-primary/20 bg-primary/5 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-primary/60">
+                Beta
+              </span>
+            </div>
           )}
         </div>
         {!collapsed && (

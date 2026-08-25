@@ -593,9 +593,14 @@ function ConversationalDiscovery({
     <>
       <header className="fixed top-0 left-0 w-full z-50 bg-[#fdf8f8]/80 backdrop-blur-md px-6 py-6 flex justify-between items-center">
         <div className="flex items-center space-x-3">
-          <span className="font-['Libre_Caslon_Text'] text-[24px] leading-[1.4] font-bold text-[#000000] tracking-tight">
-            Loqi
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="font-['Libre_Caslon_Text'] text-[24px] leading-[1.4] font-bold text-[#000000] tracking-tight">
+              Loqi
+            </span>
+            <span className="rounded-full border border-[#000000]/15 bg-[#000000]/[0.03] px-1.5 py-0.5 font-['Geist'] text-[9px] leading-none font-semibold uppercase tracking-[0.12em] text-[#444748]">
+              Beta
+            </span>
+          </div>
           <span className="h-4 w-px bg-[#c4c7c7]/40" />
           <span className="font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] font-medium uppercase tracking-widest text-[#444748]">
             Continuous Strategy

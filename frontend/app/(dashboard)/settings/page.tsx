@@ -164,7 +164,7 @@ export default function SettingsPage() {
   const showConnect = shouldShowConnectButton(providers);
 
   return (
-    <div className="relative min-h-full overflow-hidden">
+    <div className="relative -mb-6 min-h-[calc(100%+1.5rem)] overflow-hidden lg:-mb-8 lg:min-h-[calc(100%+2rem)]">
       <div
         aria-hidden="true"
         className="pointer-events-none absolute bottom-[-0.28em] left-1/2 z-0 -translate-x-1/2 select-none whitespace-nowrap font-heading text-[clamp(12rem,36vw,34rem)] font-semibold leading-none tracking-[-0.09em] text-on-surface/[0.035] opacity-70 [-webkit-text-stroke:1px_rgba(255,255,255,0.1)]"

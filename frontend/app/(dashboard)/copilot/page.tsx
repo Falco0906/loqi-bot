@@ -19,7 +19,7 @@ export default function CopilotPage() {
   // the workspace instead. The layout hides the duplicate sidebar instance
   // for /copilot (see DashboardLayout isCopilotPage).
   return (
-    <div className="h-[calc(100vh-4rem)] w-full min-w-0 overflow-hidden" data-copilot-page>
+    <div className="h-full w-full min-w-0 overflow-hidden" data-copilot-page>
       <CopilotPanel variant="page" />
     </div>
   );

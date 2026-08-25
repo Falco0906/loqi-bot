@@ -61,6 +61,7 @@ export default function Sidebar({
   const pathname = usePathname();
   const { user } = useAuth();
   const dragState = useRef<{ startX: number; fromExpanded: boolean } | null>(null);
+  const copilotActive = pathname.startsWith("/copilot");
 
   const displayName =
     user && "display_name" in user && user.display_name
@@ -210,10 +211,14 @@ export default function Sidebar({
         {!collapsed && (
           <Link
             href="/copilot"
-            className="mt-4 flex h-9 w-full items-center gap-2 rounded-lg border border-outline-variant/20 bg-surface-lowest px-3 text-left text-sm text-on-surface-variant/70 transition-colors hover:border-primary/35 hover:text-on-surface"
+            className={`mt-4 flex h-9 w-full items-center gap-2 rounded-lg border px-3 text-left text-sm transition-colors ${
+              copilotActive
+                ? "border-primary/25 bg-surface-container-high/70 text-on-surface"
+                : "border-outline-variant/15 bg-surface-container-high/35 text-on-surface-variant hover:border-outline-variant/30 hover:bg-surface-container-high/55 hover:text-on-surface"
+            }`}
             aria-label="Open Copilot page"
           >
-            <Icon name="smart_toy" className="shrink-0 text-base text-primary/70" />
+            <Icon name="smart_toy" className={`shrink-0 text-base ${copilotActive ? "text-primary" : "text-on-surface-variant"}`} />
             <span>Copilot</span>
           </Link>
         )}
@@ -223,7 +228,11 @@ export default function Sidebar({
               href="/copilot"
               title="Open Copilot"
               aria-label="Open Copilot page"
-              className="relative w-9 h-9 grid place-items-center rounded-lg text-on-surface-variant/60 hover:text-primary hover:bg-surface-container-high/60 transition-all active:scale-95"
+              className={`relative w-9 h-9 grid place-items-center rounded-lg transition-all active:scale-95 ${
+                copilotActive
+                  ? "bg-surface-container-high/70 text-primary"
+                  : "text-on-surface-variant/60 hover:text-on-surface hover:bg-surface-container-high/60"
+              }`}
             >
               <Icon name="smart_toy" className="text-xl" />
             </Link>

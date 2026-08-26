@@ -103,6 +103,7 @@ class _CompletionTracker:
     def __init__(self, svc: "AuthService") -> None:
         self._svc = svc
         self._user_ids: list[str] = []
+        self._legacy_user_ids: list[str] = []
         self._credential_ids: list[str] = []
         self._org_ids: list[str] = []
         self._membership_ids: list[str] = []
@@ -113,6 +114,9 @@ class _CompletionTracker:
 
     def record_user(self, user_id: str) -> None:
         self._user_ids.append(user_id)
+
+    def record_legacy_user(self, user_id: str) -> None:
+        self._legacy_user_ids.append(user_id)
 
     def record_credential(self, credential_id: str) -> None:
         self._credential_ids.append(credential_id)
@@ -176,6 +180,12 @@ class _CompletionTracker:
         for uid in reversed(self._user_ids):
             try:
                 await svc._user._user_repo.delete(uid)
+            except Exception:  # noqa: BLE001
+                pass
+        for uid in reversed(self._legacy_user_ids):
+            try:
+                from services.supabase import delete_legacy_user_bridge
+                await asyncio.to_thread(delete_legacy_user_bridge, uid)
             except Exception:  # noqa: BLE001
                 pass
         if self._reg_session_snapshot:
@@ -243,6 +253,38 @@ class AuthService:
         duplicate-account creation via case variants).
         """
         return (email or "").strip().lower()
+
+    async def _provision_legacy_user_bridge(
+        self, user: User, tracker: _CompletionTracker | None = None,
+    ) -> None:
+        """Preserve the shared identity id in the legacy workflow user table.
+
+        ``identity_users`` is the account aggregate of record, but jobs and a
+        few older workflow tables still hold a foreign key to ``users(id)``.
+        A successful registration must establish both rows with the *same*
+        UUID before it can create memberships, workspaces, or sessions.
+        """
+        from services.persistence.config import (
+            RepositoryProvider,
+            get_repository_provider,
+        )
+
+        # In-memory lifecycle tests and local non-durable development do not
+        # have the legacy job table. Production Supabase registration must not
+        # continue without this bridge.
+        if get_repository_provider() != RepositoryProvider.SUPABASE:
+            return
+
+        from services.supabase import ensure_legacy_user_bridge_with_status
+        row, created = await asyncio.to_thread(
+            ensure_legacy_user_bridge_with_status,
+            user.id,
+            user.display_name,
+        )
+        if row is None or str(row.get("id") or "") != user.id:
+            raise RuntimeError("Could not provision the workflow user record")
+        if created and tracker is not None:
+            tracker.record_legacy_user(user.id)
 
     async def _reclaim_abandoned_registration(self, email: str) -> None:
         """Reclaim an email blocked only by expired abandoned registration
@@ -414,6 +456,11 @@ class AuthService:
                 email_identity = linked_ei
                 events.append(user_event)
 
+            # 1b. The job/workflow bridge must exist before any durable
+            # organization, workspace, or authenticated session can be
+            # created for this account.
+            await self._provision_legacy_user_bridge(user, tracker)
+
             # 2. Ensure the verified email identity is linked to this user
             # (UPDATE, never INSERT — no duplicate email identity).
             if email_identity.user_id != user.id:
@@ -503,6 +550,8 @@ class AuthService:
         user = await self._user.get_user(reg_session.user_id)
         org = await self._org.get_organization(reg_session.organization_id)
 
+        await self._provision_legacy_user_bridge(user)
+
         session, session_event = await self._session_svc.create_session(
             user_id=user.id,
             organization_id=org.id,
@@ -540,6 +589,9 @@ class AuthService:
             raise InvalidCredentialsException("No active organization membership")
 
         org_id = active_memberships[0].organization_id
+
+        user = await self._user.get_user(user_id)
+        await self._provision_legacy_user_bridge(user)
 
         session, session_event = await self._session_svc.create_session(
             user_id=user_id,
@@ -599,6 +651,7 @@ class AuthService:
                 is_new_user = True
 
         await self._sync_external_identity(user.id, external_dto)
+        await self._provision_legacy_user_bridge(user)
 
         if is_new_user:
             org, membership, org_event = await self._org.create_organization(

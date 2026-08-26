@@ -3536,6 +3536,8 @@ async def create_web_session(payload: CreateWebSessionRequest, request: Request)
                 # session rather than failing the whole bootstrap request.
                 user_id = None
                 canonical_session_id = ""
+        if user_id:
+            await _ensure_authenticated_web_user_bridge(user_id)
         result = await asyncio.to_thread(
             engine.create_web_session,
             display_name=payload.display_name,
@@ -3596,6 +3598,8 @@ async def post_web_session_message(
             except HTTPException:
                 user_id = None
                 canonical_session_id = ""
+        if user_id:
+            await _ensure_authenticated_web_user_bridge(user_id)
         created = engine.create_web_session(
             display_name="web-user",
             user_id=user_id,
@@ -6226,6 +6230,46 @@ def _copilot_tool_failure_reason(tool_name: str) -> str:
     return f"{tool_name} could not be completed. Please try again."
 
 
+async def _ensure_authenticated_web_user_bridge(user_id: str) -> None:
+    """Provision the legacy job/workflow user row for an authenticated web user.
+
+    The Identity platform is authoritative for authentication and owns
+    ``identity_users``.  Some pre-existing durable workflow tables still use
+    ``users(id)`` foreign keys, so web-session creation must establish the
+    same-id bridge before exposing that identity to the web workflow surface.
+    This is intentionally outside Discovery: every authenticated web session
+    receives the invariant, while anonymous sessions retain their existing
+    isolated behaviour.
+    """
+    canonical_id = str(user_id or "").strip()
+    if not canonical_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    display_name = ""
+    try:
+        from services.identity.api import get_auth_user_service
+        user_service = get_auth_user_service()
+        if user_service is not None:
+            identity_user = await user_service.get_user(canonical_id)
+            display_name = str(identity_user.display_name or "")
+    except Exception as error:  # noqa: BLE001 -- bridge can use a safe fallback name
+        log.warning(
+            "legacy_user_bridge_identity_lookup_failed user_id=%s error_type=%s",
+            canonical_id, type(error).__name__,
+        )
+
+    from services.supabase import ensure_legacy_user_bridge
+    row = await asyncio.to_thread(
+        ensure_legacy_user_bridge, canonical_id, display_name,
+    )
+    if row is None or str(row.get("id") or "") != canonical_id:
+        log.error("legacy_user_bridge_failed user_id=%s", canonical_id)
+        raise HTTPException(
+            status_code=503,
+            detail="Authenticated user provisioning is temporarily unavailable",
+        )
+
+
 async def _resolve_session_context(request: Request) -> tuple[str, str]:
     """Return ``(owner_id, web_session_token)`` from the Authorization header.
 
@@ -6246,10 +6290,15 @@ async def _resolve_session_context(request: Request) -> tuple[str, str]:
     try:
         from services.identity.api import get_authenticated_user_id
         user_id = await get_authenticated_user_id(request)
-        if user_id:
-            return str(user_id), token
     except HTTPException:
-        pass
+        user_id = ""
+    if user_id:
+        resolved_id = str(user_id)
+        # Provisioning failures are deliberately NOT treated as an invalid
+        # token.  Returning the explicit 503 keeps the authenticated caller
+        # from silently falling through to an unrelated web-session identity.
+        await _ensure_authenticated_web_user_bridge(resolved_id)
+        return resolved_id, token
     # PR-2B: this resolver previously fetched the FULL session summary
     # (~9-10 Supabase queries) and used only ``user_id``. The minimal cached
     # identity serves the same decision with 2-4 queries at most, and a 15s
@@ -6267,8 +6316,11 @@ async def _resolve_session_context(request: Request) -> tuple[str, str]:
                 raise HTTPException(
                     status_code=401, detail="Invalid or expired session",
                 ) from exc
+            await _ensure_authenticated_web_user_bridge(binding.canonical_user_id)
             return binding.canonical_user_id, token
-        return str(identity["user_id"]), token
+        resolved_id = str(identity["user_id"])
+        await _ensure_authenticated_web_user_bridge(resolved_id)
+        return resolved_id, token
     raise HTTPException(status_code=401, detail="Invalid or expired session")
 
 

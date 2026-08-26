@@ -51,10 +51,10 @@ def authenticated_session(client, monkeypatch):
 
     Anonymous sessions only exist in the legacy ``users`` table, so
     ``workspaces.owner_user_id`` (FK → identity_users) can never be satisfied
-    for them and no discovery can be created. The product binds authenticated
-    sessions to identity users at session creation; mirror that here by
-    seeding both rows (legacy users + identity_users) with the same id and
-    resolving auth through the same hook the endpoint uses.
+    for them and no discovery can be created. The product must bridge an
+    authenticated identity into the legacy ``users`` table at web-session
+    bootstrap before the job engine's ``jobs.user_id`` foreign key is used.
+    Seed only the identity row here so this test exercises that real bridge.
     """
     from uuid import uuid4
 
@@ -67,12 +67,6 @@ def authenticated_session(client, monkeypatch):
         "id": user_id,
         "display_name": "Discovery Test",
     }).execute()
-    db.table("users").insert({
-        "id": user_id,
-        "telegram_id": f"web:test-{user_id}",
-        "username": "Discovery Test",
-    }).execute()
-
     async def fake_auth(request):
         return user_id
 

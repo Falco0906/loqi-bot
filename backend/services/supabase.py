@@ -220,9 +220,24 @@ def get_or_create_oauth_user(
             )
             identity_rows = getattr(identity_result, "data", None) or []
             if identity_rows:
-                user = get_user(str(identity_rows[0].get("user_id", "")))
+                identity_user_id = str(identity_rows[0].get("user_id", ""))
+                user = get_user(identity_user_id)
                 if user:
                     return user, False
+                # Email/password signup creates identity_users first.  When
+                # Google is later connected for that same email, retain that
+                # exact identity UUID rather than falling through to a new
+                # provider-only legacy user row.
+                bridged = ensure_legacy_user_bridge(
+                    identity_user_id,
+                    username=username or (email.split("@", 1)[0] if email else provider),
+                )
+                if bridged:
+                    return bridged, False
+                # The identity already exists but the required bridge could
+                # not be created.  Fail this lookup rather than fabricating a
+                # second user under the same email.
+                return None, False
     except Exception:
         # Older deployments may not have email_identities yet. The stable
         # provider subject fallback below remains safe and deterministic.
@@ -287,6 +302,104 @@ def get_user(user_id: str) -> dict | None:
     except Exception as error:
         _log(f"get_user error: {error}")
         return None
+
+
+def _ensure_legacy_user_bridge(user_id: str, username: str = "") -> tuple[dict | None, bool]:
+    """Ensure an authenticated identity also has its legacy ``users`` row.
+
+    Identity-platform users live in ``identity_users``.  A few durable legacy
+    tables, including ``jobs``, still retain a foreign key to ``users(id)``.
+    Web authentication therefore needs this idempotent bridge before handing a
+    canonical identity to workflow/job infrastructure.  It never changes an
+    existing row and never creates a second identity: the legacy primary key is
+    explicitly the authenticated identity UUID.
+    """
+    normalized_id = str(user_id or "").strip()
+    if not normalized_id:
+        return None, False
+
+    client = get_supabase_client()
+    if client is None:
+        _log("ensure_legacy_user_bridge aborted: no client")
+        return None, False
+
+    try:
+        existing = _first_row(
+            client.table("users").select("*").eq("id", normalized_id).limit(1).execute()
+        )
+        if existing:
+            return existing, False
+
+        # ``telegram_id`` remains the legacy table's stable external key.  A
+        # namespaced value prevents this bridge from colliding with a real
+        # Telegram identity while keeping the UUID identical across both user
+        # stores.
+        payload = {
+            "id": normalized_id,
+            "telegram_id": f"identity:{normalized_id}",
+            "username": str(username or "web-user")[:255],
+        }
+        created = _first_row(client.table("users").insert(payload).execute())
+        if created:
+            _log(f"ensure_legacy_user_bridge created row for {normalized_id}")
+            return created, True
+
+        # PostgREST may omit returned rows depending on the deployment's
+        # return preference.  Read by the authoritative UUID before deciding
+        # that provisioning failed.
+        reconciled = _first_row(
+            client.table("users").select("*").eq("id", normalized_id).limit(1).execute()
+        )
+        return reconciled, bool(reconciled)
+    except Exception as error:
+        # Concurrent bootstrap requests can race on the primary key.  A
+        # successful competing insert is still the same canonical bridge, so
+        # re-read once instead of creating a duplicate or overwriting data.
+        try:
+            raced = _first_row(
+                client.table("users").select("*").eq("id", normalized_id).limit(1).execute()
+            )
+            if raced:
+                return raced, False
+        except Exception:
+            pass
+        _log(f"ensure_legacy_user_bridge error: {error}")
+        return None, False
+
+
+def ensure_legacy_user_bridge(user_id: str, username: str = "") -> dict | None:
+    """Return the same-ID legacy user bridge, creating it idempotently."""
+    row, _created = _ensure_legacy_user_bridge(user_id, username)
+    return row
+
+
+def ensure_legacy_user_bridge_with_status(
+    user_id: str, username: str = "",
+) -> tuple[dict | None, bool]:
+    """Return ``(row, created_now)`` for lifecycle compensation callers."""
+    return _ensure_legacy_user_bridge(user_id, username)
+
+
+def delete_legacy_user_bridge(user_id: str) -> bool:
+    """Remove only a bridge row created by a rolled-back registration.
+
+    The namespace predicate prevents this compensation from deleting a legacy
+    Telegram/OAuth account that happens to share an id.
+    """
+    normalized_id = str(user_id or "").strip()
+    if not normalized_id:
+        return False
+    client = get_supabase_client()
+    if client is None:
+        return False
+    try:
+        client.table("users").delete().eq("id", normalized_id).eq(
+            "telegram_id", f"identity:{normalized_id}",
+        ).execute()
+        return True
+    except Exception as error:
+        _log(f"delete_legacy_user_bridge error: {error}")
+        return False
 
 
 def _parse_dt(value):

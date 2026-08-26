@@ -8,9 +8,12 @@ workflow_sessions mapping.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock
 
 import pytest
+from fastapi import HTTPException
+from starlette.requests import Request
 
 import services.conversation_store as store
 import services.conversation_engine as engine_module
@@ -47,6 +50,59 @@ def _supabase_client(*, users_rows=None, workflow_rows=None):
 
     client.table.side_effect = select
     return client
+
+
+class _LegacyUserTable:
+    def __init__(self, rows):
+        self.rows = rows
+        self._selected_id = ""
+        self.inserted: list[dict] = []
+
+    def select(self, _fields):
+        return self
+
+    def eq(self, _field, value):
+        self._selected_id = value
+        return self
+
+    def limit(self, _value):
+        return self
+
+    def insert(self, payload):
+        self.inserted.append(payload)
+        self.rows.append(dict(payload))
+        return self
+
+    def execute(self):
+        if self.inserted and self.rows[-1] == self.inserted[-1]:
+            return MagicMock(data=[self.rows[-1]])
+        return MagicMock(data=[row for row in self.rows if row.get("id") == self._selected_id])
+
+
+def test_ensure_legacy_user_bridge_uses_authenticated_identity_uuid(monkeypatch):
+    from services import supabase
+
+    table = _LegacyUserTable([])
+    client = MagicMock()
+    client.table.return_value = table
+    monkeypatch.setattr(supabase, "get_supabase_client", lambda: client)
+
+    user_id = "5b8f5d21-76b3-49a3-8bc7-f9e6987f14dd"
+    row = supabase.ensure_legacy_user_bridge(user_id, "Test User")
+
+    assert row is not None
+    assert row["id"] == user_id
+    assert table.inserted == [{
+        "id": user_id,
+        "telegram_id": f"identity:{user_id}",
+        "username": "Test User",
+    }]
+
+    # Repeated session bootstraps use the same row and do not create a second
+    # legacy account.
+    same = supabase.ensure_legacy_user_bridge(user_id, "Different Name")
+    assert same["id"] == user_id
+    assert len(table.inserted) == 1
 
 
 # ─── create_lightweight_web_session ────────────────────────────────────────
@@ -245,6 +301,11 @@ def test_create_web_session_endpoint_binds_authenticated_identity(monkeypatch, c
         "services.identity.dependencies.get_current_auth", fake_current_auth
     )
 
+    async def fake_bridge(user_id):
+        captured["bridged_user_id"] = user_id
+
+    monkeypatch.setattr(main_module, "_ensure_authenticated_web_user_bridge", fake_bridge)
+
     resp = client.post(
         "/api/web/session",
         json={"display_name": "Ada"},
@@ -253,7 +314,71 @@ def test_create_web_session_endpoint_binds_authenticated_identity(monkeypatch, c
 
     assert resp.status_code == 200
     assert captured["user_id"] == OAUTH_USER_ID
+    assert captured["bridged_user_id"] == OAUTH_USER_ID
     assert resp.json()["user_id"] == OAUTH_USER_ID
+
+
+def test_create_web_session_fails_closed_when_legacy_user_bridge_cannot_be_provisioned(
+    monkeypatch, client,
+):
+    created = False
+
+    def fake_engine_create(**_kwargs):
+        nonlocal created
+        created = True
+        return {"ok": True, "session_token": "must-not-exist"}
+
+    monkeypatch.setattr(main_module.engine, "create_web_session", fake_engine_create)
+
+    async def fake_current_auth(_request):
+        from services.identity.dependencies import AuthContext
+        return AuthContext(user_id=OAUTH_USER_ID, session_id="sess-1", organization_id="org-1")
+
+    monkeypatch.setattr("services.identity.dependencies.get_current_auth", fake_current_auth)
+
+    async def failing_bridge(_user_id):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail="Authenticated user provisioning is temporarily unavailable")
+
+    monkeypatch.setattr(main_module, "_ensure_authenticated_web_user_bridge", failing_bridge)
+
+    response = client.post(
+        "/api/web/session",
+        json={"display_name": "Ada"},
+        headers={"Authorization": "Bearer valid-token"},
+    )
+
+    assert response.status_code == 503
+    assert created is False
+
+
+def test_authenticated_request_does_not_downgrade_bridge_failure_to_another_session(
+    monkeypatch,
+):
+    async def fake_authenticated_user_id(_request):
+        return OAUTH_USER_ID
+
+    async def failing_bridge(_user_id):
+        raise HTTPException(status_code=503, detail="Authenticated user provisioning is temporarily unavailable")
+
+    monkeypatch.setattr(
+        "services.identity.api.get_authenticated_user_id", fake_authenticated_user_id,
+    )
+    monkeypatch.setattr(main_module, "_ensure_authenticated_web_user_bridge", failing_bridge)
+
+    request = Request({
+        "type": "http",
+        "method": "POST",
+        "path": "/api/discoveries",
+        "headers": [(b"authorization", b"Bearer valid-token")],
+    })
+
+    from tests.conftest import REAL_RESOLVE_SESSION_CONTEXT
+
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(REAL_RESOLVE_SESSION_CONTEXT(request))
+
+    assert raised.value.status_code == 503
 
 
 def test_create_web_session_endpoint_anonymous_without_header(monkeypatch, client):

@@ -111,6 +111,94 @@ def _fresh_service() -> AuthService:
 class TestRegistrationLifecycle:
 
     @pytest.mark.asyncio
+    async def test_completed_durable_signup_provisions_legacy_workflow_user(
+        self, monkeypatch,
+    ):
+        """Email signup must bridge its identity before workspace/session use."""
+        from services.persistence.config import RepositoryProvider
+        from services import supabase
+        from services import workspace_state
+
+        svc = _fresh_service()
+        bridge_calls: list[tuple[str, str]] = []
+        workspace_calls: list[tuple[str, str]] = []
+
+        monkeypatch.setattr(
+            "services.persistence.config.get_repository_provider",
+            lambda: RepositoryProvider.SUPABASE,
+        )
+        monkeypatch.setattr(
+            supabase,
+            "ensure_legacy_user_bridge_with_status",
+            lambda user_id, username: (
+                bridge_calls.append((user_id, username)) or ({"id": user_id}, True)
+            ),
+        )
+        monkeypatch.setattr(
+            workspace_state,
+            "ensure_workspace",
+            lambda user_id, organization_id="": (
+                workspace_calls.append((user_id, organization_id)) or "workspace-1"
+            ),
+        )
+
+        registration = await svc.begin_registration("bridge-signup@test.com")
+        await svc.verify_email(registration.raw_token)
+        completed = await svc.complete_registration(
+            registration.registration_session.id,
+            "Bridge Signup",
+            "SecurePass123!",
+            "Bridge Org",
+        )
+
+        assert bridge_calls == [(completed.user.id, "Bridge Signup")]
+        assert workspace_calls == [(completed.user.id, completed.organization.id)]
+        assert completed.session.user_id == completed.user.id
+
+    @pytest.mark.asyncio
+    async def test_failed_durable_signup_compensates_a_new_legacy_bridge(
+        self, monkeypatch,
+    ):
+        from services.persistence.config import RepositoryProvider
+        from services import supabase
+
+        svc = _fresh_service()
+        deleted_ids: list[str] = []
+
+        monkeypatch.setattr(
+            "services.persistence.config.get_repository_provider",
+            lambda: RepositoryProvider.SUPABASE,
+        )
+        monkeypatch.setattr(
+            supabase,
+            "ensure_legacy_user_bridge_with_status",
+            lambda user_id, _username: ({"id": user_id}, True),
+        )
+        monkeypatch.setattr(
+            supabase,
+            "delete_legacy_user_bridge",
+            lambda user_id: deleted_ids.append(user_id) or True,
+        )
+
+        async def fail_org(*_args, **_kwargs):
+            raise RuntimeError("organization persistence failed")
+
+        monkeypatch.setattr(svc._org, "create_organization", fail_org)
+
+        registration = await svc.begin_registration("bridge-rollback@test.com")
+        await svc.verify_email(registration.raw_token)
+        with pytest.raises(RuntimeError, match="organization persistence failed"):
+            await svc.complete_registration(
+                registration.registration_session.id,
+                "Bridge Rollback",
+                "SecurePass123!",
+                "Bridge Org",
+            )
+
+        assert len(deleted_ids) == 1
+
+
+    @pytest.mark.asyncio
     async def test_begin_registration(self):
         svc = _fresh_service()
         result = await svc.begin_registration("alice@test.com")

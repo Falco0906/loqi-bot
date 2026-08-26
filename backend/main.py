@@ -6230,6 +6230,10 @@ def _copilot_tool_failure_reason(tool_name: str) -> str:
     return f"{tool_name} could not be completed. Please try again."
 
 
+_LEGACY_USER_BRIDGE_TTL_SECONDS = 60
+_legacy_user_bridge_verified: dict[str, float] = {}
+
+
 async def _ensure_authenticated_web_user_bridge(user_id: str) -> None:
     """Provision the legacy job/workflow user row for an authenticated web user.
 
@@ -6244,6 +6248,19 @@ async def _ensure_authenticated_web_user_bridge(user_id: str) -> None:
     canonical_id = str(user_id or "").strip()
     if not canonical_id:
         raise HTTPException(status_code=401, detail="Authentication required")
+
+    # The auth middleware and the route body both resolve the same request's
+    # caller.  Without this short cache each protected route paid two
+    # identity-user reads plus two legacy-user reads, multiplying Supabase
+    # latency across pages that load several resources concurrently. The
+    # authenticated session remains the authority; this only memoizes the
+    # already-verified same-id bridge row for a bounded interval.
+    now = time.monotonic()
+    expires_at = _legacy_user_bridge_verified.get(canonical_id, 0.0)
+    if expires_at > now:
+        return
+    if len(_legacy_user_bridge_verified) > 2048:
+        _legacy_user_bridge_verified.clear()
 
     display_name = ""
     try:
@@ -6268,6 +6285,7 @@ async def _ensure_authenticated_web_user_bridge(user_id: str) -> None:
             status_code=503,
             detail="Authenticated user provisioning is temporarily unavailable",
         )
+    _legacy_user_bridge_verified[canonical_id] = now + _LEGACY_USER_BRIDGE_TTL_SECONDS
 
 
 async def _resolve_session_context(request: Request) -> tuple[str, str]:

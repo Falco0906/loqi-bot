@@ -105,6 +105,38 @@ def test_ensure_legacy_user_bridge_uses_authenticated_identity_uuid(monkeypatch)
     assert len(table.inserted) == 1
 
 
+def test_authenticated_bridge_is_memoized_after_successful_verification(monkeypatch):
+    """Repeated session resolution must not add Supabase reads to one request."""
+    from services import supabase
+
+    class _IdentityUser:
+        display_name = "Ada"
+
+    class _UserService:
+        async def get_user(self, user_id):
+            assert user_id == OAUTH_USER_ID
+            return _IdentityUser()
+
+    bridge_calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(main_module, "_legacy_user_bridge_verified", {})
+    monkeypatch.setattr(
+        "services.identity.api.get_auth_user_service", lambda: _UserService(),
+    )
+    monkeypatch.setattr(
+        supabase,
+        "ensure_legacy_user_bridge",
+        lambda user_id, display_name: (
+            bridge_calls.append((user_id, display_name)) or {"id": user_id}
+        ),
+    )
+
+    asyncio.run(main_module._ensure_authenticated_web_user_bridge(OAUTH_USER_ID))
+    asyncio.run(main_module._ensure_authenticated_web_user_bridge(OAUTH_USER_ID))
+
+    assert bridge_calls == [(OAUTH_USER_ID, "Ada")]
+
+
 # ─── create_lightweight_web_session ────────────────────────────────────────
 
 

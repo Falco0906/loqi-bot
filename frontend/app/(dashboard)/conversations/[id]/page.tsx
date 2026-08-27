@@ -51,7 +51,7 @@ export default function ConversationWorkspacePage({ params }: { params: Params }
   const [sending, setSending] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [testRecipient, setTestRecipient] = useState("");
-  const { inboxResult } = useCopilot();
+  const { inboxResult, open: copilotOpen } = useCopilot();
 
   usePageContext("Conversation", {
     conversation_id: id,
@@ -272,8 +272,8 @@ export default function ConversationWorkspacePage({ params }: { params: Params }
         <div className="flex h-full flex-col px-6 pt-6">
           <div className="h-3 w-24 bg-surface-high/50 rounded animate-skeleton-pulse" />
           <div className="mt-4 h-6 w-64 bg-surface-high/50 rounded animate-skeleton-pulse" />
-          <div className="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1">
-            <div className="lg:col-span-2 space-y-4">
+          <div className={`mt-8 grid grid-cols-1 gap-6 flex-1 ${copilotOpen ? "" : "lg:grid-cols-3"}`}>
+            <div className={copilotOpen ? "space-y-4" : "lg:col-span-2 space-y-4"}>
               {[1, 2, 3].map((i) => (
                 <div key={i} className="h-16 bg-surface-high/40 rounded-lg animate-skeleton-pulse" />
               ))}
@@ -370,8 +370,8 @@ export default function ConversationWorkspacePage({ params }: { params: Params }
               </div>
             </div>
           )}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 px-6 py-5 max-w-6xl mx-auto">
-            <div className="lg:col-span-2 space-y-6">
+          <div className={`grid grid-cols-1 gap-6 px-6 py-5 max-w-6xl mx-auto ${copilotOpen ? "" : "lg:grid-cols-3"}`}>
+            <div className={copilotOpen ? "space-y-6" : "lg:col-span-2 space-y-6"}>
               {/* Conversation (real messages) */}
               <section>
                 <span className="text-[10px] uppercase tracking-widest text-on-surface-variant/50 font-medium block mb-2.5">

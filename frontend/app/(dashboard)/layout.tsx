@@ -192,8 +192,8 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           } as React.CSSProperties}
         >
           <Topbar />
-          <div className="flex flex-1 min-h-0">
-            <main ref={mainRef} className="flex-1 overflow-y-auto h-full">
+          <div className="flex flex-1 min-h-0 min-w-0">
+            <main ref={mainRef} className="flex-1 min-w-0 overflow-y-auto h-full">
                {isDraftPage || isCopilotPage || isKnowledgePage ? children : <AppPage>{children}</AppPage>}
             </main>
             {!isDraftPage && !isCopilotPage && <CopilotPanel width={COPILOT_PANEL_WIDTH} />}

@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import WorkspaceContainer from "../../../components/layout/WorkspaceContainer";
 import AppPage from "../../../components/primitives/AppPage";
 import { useData } from "../../../lib/hooks/use-data";
 import { fetchInbox, type InboxData } from "../../../lib/repositories";
 import { swrFetch, peekCache, scopedKey } from "../../../lib/client-cache";
-import { setNavState, getNavState } from "../../../lib/nav-state";
+import { setNavState } from "../../../lib/nav-state";
 import { useTellLoqi } from "../../../hooks/useTellLoqi";
 import { usePageContext } from "../../../hooks/usePageContext";
 import { useCopilot } from "../../../contexts/CopilotContext";
@@ -88,20 +88,6 @@ export default function InboxPage() {
       );
     });
   }, [rows, search, classFilter]);
-
-  /* PR-3D: restore the previously opened conversation (one-shot per mount).
-     Falls back gracefully to the list when it no longer exists. */
-  const restoredRef = useRef(false);
-  useEffect(() => {
-    if (restoredRef.current || loading || !rows.length) return;
-    const last = getNavState<{ id: string; at: number }>("inbox", "lastOpened");
-    if (!last) return;
-    restoredRef.current = true;
-    if (Date.now() - last.at < 30 * 60 * 1000 && rows.some((r: { id: string }) => r.id === last.id)) {
-      router.replace(`/conversations/${last.id}`);
-    }
-  }, [loading, rows, router]);
-
 
   /* ── Loading / error states ── */
 

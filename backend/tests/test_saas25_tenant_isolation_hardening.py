@@ -91,7 +91,7 @@ class TestGetDiscoveryWorkspaceScoping:
 
     @pytest.mark.asyncio
     async def test_foreign_discovery_returns_none_at_query_layer(self, monkeypatch):
-        from services import discovery
+        from services.discovery import service as discovery
         db = FakeClient({"discoveries": [
             {"id": "disc-A", "workspace_id": "ws-A", "created_at": _iso(),
              "updated_at": _iso(), "status": "completed"},
@@ -200,7 +200,7 @@ class TestWorkspaceContextProviderScoping:
             owner_id = "user-other"
 
         # The conversation provably belongs to a DIFFERENT owner -> denied.
-        monkeypatch.setattr(main_module, "_conversation_owned_by", lambda convo, owner: False)
+        monkeypatch.setattr(main_module, "conversation_owned_by", lambda convo, owner: False)
 
         class _ConvStore:
             def get_conversation(self, cid):

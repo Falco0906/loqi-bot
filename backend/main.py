@@ -32,6 +32,7 @@ from services.billing.api import register_provider_and_config as _register_billi
 from services.capabilities.api import router as capabilities_router, register_deps as register_capability_deps, CapabilityDeps
 from services.knowledge.api import router as knowledge_router
 from services.mission_control.api import router as mission_control_router
+from services.discovery.api import router as discovery_router
 from services.capabilities.config import CapabilityConfig
 from services.capabilities.services import CapabilityService
 from services.capabilities.repositories import (
@@ -482,6 +483,7 @@ app.include_router(capabilities_router)
 app.include_router(knowledge_router)
 app.include_router(strategic_intelligence_router)
 app.include_router(mission_control_router)
+app.include_router(discovery_router)
 
 # ── Wire Organization Platform services ──
 _org_deps = _build_org_deps()
@@ -915,7 +917,7 @@ async def _reconcile_stale_search_jobs() -> int:
 
     Returns the number of job rows reconciled.
     """
-    from services.discovery import (
+    from services.discovery.service import (
         finalize_discovery,
         mark_discovery_status,
     )
@@ -2429,7 +2431,7 @@ async def _run_copilot_campaign(
         leads: list[dict[str, Any]] = []
         if discovery_id:
             from services.copilot_tools import _discovery_leads, _requested_leads
-            from services.discovery import get_discovery
+            from services.discovery.service import get_discovery
             discovery = await asyncio.to_thread(get_discovery, discovery_id, workspace_id)
             if discovery:
                 leads = _requested_leads(discovery, decision)
@@ -6307,7 +6309,7 @@ async def save_campaign(session_token: str, payload: SaveCampaignRequest, reques
     ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     _campaign_timing("workspace_resolved")
     if payload.discovery_id:
-        from services.discovery import get_discovery
+        from services.discovery.service import get_discovery
         discovery = await asyncio.to_thread(get_discovery, payload.discovery_id, ws_id)
         _campaign_timing("discovery_handoff_validated")
         if discovery is None:
@@ -6657,7 +6659,7 @@ async def _build_strategy_context(target: dict[str, Any]) -> dict[str, Any]:
     discovery_id = str(target.get("discovery_id") or "").strip()
     if discovery_id:
         try:
-            from services.discovery import get_discovery
+            from services.discovery.service import get_discovery
             discovery = await asyncio.to_thread(get_discovery, discovery_id)
         except Exception as e:
             log.warning("[campaign_strategy] discovery lookup failed: %s", e)
@@ -7394,7 +7396,7 @@ async def attach_discovery_to_campaign(session_token: str, campaign_id: str, pay
     target = next((c for c in campaigns if c.get("id") == campaign_id), None)
     if not target:
         raise HTTPException(status_code=404, detail="Campaign not found")
-    from services.discovery import get_discovery
+    from services.discovery.service import get_discovery
     discovery = await asyncio.to_thread(get_discovery, payload.discovery_id, workspace_id)
     if not discovery:
         raise HTTPException(status_code=404, detail="Discovery not found")
@@ -7872,7 +7874,7 @@ async def _create_search_run(
     worker without a canonical Discovery would be unobservable and could not
     be safely attached to Campaigns or recovered after a restart.
     """
-    from services.discovery import (
+    from services.discovery.service import (
         create_discovery,
         finalize_discovery,
         get_discovery_by_job_id,
@@ -8026,38 +8028,6 @@ async def create_discovery_endpoint(payload: CreateDiscoveryRequest, request: Re
     log.info("[kickoff] POST /api/discoveries: ok discovery_id=%s job_id=%s",
              result.get("discovery_id", ""), result.get("job_id", ""))
     return {"ok": True, **result}
-
-
-@app.get("/api/discoveries")
-async def list_discoveries_endpoint(request: Request):
-    """Recent discoveries for the workspace, newest first."""
-    from services.discovery import list_discoveries
-    user_id, _ = await identity_dependencies.resolve_web_session(request)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Valid session required")
-    # Creation and detail both use the authenticated selected workspace.
-    # Listing must use the identical authority; ``ensure_workspace`` may
-    # create/select a different owner-default workspace for legacy sessions.
-    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, user_id)
-    discoveries = await asyncio.to_thread(list_discoveries, workspace_id)
-    return {"ok": True, "discoveries": discoveries}
-
-
-@app.get("/api/discoveries/{discovery_id}")
-async def get_discovery_endpoint(discovery_id: str, request: Request):
-    """One discovery with its surfaced companies and leads."""
-    from services.discovery import get_discovery
-    user_id, _ = await identity_dependencies.resolve_web_session(request)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Valid session required")
-    log.info("[kickoff] GET /api/discoveries/%s: user=%s", discovery_id, user_id)
-    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, user_id)
-    # SaaS-2.5: constrain the lookup to the caller's workspace so a foreign
-    # discovery id cannot return another tenant's PII even before the check.
-    discovery = await asyncio.to_thread(get_discovery, discovery_id, workspace_id)
-    if not discovery:
-        raise HTTPException(status_code=404, detail="Discovery not found")
-    return {"ok": True, "discovery": discovery}
 
 
 @app.get("/api/jobs/{job_id}")

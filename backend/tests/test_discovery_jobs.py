@@ -175,7 +175,7 @@ class TestDiscoveryEntity:
 
     @pytest.mark.asyncio
     async def test_create_list_get_discovery(self, client, authenticated_session):
-        from services.discovery import list_discoveries
+        from services.discovery.service import list_discoveries
         from services.job_engine.models import JobStatus
         from services.job_engine.storage import JobStorage
 
@@ -247,7 +247,7 @@ class TestDiscoveryEntity:
         # Tidy up: the async worker is cancelled when the TestClient request
         # scope ends, so the discovery row can be left searching forever.
         # Mark it cancelled so the history list stays clean.
-        from services.discovery import mark_discovery_status
+        from services.discovery.service import mark_discovery_status
 
         await asyncio.to_thread(mark_discovery_status, discovery_id, "cancelled")
         storage = JobStorage()
@@ -263,7 +263,7 @@ class TestDiscoveryEntity:
         """When a discovery is tied to a job, job completion must finalize it:
         status -> completed, leads + companies linked, provenance recorded."""
         from main import engine
-        from services.discovery import (
+        from services.discovery.service import (
             create_discovery,
             finalize_discovery,
             get_discovery,
@@ -339,7 +339,7 @@ class TestDiscoveryEntity:
         } == {l["lead_id"] for l in leads}, "lead links must survive refresh"
 
         # Tidy up: mark the discovery cancelled so the history list stays clean.
-        from services.discovery import mark_discovery_status
+        from services.discovery.service import mark_discovery_status
 
         await asyncio.to_thread(mark_discovery_status, discovery_id, "cancelled")
 
@@ -394,7 +394,7 @@ class TestDiscoveryEntity:
         )
 
         # Tidy up: cancel the discovery + its job.
-        from services.discovery import mark_discovery_status
+        from services.discovery.service import mark_discovery_status
 
         await asyncio.to_thread(mark_discovery_status, discovery_id, "cancelled")
         from services.job_engine.storage import JobStorage

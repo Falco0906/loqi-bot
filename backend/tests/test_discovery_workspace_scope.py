@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
+from fastapi import HTTPException
 from starlette.requests import Request
 
 import main
+import services.discovery.api as discovery_api
 
 
 def _request(workspace_id: str = "workspace-selected") -> Request:
@@ -53,21 +56,49 @@ async def test_discovery_create_list_and_get_share_authenticated_workspace(monke
     monkeypatch.setattr(main.identity_dependencies, "resolve_web_session", resolve_user)
     monkeypatch.setattr(main.workspace_access, "resolve_legacy_workspace_id", resolve_workspace)
     monkeypatch.setattr(main, "_create_search_run", create_run)
-    monkeypatch.setattr("services.discovery.list_discoveries", list_rows)
-    monkeypatch.setattr("services.discovery.get_discovery", get_row)
+    monkeypatch.setattr(discovery_api, "list_discoveries", list_rows)
+    monkeypatch.setattr(discovery_api, "get_discovery", get_row)
 
     request = _request(selected_workspace)
     created_response = await main.create_discovery_endpoint(
         main.CreateDiscoveryRequest(query="cafe owners"), request,
     )
-    listed_response = await main.list_discoveries_endpoint(request)
-    detail_response = await main.get_discovery_endpoint("discovery-1", request)
+    listed_response = await discovery_api.list_discoveries_endpoint(request)
+    detail_response = await discovery_api.get_discovery_endpoint("discovery-1", request)
 
     assert created_response["discovery_id"] == "discovery-1"
     assert created["workspace_id"] == selected_workspace
+    assert set(listed_response) == {"ok", "discoveries"}
+    assert set(detail_response) == {"ok", "discovery"}
     assert listed_response["discoveries"] == [{"id": "discovery-1", "workspace_id": selected_workspace}]
     assert detail_response["discovery"]["workspace_id"] == selected_workspace
     assert calls == [("list", selected_workspace), ("get", selected_workspace)]
+
+
+async def test_discovery_read_routes_keep_their_registered_http_contract(monkeypatch):
+    """The read router keeps the legacy paths and their 404 response contract."""
+    paths = [route.path for route in discovery_api.router.routes]
+    assert paths == ["/api/discoveries", "/api/discoveries/{discovery_id}"]
+    assert any(
+        getattr(route, "original_router", None) is discovery_api.router
+        for route in main.app.routes
+    )
+
+    async def resolve_user(_request):
+        return "authenticated-user", "session-token"
+
+    async def resolve_workspace(_request, _owner_id):
+        return "workspace-selected"
+
+    monkeypatch.setattr(discovery_api.identity_dependencies, "resolve_web_session", resolve_user)
+    monkeypatch.setattr(discovery_api.workspace_access, "resolve_legacy_workspace_id", resolve_workspace)
+    monkeypatch.setattr(discovery_api, "get_discovery", lambda *_args: None)
+
+    with pytest.raises(HTTPException) as error:
+        await discovery_api.get_discovery_endpoint("missing", _request())
+
+    assert error.value.status_code == 404
+    assert error.value.detail == "Discovery not found"
 
 
 async def test_create_search_run_keeps_explicit_workspace(monkeypatch):
@@ -81,7 +112,7 @@ async def test_create_search_run_keeps_explicit_workspace(monkeypatch):
     async def create_job(**_kwargs):
         return {"job_id": "job-1"}
 
-    monkeypatch.setattr("services.discovery.create_discovery", create_discovery)
+    monkeypatch.setattr("services.discovery.service.create_discovery", create_discovery)
     monkeypatch.setattr(main.job_manager, "create_search_job", create_job)
 
     result = await main._create_search_run(

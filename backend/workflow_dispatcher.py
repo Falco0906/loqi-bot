@@ -119,7 +119,7 @@ async def run_search_workflow(job: Job, on_progress) -> dict:
             target = pl_target
         if job.discovery_id:
             try:
-                from services.discovery import store_discovery_plan
+                from services.discovery.service import store_discovery_plan
                 context_provenance = discovery_context.get("provenance") or {}
                 _log(
                     f"discovery context provenance job={job.id} discovery={job.discovery_id} "
@@ -149,7 +149,7 @@ async def run_search_workflow(job: Job, on_progress) -> dict:
     def persist_partial(leads: list) -> None:
         """Runs INSIDE the executor thread (no event loop) — sync by design."""
         try:
-            from services.discovery import update_discovery_progress
+            from services.discovery.service import update_discovery_progress
             ranked = []
             for lead in leads:
                 rank_offset["n"] += 1

@@ -38,7 +38,7 @@ async def test_manual_campaign_returns_after_four_selected_leads_are_durable(mon
     monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda _request: "session-1")
     monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", lambda *_args, **_kwargs: _async_value("owner-1"))
     monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", lambda *_args, **_kwargs: _async_value("workspace-1"))
-    monkeypatch.setattr("services.discovery.get_discovery", lambda discovery_id, workspace_id="": {
+    monkeypatch.setattr("services.discovery.service.get_discovery", lambda discovery_id, workspace_id="": {
         "id": discovery_id, "workspace_id": workspace_id,
     })
     monkeypatch.setattr("services.workspace_state.persist_campaign_row", persist_campaign)

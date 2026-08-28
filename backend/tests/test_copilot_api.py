@@ -721,7 +721,7 @@ class TestCopilotOperationBoundary:
 
         assert select_copilot_tool({"intent": "conversation"}) is None
         monkeypatch.setattr(
-            "services.discovery.get_discovery",
+            "services.discovery.service.get_discovery",
             lambda _discovery_id, _workspace_id: {
                 "id": "d-1", "status": "completed", "title": "Restaurant leads",
                 "discovery_leads": [{"rank": 1, "workspace_lead": {"lead": {"name": "A"}}}],
@@ -840,7 +840,7 @@ class TestCopilotOperationBoundary:
         from services.copilot_tools import execute_copilot_tool
 
         monkeypatch.setattr(
-            "services.discovery.get_discovery",
+            "services.discovery.service.get_discovery",
             lambda discovery_id, workspace_id: {
                 "id": discovery_id,
                 "workspace_id": workspace_id,
@@ -881,7 +881,7 @@ class TestCopilotOperationBoundary:
         from services.copilot_tools import execute_copilot_tool
 
         monkeypatch.setattr(
-            "services.discovery.get_discovery",
+            "services.discovery.service.get_discovery",
             lambda *_args: {
                 "id": "d-1", "status": "completed", "discovery_companies": [],
                 "discovery_leads": [{"lead_id": "l-1", "rank": 1, "workspace_lead": {"id": "wl-1", "email": "a@example.com", "lead": {"name": "A"}}}],
@@ -925,7 +925,7 @@ class TestCopilotOperationBoundary:
         )
         monkeypatch.setattr("services.workspace_state.ensure_workspace", lambda _user_id: "workspace-1")
         monkeypatch.setattr(
-            "services.discovery.get_discovery",
+            "services.discovery.service.get_discovery",
             lambda *_args: {
                 "id": "d-1", "status": "completed", "discovery_companies": [],
                 "discovery_leads": [
@@ -967,7 +967,7 @@ class TestCopilotOperationBoundary:
         monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}))
         monkeypatch.setattr("services.workspace_state.ensure_workspace", lambda _user_id: "workspace-1")
         monkeypatch.setattr(main_module, "_create_search_run", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("read/conversation must not create Discovery")))
-        monkeypatch.setattr("services.discovery.get_discovery", lambda *_args: {"id": "d-1", "status": "completed", "title": "Restaurant leads", "discovery_leads": [], "discovery_companies": [], "summary": {}})
+        monkeypatch.setattr("services.discovery.service.get_discovery", lambda *_args: {"id": "d-1", "status": "completed", "title": "Restaurant leads", "discovery_leads": [], "discovery_companies": [], "summary": {}})
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
         payload = main_module.SendWebMessageRequest(text="hi", copilot=main_module.CopilotContextModel(current_page="Mission Control", message_history=[]))
         conversation = await main_module.post_web_session_message("session-1", payload, request)

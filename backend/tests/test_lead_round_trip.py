@@ -74,7 +74,7 @@ async def _run_completed_discovery(client, token, query="HR software startups"):
     Returns (discovery_detail, discovery_id, job_id).
     """
     from main import engine
-    from services.discovery import finalize_discovery
+    from services.discovery.service import finalize_discovery
     from services.job_engine.manager import JobManager
     from services.job_engine.storage import JobStorage
 
@@ -126,7 +126,7 @@ async def _run_completed_discovery(client, token, query="HR software startups"):
 
 
 def _tidy(discovery_id, job_id):
-    from services.discovery import mark_discovery_status
+    from services.discovery.service import mark_discovery_status
     from services.job_engine.models import JobStatus
     from services.job_engine.storage import JobStorage
 
@@ -272,7 +272,7 @@ class TestLeadRoundTrip:
         """Campaign creation with attached-lead payloads (New Campaign page flow
         from Discovery) must persist each lead and re-read count > 0."""
         from main import engine
-        from services.discovery import finalize_discovery
+        from services.discovery.service import finalize_discovery
         from services.job_engine.manager import JobManager
         from services.job_engine.storage import JobStorage
 

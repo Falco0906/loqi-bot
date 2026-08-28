@@ -115,7 +115,7 @@ def pipeline(monkeypatch):
         meta_calls.append((discovery_id, stage, pct))
         return True
 
-    import services.discovery as disc
+    import services.discovery.service as disc
     monkeypatch.setattr(disc, "update_discovery_progress", fake_update_progress)
 
     return {"captured": captured, "meta": meta_calls}
@@ -152,7 +152,7 @@ def test_vertical_slice_lifecycle(pipeline, monkeypatch):
     # Wire the same notify chain main.py uses: on_update → publish events.
     # The workflow emits progress through the passed callback; events flow
     # through on_update which we wire exactly like _create_search_run does:
-    from services.discovery import (
+    from services.discovery.service import (
         create_discovery, get_discovery_by_job_id, mark_discovery_status,
         get_discovery_id_for_job, update_discovery_progress,
     )

@@ -374,7 +374,7 @@ def _requested_leads(discovery: dict[str, Any], decision: dict[str, Any]) -> lis
 
 
 async def _load_owned_discovery(discovery_id: str, workspace_id: str) -> dict[str, Any] | None:
-    from services.discovery import get_discovery
+    from services.discovery.service import get_discovery
     return await asyncio.to_thread(get_discovery, discovery_id, workspace_id)
 
 

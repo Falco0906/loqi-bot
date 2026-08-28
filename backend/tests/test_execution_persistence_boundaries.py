@@ -17,7 +17,7 @@ from fastapi import HTTPException
 @pytest.mark.asyncio
 async def test_search_job_is_not_created_when_discovery_insert_fails(monkeypatch):
     import main as main_module
-    import services.discovery as discovery
+    import services.discovery.service as discovery
     import services.workspace_state as workspace_state
 
     monkeypatch.setattr(workspace_state, "ensure_workspace", lambda _owner: "workspace-1")
@@ -34,7 +34,7 @@ async def test_search_job_is_not_created_when_discovery_insert_fails(monkeypatch
 
 @pytest.mark.asyncio
 async def test_discovery_finalization_fails_when_canonical_lead_persistence_fails(monkeypatch):
-    import services.discovery as discovery
+    import services.discovery.service as discovery
 
     row = {"id": "discovery-1", "workspace_id": "workspace-1", "status": "searching", "query": "cafe owners"}
 

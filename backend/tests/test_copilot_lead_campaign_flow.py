@@ -60,7 +60,7 @@ async def test_campaign_create_returns_authoritative_campaign_and_attached_ids(m
 
     monkeypatch.setattr(main_module, "_maybe_auto_strategy", _noop_async)
     monkeypatch.setattr(
-        "services.discovery.get_discovery",
+        "services.discovery.service.get_discovery",
         lambda *_args, **_kwargs: {
             "id": "discovery-1",
             "discovery_leads": [
@@ -192,7 +192,6 @@ async def test_endpoint_rank_then_campaign_stays_read_only_in_mvp(monkeypatch):
 
     monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1", "display_name": "Owner"})
     monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *_args, **_kwargs: {"snapshot": {}, "analysis": {}})
-    monkeypatch.setattr("services.workspace_state.ensure_workspace", lambda _user: "workspace-1")
     monkeypatch.setattr(main_module, "_copilot_tool_failure_reason", lambda tool: f"{tool} failed")
     monkeypatch.setattr(
         "services.conversational_response_generator.decide_copilot_intent",
@@ -202,7 +201,7 @@ async def test_endpoint_rank_then_campaign_stays_read_only_in_mvp(monkeypatch):
         return SimpleNamespace(to_dict=lambda: {"items": [], "sources": []})
 
     monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", knowledge_context)
-    monkeypatch.setattr("services.discovery.get_discovery", lambda *_args, **_kwargs: discovery)
+    monkeypatch.setattr("services.discovery.service.get_discovery", lambda *_args, **_kwargs: discovery)
     async def persist_campaign(_u, campaign, workspace_id=""):
         persisted.update(campaign)
         return True

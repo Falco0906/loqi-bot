@@ -35,6 +35,8 @@ from services.mission_control.api import router as mission_control_router
 from services.discovery.api import router as discovery_router
 from services.campaigns.api import router as campaigns_router
 from services.campaigns.service import load_campaigns
+from services.conversations.api import router as conversations_router
+from services.conversations.conversation_store import conversation_owned_by
 from services.capabilities.config import CapabilityConfig
 from services.capabilities.services import CapabilityService
 from services.capabilities.repositories import (
@@ -487,6 +489,7 @@ app.include_router(strategic_intelligence_router)
 app.include_router(mission_control_router)
 app.include_router(discovery_router)
 app.include_router(campaigns_router)
+app.include_router(conversations_router)
 
 # ── Wire Organization Platform services ──
 _org_deps = _build_org_deps()
@@ -1303,7 +1306,7 @@ def _build_copilot_workspace_context(
         convo = conversation_store.get_conversation(conversation_id)
         if (
             convo is not None
-            and _conversation_owned_by(convo, user_id)
+            and conversation_owned_by(convo, user_id)
             and _conversation_in_workspace(convo, str(workspace_id or ""))
         ):
             mem = memory_store.get(conversation_id)
@@ -1431,29 +1434,6 @@ async def _require_canonical_outbound_draft(
     if canonical_provider and not _outbound_draft_owned_by(outbound, owner_id):
         raise HTTPException(status_code=404, detail="Draft not found")
     return owner_id, workspace_id, canonical, outbound
-
-
-def _conversation_owned_by(conversation: "object", owner_id: str) -> bool:
-    """True only when the conversation provably belongs to ``owner_id``.
-
-    Fail-closed (PR10.8.3.1): ownership must be established from a trusted
-    server-derived source (the conversation's persisted ``owner_id`` set by the
-    trusted creation path, or its provider record). If ownership cannot be
-    established — missing provider, unresolved provider, missing owner — access
-    is DENIED. There is no "authenticated user = allowed" fallback.
-    """
-    if not owner_id:
-        return False
-    conv_owner = getattr(conversation, "owner_id", "") or ""
-    if conv_owner:
-        return str(conv_owner) == str(owner_id)
-    provider_id = getattr(conversation, "provider_id", "") or ""
-    if not provider_id:
-        return False  # fail closed: no owner and no provider
-    provider = communication_store.get_provider(provider_id)
-    if provider is None:
-        return False  # fail closed: provider cannot be resolved
-    return str(provider.user_id) == str(owner_id)
 
 
 def _conversation_in_workspace(conversation: "object", workspace_id: str) -> bool:
@@ -2709,7 +2689,7 @@ async def _run_copilot_inbox(
         attention = []
         for candidate in conversation_store.list_conversations(limit=50):
             if (
-                not _conversation_owned_by(candidate, user_id)
+                not conversation_owned_by(candidate, user_id)
                 or not _conversation_in_workspace(candidate, workspace_id)
             ):
                 continue
@@ -2740,7 +2720,7 @@ async def _run_copilot_inbox(
         }
     if (
         not convo
-        or not _conversation_owned_by(convo, user_id)
+        or not conversation_owned_by(convo, user_id)
         or not _conversation_in_workspace(convo, workspace_id)
     ):
         return {"ok": False, "status": "unavailable", "tool": tool_name,
@@ -2828,7 +2808,7 @@ async def _run_copilot_inbox(
         )
         if (
             not refreshed
-            or not _conversation_owned_by(refreshed, user_id)
+            or not conversation_owned_by(refreshed, user_id)
             or not _conversation_in_workspace(refreshed, workspace_id)
             or str(getattr(refreshed.status, "value", "")) != "sent"
             or not sent_message_id
@@ -4993,7 +4973,7 @@ async def communication_timeline(session_token: str, conversation_id: str, reque
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     from services.conversations.conversation_store import conversation_store
     convo = conversation_store.get_conversation(conversation_id)
-    if convo is None or not _conversation_owned_by(convo, owner_id):
+    if convo is None or not conversation_owned_by(convo, owner_id):
         # Safe not-found: foreign-but-existing and nonexistent conversations are
         # indistinguishable (no existence leak, no foreign memory/timeline).
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -8191,64 +8171,6 @@ async def cancel_workflow_endpoint(session_token: str, workflow_id: str, request
         raise HTTPException(status_code=400, detail=str(e))
 
 
-# ── Conversation Routes ──
-
-@app.get("/api/web/session/{session_token}/conversations")
-async def list_conversations_route(session_token: str, request: Request = None):
-    from services.conversations.conversation_store import conversation_store
-    owner_id = await identity_dependencies.resolve_web_session(request) if request is not None else ("", "")
-    owner_id = owner_id[0]
-    conversations = conversation_store.list_conversations(limit=1000)
-    # Fail-closed: only conversations that provably belong to the owner are
-    # returned; unattributable conversations are hidden.
-    owned = [c for c in conversations if _conversation_owned_by(c, owner_id)]
-    return {
-        "ok": True,
-        "conversations": [c.to_dict() for c in owned],
-    }
-
-
-@app.get("/api/web/session/{session_token}/conversations/{conversation_id}")
-async def get_conversation_route(session_token: str, conversation_id: str, request: Request = None):
-    owner_id = (await identity_dependencies.resolve_web_session(request))[0] if request is not None else ""
-    from services.conversations.conversation_store import conversation_store
-    convo = conversation_store.get_conversation(conversation_id)
-    if not convo or not _conversation_owned_by(convo, owner_id):
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    return {
-        "ok": True,
-        "conversation": convo.to_dict(),
-    }
-
-
-@app.get("/api/web/session/{session_token}/conversations/{conversation_id}/timeline")
-async def get_conversation_timeline_route(session_token: str, conversation_id: str, request: Request = None):
-    owner_id = (await identity_dependencies.resolve_web_session(request))[0] if request is not None else ""
-    from services.conversations.conversation_store import conversation_store
-    convo = conversation_store.get_conversation(conversation_id)
-    if not convo or not _conversation_owned_by(convo, owner_id):
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    events = conversation_store.get_timeline(conversation_id)
-    return {
-        "ok": True,
-        "events": [e.to_dict() for e in events],
-    }
-
-
-@app.get("/api/web/session/{session_token}/conversations/{conversation_id}/messages")
-async def get_conversation_messages_route(session_token: str, conversation_id: str, request: Request = None):
-    owner_id = (await identity_dependencies.resolve_web_session(request))[0] if request is not None else ""
-    from services.conversations.conversation_store import conversation_store
-    convo = conversation_store.get_conversation(conversation_id)
-    if not convo or not _conversation_owned_by(convo, owner_id):
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    messages = conversation_store.get_messages_for_conversation(conversation_id)
-    return {
-        "ok": True,
-        "messages": [m.to_dict() for m in messages],
-    }
-
-
 @app.get("/api/web/session/{session_token}/conversations/{conversation_id}/reasoning")
 async def get_conversation_reasoning_route(session_token: str, conversation_id: str, request: Request = None):
     owner_id = (await identity_dependencies.resolve_web_session(request))[0] if request is not None else ""
@@ -8257,7 +8179,7 @@ async def get_conversation_reasoning_route(session_token: str, conversation_id: 
     from services.reasoning.reasoning_pipeline import get_pipeline as get_reasoning_pipeline
 
     convo = conversation_store.get_conversation(conversation_id)
-    if not convo or not _conversation_owned_by(convo, owner_id):
+    if not convo or not conversation_owned_by(convo, owner_id):
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     messages = conversation_store.get_messages_for_conversation(conversation_id)
@@ -8294,7 +8216,7 @@ async def get_conversation_plan_route(session_token: str, conversation_id: str, 
     from services.reasoning.reasoning_pipeline import get_pipeline as get_reasoning_pipeline
 
     convo = conversation_store.get_conversation(conversation_id)
-    if not convo or not _conversation_owned_by(convo, owner_id):
+    if not convo or not conversation_owned_by(convo, owner_id):
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     messages = conversation_store.get_messages_for_conversation(conversation_id)
@@ -8413,7 +8335,7 @@ async def generate_reply_route(
     from services.reply_generation.generation_models import GenerationStyle
 
     convo = conversation_store.get_conversation(conversation_id)
-    if not convo or not _conversation_owned_by(convo, owner_id):
+    if not convo or not conversation_owned_by(convo, owner_id):
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     messages = conversation_store.get_messages_for_conversation(conversation_id)
@@ -8567,7 +8489,7 @@ async def send_conversation_reply_route(
     if request is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    if not _conversation_owned_by(convo, owner_id):
+    if not conversation_owned_by(convo, owner_id):
         # Safe not-found: foreign-but-existing conversation is indistinguishable
         # from nonexistent (no existence leak).
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -8738,7 +8660,7 @@ async def send_conversation_followup_route(
     if request is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    if not _conversation_owned_by(convo, owner_id):
+    if not conversation_owned_by(convo, owner_id):
         # Safe not-found: foreign-but-existing conversation is indistinguishable
         # from nonexistent (no existence leak).
         raise HTTPException(status_code=404, detail="Conversation not found")

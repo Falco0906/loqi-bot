@@ -29,6 +29,7 @@ sys.path.insert(0, ".")
 import pytest
 
 from fastapi import HTTPException
+import services.conversations.api as conversation_api
 
 SENTINEL = "PR10831_SESSION_SENTINEL_DO_NOT_LEAK"
 
@@ -42,7 +43,7 @@ def _restore_patched_main_helpers():
     saved = {
         name: getattr(_main, name)
         for name in (
-            "_conversation_owned_by",
+            "conversation_owned_by",
         )
         if hasattr(_main, name)
     }
@@ -265,7 +266,7 @@ class TestFailClosedConversationOwnership:
         convo = _make_convo(owner_id="test-owner")
         main_module.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
         result = asyncio.run(
-            main_module.get_conversation_route("_", convo.conversation_id, _request_with_header())
+            conversation_api.get_conversation_route("_", convo.conversation_id, _request_with_header())
         )
         assert result["ok"] is True
 
@@ -275,7 +276,7 @@ class TestFailClosedConversationOwnership:
         main_module.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
         with pytest.raises(HTTPException) as exc:
             asyncio.run(
-                main_module.get_conversation_route("_", convo.conversation_id, _request_with_header())
+                conversation_api.get_conversation_route("_", convo.conversation_id, _request_with_header())
             )
         assert exc.value.status_code in (403, 404)
 
@@ -287,7 +288,7 @@ class TestFailClosedConversationOwnership:
         main_module.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
         with pytest.raises(HTTPException) as exc:
             asyncio.run(
-                main_module.get_conversation_route("_", convo.conversation_id, _request_with_header())
+                conversation_api.get_conversation_route("_", convo.conversation_id, _request_with_header())
             )
         assert exc.value.status_code in (403, 404)
 
@@ -297,7 +298,7 @@ class TestFailClosedConversationOwnership:
         main_module.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
         with pytest.raises(HTTPException) as exc:
             asyncio.run(
-                main_module.get_conversation_route("_", convo.conversation_id, _request_with_header())
+                conversation_api.get_conversation_route("_", convo.conversation_id, _request_with_header())
             )
         assert exc.value.status_code in (403, 404)
 
@@ -307,7 +308,7 @@ class TestFailClosedConversationOwnership:
         convo = _make_convo(owner_id="", provider_id="prov-a")
         main_module.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
         result = asyncio.run(
-            main_module.get_conversation_route("_", convo.conversation_id, _request_with_header())
+            conversation_api.get_conversation_route("_", convo.conversation_id, _request_with_header())
         )
         assert result["ok"] is True
 
@@ -334,21 +335,21 @@ class TestFailClosedConversationOwnership:
         main_module.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
         with pytest.raises(HTTPException) as exc:
             asyncio.run(
-                main_module.get_conversation_route("_", convo.conversation_id, _request_with_header())
+                conversation_api.get_conversation_route("_", convo.conversation_id, _request_with_header())
             )
         assert exc.value.status_code in (403, 404)
 
     def test_fail_closed_helper_semantics(self):
-        import main as main_module
         from services.communication.communication_store import store
+        from services.conversations.conversation_store import conversation_owned_by
         # No owner, no provider -> False.
         convo = _make_convo(owner_id="")
-        assert main_module._conversation_owned_by(convo, "test-owner") is False
+        assert conversation_owned_by(convo, "test-owner") is False
         # Owner matches -> True.
         convo2 = _make_convo(owner_id="test-owner")
-        assert main_module._conversation_owned_by(convo2, "test-owner") is True
+        assert conversation_owned_by(convo2, "test-owner") is True
         # Provider ownership -> True only for the matching owner.
         store._providers["prov-a"] = _provider_record("prov-a", "a@a.com", user_id="owner-x")
         convo3 = _make_convo(owner_id="", provider_id="prov-a")
-        assert main_module._conversation_owned_by(convo3, "owner-x") is True
-        assert main_module._conversation_owned_by(convo3, "test-owner") is False
+        assert conversation_owned_by(convo3, "owner-x") is True
+        assert conversation_owned_by(convo3, "test-owner") is False

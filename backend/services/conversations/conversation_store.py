@@ -27,6 +27,27 @@ from services.conversations.state_machine import transition
 logger = logging.getLogger(__name__)
 
 
+def conversation_owned_by(conversation: object, owner_id: str) -> bool:
+    """Return whether a conversation is provably owned by ``owner_id``.
+
+    Ownership is established by the durable conversation owner when present,
+    otherwise by the owning communication provider. Missing attribution fails
+    closed so route and workflow callers cannot expose foreign conversations.
+    """
+    if not owner_id:
+        return False
+    conversation_owner = getattr(conversation, "owner_id", "") or ""
+    if conversation_owner:
+        return str(conversation_owner) == str(owner_id)
+    provider_id = getattr(conversation, "provider_id", "") or ""
+    if not provider_id:
+        return False
+    from services.communication.communication_store import store as communication_store
+
+    provider = communication_store.get_provider(provider_id)
+    return provider is not None and str(provider.user_id) == str(owner_id)
+
+
 class ConversationStore:
     def __init__(self):
         self._conversations: dict[str, Conversation] = {}

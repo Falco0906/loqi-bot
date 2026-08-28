@@ -30,6 +30,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import main as main_module
+import services.conversations.api as conversation_api
 
 SENTINEL = "PR10833_FINAL_SENTINEL_DO_NOT_LEAK"
 
@@ -196,7 +197,7 @@ class TestTenantIsolationFinal:
             owner_id="",
         )
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.get_conversation_route("_", convo.conversation_id, _req("token-a")))
+            asyncio.run(conversation_api.get_conversation_route("_", convo.conversation_id, _req("token-a")))
         assert exc.value.status_code in (403, 404)
 
     def test_cross_tenant_outbound_draft_side_effect_denied(self, monkeypatch):

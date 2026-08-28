@@ -24,6 +24,7 @@ import pytest
 from services.communication import reply_simulator as sim
 from services.conversations import persistence
 from services.conversations.conversation_models import ConversationStatus
+import services.conversations.api as conversation_api
 from services.conversations.conversation_store import conversation_store
 from services.conversations.integration import create_conversation_from_send, handle_reply
 from services.conversations.timeline import TimelineEventType
@@ -214,7 +215,7 @@ class TestRoundTrip:
     def test_inbox_route_surfaces_restored_conversation(self):
         convo = _make_conversation()
         _simulate_restart()
-        result = asyncio.run(main_module.list_conversations_route("_", _auth_request()))
+        result = asyncio.run(conversation_api.list_conversations_route("_", _auth_request()))
         ids = [c["conversation_id"] for c in result["conversations"]]
         assert convo.conversation_id in ids
 
@@ -276,7 +277,7 @@ class TestSimulatorRestart:
         assert TimelineEventType.REPLY_CLASSIFIED in timeline_types
 
         # Inbox still surfaces it
-        result = asyncio.run(main_module.list_conversations_route("_", _auth_request()))
+        result = asyncio.run(conversation_api.list_conversations_route("_", _auth_request()))
         ids = [c["conversation_id"] for c in result["conversations"]]
         assert convo_id in ids
 

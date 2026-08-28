@@ -574,7 +574,7 @@ class TestCopilotOperationBoundary:
 
         import services.conversations.conversation_store as conversation_module
         monkeypatch.setattr(conversation_module, "conversation_store", Store())
-        monkeypatch.setattr(main_module, "_conversation_owned_by", lambda *_args: True)
+        monkeypatch.setattr(main_module, "conversation_owned_by", lambda *_args: True)
         result = await main_module._run_copilot_inbox(
             "inbox.conversation.recommend", "owner-1", "workspace-1", "session-1", {},
         )

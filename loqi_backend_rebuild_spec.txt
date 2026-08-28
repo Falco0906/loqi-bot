@@ -1,0 +1,280 @@
+LOQI BACKEND REBUILD SPECIFICATION (READ-ONLY)
+===============================================
+
+Purpose
+-------
+This is the minimum rebuild specification for replacing the backend while
+preserving the existing Supabase schema, public HTTP behavior, authentication,
+provider integrations, and product behavior. It is based on the current
+FastAPI application (128 direct routes plus mounted routers), route imports,
+service callers, and the existing architecture inventories.
+
+The replacement may change internal module structure. It may NOT change any
+observable request/response, auth, tenant-scoping, job lifecycle, provider,
+or persistence semantic listed below without a coordinated API/schema change.
+
+1. EXTERNALLY OBSERVABLE CONTRACTS TO PRESERVE
+----------------------------------------------
+
+1.1 HTTP application contract
+* FastAPI process, CORS behavior, request IDs, safe HTTP error translation,
+  health/root endpoints, startup recovery, and SSE event stream behavior.
+* Mounted routers:
+  - /api/v1/auth/** identity/signup/login/refresh/verification/session flow
+  - /api/v1/onboarding/** onboarding lifecycle
+  - /api/v1/organizations/** organization/member lifecycle
+  - /api/v1/billing/** billing lifecycle
+  - /api/v1/** capabilities and strategic-intelligence routers
+  - operations router including health/version operations.
+* The direct 128 main.py routes must retain path, HTTP verb, auth requirement,
+  status code (including 202 async starts), response envelope, and safe error
+  semantics. Route families are listed in Appendix A.
+
+1.2 Browser/web-session contract
+* /api/web/session/{session_token}/** remains supported, including `_` token
+  alias behavior, web-session creation/binding, message history, and legacy
+  non-Copilot conversation flow.
+* Authorization Bearer tokens, selected workspace header resolution, timezone
+  header behavior, CORS origins, and canonical session revocation semantics.
+* Authenticated request identity is authoritative. Client/session/model IDs
+  cannot grant access to another user/workspace/resource.
+
+1.3 Tenant and authorization contract
+* Active organization membership is required to resolve/select a workspace.
+* Resources are checked by canonical user/workspace ownership: campaigns,
+  discoveries, workspace leads, drafts, conversations, provider accounts,
+  knowledge, strategic updates/actions, jobs, and outbound history.
+* Never fall back from an explicit selected workspace to another workspace.
+* Legacy account bridge/session migration behavior must remain until old
+  sessions/users are reconciled and the compatibility data is retired.
+
+1.4 Persistence/schema contract
+* Preserve existing Supabase tables, foreign keys, migrations, RPCs, JSON
+  payload formats, status values, ownership columns, and audit records.
+* Canonical durable entities include users/identities/sessions/memberships,
+  organizations/workspaces, campaigns/campaign links, leads/companies,
+  discoveries/jobs/results, drafts/outbound records, conversation snapshots,
+  knowledge, strategic updates/actions, connected accounts/provider events,
+  audit records, and Copilot memories/action executions.
+* Migration 031 conversation snapshots, 032 Copilot memories, and 033 Copilot
+  action executions are required runtime schema contracts if those features are
+  enabled. A rebuild must not silently substitute local JSON in production.
+
+1.5 Async and streaming contract
+* Discovery, strategy, and draft generation create durable jobs and return
+  identifiers promptly rather than blocking HTTP requests.
+* Job states/progress/terminal results are observable through existing job
+  endpoints and SSE wake-up events. completed/failed/cancelled are distinct.
+* Startup reconciliation/recovery must safely resolve stale job state after a
+  process restart. A timeout must never be translated into success.
+
+1.6 Provider contract
+* Gmail OAuth connect/callback/disconnect, credential encryption/persistence,
+  provider ownership, sync/status/health/event/thread/message endpoints.
+* Gmail send/reply/schedule behavior, confirmation boundaries, canonical Draft
+  persistence, provider projection, and explicit provider failure semantics.
+* Lead provider dispatcher/factory must remain provider-agnostic. The current
+  synthetic provider dataset path and production provider configuration are
+  deployment contracts, not frontend concerns.
+
+1.7 Copilot contract
+* POST web-session message accepts Copilot context but resolves authenticated
+  user/workspace server-side.
+* Conversation context/memory is bounded and non-authoritative; current domain
+  reads/tools are the authority for workspace facts.
+* Read tools return canonical workspace-scoped data; failures/empty reads stay
+  explicit rather than fabricated.
+* Enabled mutations require explicit confirmation, run through existing domain
+  services, verify durable outcome where practical, and return true result.
+* Long-running work returns durable operation/job IDs.
+* Plans are bounded, tool calls are bounded, and model data never supplies
+  identity/workspace authority.
+* Action retry idempotency: user/workspace/request key maps to a durable
+  action execution record; duplicate/concurrent attempts replay/in-progress
+  rather than duplicate side effects. Audit/structured logs are preserved.
+
+2. BUSINESS CAPABILITIES TO REIMPLEMENT
+---------------------------------------
+
+IDENTITY / TENANCY
+* Email and Google signup/login, verification, refresh/revocation, account
+  recovery, canonical users bridge, organizations, memberships, workspace
+  creation/selection, and authenticated request dependencies.
+
+DISCOVERY / LEADS
+* Create canonical Discovery, validate selected workspace, create durable job,
+  dispatch provider search, persist companies/leads/workspace links/results,
+  finalize atomically or explicitly compensate/fail, list/get results, cancel,
+  recovery, selection/preview, lead save/approve/reject/attach/filter/rank.
+
+CAMPAIGNS / STRATEGY
+* Campaign CRUD, duplicate/archive/delete behavior, selected-lead attachment,
+  correct persisted lead_count, discovery attachment, strategy generation
+  job/status/recovery, campaign summary/timeline, launch progress.
+
+DRAFTS / OUTBOUND
+* Draft CRUD/edit/refine/analyze/ask/compare/history/version, batch generation
+  job/status/recovery, canonical approval/rejection/undo, schedule/cancel,
+  send now/reply send, provider projection, retry-safe status changes,
+  CSV export, outbound history/events.
+
+INBOX / CONVERSATIONS
+* Provider sync, durable conversation/thread/message/timeline snapshots,
+  workspace/owner filtering, summary/recommendation/reasoning, reply draft,
+  reply send, follow-up, memory/analysis updates, restart persistence and
+  concurrency protection.
+
+KNOWLEDGE / STRATEGIC INTELLIGENCE
+* Workspace-scoped knowledge/source CRUD and retrieval, semantic context,
+  strategic updates/actions lifecycle, recommendation/approval/refine/execute,
+  current data grounding.
+
+MISSION CONTROL / ANALYTICS
+* Shared workspace payload, health/reasoning, timeline/activity/deltas,
+  briefing synthesis, attention/recommendation cards/actions, strategic data,
+  campaign/workspace analytics from canonical records.
+
+WORKFLOWS / LEGACY CLIENTS
+* Telegram/web shared ConversationEngine path, workflow planning/execution,
+  pause/resume/cancel/approval/history/events/SSE, workflow recovery/locks,
+  and compatibility session APIs until callers are migrated.
+
+OBSERVABILITY / OPERATIONS
+* Structured safe logs, request IDs, audit records, rate limiting, errors,
+  lifecycle readiness, startup recovery, migration/schema checks, and operator
+  tooling for account/workspace reconciliation.
+
+3. MINIMUM REPLACEMENT MODULES (TARGET, NOT EXISTING FILE TREE)
+----------------------------------------------------------------
+
+app/
+  app_factory.py              FastAPI composition, middleware, routers, lifespan.
+  dependencies.py             authenticated identity + selected workspace dependencies.
+  errors.py                   domain-error to HTTP mapping.
+  events.py                   SSE publication/subscription adapter.
+
+identity/
+  application.py              signup/login/session/bridge/organization onboarding orchestration.
+  repositories.py             users, credentials, sessions, memberships, identities.
+  providers.py                email/Google identity provider interfaces.
+
+workspace/
+  access.py                   workspace membership authorization and selected-workspace resolution.
+  state.py                    canonical bounded workspace read projection only.
+
+discovery/
+  application.py              create/search/finalize/cancel/recover use cases.
+  repository.py               discoveries/results/company/lead links.
+  providers.py                provider-agnostic dispatcher and provider adapters.
+
+campaigns/
+  application.py              campaign CRUD, attach leads/discovery, strategy/draft starts.
+  repository.py               canonical campaign and campaign-lead queries.
+
+drafts/
+  application.py              canonical draft lifecycle, generation, review, approval.
+  repository.py               canonical Draft persistence/version queries.
+
+outbound/
+  application.py              provider projection, schedule/send, confirmation gate.
+  providers.py                Gmail provider adapter and ownership resolution.
+
+inbox/
+  application.py              sync/read/reply/follow-up/reasoning orchestration.
+  repository.py               durable workspace-scoped conversation snapshots.
+
+jobs/
+  application.py              durable job creation/status/results/recovery/reconciliation.
+  workers.py                  Discovery/strategy/draft workers.
+
+knowledge/
+  application.py              knowledge CRUD and scoped semantic retrieval.
+  repository.py               knowledge/source persistence.
+
+mission_control/
+  application.py              assemble briefing/health/timeline from canonical reads.
+  reasoning.py                 existing reasoner/narrative adapters, kept bounded.
+
+copilot/
+  application.py              request context, intent, read/tool response orchestration.
+  tools.py                    registered domain tool adapters only.
+  memory.py                   bounded derived memory persistence.
+  executions.py               idempotency/audit/recovery ledger.
+
+workflows/
+  application.py              legacy workflow compatibility facade while old clients remain.
+  runtime.py                  one explicit workflow state machine.
+
+repositories/
+  supabase.py                 shared client/transaction/RPC/retry primitives only.
+  audit.py                    audit write/query boundary.
+
+This is approximately 25-35 implementation modules plus routers, models, and
+tests. It is not a one-file-per-current-service translation. Domain APIs may
+remain thin adapters over these application services.
+
+4. DISCARD / PRESERVE / REIMPLEMENT
+-----------------------------------
+
+PRESERVE DIRECTLY
+* Database schema/data/migrations and existing status vocabulary.
+* External API paths, verbs, request/response shapes, SSE event shapes.
+* Browser auth/session/header semantics and tenant access behavior.
+* Gmail OAuth/provider integration behavior and data ownership.
+* Durable job semantics, recovery guarantees, and audit records.
+* Existing product actions and existing frontend navigation destinations.
+
+REIMPLEMENT BEHIND COMPATIBILITY ADAPTERS
+* Route handlers: retain endpoint contracts, replace direct main.py business
+  logic with application-service calls.
+* Workspace projections, campaign/draft/outbound flows, discovery finalization,
+  inbox persistence, Mission Control assembly, and Copilot boundaries.
+* Legacy workflow/conversation APIs: retain behavior while implementing one
+  canonical underlying runtime.
+
+DISCARD ONLY AFTER CALLER/RUNTIME VERIFICATION
+* main.py in-process campaign_store/draft_store/batch_jobs/STRATEGY_JOBS once
+  durable replacements cover reads, mutations, recovery, and UI polling.
+* services/gmail.py legacy direct requests implementation (no runtime imports).
+* backend/state/memory.py and strategy_comparison.py if operator/runtime search
+  confirms no dynamic use.
+* Duplicate provider platform modules only after runtime registry/configuration
+  proves communication/outbound is the sole provider path.
+* Legacy conversation_store.py only after Telegram/web workflow callers use the
+  durable conversations/session facade.
+
+5. NON-NEGOTIABLE REBUILD RISKS
+-------------------------------
+* The API surface is much larger than the visible product pages: 128 direct
+  routes plus mounted routers. Removing a route is a breaking change.
+* Data shape compatibility includes JSON fields, status names, error details,
+  operation/job IDs, and navigation links returned to the frontend.
+* Existing local/in-memory stores cannot simply be removed before their writes,
+  recovery behavior, and tests are migrated to canonical persistence.
+* Legacy web/Telegram workflow clients may call paths the current frontend no
+  longer visibly exercises.
+* Provider sending must preserve confirmation, owner/provider scoping, and
+  unknown-outcome behavior; external send effects cannot be safely replayed.
+* A parallel new backend would create two authorities. A true replacement must
+  be cut over endpoint-by-endpoint behind compatibility tests, not run as a
+  second product system.
+
+Appendix A — Direct route families (128)
+-----------------------------------------
+* Root/health/webhook/Gmail OAuth callbacks.
+* Web session/messages/Copilot and workflow planning/execution/events.
+* Workspaces/context/providers/provider sync/events.
+* Discovery/jobs/results and lead selection/preview/decisions.
+* Campaign CRUD/summary/timeline/lead attachment/strategy/draft generation.
+* Draft review/edit/refine/analyze/ask/compare/approve/undo/history.
+* Outbound draft CRUD/approval/scheduling/send/history/events/versions.
+* Inbox communication analysis/memory/recommendations and conversation routes.
+* Knowledge/source CRUD, strategic update/action CRUD/execution.
+* Mission Control/briefing/export CSV/SSE.
+
+Conclusion
+----------
+The backend can be rebuilt only as a compatibility-preserving replacement,
+not as a clean-slate product rewrite. Recreate application/domain boundaries
+first, retain routes and schema through adapters, migrate one capability at a
+time, and delete legacy state only after durable parity and recovery tests.

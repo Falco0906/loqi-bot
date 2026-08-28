@@ -1,0 +1,661 @@
+backend/entrypoint.py | DYNAMIC | Loqi backend container entrypoint (production persistence fix).
+backend/scripts/backfill_diagnose.py | UNCLEAR | TEMP-DIAGNOSTIC: trace the startup backfill end-to-end against Supabase.
+backend/scripts/cleanup_abandoned_registration.py | UNCLEAR | Safe cleanup of ABANDONED / FAILED email signups (pre-account recovery).
+backend/scripts/delete_test_account.py | UNCLEAR | Safe operator/development test-account removal (SaaS-1.7 recovery tool).
+backend/scripts/mc_ai_measure.py | UNCLEAR | TMP-DIAG: measure the real AI calls (recs + brief) with the real context, warm DB.
+backend/scripts/migrate_legacy_workspaces.py | UNCLEAR | SaaS-2.8 — Production workspace & tenant migration operator CLI.
+backend/scripts/mission_control_diag.py | UNCLEAR | TMP-DIAGNOSTIC: trace the Mission Control request path end to end.
+backend/scripts/reconcile_web_sessions.py | UNCLEAR | Legacy synthetic web-user → canonical identity reconciliation (SaaS-1.7).
+backend/scripts/recover_account.py | UNCLEAR | Operator-only account recovery CLI.
+backend/scripts/saas_smoke_test.py | UNCLEAR | SaaS-1.7 post-deployment smoke test (read-mostly, safe).
+backend/services/adapters/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/adapters/adapter_context.py | ACTIVE | Defines AdapterContext.
+backend/services/adapters/adapter_factory.py | ACTIVE | Defines AdapterFactory.
+backend/services/adapters/adapter_registration.py | ACTIVE | Defines AdapterIdentity and AdapterRegistration.
+backend/services/adapters/adapter_registry.py | ACTIVE | Defines AdapterRegistry.
+backend/services/adapters/analysis/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/adapters/analysis/reply_analysis_adapter.py | ACTIVE | Defines ReplyAnalysisAdapter.
+backend/services/adapters/base_adapter.py | ACTIVE | Defines ExecutionAdapter.
+backend/services/adapters/capabilities.py | ACTIVE | Defines CapabilityCategory and ParameterSpec.
+backend/services/adapters/capability_registry.py | ACTIVE | Defines CapabilityRegistry.
+backend/services/adapters/credential_registry.py | ACTIVE | Defines CredentialRegistry.
+backend/services/adapters/credential_resolver.py | ACTIVE | Defines CredentialResolver.
+backend/services/adapters/credentials.py | ACTIVE | Defines CredentialType and mask_value.
+backend/services/adapters/crm/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/adapters/crm/crm_adapter.py | APPARENTLY-UNUSED | Defines CrmAdapter.
+backend/services/adapters/crm/models.py | ACTIVE | Defines Contact and Company.
+backend/services/adapters/exceptions.py | ACTIVE | Defines AdapterError and ConfigurationError.
+backend/services/adapters/google/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/adapters/google/calendar/__init__.py | ACTIVE | Calendar adapter — Google Calendar operations via GoogleApiAdapter.
+backend/services/adapters/google/calendar/calendar_adapter.py | ACTIVE | CalendarAdapter — Google Calendar operations via the Google API Base Adapter.
+backend/services/adapters/google/calendar/errors.py | ACTIVE | Calendar adapter errors — thin typed wrappers around Google API errors.
+backend/services/adapters/google/calendar/models.py | ACTIVE | Calendar adapter models — typed request/response models and a resource mapper for the Google Calendar v3 API.
+backend/services/adapters/google/errors.py | ACTIVE | Defines GoogleApiError and GoogleAuthenticationError.
+backend/services/adapters/google/gmail/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/adapters/google/gmail/errors.py | ACTIVE | Defines GmailError and MessageNotFoundError.
+backend/services/adapters/google/gmail/gmail_adapter.py | ACTIVE | Defines GmailAdapter.
+backend/services/adapters/google/gmail/mime.py | ACTIVE | Defines MimeMessage.
+backend/services/adapters/google/gmail/models.py | ACTIVE | Defines SendEmailRequest and ListMessagesRequest.
+backend/services/adapters/google/gmail/queries.py | ACTIVE | Defines GmailQuery.
+backend/services/adapters/google/google_api_adapter.py | ACTIVE | Defines GoogleApiAdapter.
+backend/services/adapters/google/models.py | ACTIVE | Defines GoogleApiRequest and GoogleApiResponse.
+backend/services/adapters/google/pagination.py | ACTIVE | Defines next_page_token and page_token_param.
+backend/services/adapters/google/services.py | ACTIVE | Defines GoogleServiceDescriptor and GoogleServiceRegistry.
+backend/services/adapters/google/urls.py | ACTIVE | Defines build_google_url and register_google_service.
+backend/services/adapters/http/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/adapters/http/auth.py | ACTIVE | Defines AuthStrategy and NoAuth.
+backend/services/adapters/http/exceptions.py | ACTIVE | Defines HttpError and InvalidUrlError.
+backend/services/adapters/http/http_adapter.py | ACTIVE | Defines HttpAdapter.
+backend/services/adapters/http/models.py | ACTIVE | Defines HttpRequest and HttpResponse.
+backend/services/adapters/http/serializers.py | ACTIVE | Defines BodySerializer and JsonSerializer.
+backend/services/adapters/http/transport.py | ACTIVE | Defines HttpTransport and HttpxTransport.
+backend/services/adapters/http/validators.py | ACTIVE | Defines validate_url and validate_method.
+backend/services/adapters/memory/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/adapters/memory/memory_adapter.py | APPARENTLY-UNUSED | Defines MemoryAdapter.
+backend/services/adapters/models.py | ACTIVE | Defines AdapterMetadata and UsageInfo.
+backend/services/adapters/protocols.py | ACTIVE | Defines Validator and HealthCheckable.
+backend/services/agent.py | ACTIVE | Defines process_message.
+backend/services/agent_sdk/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/agent_sdk/agent_base.py | ACTIVE | Defines Agent.
+backend/services/agent_sdk/models.py | ACTIVE | Defines AgentType and AgentResult.
+backend/services/agents/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/agents/crm_agent.py | ACTIVE | Defines CrmAgent.
+backend/services/agents/memory_agent.py | ACTIVE | Defines MemoryAgent.
+backend/services/agents/outreach_agent.py | ACTIVE | Defines OutreachAgent.
+backend/services/agents/research_agent.py | ACTIVE | Defines ResearchAgent.
+backend/services/agents/scheduling_agent.py | ACTIVE | Defines SchedulingAgent.
+backend/services/ai.py | ACTIVE | Defines OpenAIError and classify_intent.
+backend/services/billing/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/billing/api.py | ACTIVE | Defines create_billing_provider and BillingDeps.
+backend/services/billing/config.py | ACTIVE | Defines BillingConfig.
+backend/services/billing/events.py | ACTIVE | Defines BillingEventType and BillingDomainEvent.
+backend/services/billing/exceptions.py | ACTIVE | Defines BillingException and CustomerNotFound.
+backend/services/billing/models.py | ACTIVE | Defines SubscriptionStatus and BillingInterval.
+backend/services/billing/provider.py | ACTIVE | Defines CheckoutResult and PortalResult.
+backend/services/billing/repositories.py | ACTIVE | Defines Repository and InMemoryRepository.
+backend/services/billing/schemas.py | ACTIVE | Defines PlanResponse and PlansListResponse.
+backend/services/billing/services.py | ACTIVE | Defines CustomerService and PlanService.
+backend/services/billing/stripe_provider.py | ACTIVE | Defines MockStripeBillingProvider and StripeBillingProvider.
+backend/services/buyer_psychology.py | ACTIVE | Buyer persona analysis.
+backend/services/buying_signal.py | ACTIVE | Buying Signal Detection — analyses messages for purchase intent signals.
+backend/services/campaign_planner.py | ACTIVE | Defines analyze_campaigns.
+backend/services/capabilities/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/capabilities/api.py | ACTIVE | Defines CapabilityDeps and register_deps.
+backend/services/capabilities/config.py | ACTIVE | Defines CapabilityConfig.
+backend/services/capabilities/events.py | ACTIVE | Defines CapabilityEventType and CapabilityDomainEvent.
+backend/services/capabilities/exceptions.py | ACTIVE | Defines CapabilityException and CapabilityNotFound.
+backend/services/capabilities/models.py | ACTIVE | Defines CapabilityDefinition and OrganizationCapability.
+backend/services/capabilities/repositories.py | ACTIVE | Defines Repository and InMemoryRepository.
+backend/services/capabilities/schemas.py | ACTIVE | Defines CapabilityDefinitionResponse and CapabilitiesListResponse.
+backend/services/capabilities/services.py | ACTIVE | Defines CapabilityService.
+backend/services/channel_adapters/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/channel_adapters/telegram.py | ACTIVE | Defines send_engine_response_to_telegram.
+backend/services/commercial_qualifier.py | ACTIVE | Defines score_lead and qualify_and_rank_leads.
+backend/services/communication/communication_store.py | ACTIVE | Communication Store — persists provider state, sync cursors, thread mappings.
+backend/services/communication/gmail_provider.py | ACTIVE | Gmail Provider — first implementation of CommunicationProviderBase.
+backend/services/communication/gmail_sync.py | ACTIVE | Defines sync_all and sync_thread.
+backend/services/communication/gmail_webhooks.py | ACTIVE | Gmail Webhooks — handles Pub/Sub push notifications from Gmail.
+backend/services/communication/inbound_filter.py | ACTIVE | Deterministic Loqi communication boundary for inbound Gmail.
+backend/services/communication/inbox_sync_engine.py | ACTIVE | Background Gmail inbox sync and follow-up readiness maintenance.
+backend/services/communication/provider_base.py | ACTIVE | Abstract provider interface.
+backend/services/communication/provider_events.py | ACTIVE | Provider Events — lifecycle events for communication providers.
+backend/services/communication/provider_models.py | ACTIVE | Provider models — strongly typed Pydantic models for the provider abstraction layer.
+backend/services/communication/provider_normalizer.py | ACTIVE | Provider Normalizer — converts provider-specific messages into ConversationMessage.
+backend/services/communication/provider_registry.py | ACTIVE | Provider Registry — manages provider lifecycle.
+backend/services/communication/reply_simulator.py | ACTIVE | Development Reply Simulator — pluggable inbound event producer.
+backend/services/company_context.py | ACTIVE | Company context analysis.
+backend/services/config_validation.py | ACTIVE | Centralized environment/configuration validation (PR10.2).
+backend/services/conversation_classifier.py | ACTIVE | Conversation Stage Classification.
+backend/services/conversation_engine.py | ACTIVE | Defines ConversationEngine.
+backend/services/conversation_intelligence/__init__.py | ACTIVE | Conversation Intelligence Module.
+backend/services/conversation_intelligence/buying_signal_detector.py | ACTIVE | Buying signal detection.
+backend/services/conversation_intelligence/conversation_memory.py | ACTIVE | Conversation memory manager — extracts and persists conversation facts.
+backend/services/conversation_intelligence/conversation_scoring.py | ACTIVE | Conversation health scoring.
+backend/services/conversation_intelligence/conversation_summary.py | ACTIVE | Multi-level conversation summary generation.
+backend/services/conversation_intelligence/entity_extractor.py | ACTIVE | Entity extraction — extracts structured business entities from conversation messages.
+backend/services/conversation_intelligence/intelligence_models.py | ACTIVE | Enhanced intelligence models for conversation understanding.
+backend/services/conversation_intelligence/intelligence_pipeline.py | ACTIVE | Intelligence pipeline — orchestrates all conversation intelligence analyzers.
+backend/services/conversation_intelligence/intent_extractor.py | ACTIVE | Intent extraction.
+backend/services/conversation_intelligence/knowledge/__init__.py | ACTIVE | Intelligence Knowledge Layer.
+backend/services/conversation_intelligence/knowledge/budgets.py | APPARENTLY-UNUSED | Budget-related regex patterns and metadata.
+backend/services/conversation_intelligence/knowledge/buying_signals.py | ACTIVE | Buying signal definitions with keywords, strength, and base confidence.
+backend/services/conversation_intelligence/knowledge/companies.py | ACTIVE | Company-related patterns and indicators.
+backend/services/conversation_intelligence/knowledge/confidence.py | APPARENTLY-UNUSED | Named confidence defaults.
+backend/services/conversation_intelligence/knowledge/meeting_patterns.py | APPARENTLY-UNUSED | Meeting-related regex patterns.
+backend/services/conversation_intelligence/knowledge/normalization.py | APPARENTLY-UNUSED | Reusable normalization utilities for entity values.
+backend/services/conversation_intelligence/knowledge/objections.py | APPARENTLY-UNUSED | Objection definitions with category, keywords, severity, and base confidence.
+backend/services/conversation_intelligence/knowledge/patterns.py | APPARENTLY-UNUSED | Generic extraction regex patterns (people, products, needs).
+backend/services/conversation_intelligence/knowledge/registry.py | ACTIVE | Central Knowledge Registry.
+backend/services/conversation_intelligence/knowledge/scoring_config.py | APPARENTLY-UNUSED | Scoring configuration — tunable weights for conversation health scoring.
+backend/services/conversation_intelligence/knowledge/technologies.py | ACTIVE | Technology names organized by category.
+backend/services/conversation_intelligence/knowledge/timelines.py | APPARENTLY-UNUSED | Timeline and date-related regex patterns.
+backend/services/conversation_intelligence/knowledge/titles.py | ACTIVE | Decision-maker titles and role patterns.
+backend/services/conversation_intelligence/objection_detector.py | ACTIVE | Objection detection — identifies and categorizes prospect objections.
+backend/services/conversation_memory.py | ACTIVE | Conversation Memory — structured fact storage.
+backend/services/conversation_models.py | ACTIVE | Communication Intelligence — strongly typed Pydantic models.
+backend/services/conversation_store.py | ACTIVE | Defines get_or_create_channel_user and create_lightweight_web_session.
+backend/services/conversation_timeline.py | ACTIVE | Conversation Timeline — structured event log for a conversation.
+backend/services/conversational_response_generator.py | ACTIVE | Defines decide_copilot_intent and classify_copilot_read_question.
+backend/services/conversations/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/conversations/classification.py | ACTIVE | Reply classification architecture.
+backend/services/conversations/conversation_models.py | ACTIVE | Conversation domain models.
+backend/services/conversations/conversation_store.py | ACTIVE | Conversation store with explicit JSON persistence.
+backend/services/conversations/followup_planner.py | ACTIVE | Follow-up Planner architecture.
+backend/services/conversations/integration.py | ACTIVE | Integration between outbound system and conversation management.
+backend/services/conversations/persistence.py | TEST-ONLY | Durable persistence backend for the conversation store.
+backend/services/conversations/state_machine.py | ACTIVE | Conversation state machine.
+backend/services/conversations/timeline.py | ACTIVE | Conversation timeline models.
+backend/services/coordinator/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/coordinator/coordinator.py | ACTIVE | Defines CoordinationPlan and AgentCoordinator.
+backend/services/coordinator/strategy.py | ACTIVE | Defines CoordinatorStrategy.
+backend/services/copilot_orchestrator.py | ACTIVE | Bounded multi-step orchestration over the existing Copilot tool registry.
+backend/services/copilot_tools.py | ACTIVE | Backend-owned Copilot tool contract.
+backend/services/credential_crypto.py | ACTIVE | Authenticated encryption at rest for persisted provider credentials (PR10.7).
+backend/services/cta_strategy.py | ACTIVE | CTA strategy engine.
+backend/services/discovery.py | ACTIVE | Discovery service — first-class, persistent research entities.
+backend/services/discovery_context.py | ACTIVE | Optional workspace context for Discovery and qualification.
+backend/services/discovery_plan.py | ACTIVE | Discovery Plan — the structured intelligence item behind every search.
+backend/services/draft_comparison.py | ACTIVE | Structured draft comparison between versions.
+backend/services/draft_intelligence.py | ACTIVE | Structured draft intelligence engine.
+backend/services/email/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/email/attachments.py | ACTIVE | Defines AttachmentProcessor.
+backend/services/email/branding.py | ACTIVE | Defines BrandingManager.
+backend/services/email/composer.py | ACTIVE | Defines EmailComposer.
+backend/services/email/config.py | ACTIVE | Defines EmailConfig.
+backend/services/email/delivery_log.py | ACTIVE | Defines log_email_sent and log_email_failed.
+backend/services/email/draft.py | ACTIVE | Defines DraftBuilder and draft_to_gmail_params.
+backend/services/email/exceptions.py | ACTIVE | Defines EmailCompositionError and UnknownTemplateError.
+backend/services/email/mailbox.py | ACTIVE | Defines MailboxManager.
+backend/services/email/models.py | ACTIVE | Defines TemplateName and Attachment.
+backend/services/email/renderer.py | ACTIVE | Defines EmailRenderer.
+backend/services/email/resend_provider.py | ACTIVE | Defines ResendEmailProvider.
+backend/services/email/template_registry.py | ACTIVE | Defines TemplateRegistry.
+backend/services/email/templates.py | ACTIVE | Defines plain_template and professional_template.
+backend/services/email/transactional_templates.py | ACTIVE | Defines TemplateResult and render_verification_email.
+backend/services/enrichment/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/enrichment/apollo_enricher.py | DYNAMIC | Defines ApolloEnricher.
+backend/services/enrichment/base_enricher.py | APPARENTLY-UNUSED | Defines EnricherError and BaseEnricher.
+backend/services/enrichment/enrichment_factory.py | ACTIVE | Defines get_enricher and get_enricher_capabilities.
+backend/services/enrichment/synthetic_enricher.py | DYNAMIC | Defines SyntheticEnricher.
+backend/services/events_bus.py | ACTIVE | PR-3A — Real-time event bus (Redis Pub/Sub).
+backend/services/execution/__init__.py | ACTIVE | Execution Engine package.
+backend/services/execution/adapter_registry.py | ACTIVE | Execution Engine adapter registry.
+backend/services/execution/adapter_registry_resolver.py | ACTIVE | AdapterRegistryResolver — a generic AdapterResolver backed by the execution AdapterRegistry.
+backend/services/execution/base_adapter.py | ACTIVE | Abstract base class for all execution adapters.
+backend/services/execution/bridge_adapter.py | ACTIVE | BridgeAdapter — adapts an Adapter SDK ExecutionAdapter for the Execution Engine.
+backend/services/execution/credential_factory.py | ACTIVE | Per-user credential resolution for globally registered BridgeAdapters.
+backend/services/execution/dispatcher.py | ACTIVE | Execution Engine dispatcher.
+backend/services/execution/enums.py | ACTIVE | Execution Engine enums.
+backend/services/execution/event_bus.py | ACTIVE | Event Bus — loosely coupled event pub/sub for the execution engine.
+backend/services/execution/exceptions.py | ACTIVE | Execution Engine exception hierarchy.
+backend/services/execution/execution_context.py | ACTIVE | Execution context — built once at session initialization.
+backend/services/execution/execution_models.py | ACTIVE | Execution Engine core data models.
+backend/services/execution/execution_pipeline.py | ACTIVE | Execution Pipeline — main orchestration entry point.
+backend/services/execution/logging_subscriber.py | ACTIVE | Logging subscriber — writes ExecutionEngine lifecycle events to Python's logging module.
+backend/services/execution/metrics_collector.py | ACTIVE | Metrics Collector — passive event-driven statistics for the execution engine.
+backend/services/execution/recovery_manager.py | ACTIVE | Recovery Manager — orchestrates session recovery and approval integration.
+backend/services/execution/scheduler.py | ACTIVE | Execution Engine scheduler.
+backend/services/execution/state_machine.py | ACTIVE | Execution Engine state machine.
+backend/services/execution/utils.py | ACTIVE | Execution Engine utility functions.
+backend/services/execution/validation.py | ACTIVE | Execution plan validation.
+backend/services/executive_brief.py | ACTIVE | Executive Brief — thin adapter between Reasoning Layer and Narrative Engine.
+backend/services/followup_reasoner.py | ACTIVE | Follow-up Reasoner — recommends next action based on intent, signals, and stage.
+backend/services/framework_selector.py | ACTIVE | Messaging framework selector.
+backend/services/gmail.py | APPARENTLY-UNUSED | Defines send_email.
+backend/services/gmail_auth_failure.py | ACTIVE | Gmail OAuth authentication failure classification (PR10.8.1).
+backend/services/google_auth.py | ACTIVE | Defines get_google_auth_url and exchange_code_for_tokens.
+backend/services/icp_extractor.py | ACTIVE | Defines extract_structured_icp and is_lead_excluded.
+backend/services/identity/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/identity/account_recovery.py | ACTIVE | Safe operator-only account recovery: provision the durable organization + owner membership that a legacy completed account is missing.
+backend/services/identity/api.py | ACTIVE | Defines get_authenticated_user_id and get_auth_user_service.
+backend/services/identity/config.py | ACTIVE | Defines Argon2Config and TokenConfig.
+backend/services/identity/contracts/__init__.py | ACTIVE | Defines ProviderType and IdentityContext.
+backend/services/identity/dependencies.py | ACTIVE | Canonical authentication dependency for the Loqi identity boundary.
+backend/services/identity/events/__init__.py | ACTIVE | Defines IdentityEventType and IdentityEvent.
+backend/services/identity/exceptions/__init__.py | ACTIVE | Defines IdentityException and AuthenticationException.
+backend/services/identity/metrics.py | ACTIVE | Defines AuthMetrics and get_metrics.
+backend/services/identity/models/__init__.py | ACTIVE | Defines MembershipStatus and InvitationStatus.
+backend/services/identity/models/oauth_session.py | ACTIVE | Defines OAuthSession.
+backend/services/identity/providers/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/identity/providers/email_provider.py | ACTIVE | Defines EmailProvider and ConsoleEmailProvider.
+backend/services/identity/providers/google_provider.py | ACTIVE | Defines GoogleIdentityProvider and InMemoryGoogleIdentityProvider.
+backend/services/identity/providers/registry.py | ACTIVE | Defines IdentityProviderRegistryError and IdentityProviderRegistry.
+backend/services/identity/registration_cleanup.py | ACTIVE | Shared abandoned-registration cleanup logic (SaaS lifecycle).
+backend/services/identity/repositories/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/identity/repositories/base.py | ACTIVE | Defines Repository and InMemoryRepository.
+backend/services/identity/repositories/email_identity_repository.py | ACTIVE | Defines EmailIdentityRepository and InMemoryEmailIdentityRepository.
+backend/services/identity/repositories/external_identity_repository.py | ACTIVE | Defines ExternalIdentityRepository and InMemoryExternalIdentityRepository.
+backend/services/identity/repositories/invitation_repository.py | ACTIVE | Defines InvitationRepository and InMemoryInvitationRepository.
+backend/services/identity/repositories/membership_repository.py | ACTIVE | Defines MembershipRepository and InMemoryMembershipRepository.
+backend/services/identity/repositories/oauth_session_repository.py | ACTIVE | Defines OAuthSessionRepository and InMemoryOAuthSessionRepository.
+backend/services/identity/repositories/organization_repository.py | ACTIVE | Defines OrganizationRepository and InMemoryOrganizationRepository.
+backend/services/identity/repositories/password_credential_repository.py | ACTIVE | Defines PasswordCredentialRepository and InMemoryPasswordCredentialRepository.
+backend/services/identity/repositories/registration_session_repository.py | ACTIVE | Defines RegistrationSessionRepository and InMemoryRegistrationSessionRepository.
+backend/services/identity/repositories/session_repository.py | ACTIVE | Defines SessionRepository and InMemorySessionRepository.
+backend/services/identity/repositories/token_repositories.py | ACTIVE | Defines VerificationTokenRepository and InMemoryVerificationTokenRepository.
+backend/services/identity/repositories/user_repository.py | ACTIVE | Defines UserRepository and InMemoryUserRepository.
+backend/services/identity/schemas.py | ACTIVE | Defines EmailSignupRequest and EmailVerifyRequest.
+backend/services/identity/services/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/identity/services/auth_service.py | ACTIVE | Defines RegistrationResult and VerificationResult.
+backend/services/identity/services/invitation_service.py | ACTIVE | Defines InvitationService.
+backend/services/identity/services/membership_service.py | ACTIVE | Defines MembershipService.
+backend/services/identity/services/organization_service.py | ACTIVE | Defines OrganizationService.
+backend/services/identity/services/password_service.py | ACTIVE | Defines PasswordService.
+backend/services/identity/services/session_service.py | ACTIVE | Defines SessionService.
+backend/services/identity/services/token_service.py | ACTIVE | Defines TokenService.
+backend/services/identity/services/user_service.py | ACTIVE | Defines UserService.
+backend/services/identity/services/verification_service.py | ACTIVE | Defines VerificationService.
+backend/services/identity/types/__init__.py | ACTIVE | Defines EmailAddress and PasswordHash.
+backend/services/identity/utils/__init__.py | APPARENTLY-UNUSED | Package initializer and public import surface.
+backend/services/intelligence/__init__.py | ACTIVE | Intelligence Layer — describes reality through deterministic signals.
+backend/services/intelligence/account_intelligence.py | ACTIVE | Defines generate_account_intelligence.
+backend/services/intelligence/activity_intelligence.py | TEST-ONLY | Defines suggest_next_activity_type and infer_activity_priority.
+backend/services/intelligence/campaign_signals.py | ACTIVE | CampaignSignals — deterministic extraction of per-campaign facts.
+backend/services/intelligence/contact_intelligence.py | TEST-ONLY | Defines generate_contact_intelligence.
+backend/services/intelligence/conversation_signals.py | ACTIVE | ConversationSignals — deterministic extraction of conversation-level facts.
+backend/services/intelligence/lead_intelligence.py | ACTIVE | Deterministic lead intelligence generator.
+backend/services/intelligence/lead_signals.py | ACTIVE | LeadSignals — deterministic extraction of per-campaign lead quality signals.
+backend/services/intelligence/provider_signals.py | ACTIVE | ProviderSignals — deterministic extraction of provider/connection facts.
+backend/services/intelligence/signal_factory.py | ACTIVE | SignalFactory — builds all intelligence signals from raw snapshot + delta.
+backend/services/intelligence/workspace_signals.py | ACTIVE | WorkspaceSignals — deterministic extraction of workspace-wide metrics.
+backend/services/intent_detector.py | ACTIVE | Intent Detection — structured classification of message intent.
+backend/services/intentions/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/intentions/engine.py | ACTIVE | Defines IntentionEngine.
+backend/services/intentions/helpers.py | ACTIVE | Defines build_intention and deduplicate.
+backend/services/intentions/lifecycle.py | ACTIVE | Defines LifecycleError and transition.
+backend/services/intentions/models.py | ACTIVE | Defines IntentionType and PriorityLevel.
+backend/services/intentions/policies.py | ACTIVE | Defines PolicyResult and Policy.
+backend/services/intentions/priority.py | ACTIVE | Defines order_intentions and highest_priority.
+backend/services/intentions/queue.py | ACTIVE | Defines IntentionQueue.
+backend/services/job_engine/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/job_engine/manager.py | ACTIVE | Defines JobManager.
+backend/services/job_engine/models.py | ACTIVE | Defines JobStatus and JobProgress.
+backend/services/job_engine/registry.py | ACTIVE | Defines WorkflowRegistration and JobRegistry.
+backend/services/job_engine/runner.py | ACTIVE | Defines BackgroundRunner.
+backend/services/job_engine/storage.py | ACTIVE | Defines JobStorage.
+backend/services/knowledge/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/knowledge/context_adapter.py | ACTIVE | Knowledge-to-generation context adapter (PR5.1).
+backend/services/knowledge/service.py | ACTIVE | Knowledge service (PR5 — Knowledge Foundation).
+backend/services/lead_provider.py | ACTIVE | Defines get_leads and search_with_expansion.
+backend/services/learning/__init__.py | ACTIVE | Learning Layer — deterministic, event-driven learning from user behavior.
+backend/services/learning/behavior_tracker.py | ACTIVE | BehaviorTracker — records user actions and provides evidence counts.
+backend/services/learning/feedback_interpreter.py | ACTIVE | FeedbackInterpreter — interprets explicit user feedback signals.
+backend/services/learning/helpers.py | APPARENTLY-UNUSED | Learning helpers — simple import surface for main.py integration.
+backend/services/learning/learner.py | ACTIVE | Learner — orchestrator that runs the full learning pipeline.
+backend/services/learning/models.py | ACTIVE | PreferenceModel — typed, structured preferences learned from user behavior.
+backend/services/learning/pattern_detector.py | ACTIVE | PatternDetector — detects recurring temporal and behavioral patterns.
+backend/services/learning/preference_learner.py | ACTIVE | PreferenceLearner — decides when repeated behavior warrants a learned preference.
+backend/services/learning/preference_store.py | ACTIVE | PreferenceStore — thin wrapper around World Model preferences.
+backend/services/lifecycle.py | ACTIVE | Minimal application lifecycle state (PR10.6).
+backend/services/logging_setup.py | ACTIVE | Centralized logging configuration (PR10.4).
+backend/services/memory/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/memory/consolidation.py | ACTIVE | Defines consolidate_memories.
+backend/services/memory/explainability.py | TEST-ONLY | Defines explain_decision and audit_plan_influences.
+backend/services/memory/memory_store.py | ACTIVE | Defines MemoryProvider and InMemoryMemoryProvider.
+backend/services/memory/models.py | ACTIVE | Defines MemoryType and MemoryRelationship.
+backend/services/memory/subscriber.py | ACTIVE | Defines MemorySubscriber.
+backend/services/messaging_strategy.py | ACTIVE | Messaging angle selection.
+backend/services/migration.py | ACTIVE | Defines apply_migrations.
+backend/services/mission_control/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/mission_control/api.py | ACTIVE | Mission Control API endpoint handlers.
+backend/services/mission_control/briefing.py | ACTIVE | Defines MissionControlService and get_service.
+backend/services/mission_control/payload.py | ACTIVE | Shared Mission Control payload — one state load + one LLM computation per workspace state, served to both ``/mission-control`` and ``/briefing``.
+backend/services/mission_control/types.py | TEST-ONLY | Defines IntentionCard and BriefingSection.
+backend/services/narrative_engine.py | ACTIVE | Defines BriefingContext and NarrativeEngine.
+backend/services/oauth_state.py | ACTIVE | Server-side OAuth state (CSRF) protection, durable across instances (SaaS-1.5).
+backend/services/objection_predictor.py | ACTIVE | Objection prediction engine.
+backend/services/onboarding/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/onboarding/api.py | ACTIVE | Defines set_onboarding_service and set_onboarding_completion_handler.
+backend/services/onboarding/config.py | ACTIVE | Defines OnboardingConfig and WizardStepDefinition.
+backend/services/onboarding/events.py | ACTIVE | Defines OnboardingEventType and OnboardingEvent.
+backend/services/onboarding/exceptions.py | ACTIVE | Defines OnboardingException and LifecycleException.
+backend/services/onboarding/models.py | ACTIVE | Defines LifecycleState and is_valid_transition.
+backend/services/onboarding/repositories.py | ACTIVE | Defines Repository and InMemoryRepository.
+backend/services/onboarding/schemas.py | ACTIVE | Defines ValidationError and CompleteStepRequest.
+backend/services/onboarding/services.py | ACTIVE | Defines LifecycleService and OnboardingService.
+backend/services/operations/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/operations/diagnostics.py | ACTIVE | Defines get_build_metadata and set_startup_time.
+backend/services/operations/middleware.py | ACTIVE | Defines redact_session_path and RequestLoggingMiddleware.
+backend/services/operations/router.py | ACTIVE | Defines health and ready.
+backend/services/organizations/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/organizations/api.py | ACTIVE | Defines OrgDeps and register_deps.
+backend/services/organizations/events.py | ACTIVE | Defines OrgEventType and OrgEvent.
+backend/services/organizations/exceptions.py | ACTIVE | Defines OrganizationException and OrganizationNotFound.
+backend/services/organizations/models.py | ACTIVE | Defines MembershipRole and MembershipStatus.
+backend/services/organizations/repositories.py | ACTIVE | Defines Repository and InMemoryRepository.
+backend/services/organizations/resolver.py | ACTIVE | Defines CurrentOrganizationResolver.
+backend/services/organizations/schemas.py | ACTIVE | Defines OrganizationCreate and OrganizationUpdate.
+backend/services/organizations/services.py | ACTIVE | Defines OrganizationService and MembershipService.
+backend/services/outbound/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/outbound/draft_store.py | ACTIVE | Draft Store — stores drafts, approval state, version history.
+backend/services/outbound/gmail_outbound.py | ACTIVE | Gmail Outbound Provider — implements OutboundProviderBase for Gmail.
+backend/services/outbound/outbound_base.py | ACTIVE | Abstract outbound provider interface.
+backend/services/outbound/outbound_events.py | ACTIVE | Outbound Events — lifecycle events for outbound communication.
+backend/services/outbound/outbound_executor.py | ACTIVE | Outbound Executor — universal outbound dispatcher.
+backend/services/outbound/outbound_models.py | ACTIVE | Outbound models — provider-agnostic Pydantic models for outbound communication.
+backend/services/outbound/outbound_persistence.py | ACTIVE | Outbound Persistence — stores send history and delivery state.
+backend/services/outbound/outbound_registry.py | ACTIVE | Outbound Registry — manages outbound provider lifecycle.
+backend/services/outbound/outbound_scheduler.py | ACTIVE | Outbound Scheduler — sends scheduled drafts when their time arrives.
+backend/services/persistence/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/persistence/base_repository.py | ACTIVE | Defines SupabaseRepository.
+backend/services/persistence/config.py | ACTIVE | Defines RepositoryProvider and get_repository_provider.
+backend/services/persistence/database.py | ACTIVE | Defines SupabaseConnectionManager and get_connection_manager.
+backend/services/persistence/json_file.py | APPARENTLY-UNUSED | Durable atomic JSON file persistence (PR10.8).
+backend/services/persistence/launch/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/persistence/launch/backfill.py | APPARENTLY-UNUSED | One-shot backfill of canonical launch tables from the event log.
+backend/services/persistence/launch/communication_persistence.py | ACTIVE | SaaS-2.6 — Durable outbound message + provider event persistence.
+backend/services/persistence/launch/legacy_workspace_migration.py | LEGACY | SaaS-2.3 — Stable workspace ownership: legacy workspace detection + migration.
+backend/services/persistence/launch/models.py | ACTIVE | Defines ExternalIdentity and ConnectedAccount.
+backend/services/persistence/launch/repositories.py | ACTIVE | Defines LaunchRepository and ExternalIdentityRepository.
+backend/services/persistence/launch/workspace_reconciliation.py | ACTIVE | SaaS-2.8 — Production workspace & tenant reconciliation.
+backend/services/persistence/migrations/__init__.py | APPARENTLY-UNUSED | Package initializer and public import surface.
+backend/services/persistence/repositories/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/persistence/repositories/billing_repositories.py | ACTIVE | Defines SupabasePlanRepository and SupabaseCustomerRepository.
+backend/services/persistence/repositories/identity_auth_repositories.py | ACTIVE | Defines SupabaseEmailIdentityRepository and SupabasePasswordCredentialRepository.
+backend/services/persistence/repositories/identity_org_repositories.py | ACTIVE | Defines SupabaseIdentityOrganizationRepository and SupabaseIdentityMembershipRepository.
+backend/services/persistence/repositories/organization_repositories.py | ACTIVE | Defines SupabaseOrganizationRepository and SupabaseMembershipRepository.
+backend/services/persistence/repositories/session_repository.py | ACTIVE | Defines SupabaseSessionRepository.
+backend/services/persistence/repositories/token_repositories.py | ACTIVE | Defines SupabaseVerificationTokenRepository and SupabaseRefreshTokenRepository.
+backend/services/persistence/repositories/user_repository.py | ACTIVE | Defines SupabaseUserRepository.
+backend/services/persistence/retry.py | ACTIVE | Bounded, classified persistence retry (PR10.8).
+backend/services/planner/__init__.py | ACTIVE | Planning Engine.
+backend/services/planner/approval_engine.py | ACTIVE | Defines apply_approval_rules.
+backend/services/planner/branching_engine.py | ACTIVE | Defines apply_branching and collect_branching_issues.
+backend/services/planner/dependency_builder.py | ACTIVE | Defines build_dependencies and validate_dag.
+backend/services/planner/exceptions.py | ACTIVE | Planning Engine exception hierarchy.
+backend/services/planner/payloads.py | ACTIVE | Typed task payload system.
+backend/services/planner/plan_validator.py | ACTIVE | Defines ValidationIssue and ValidationResult.
+backend/services/planner/planner_router.py | ACTIVE | PlannerRouter — routes conversation intents through the Planner.
+backend/services/planner/planning_models.py | ACTIVE | Defines PlanStatus and TaskStatus.
+backend/services/planner/planning_pipeline.py | ACTIVE | Planning Pipeline — orchestrates all planning stages.
+backend/services/planner/scheduling_engine.py | ACTIVE | Defines apply_scheduling and collect_scheduling_issues.
+backend/services/planner/strategies/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/planner/strategies/booking.py | ACTIVE | Booking Strategy — produces a Plan with a calendar event creation followed by a notification email.
+backend/services/planner/strategies/cold_outreach.py | ACTIVE | Defines ColdOutreachStrategy.
+backend/services/planner/strategies/demo_booking.py | ACTIVE | Defines DemoBookingStrategy.
+backend/services/planner/strategies/draft_revision.py | ACTIVE | Defines DraftRevisionStrategy.
+backend/services/planner/strategies/escalation.py | ACTIVE | Defines EscalationStrategy.
+backend/services/planner/strategies/follow_up.py | ACTIVE | Defines FollowUpStrategy.
+backend/services/planner/strategies/follow_up_v2.py | ACTIVE | Defines FollowUpV2Strategy.
+backend/services/planner/strategies/general_engagement.py | ACTIVE | Defines GeneralEngagementStrategy.
+backend/services/planner/strategies/memory_aware.py | ACTIVE | Defines MemoryAwareStrategy.
+backend/services/planner/strategies/memory_nba.py | ACTIVE | Defines MemoryNextBestActionStrategy.
+backend/services/planner/strategies/memory_outreach.py | ACTIVE | Defines MemoryOutreachStrategy.
+backend/services/planner/strategies/next_best_action.py | ACTIVE | Defines NextBestActionStrategy.
+backend/services/planner/strategies/nurture.py | ACTIVE | Defines NurtureStrategy.
+backend/services/planner/strategies/opportunity_development.py | ACTIVE | Defines OpportunityDevelopmentStrategy.
+backend/services/planner/strategies/pipeline_outreach.py | ACTIVE | Defines PipelineOutreachStrategy.
+backend/services/planner/strategies/planning_registry.py | ACTIVE | Strategy registry for the Planning Engine.
+backend/services/planner/strategies/pricing_objection.py | ACTIVE | Defines PricingObjectionStrategy.
+backend/services/planner/strategies/re_engagement.py | ACTIVE | Defines ReEngagementStrategy.
+backend/services/planner/strategies/strategy_base.py | ACTIVE | Defines SchedulingHints and ApprovalRule.
+backend/services/planner/task_generator.py | ACTIVE | Defines generate_tasks.
+backend/services/providers/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/providers/apollo_provider.py | DYNAMIC | Defines ApolloProvider.
+backend/services/providers/base_provider.py | ACTIVE | Defines ProviderError and BaseProvider.
+backend/services/providers/capabilities.py | ACTIVE | Defines Capability and CapabilitySet.
+backend/services/providers/google/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/providers/google/calendar/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/providers/google/calendar/mapper.py | ACTIVE | Defines CalendarMapper.
+backend/services/providers/google/calendar/provider.py | APPARENTLY-UNUSED | Defines CalendarProvider.
+backend/services/providers/google/drive/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/providers/google/drive/mapper.py | ACTIVE | Defines DriveMapper.
+backend/services/providers/google/drive/provider.py | APPARENTLY-UNUSED | Defines DriveProvider.
+backend/services/providers/google/gmail/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/providers/google/gmail/mapper.py | ACTIVE | Defines GmailMapper.
+backend/services/providers/google/gmail/provider.py | APPARENTLY-UNUSED | Defines GmailProvider.
+backend/services/providers/google/oauth.py | ACTIVE | Defines GoogleOAuthFlow and build_gmail_flow.
+backend/services/providers/health.py | ACTIVE | Defines ProviderStatus and HealthCheckResult.
+backend/services/providers/hunter/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/providers/hunter/mapper.py | ACTIVE | Defines HunterMapper.
+backend/services/providers/hunter/provider.py | APPARENTLY-UNUSED | Defines HunterProvider.
+backend/services/providers/interface.py | ACTIVE | Defines Provider and ProviderSetupError.
+backend/services/providers/linkedin/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/providers/linkedin/mapper.py | ACTIVE | Defines LinkedInMapper.
+backend/services/providers/linkedin/provider.py | APPARENTLY-UNUSED | Defines LinkedInProvider.
+backend/services/providers/models.py | ACTIVE | Defines ProviderContactRole and ProviderContact.
+backend/services/providers/oauth.py | ACTIVE | Defines OAuthToken and OAuthTokenStore.
+backend/services/providers/people_data_labs/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/providers/people_data_labs/mapper.py | ACTIVE | Defines PDLMapper.
+backend/services/providers/people_data_labs/provider.py | APPARENTLY-UNUSED | Defines PeopleDataLabsProvider.
+backend/services/providers/provider_factory.py | ACTIVE | Defines get_provider and get_provider_capabilities.
+backend/services/providers/registry.py | APPARENTLY-UNUSED | Defines ProviderRegistry and get_registry.
+backend/services/providers/synthetic_provider.py | DYNAMIC | Defines SyntheticProvider.
+backend/services/rate_limit.py | ACTIVE | Rate limiting (PR10.5 → PR-3A).
+backend/services/reasoning/__init__.py | ACTIVE | Modular reasoning pipeline for workspace analysis.
+backend/services/reasoning/_shared.py | ACTIVE | Shared utilities for deterministic reasoners.
+backend/services/reasoning/attention_reasoner.py | ACTIVE | AttentionReasoner — determines what needs the user's attention.
+backend/services/reasoning/confidence_engine.py | ACTIVE | Confidence Engine — calculates reasoning confidence from intelligence signals.
+backend/services/reasoning/coordinator.py | ACTIVE | ReasoningCoordinator — orchestrates the deterministic reasoning pipeline.
+backend/services/reasoning/delta_reasoner.py | ACTIVE | DeltaReasoner — computes what changed since the user's last visit.
+backend/services/reasoning/goal_selector.py | ACTIVE | Goal Selection — determines the best objective from conversation intelligence.
+backend/services/reasoning/health_reasoner.py | ACTIVE | HealthReasoner — computes workspace health and cross-campaign insights.
+backend/services/reasoning/opportunity_reasoner.py | ACTIVE | OpportunityReasoner — identifies opportunities from workspace state and delta.
+backend/services/reasoning/policy_engine.py | ACTIVE | Policy Engine — evaluates configurable reasoning policies.
+backend/services/reasoning/priority_engine.py | ACTIVE | Priority Engine — determines conversation urgency from intelligence.
+backend/services/reasoning/priority_reasoner.py | ACTIVE | PriorityReasoner — ranks campaigns by importance.
+backend/services/reasoning/reasoning_models.py | ACTIVE | Unified reasoning models.
+backend/services/reasoning/reasoning_pipeline.py | ACTIVE | Reasoning Pipeline — orchestrates all reasoning stages.
+backend/services/reasoning/recommendation_reasoner.py | ACTIVE | RecommendationReasoner — picks the single next action and determines workflow continuation.
+backend/services/reasoning/risk_assessor.py | ACTIVE | Risk Assessor — evaluates conversation risk from intelligence signals.
+backend/services/reasoning/risk_reasoner.py | ACTIVE | RiskReasoner — identifies risks from workspace state and delta.
+backend/services/recommendation_engine.py | ACTIVE | Recommendation engine — thin adapter between Reasoning Layer and Narrative Engine.
+backend/services/redis_client.py | ACTIVE | PR-3A — Centralized Redis infrastructure.
+backend/services/reply_generation/__init__.py | ACTIVE | Reply Generation Engine.
+backend/services/reply_generation/generation_context.py | ACTIVE | Defines build_context.
+backend/services/reply_generation/generation_models.py | ACTIVE | Defines GenerationStyle and GenerationTemplate.
+backend/services/reply_generation/generation_pipeline.py | ACTIVE | Defines GenerationPipeline and select_template_name.
+backend/services/reply_generation/prompt_builder.py | ACTIVE | Defines build_system_prompt and build_user_prompt.
+backend/services/reply_generation/provider_base.py | ACTIVE | Defines ProviderResponse and LLMProvider.
+backend/services/reply_generation/provider_registry.py | ACTIVE | Defines register_provider and list_providers.
+backend/services/reply_generation/providers/__init__.py | ACTIVE | LLM provider implementations.
+backend/services/reply_generation/providers/anthropic_provider.py | DYNAMIC | Defines AnthropicProvider.
+backend/services/reply_generation/providers/deepseek_provider.py | DYNAMIC | Defines DeepSeekProvider.
+backend/services/reply_generation/providers/gemini_provider.py | DYNAMIC | Defines GeminiProvider.
+backend/services/reply_generation/providers/openai_provider.py | DYNAMIC | Defines OpenAIProvider.
+backend/services/reply_generation/style_engine.py | ACTIVE | Style engine — modifies generation instructions based on selected style.
+backend/services/reply_generation/template_library.py | ACTIVE | Defines register_template and select_template.
+backend/services/reply_generation/validation.py | ACTIVE | Defines validate_draft.
+backend/services/reply_intelligence.py | ACTIVE | Reply Intelligence — aggregates all conversation intelligence into one object.
+backend/services/reply_summary.py | ACTIVE | Reply Summary — generates concise executive summaries of conversation analysis.
+backend/services/rewrite_engine.py | ACTIVE | Strategy-aware rewrite engine.
+backend/services/rewrite_history.py | ACTIVE | Rewrite history with multi-level undo support.
+backend/services/search_expansion.py | ACTIVE | Defines expand_search_intent.
+backend/services/security/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/security/crypto/__init__.py | ACTIVE | Package initializer and public import surface.
+backend/services/security/crypto/crypto_service.py | ACTIVE | Defines CryptoService and DefaultCryptoService.
+backend/services/session_cache.py | ACTIVE | Session identity cache — PR-3A Redis-backed implementation of the Phase-2B contract.
+backend/services/strategic/__init__.py | ACTIVE | Thin Strategic Intelligence layer over canonical Loqi activity.
+backend/services/strategic/actions.py | ACTIVE | Human-approved Strategic Action proposals and execution (PR6.1).
+backend/services/strategic/collector.py | TEST-ONLY | Deterministic collection of strategic signals from canonical activity.
+backend/services/strategic/models.py | TEST-ONLY | Internal normalized signal and pattern models for PR6.
+backend/services/strategic/patterns.py | TEST-ONLY | Deterministic evidence thresholds and pattern detection for PR6.
+backend/services/strategic/service.py | ACTIVE | Strategic Intelligence refresh, persistence, and owner-scoped reads.
+backend/services/strategic_intelligence.py | ACTIVE | Strategic Intelligence Service for generating organization profiles from onboarding data.
+backend/services/strategic_intelligence_api.py | ACTIVE | Strategic Intelligence API endpoints.
+backend/services/strategy_comparison.py | APPARENTLY-UNUSED | Strategy comparison engine.
+backend/services/supabase.py | ACTIVE | Defines get_supabase_client and test_supabase_connection.
+backend/services/telegram.py | ACTIVE | Defines send_message.
+backend/services/trust_builder.py | ACTIVE | Trust builder engine.
+backend/services/web_session_binding.py | ACTIVE | Web-session → canonical identity binding (SaaS-1.6).
+backend/services/workflow_events.py | ACTIVE | Workflow Events — every execution emits events.
+backend/services/workflow_executor.py | ACTIVE | Workflow Executor — deterministic step-by-step execution engine.
+backend/services/workflow_locks.py | ACTIVE | Workflow Locks — per-resource locking to prevent double execution.
+backend/services/workflow_models.py | ACTIVE | Defines PlanStatus and StepStatus.
+backend/services/workflow_persistence.py | ACTIVE | Workflow Persistence — save/load runtime state to survive restarts.
+backend/services/workflow_planner.py | ACTIVE | Defines plan_workflow.
+backend/services/workflow_progress.py | ACTIVE | Workflow Progress — pure calculation service.
+backend/services/workflow_reasoner.py | ACTIVE | Defines WorkflowReasoner.
+backend/services/workflow_recovery.py | ACTIVE | Workflow Recovery — auto-restore workflows after process restart.
+backend/services/workflow_registry.py | ACTIVE | Action Registry — maps ActionType to executor functions.
+backend/services/workflow_retry.py | ACTIVE | Workflow Retry — retry policies and error classification.
+backend/services/workflow_runtime.py | ACTIVE | Workflow Runtime — single source of truth for execution state.
+backend/services/workflow_scheduler.py | ACTIVE | Workflow Scheduler — lightweight scheduler for delayed execution.
+backend/services/workspace_context.py | ACTIVE | SaaS-2.7 — Canonical multi-workspace context resolution.
+backend/services/workspace_memory.py | ACTIVE | Defines record and get.
+backend/services/workspace_reasoner.py | ACTIVE | WorkspaceReasoner — thin adapter over the modular reasoning pipeline.
+backend/services/workspace_snapshot.py | ACTIVE | Defines enrich_campaigns and invalidate_cache.
+backend/services/workspace_state.py | ACTIVE | Durable state projection for the canonical web workspace workflow.
+backend/services/workspace_timeline.py | ACTIVE | Defines add_event and get_events.
+backend/services/world_model/__init__.py | ACTIVE | World Model — persistent, event-sourced representation of business state.
+backend/services/world_model/events.py | ACTIVE | Defines EventType and WorkspaceEvent.
+backend/services/world_model/publisher.py | ACTIVE | Defines get_store and publish.
+backend/services/world_model/snapshot_adapter.py | ACTIVE | Defines get_data_source and build_snapshot_from_wm.
+backend/services/world_model/state.py | ACTIVE | Defines Goal and Preference.
+backend/services/world_model/store.py | ACTIVE | Defines WorldModelStore and InMemoryWorldModelStore.
+backend/state/memory.py | APPARENTLY-UNUSED | Defines get_session and update_session.
+backend/tests/__init__.py | TEST-ONLY | Package initializer and public import surface.
+backend/tests/conftest.py | TEST-ONLY | Shared fixtures for backend tests.
+backend/tests/test_account_recovery.py | TEST-ONLY | Regression: a completed production account must survive a backend restart.
+backend/tests/test_adapter_registry_integration.py | TEST-ONLY | Defines MockAdapter and GmailAdapter.
+backend/tests/test_adapter_sdk.py | TEST-ONLY | Defines TestExceptionHierarchy and TestExceptionCatching.
+backend/tests/test_auth_api.py | TEST-ONLY | Tests for M1.2 — Email Identity Flow.
+backend/tests/test_billing_platform.py | TEST-ONLY | Defines billing_config and provider.
+backend/tests/test_booking_strategy.py | TEST-ONLY | Integration tests for the BookingStrategy — Phase 8b.
+backend/tests/test_calendar_adapter.py | TEST-ONLY | Comprehensive test suite for the Calendar Adapter v1.0.
+backend/tests/test_campaign_delete_fast_path.py | TEST-ONLY | Regression coverage for the campaign-delete latency path.
+backend/tests/test_capability_platform.py | TEST-ONLY | Defines config and definition_repo.
+backend/tests/test_capability_system.py | TEST-ONLY | Defines TestCapabilityCategory and TestParameterSpecConstruction.
+backend/tests/test_cleanup_abandoned_registration.py | TEST-ONLY | Tests for the abandoned-registration cleanup tool.
+backend/tests/test_communication_intelligence.py | TEST-ONLY | Tests for the Communication Intelligence Engine (Phase 3.5.1).
+backend/tests/test_config_validation.py | TEST-ONLY | PR10.2 — environment/configuration validation tests.
+backend/tests/test_conversation_followup_flow.py | TEST-ONLY | PR — Draft Lifecycle: conversation follow-up action semantics.
+backend/tests/test_conversation_reply_flow.py | TEST-ONLY | PR4.3 — Inbox reply execution E2E: conversation reply send path.
+backend/tests/test_conversation_store_restart.py | TEST-ONLY | Conversation persistence restart round-trip tests (file-backed store).
+backend/tests/test_conversation_supabase_persistence.py | TEST-ONLY | Production Inbox persistence uses Supabase snapshots, never local files.
+backend/tests/test_copilot_api.py | TEST-ONLY | Regression test suite for the Copilot API.
+backend/tests/test_copilot_async_jobs.py | TEST-ONLY | Phase 3 durable-job boundary regressions.
+backend/tests/test_copilot_lead_campaign_flow.py | TEST-ONLY | Focused Copilot lead-save and campaign handoff contracts.
+backend/tests/test_copilot_orchestrator.py | TEST-ONLY | Phase 4 regressions for bounded, grounded Copilot tool orchestration.
+backend/tests/test_credential_framework.py | TEST-ONLY | Defines TestCredentialType and TestMaskValue.
+backend/tests/test_delete_test_account.py | TEST-ONLY | Tests for the safe test-account cleanup tool (delete_test_account.py).
+backend/tests/test_discovery_context.py | TEST-ONLY | PR7 — Knowledge/Strategic context integration for Discovery and ICP.
+backend/tests/test_discovery_jobs.py | TEST-ONLY | Regression tests: Discovery market prompts must always start a search job.
+backend/tests/test_discovery_provenance.py | TEST-ONLY | PR7 regression tests for Discovery context provenance persistence.
+backend/tests/test_discovery_workspace_scope.py | TEST-ONLY | Request-scoped workspace regressions for the Discovery API.
+backend/tests/test_draft_generation_recovery.py | TEST-ONLY | Tests for production-stability fixes in the campaign draft pipeline.
+backend/tests/test_draft_lifecycle.py | TEST-ONLY | PR — Draft Lifecycle: sent drafts leave the actionable queue.
+backend/tests/test_email_composition_engine.py | TEST-ONLY | Defines brand_kit and mailbox.
+backend/tests/test_email_infrastructure.py | TEST-ONLY | Defines TestEmailTemplates and TestConsoleEmailProvider.
+backend/tests/test_event_bus.py | TEST-ONLY | Unit tests for the Event Bus (Phase 3.6.4G).
+backend/tests/test_execution_adapter_registry.py | TEST-ONLY | Unit tests for the Execution Engine Adapter Registry (Phase 3.6.4D).
+backend/tests/test_execution_dispatcher.py | TEST-ONLY | Unit tests for the Execution Engine Dispatcher & Base Adapter (Phase 3.6.4C).
+backend/tests/test_execution_foundation.py | TEST-ONLY | Unit tests for the Execution Engine Foundation (Phase 3.6.4A).
+backend/tests/test_execution_loop.py | TEST-ONLY | Unit tests for the Execution Engine Loop (Phase 3.6.4E).
+backend/tests/test_execution_persistence_boundaries.py | TEST-ONLY | Durable success-boundary regressions for core execution flows.
+backend/tests/test_execution_scheduler.py | TEST-ONLY | Unit tests for the Execution Engine Scheduler & State Machine (Phase 3.6.4B).
+backend/tests/test_executive_brief_timezone.py | TEST-ONLY | Defines test_greeting_uses_the_users_iana_timezone and test_invalid_timezone_fails_safely_to_utc.
+backend/tests/test_generate_reply_instruction.py | TEST-ONLY | PR4.3B — generate-reply instruction (refine) path.
+backend/tests/test_gmail_adapter.py | TEST-ONLY | Comprehensive test suite for the Gmail Adapter v1.0.
+backend/tests/test_gmail_auth_failure_recovery.py | TEST-ONLY | PR10.8.1 — Gmail OAuth credential failure cleanup & re-auth recovery.
+backend/tests/test_gmail_outbound_auth_retry.py | TEST-ONLY | GmailOutboundProvider refresh-on-401 retry + token persistence tests.
+backend/tests/test_google_api_adapter.py | TEST-ONLY | Defines FakeGoogleTransport and TestGoogleServiceDescriptorConstruction.
+backend/tests/test_google_oauth.py | TEST-ONLY | Tests for M1.3 — Google OAuth flow.
+backend/tests/test_heterogeneous_execution.py | TEST-ONLY | Heterogeneous multi-task execution test — Phase 8a.
+backend/tests/test_http_adapter.py | TEST-ONLY | Defines FakeHttpTransport and TestHttpRequestConstruction.
+backend/tests/test_identity_auth_repository_contract.py | TEST-ONLY | Regression: Supabase identity/auth repository methods must return domain models, not raw PostgREST dicts.
+backend/tests/test_identity_platform_p1.py | TEST-ONLY | Tests for M1.1 — Identity Core Foundation (Part 1).
+backend/tests/test_identity_platform_p2.py | TEST-ONLY | Tests for M1.1 — Identity Core Foundation (Part 2: Services & Repositories).
+backend/tests/test_identity_schema_migration.py | TEST-ONLY | Structural validation of the 021 identity session/token migration.
+backend/tests/test_identity_schema_migration_022.py | TEST-ONLY | Structural validation of the 022 identity auth persistence migration.
+backend/tests/test_identity_schema_migration_025_026.py | TEST-ONLY | Structural validation of the SaaS-1.7 migrations 025/026.
+backend/tests/test_inbound_filter.py | TEST-ONLY | PR8.1 — lead-scoped inbound filtering tests.
+backend/tests/test_inbox_sync_engine.py | TEST-ONLY | PR8 — background inbox sync and follow-up readiness tests.
+backend/tests/test_knowledge_agent_context.py | TEST-ONLY | PR5.1 — Knowledge context integration tests.
+backend/tests/test_knowledge_service.py | TEST-ONLY | PR5 — Knowledge Foundation: backend regression suite.
+backend/tests/test_launch_execution.py | TEST-ONLY | PR3A — execution engine: durable launch dispatch.
+backend/tests/test_launch_persistence.py | TEST-ONLY | Tests for the launch foundation persistence layer.
+backend/tests/test_lead_round_trip.py | TEST-ONLY | PR2.8 regression: attached leads must survive a Research -> Attach -> Return round trip with lead_count > 0.
+backend/tests/test_lifecycle_readiness.py | TEST-ONLY | PR10.6 — health / readiness / graceful lifecycle tests.
+backend/tests/test_load_provider_credentials_filter.py | TEST-ONLY | load_all_provider_credentials must skip connected_accounts rows without a real refresh token (placeholders like 'xx' break provider restoration and provider selection at startup).
+backend/tests/test_logging_error_handling.py | TEST-ONLY | PR10.4 — structured logging + error handling tests.
+backend/tests/test_manual_campaign_creation.py | TEST-ONLY | Native Discovery-selection -> manual Campaign creation regression.
+backend/tests/test_metrics_collector.py | TEST-ONLY | Unit tests for the Metrics Collector (Phase 3.6.4H).
+backend/tests/test_mission_control.py | TEST-ONLY | Tests for the Mission Control experience (Phase 11).
+backend/tests/test_multi_agent.py | TEST-ONLY | Tests for Phase 13 — Multi-Agent Collaboration Platform.
+backend/tests/test_no_email_guard.py | TEST-ONLY | Regression tests: drafts with no recipient email are guarded at email execution.
+backend/tests/test_onboarding.py | TEST-ONLY | Tests for M1.4 — User Onboarding Foundation.
+backend/tests/test_operations.py | TEST-ONLY | Tests for M2.2.1 — Production Readiness infrastructure.
+backend/tests/test_organization_platform.py | TEST-ONLY | Defines org_repo and membership_repo.
+backend/tests/test_organizational_memory.py | TEST-ONLY | Tests for Phase 12 — Organizational Memory & Knowledge Platform.
+backend/tests/test_outbound_endpoint_ownership.py | TEST-ONLY | Session-prefixed outbound routes must enforce bearer-derived ownership.
+backend/tests/test_outbound_engine.py | TEST-ONLY | Comprehensive tests for the Outbound Communication Engine.
+backend/tests/test_persistence.py | TEST-ONLY | Tests for M2.1 — Production Persistence Layer.
+backend/tests/test_persistence_deserialize.py | TEST-ONLY | Regression: Supabase `_deserialize` must convert str-based Enums to Enums.
+backend/tests/test_phase2a_gmail_providers.py | TEST-ONLY | PR-2A — Gmail provider store correctness regression tests.
+backend/tests/test_phase2b_draft_send.py | TEST-ONLY | PR-2B — Draft Send Now end-to-end regression tests.
+backend/tests/test_phase2b_session_cache.py | TEST-ONLY | PR-2B — session identity cache tests.
+backend/tests/test_phase3a_redis.py | TEST-ONLY | PR-3A — Redis foundation tests.
+backend/tests/test_phase3d_sse.py | TEST-ONLY | PR-3D — SSE event gateway regression tests.
+backend/tests/test_phase3e_draft_events.py | TEST-ONLY | PR-3E — draft lifecycle event regression tests.
+backend/tests/test_phase3f_concurrency.py | TEST-ONLY | PR-3F — backend concurrency + job durability regression tests.
+backend/tests/test_phase4_discovery.py | TEST-ONLY | PR-4 — Discovery production-grade regression tests.
+backend/tests/test_phase4_vertical_slice.py | TEST-ONLY | PR-4 — Discovery vertical-slice lifecycle integration test.
+backend/tests/test_planner.py | TEST-ONLY | Unit tests for the Planning Engine.
+backend/tests/test_planner_router.py | TEST-ONLY | Integration tests for PlannerRouter — Phase 8c routing migration.
+backend/tests/test_pr10_7_oauth_credentials.py | TEST-ONLY | PR10.7 — Gmail OAuth hardening + credential encryption at rest tests.
+backend/tests/test_pr10_8_2_connection_dedup.py | TEST-ONLY | PR10.8.2 — Gmail duplicate connections + reauth state persistence.
+backend/tests/test_pr10_8_2_live_fixes.py | TEST-ONLY | PR10.8.2 live-fix regression — duplicate Gmail accounts + session-token exposure.
+backend/tests/test_pr10_8_3_1_session_tenant_security.py | TEST-ONLY | PR10.8.3.1 — session auth hardening + fail-closed tenant isolation.
+backend/tests/test_pr10_8_3_2_idor_audit.py | TEST-ONLY | PR10.8.3.2 — Adversarial API authorization / IDOR audit regression suite.
+backend/tests/test_pr10_8_3_3_final_security.py | TEST-ONLY | PR10.8.3.3 — FINAL SECURITY GATE regression suite.
+backend/tests/test_pr10_8_3_security.py | TEST-ONLY | PR10.8.3 — Security audit regression suite.
+backend/tests/test_pr10_8_persistence_recovery.py | TEST-ONLY | PR10.8 — Production Persistence & Recovery Hardening regression suite.
+backend/tests/test_pr10_error_handling.py | TEST-ONLY | PR10 — Error handling & observability regression tests.
+backend/tests/test_pr10_persistence_verification.py | TEST-ONLY | PR10 — Production database / persistence verification regression tests.
+backend/tests/test_pr10_rate_limit_audit.py | TEST-ONLY | PR10 — Rate-limiting adversarial audit regression tests.
+backend/tests/test_pr10_volume_entrypoint.py | TEST-ONLY | PR10 — Railway /data volume ownership entrypoint regression tests.
+backend/tests/test_pr29_sales_playbook.py | TEST-ONLY | PR2.9: Sales Intelligence Upgrade regression tests.
+backend/tests/test_pr30_campaign_flow.py | TEST-ONLY | PR3.0: end-to-end campaign flow regression — no prompt hacking.
+backend/tests/test_pr9_reply_lifecycle.py | TEST-ONLY | PR9 — final core reply/follow-up lifecycle regression tests.
+backend/tests/test_provider_layer.py | TEST-ONLY | Tests for the Communication Provider Layer (Phase 3.5.2).
+backend/tests/test_rate_limiting.py | TEST-ONLY | PR10.5 — production rate-limiting tests.
+backend/tests/test_reasoner_integration.py | TEST-ONLY | Integration tests for Workspace Reasoner → Mission Control → Copilot pipeline.
+backend/tests/test_recovery_manager.py | TEST-ONLY | Unit tests for the Recovery Manager (Phase 3.6.4I).
+backend/tests/test_registration_lifecycle_cleanup.py | TEST-ONLY | Automatic abandoned-registration lifecycle cleanup tests.
+backend/tests/test_reply_simulator.py | TEST-ONLY | Tests for the development reply simulator (services/communication/reply_simulator.py).
+backend/tests/test_retry_engine.py | TEST-ONLY | Unit tests for the Retry Engine (Phase 3.6.4F).
+backend/tests/test_saas12_auth_hardening.py | TEST-ONLY | SaaS-1.2 — authentication lifecycle hardening tests.
+backend/tests/test_saas13_api_boundary.py | TEST-ONLY | SaaS-1.3 — authenticated API surface / canonical identity boundary tests.
+backend/tests/test_saas14_tenant_isolation.py | TEST-ONLY | SaaS-1.4 — tenant/user isolation regression tests.
+backend/tests/test_saas15_oauth_hardening.py | TEST-ONLY | SaaS-1.5 — OAuth state / identity-binding hardening tests.
+backend/tests/test_saas16_session_consolidation.py | TEST-ONLY | SaaS-1.6 — web-session → canonical identity/session consolidation tests.
+backend/tests/test_saas17_reconciliation.py | TEST-ONLY | SaaS-1.7 — legacy synthetic web-user reconciliation tests.
+backend/tests/test_saas22_membership_lifecycle.py | TEST-ONLY | SaaS-2.2 — Canonical Membership Lifecycle & Unification.
+backend/tests/test_saas23_legacy_workspace_migration.py | TEST-ONLY | SaaS-2.3 — Stable Workspace Ownership & Legacy Migration.
+backend/tests/test_saas24_resource_tenant_scoping.py | TEST-ONLY | SaaS-2.4 — Resource-by-Resource Tenant Scoping.
+backend/tests/test_saas25_tenant_isolation_hardening.py | TEST-ONLY | SaaS-2.5 — Complete Tenant Isolation Audit & Security Hardening.
+backend/tests/test_saas26_durable_communication.py | TEST-ONLY | SaaS-2.6 — Persist In-Memory Product Subsystems & Establish Durable Tenant Ownership.
+backend/tests/test_saas27_multi_workspace.py | TEST-ONLY | SaaS-2.7 — Multi-Workspace Lifecycle, Switching & Membership UX.
+backend/tests/test_saas28_1_organization_adoption.py | TEST-ONLY | SaaS-2.8.1 — Legacy Organization Adoption & Reconciliation Preparation.
+backend/tests/test_saas28_production_workspace_migration.py | TEST-ONLY | SaaS-2.8 — Production Workspace & Tenant Migration / Reconciliation.
+backend/tests/test_saas_identity_boundary.py | TEST-ONLY | SaaS-1 — enforceable identity boundary tests.
+backend/tests/test_sales_intelligence.py | TEST-ONLY | Tests for Phase 11 — Sales Intelligence Platform.
+backend/tests/test_secrets_safety.py | TEST-ONLY | PR10.3 — secrets safety tests.
+backend/tests/test_send_provider_resolution.py | TEST-ONLY | Regression tests: owner-scoped Gmail provider resolution for Send Now.
+backend/tests/test_signup_completion_link.py | TEST-ONLY | Regression: signup-completion email-identity linking + atomicity + retry.
+backend/tests/test_strategic_actions.py | TEST-ONLY | PR6.1 — explicit Strategic Action approval and execution tests.
+backend/tests/test_strategic_intelligence.py | TEST-ONLY | PR6 — deterministic Strategic Intelligence over real domain records.
+backend/tests/test_test_recipient.py | TEST-ONLY | PR8.1 — test-only recipient override tests.
+backend/tests/test_verification_email_recipient.py | TEST-ONLY | Regression: verification-email recipient + verification-URL origin.
+backend/tests/test_web_session_identity.py | TEST-ONLY | Tests for single-identity web session mapping.
+backend/tests/test_workflow_executor.py | TEST-ONLY | Unit tests for Workflow Runtime, Progress, Events, Registry, and Executor.
+backend/tests/test_workflow_phase2b.py | TEST-ONLY | Tests for Phase 3.4.2B features: persistence, recovery, retry, pause/resume/cancel, locks, scheduler, metrics, history.
+backend/tests/test_workflow_planner.py | TEST-ONLY | Unit tests for the Workflow Planner (Phase 3.4.1).
+backend/tests/test_workspace_lead_attach.py | TEST-ONLY | Company-only lead attach flow — campaign lifecycle advancement.
+backend/tests/test_workspace_tenant_foundation.py | TEST-ONLY | SaaS-2.1 — Tenant Architecture Foundation regression tests.
+backend/tests/test_world_model.py | TEST-ONLY | Tests for the World Model foundation (Phase 1).
+backend/workflow_dispatcher.py | ACTIVE | Defines run_search_workflow and register_workflows.
+backend/workflows.py | ACTIVE | Defines generate_leads and draft_message.
+TOTAL | 649
+ACTIVE | 455
+DYNAMIC | 9
+TEST-ONLY | 149
+LEGACY | 1
+APPARENTLY-UNUSED | 26
+UNCLEAR | 9
+DUPLICATE/SAME-RESPONSIBILITY | Conversation state: services/conversation_store.py, services/conversations/conversation_store.py, services/conversation_memory.py, services/conversations/persistence.py, services/communication/communication_store.py.
+DUPLICATE/SAME-RESPONSIBILITY | Workflow execution: workflows.py, workflow_dispatcher.py, workflow_runtime.py, workflow_executor.py, planner/**, execution/**.
+DUPLICATE/SAME-RESPONSIBILITY | Provider abstraction: providers/**, adapters/**, communication/provider_*.py, outbound/outbound_*.py, execution/adapter_*.py.
+DUPLICATE/SAME-RESPONSIBILITY | Persistence: supabase.py, persistence/**, persistence/launch/**, identity repositories, JSON compatibility persistence.
+DUPLICATE/SAME-RESPONSIBILITY | Workspace reasoning: workspace_reasoner.py, reasoning/**, recommendation_engine.py, intentions/**, narrative_engine.py, executive_brief.py.

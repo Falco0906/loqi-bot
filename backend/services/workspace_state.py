@@ -1073,6 +1073,48 @@ def persist_lead_decision(user_id: str, lead: dict[str, Any], approved: bool) ->
     })
 
 
+async def persist_lead_decision_awaited(
+    user_id: str,
+    lead: dict[str, Any],
+    approved: bool,
+    *,
+    workspace_id: str,
+) -> str | None:
+    """Persist and verify a lead decision in one authorized workspace."""
+    workspace = await _async_workspace(user_id, workspace_id=workspace_id)
+    if not workspace:
+        return None
+    ws_lead_repo = WorkspaceLeadRepository()
+    workspace_lead_id = str(lead.get("id") or "").strip()
+    entity = (
+        await ws_lead_repo.get_for_workspace(workspace_lead_id, workspace)
+        if workspace_lead_id else None
+    )
+    if entity is None:
+        email = str(lead.get("email") or "").strip().lower()
+        if not email:
+            return None
+        matches = await ws_lead_repo.list_by_email(workspace, email)
+        entity = matches[0] if matches else None
+    if entity is None:
+        return None
+    entity.lead_status = "approved" if approved else "rejected"
+    entity.updated_at = datetime.now(timezone.utc)
+    await ws_lead_repo.save(entity)
+    verified = await ws_lead_repo.get_for_workspace(entity.id, workspace)
+    expected = "approved" if approved else "rejected"
+    if verified is None or verified.lead_status != expected:
+        return None
+    try:
+        append_event(user_id, "lead.approved" if approved else "lead.rejected", {
+            "lead": lead,
+            "lead_id": entity.id,
+        })
+    except Exception as error:
+        print(f"[workspace_state] lead decision event append failed: {error}")
+    return entity.id
+
+
 async def _update_lead_decision(user_id: str, lead: dict[str, Any], approved: bool) -> None:
     workspace = await _async_workspace(user_id)
     if not workspace:
@@ -1301,8 +1343,12 @@ def _flatten_launch_counters(campaigns: dict[str, dict[str, Any]]) -> None:
             campaign["launch_failed"] = int(launch.get("failed", 0))
 
 
-def load_workspace_state(user_id: str, include_details: bool = True,
-                         workspace_id: str = "") -> dict[str, Any]:
+def load_workspace_state(
+    user_id: str,
+    include_details: bool = True,
+    workspace_id: str = "",
+    canonical_only: bool = False,
+) -> dict[str, Any]:
     """Return {campaigns, drafts, approved_leads} for the user's workspace.
 
     Prefers canonical tables when seeded; falls back to the event projection
@@ -1314,7 +1360,10 @@ def load_workspace_state(user_id: str, include_details: bool = True,
     counts and step state — it cuts the workspace-graph load roughly in half.
 
     SaaS-2.7: ``workspace_id`` (membership-validated upstream) selects the
-    workspace context; empty keeps the single-owner default.
+    workspace context; empty keeps the single-owner default. ``canonical_only``
+    intentionally returns an empty projection instead of the legacy event log
+    when canonical data is unavailable; use it for surfaces that must never
+    mix stale session/event state into an explicitly selected workspace.
     """
     client = get_supabase_client()
     if client is not None:
@@ -1325,7 +1374,10 @@ def load_workspace_state(user_id: str, include_details: bool = True,
             if projection is not None:
                 return projection
         except Exception as error:
-            print(f"[workspace_state] canonical read failed, falling back: {error}")
+            disposition = "returning empty canonical projection" if canonical_only else "falling back"
+            print(f"[workspace_state] canonical read failed, {disposition}: {error}")
+    if canonical_only:
+        return {"campaigns": [], "drafts": [], "approved_leads": []}
     return _project_from_events(_events(user_id))
 
 

@@ -2,7 +2,7 @@
 
 Covers: hit/miss behavior, TTL expiry, per-token isolation (no cross-user
 leakage), explicit invalidation (token + user), and that the hot resolver
-(``_resolve_session_context``) now serves identity from the cache WITHOUT
+(``resolve_web_session``) now serves identity from the cache WITHOUT
 executing the full ~9-query summary fetch.
 """
 import asyncio
@@ -124,11 +124,23 @@ def test_resolver_uses_cached_identity_not_full_summary(monkeypatch):
         calls["summary"] += 1
         return {"user_id": USER_A}
 
-    monkeypatch.setattr(main_module.engine, "get_web_session_identity", fake_identity)
+    monkeypatch.setattr(
+        "services.conversation_store.get_web_session",
+        lambda _token: {"id": USER_A, "username": "u"},
+    )
+    monkeypatch.setattr(
+        "services.supabase.has_connected_account",
+        lambda _user_id: calls.__setitem__("identity", calls["identity"] + 1) or False,
+    )
     monkeypatch.setattr(main_module.engine, "get_web_session_summary", fake_summary_full)
     monkeypatch.setattr(
-        main_module, "_web_session_binding",
+        main_module.identity_dependencies, "web_session_binding",
         lambda token: asyncio.sleep(0, result=None),
+    )
+    monkeypatch.setattr(
+        main_module.identity_dependencies,
+        "ensure_legacy_user_bridge",
+        lambda _user_id: asyncio.sleep(0),
     )
 
     class Req:
@@ -140,16 +152,15 @@ def test_resolver_uses_cached_identity_not_full_summary(monkeypatch):
     # Fresh cache → one identity lookup serves BOTH resolver calls.
     from services.session_cache import session_cache
     session_cache.clear_local_only()
-    owner1 = asyncio.run(main_module._resolve_session_context(request))
-    owner2 = asyncio.run(main_module._resolve_session_context(request))
+    owner1 = asyncio.run(main_module.identity_dependencies.resolve_web_session(request))
+    owner2 = asyncio.run(main_module.identity_dependencies.resolve_web_session(request))
     assert owner1[0] == USER_A and owner2[0] == USER_A
     assert calls["identity"] == 1, "second call must be a cache hit"
     assert calls["summary"] == 0, "full summary must not run in the resolver"
 
 
-def test_workspace_owner_and_summary_returns_minimal_shape(monkeypatch):
-    """Callers only ever read user_id — the shim must not trigger the heavy
-    fetch and must keep the historical {'user_id': ...} shape."""
+def test_authenticated_user_id_uses_canonical_session_resolution(monkeypatch):
+    """Legacy web routes resolve only the durable authenticated user id."""
     seen = {"full": 0}
 
     async def fake_owner(request=None, session_token=None):
@@ -160,13 +171,18 @@ def test_workspace_owner_and_summary_returns_minimal_shape(monkeypatch):
         seen["full"] += 1
         return {"user_id": USER_A, "messages": [], "workflow_sessions": []}
 
-    monkeypatch.setattr(main_module, "_resolve_session_context", fake_owner)
-    monkeypatch.setattr(main_module.engine, "get_web_session_identity", fake_identity)
+    monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", fake_owner)
+    monkeypatch.setattr(
+        "services.conversation_store.get_web_session",
+        lambda _token: fake_identity(_token) and {"id": USER_A, "username": "u"},
+    )
+    monkeypatch.setattr("services.supabase.has_connected_account", lambda _user_id: False)
     monkeypatch.setattr(main_module.engine, "get_web_session_summary", fake_full)
 
     from services.session_cache import session_cache
     session_cache.clear_local_only()
-    owner, summary = asyncio.run(main_module._workspace_owner_and_summary(None, TOKEN_A))
+    owner = asyncio.run(
+        main_module.identity_dependencies.authenticated_user_id(None, TOKEN_A),
+    )
     assert owner == USER_A
-    assert summary == {"user_id": USER_A}
     assert seen["full"] == 0

@@ -83,7 +83,7 @@ class TestTestRecipientOverride:
 
         monkeypatch.setattr(main_module, "outbound_executor", MagicMock(execute=fake_execute))
         monkeypatch.setattr(main_module, "_get_outbound_provider_for_draft", lambda draft, owner_id="": "prov-1")
-        monkeypatch.setattr(main_module, "_workspace_owner", async_fake_owner)
+        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", async_fake_owner)
         monkeypatch.setattr("services.conversations.integration.create_conversation_from_send", lambda **kwargs: MagicMock())
         monkeypatch.setattr(main_module, "simulate_reply", lambda **kwargs: None)
         monkeypatch.setattr(main_module, "publish", lambda *args, **kwargs: None)
@@ -125,7 +125,7 @@ class TestTestRecipientOverride:
 
         monkeypatch.setattr(main_module, "outbound_executor", MagicMock(execute=fake_execute))
         monkeypatch.setattr(main_module, "_get_outbound_provider_for_draft", lambda draft, owner_id="": "prov-1")
-        monkeypatch.setattr(main_module, "_workspace_owner", async_fake_owner)
+        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", async_fake_owner)
         monkeypatch.setattr("services.conversations.integration.create_conversation_from_send", lambda **kwargs: MagicMock())
         monkeypatch.setattr(main_module, "simulate_reply", lambda **kwargs: None)
         monkeypatch.setattr(main_module, "publish", lambda *args, **kwargs: None)
@@ -241,7 +241,7 @@ class TestSendDraftRoute:
         return fake
 
     def _patch_route_deps(self, monkeypatch):
-        monkeypatch.setattr(main_module, "_workspace_owner", async_fake_owner)
+        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", async_fake_owner)
         monkeypatch.setattr(main_module, "_get_outbound_provider_for_draft", lambda draft, owner_id="": "prov-1")
         monkeypatch.setattr("services.conversations.integration.create_conversation_from_send", lambda **kwargs: MagicMock())
         monkeypatch.setattr(main_module, "simulate_reply", lambda **kwargs: None)

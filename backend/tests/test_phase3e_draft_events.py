@@ -64,8 +64,8 @@ def _wire_send_route(app, monkeypatch):
 
     async def fake_owner(request=None, session_token=None):
         return OWNER
-    monkeypatch.setattr(main_module, "_workspace_owner", fake_owner)
-    monkeypatch.setattr(main_module, "_session_token_from_request", lambda r: SESSION)
+    monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", fake_owner)
+    monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda r: SESSION)
     monkeypatch.setattr(main_module, "_test_recipient_override_enabled", lambda: False)
     monkeypatch.setattr(main_module, "_get_outbound_provider_for_draft", lambda d, o: "prov-1")
 
@@ -114,7 +114,7 @@ def test_draft_sent_event_published_and_scoped(monkeypatch, capture):
 
     async def fake_resolve(request=None):
         return OWNER
-    monkeypatch.setattr(main_module, "_resolve_session_context", lambda r: asyncio.sleep(0, result=(OWNER, SESSION)))
+    monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", lambda r: asyncio.sleep(0, result=(OWNER, SESSION)))
 
     # Drive the real route coroutine directly (TestClient's portal loop
     # interferes with the async event capture).

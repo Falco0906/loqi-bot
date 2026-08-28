@@ -133,8 +133,8 @@ async def _register_user(svc, email):
 
 
 def _real_resolve():
-    from tests.conftest import REAL_RESOLVE_SESSION_CONTEXT
-    return REAL_RESOLVE_SESSION_CONTEXT
+    from tests.conftest import REAL_RESOLVE_WEB_SESSION
+    return REAL_RESOLVE_WEB_SESSION
 
 
 def _web_request(web_token: str):
@@ -149,13 +149,22 @@ def _web_request(web_token: str):
 
 
 def _fake_engine_summary(monkeypatch, mapping: dict):
-    """Make the web-session summary resolvable without hitting Supabase."""
+    """Make the canonical legacy-session identity lookup deterministic."""
     import main as main_module
 
-    def summary(token):
+    async def identity(token):
         return mapping.get(token)
 
-    monkeypatch.setattr(main_module.engine, "get_web_session_summary", summary)
+    monkeypatch.setattr(
+        main_module.identity_dependencies,
+        "cached_web_session_identity",
+        identity,
+    )
+    monkeypatch.setattr(
+        main_module.identity_dependencies,
+        "ensure_legacy_user_bridge",
+        lambda _user_id: asyncio.sleep(0),
+    )
 
 
 # ─── 1. Bootstrap binds web-session to canonical identity ─────────────

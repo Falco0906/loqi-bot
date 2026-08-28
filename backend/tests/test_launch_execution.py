@@ -94,7 +94,7 @@ def env(monkeypatch):
         calls.append(payload)
         return {"ok": True, "send_result": {"thread_id": "th-1", "external_message_id": "em-1"}}
 
-    monkeypatch.setattr(main_module, "_workspace_owner", fake_owner)
+    monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", fake_owner)
     monkeypatch.setattr(main_module, "_workspace_campaigns", fake_campaigns)
     monkeypatch.setattr(main_module, "_workspace_drafts", fake_drafts)
     monkeypatch.setattr(workspace_state, "persist_campaign_update_awaited", fake_persist_campaign)

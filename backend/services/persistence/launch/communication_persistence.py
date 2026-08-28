@@ -13,21 +13,28 @@ workspace); the client never supplies tenant authority.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import threading
 
 
-def _run_threaded(coro_factory):
-    """Run an async write in a dedicated thread; swallow/log failures."""
+def _run_threaded(write) -> None:
+    """Run one best-effort persistence write off the live path."""
+    def _run() -> None:
+        try:
+            outcome = write()
+            if inspect.isawaitable(outcome):
+                asyncio.run(outcome)
+        except Exception:  # noqa: BLE001 — best-effort persistence
+            return
+
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        try:
-            asyncio.run(coro_factory())
-        except Exception:  # noqa: BLE001 — best-effort persistence
-            return
+        _run()
         return
+
     try:
-        threading.Thread(target=lambda: asyncio.run(coro_factory()), daemon=True).start()
+        threading.Thread(target=_run, daemon=True).start()
     except Exception:  # noqa: BLE001
         pass
 

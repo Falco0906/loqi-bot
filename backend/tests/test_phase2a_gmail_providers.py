@@ -173,7 +173,7 @@ def api(monkeypatch):
 def _set_owner(monkeypatch, user_id: str) -> None:
     async def fake_owner(request=None, session_token=None):
         return user_id
-    monkeypatch.setattr(main_module, "_workspace_owner", fake_owner)
+    monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", fake_owner)
 
 
 def _wipe_memory_registries():

@@ -112,15 +112,15 @@ def harness(monkeypatch):
         "legacy": {},             # legacy session-scoped drafts
     }
 
-    monkeypatch.setattr(main_module, "_session_token_from_request", lambda request: SESSION)
+    monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda request: SESSION)
 
     async def fake_owner(request=None, session_token=None):
         return OWNER
-    monkeypatch.setattr(main_module, "_workspace_owner", fake_owner)
+    monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", fake_owner)
 
     async def fake_ws(request=None, owner_id=None):
         return ""
-    monkeypatch.setattr(main_module, "_resolved_workspace_id_or_default", fake_ws)
+    monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", fake_ws)
 
     def fake_workspace_drafts(user_id, session_token="", workspace_id=""):
         state["workspace_ids_seen"].append(workspace_id)

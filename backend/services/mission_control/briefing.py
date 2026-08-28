@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -75,6 +76,149 @@ class MissionControlService:
     @property
     def intention_engine(self) -> IntentionEngine:
         return self._intention_engine
+
+    async def get_summary(self, *, owner_id: str, session_token: str) -> dict[str, Any]:
+        """Assemble the current workspace Mission Control summary."""
+        from services.job_engine import job_manager
+        from services.mission_control.payload import compute_shared_payload, embed_delta_into_snapshot
+        from services.onboarding.api import get_onboarding_service
+        from services.workspace_timeline import get_grouped_events
+        from services.world_model import get_store as get_wm_store
+
+        started = time.monotonic()
+        payload = await compute_shared_payload(
+            owner_id,
+            session_token,
+            owner_id,
+            include_narrative=False,
+        )
+        campaigns = payload["campaigns"]
+        snapshot = payload["snapshot"]
+        analysis = payload["analysis"]
+        recommendations = payload["recommendations"]
+        delta = payload["delta"]
+        embed_delta_into_snapshot(snapshot, delta)
+
+        world_model = get_wm_store()
+        world_model.record_acknowledgement(session_token)
+
+        async def _load_current_jobs() -> list[dict]:
+            try:
+                return await asyncio.to_thread(job_manager.list_active_jobs, owner_id)
+            except Exception:
+                return []
+
+        async def _load_initial_research() -> tuple[dict | None, int | None]:
+            try:
+                wizard = await get_onboarding_service().get_wizard_data(owner_id)
+                job_id = str(wizard.get("initial_research_job_id") or "")
+                if not job_id:
+                    recent_searches = [
+                        job
+                        for job in await asyncio.to_thread(job_manager.list_recent_jobs, owner_id)
+                        if job.get("type") == "search"
+                    ]
+                    if recent_searches:
+                        job_id = str(recent_searches[0].get("id") or "")
+                if not job_id:
+                    return None, None
+                job = await asyncio.to_thread(job_manager.get_job, job_id)
+                count = None
+                if job and job.get("status") == "completed":
+                    result = await asyncio.to_thread(job_manager.get_job_results, job_id)
+                    if result and result.get("ok"):
+                        count = len(result.get("leads") or [])
+                return job, count
+            except Exception:
+                return None, None
+
+        current_jobs, initial_research_data, grouped_activity = await asyncio.gather(
+            _load_current_jobs(),
+            _load_initial_research(),
+            asyncio.to_thread(get_grouped_events, session_token, 10),
+        )
+        initial_research, initial_research_result_count = initial_research_data
+
+        campaign_list = snapshot.get("campaigns", [])
+        draft_counts = snapshot.get("drafts", {"total": 0, "pending": 0, "approved": 0})
+        pending_drafts = draft_counts.get("pending", 0)
+        approved_drafts = draft_counts.get("approved", 0)
+        total_drafts = draft_counts.get("total", 0)
+        total_leads = sum(campaign.get("lead_count", 0) or 0 for campaign in campaigns)
+        reply_rate_heuristic = round(
+            approved_drafts / total_drafts * 100 if total_drafts else 0
+        )
+        attention_items = analysis.get("attention_items", [])[:4]
+        needs_attention = [
+            {
+                "type": item.get("action", "").lower().replace(" ", "_"),
+                "campaign_id": item.get("campaign_id"),
+                "campaign_name": item.get("campaign_name"),
+                "label": item.get("title", ""),
+                "action": item.get("action", "review"),
+            }
+            for item in attention_items
+        ]
+
+        logger.info(
+            "mission_control_summary owner=%s duration_ms=%.0f",
+            owner_id[:8],
+            (time.monotonic() - started) * 1000,
+        )
+        return {
+            "ok": True,
+            "campaigns": campaign_list[:4],
+            "draft_counts": draft_counts,
+            "needs_attention": needs_attention,
+            "live_activity": grouped_activity,
+            "campaign_count": len(campaign_list),
+            "active_jobs": current_jobs,
+            "initial_research": initial_research,
+            "initial_research_result_count": initial_research_result_count,
+            "recommendations": recommendations[:3],
+            "kpis": {
+                "estimated_reply_rate": reply_rate_heuristic,
+                "pending_reviews": pending_drafts,
+                "campaigns_ready": analysis.get("workspace_health", {}).get("campaigns_ready", 0),
+            },
+            "total_leads": snapshot.get("total_leads", total_leads),
+            "brief": payload["brief"],
+            "workspace_memory": snapshot.get("memory", {}),
+            "delta": snapshot.get("_delta", {}),
+            "workspace_analysis": {
+                "current_focus": analysis.get("current_focus"),
+                "recommended_next_action": analysis.get("recommended_next_action"),
+                "campaign_priorities": analysis.get("campaign_priorities", [])[:8],
+                "workspace_health": analysis.get("workspace_health"),
+                "cross_campaign_insights": analysis.get("cross_campaign_insights", []),
+                "workflow_continuation": analysis.get("workflow_continuation"),
+            },
+        }
+
+    async def get_workspace_briefing(
+        self,
+        *,
+        owner_id: str,
+        session_token: str,
+        user_timezone: str | None,
+    ) -> BriefingResponse:
+        """Build a workspace-scoped briefing from the shared payload."""
+        from services.mission_control.payload import compute_shared_payload
+
+        payload = await compute_shared_payload(
+            owner_id,
+            session_token,
+            owner_id,
+            user_timezone=user_timezone,
+        )
+        return self.get_briefing(
+            session_token=session_token,
+            campaigns=payload["campaigns"],
+            drafts=payload["drafts"],
+            total_leads=payload["total_leads"],
+            db_user_id=owner_id,
+            prebuilt=payload,
+        )
 
     def get_briefing(
         self,

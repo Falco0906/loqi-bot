@@ -242,7 +242,7 @@ class TestActionRoutes:
         async def owner(request, session_token):
             return OWNER_A
 
-        monkeypatch.setattr(main_module, "_workspace_owner", owner)
+        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner)
         proposal = asyncio.run(main_module.propose_strategic_action(
             "session", update.id, object(), {"action_type": "update_messaging"}))
         action_id = proposal["action"]["id"]

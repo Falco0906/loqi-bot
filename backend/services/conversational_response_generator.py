@@ -76,7 +76,7 @@ def decide_copilot_intent(
     """Make the agent's intent/tool decision before response generation."""
     _log(f"COPILOT_INTENT_ROUTER_ENTER message_chars={len(user_message)} history_len={len(message_history or [])}")
     system = (
-        "You are Loqi's intent and goal router. Return JSON only with keys intent, mode, action, "
+        "You are Loqi's intent and goal router. Return JSON only with keys intent, mode, action, plan, "
         "search_context, lead_ids, filters, sort, limit, campaign_id, draft_id, draft_ids, conversation_id, knowledge_query, knowledge_categories, knowledge_item_id, analytics_scope, edit_request, send_at, reply_body, confirmed, reason. Omit fields that do not apply.\n"
         "Allowed intent values: conversation, discovery, discovery_refinement, read, action, clarification.\n"
         "Use conversation for greetings, acknowledgements, and ordinary chat.\n"
@@ -90,8 +90,8 @@ def decide_copilot_intent(
         "lead.approve, lead.reject, or lead.attach. Use lead.read/filter/rank for reading existing leads; "
         "use lead.save/approve/reject/attach only when the user explicitly requests that mutation.\n"
         "For lead operations, include lead_ids when the user refers to selected leads, filters for field filters, "
-        "sort for ranking, campaign_id for attaching, and confirmed=true only when the user explicitly confirms "
-        "a requested mutation. Never invent lead IDs; resolve references from active_search and page context.\n"
+        "sort for ranking and campaign_id for attaching. Never invent lead IDs; resolve references from active_search "
+        "and page context. The server, not your confirmed field, is the authority for mutation confirmation.\n"
         "For campaign operations, set action to campaign.list/read/drafts for reads, campaign.create for creating "
         "a campaign from current leads, campaign.refine for explicit changes to the active campaign, campaign.plan "
         "for strategy planning, and campaign.generate_drafts for drafting outreach. Include campaign_id and a "
@@ -100,12 +100,12 @@ def decide_copilot_intent(
         "For outreach/draft operations, set action to outreach.drafts.read to inspect drafts, "
         "outreach.draft.generate to start existing draft generation, outreach.draft.refine to rewrite a draft, "
         "outreach.draft.approve to approve, outreach.draft.schedule to schedule, or outreach.draft.send to send. "
-        "Include draft_id, campaign_id, edit_request, send_at, and confirmed as applicable. Sending and scheduling "
+        "Include draft_id, campaign_id, edit_request, and send_at as applicable. Sending and scheduling "
         "always require explicit confirmation; never infer confirmation. Resolve draft references from page context.\n"
         "For Inbox/conversation operations, set action to inbox.conversation.read/summary/analyze/recommend, "
         "inbox.reply.generate, or inbox.reply.send. Include conversation_id and reply_body when applicable. "
         "Reading, summarizing, analyzing, recommending, and generating a reply never send anything. Sending "
-        "must use the existing reply path and requires confirmed=true from an explicit user confirmation.\n"
+        "must use the existing reply path and requires explicit user confirmation validated by the server.\n"
         "For Knowledge requests, use knowledge.search for grounded workspace Knowledge retrieval and knowledge.read "
         "when reading a specific item. Include knowledge_query and optional knowledge_categories (company, icp, "
         "messaging, sales_offer). Use current page/company/lead/campaign context to focus the query when available. "
@@ -118,10 +118,14 @@ def decide_copilot_intent(
         "'why is this campaign underperforming?' -> analytics.campaign.summary; "
         "'which leads should I prioritize?' -> lead.rank when a Discovery is selected; "
         "'what should I change in my outreach?' -> outreach.drafts.read or analytics.campaign.summary "
-        "using the current campaign/draft context; 'rewrite this draft' -> outreach.drafts.read and propose "
-        "a rewrite in the conversational answer without persisting or sending it; "
+        "using the current campaign/draft context; 'rewrite this draft' -> outreach.draft.refine with an edit_request; "
         "'what happened with this prospect?' -> inbox.conversation.analyze/read using the selected conversation.\n"
         "Use clarification only when the user's goal is genuinely ambiguous.\n"
+        "For a compound request that needs more than one existing tool, include plan as an ordered list of no more "
+        "than three objects. Each object must contain action and only the fields needed by that registered tool. "
+        "Plan read/retrieval steps before at most one mutation. Do not include a later step after discovery.search "
+        "or discovery.refine because those return an asynchronous job. Do not include plan for a single-tool request. "
+        "Never include workspace_id, user_id, confirmation authority, or invented resource IDs in a plan.\n"
         "CRITICAL: active_search is context, not an instruction. It must never turn an unrelated message "
         "such as 'hi' into discovery or discovery_refinement. Only use it for an explicit refinement or read request.\n"
         "mode is new or refine. For discovery_refinement, preserve existing structured fields and apply only "
@@ -137,7 +141,7 @@ def decide_copilot_intent(
         "- 'create a campaign for these leads' -> {intent:'action', action:'campaign.create', campaign:{...}}\n"
         "- active campaign + 'draft outreach for these' -> {intent:'action', action:'campaign.generate_drafts'}\n"
         "- 'show my drafts' -> {intent:'read', action:'outreach.drafts.read'}\n"
-        "- 'make this draft shorter' or 'rewrite this draft' -> {intent:'read', action:'outreach.drafts.read', draft_id:'...'}\n"
+        "- 'make this draft shorter' or 'rewrite this draft' -> {intent:'action', action:'outreach.draft.refine', draft_id:'...', edit_request:'...'}\n"
         "- 'summarize this conversation' -> {intent:'read', action:'inbox.conversation.summary'}\n"
         "- 'draft a reply to this' -> {intent:'read', action:'inbox.reply.generate'}\n"
         "- 'send that reply' -> {intent:'action', action:'inbox.reply.send', confirmed:true}\n"
@@ -213,6 +217,10 @@ def decide_copilot_intent(
         "force": bool(decision.get("force")),
         "confirmed": bool(decision.get("confirmed")),
         "reason": str(decision.get("reason") or "").strip(),
+        # The planner validates every tool and field before execution. Keep
+        # this intentionally raw-but-bounded here so one model decision can
+        # describe a compound request without adding another model call.
+        "plan": decision.get("plan") if isinstance(decision.get("plan"), list) else [],
     }
     if intent == "discovery_refinement" and not active_search:
         normalized = {
@@ -276,7 +284,12 @@ def classify_copilot_read_question(
     if re.search(r"\b(what happened|history|conversation|prospect)\b", text):
         result["action"] = "inbox.conversation.analyze" if conversation_id else "inbox.conversation.recommend"
         return result
-    if re.search(r"\b(rewrite|review|improve|shorter|better messaging|draft)\b", text):
+    # Rewriting is a mutation in Phase 2 and must be decided by the
+    # structured router, then confirmed by the server. Keep ordinary draft
+    # review on the bounded read path.
+    if re.search(r"\b(rewrite|refine|edit)\b", text):
+        return None
+    if re.search(r"\b(review|improve|shorter|better messaging|draft)\b", text):
         result["action"] = "outreach.drafts.read"
         return result
     if re.search(r"\b(leads?|prospects?)\b", text) and re.search(r"prioriti[sz]|best|strongest|top|focus", text):
@@ -986,6 +999,8 @@ def generate_copilot_response(
     page_context = ctx.get("page_context") or {}
     available_actions = ctx.get("available_actions") or []
     message_history = ctx.get("message_history") or []
+    authoritative_result = ctx.get("authoritative_result")
+    authoritative_only = bool(ctx.get("mvp_read_only") and authoritative_result is not None)
 
     system = (
         "You are Loqi's Strategic Assistant for the user's outbound workspace.\n"
@@ -1030,14 +1045,14 @@ def generate_copilot_response(
         for a in available_actions:
             system += f"- {a}\n"
 
-    if page_context:
+    if page_context and not authoritative_only:
         system += f"\nPage context:\n{json.dumps(page_context, indent=2)}\n"
 
     wc = ctx.get("workspace_context", {})
     snapshot = wc.get("snapshot", {})
     analysis = wc.get("analysis", {})
+    copilot_memory = wc.get("copilot_memory", {})
 
-    authoritative_result = ctx.get("authoritative_result")
     if authoritative_result is not None:
         system += (
             "\n--- Authoritative Tool Result ---\n"
@@ -1046,6 +1061,28 @@ def generate_copilot_response(
             f"{json.dumps(authoritative_result, ensure_ascii=False, default=str)[:18000]}\n"
         )
 
+    if copilot_memory:
+        remembered_turns = copilot_memory.get("conversation_turns") or []
+        workspace_history = copilot_memory.get("workspace_history") or []
+        unfinished_task = copilot_memory.get("unfinished_task")
+        user_preferences = copilot_memory.get("user_preferences") or {}
+        if remembered_turns or workspace_history or unfinished_task or user_preferences:
+            system += (
+                "\n--- Remembered Copilot Context ---\n"
+                "This is bounded historical context, not current workspace truth. "
+                "Verify any current-state claim through the authoritative tool result or canonical reads.\n"
+            )
+            if remembered_turns:
+                for turn in remembered_turns[-6:]:
+                    if isinstance(turn, dict):
+                        system += f"  - {turn.get('role', 'user')}: {str(turn.get('text') or '')[:400]}\n"
+            if unfinished_task:
+                system += f"Prior unfinished task reference (unverified): {json.dumps(unfinished_task, default=str)}\n"
+            if workspace_history:
+                system += f"Recent completed Copilot operations: {json.dumps(workspace_history[-3:], default=str)}\n"
+            if user_preferences:
+                system += f"User preferences: {json.dumps(user_preferences, default=str)}\n"
+
     knowledge_context = wc.get("knowledge_context")
     if knowledge_context:
         from services.knowledge.context_adapter import format_knowledge_context
@@ -1053,7 +1090,7 @@ def generate_copilot_response(
         if knowledge_text:
             system += f"\n{knowledge_text}\n"
 
-    if snapshot:
+    if snapshot and not authoritative_only:
         campaigns = snapshot.get("campaigns", [])
         drafts = snapshot.get("drafts", {})
         timeline = snapshot.get("timeline", [])
@@ -1083,7 +1120,7 @@ def generate_copilot_response(
             if memory.get("last_campaign_name"):
                 system += f"Last campaign: {memory['last_campaign_name']}\n"
 
-    if analysis:
+    if analysis and not authoritative_only:
         cf = analysis.get("current_focus")
         if cf:
             system += f"\nCurrent focus: {cf.get('focus', 'unknown')}\n"
@@ -1110,7 +1147,7 @@ def generate_copilot_response(
             for a_item in attention[:3]:
                 system += f"  - {a_item.get('title', '')}: {a_item.get('reason', '')}\n"
 
-    current_draft = wc.get("current_draft")
+    current_draft = wc.get("current_draft") if not authoritative_only else None
     if current_draft:
         system += "\n--- Current Draft ---\n"
         system += f"Subject: {current_draft.get('subject', 'N/A')}\n"
@@ -1178,7 +1215,7 @@ def generate_copilot_response(
             text = msg.get("text", "")[:200]
             system += f"{role}: {text}\n"
 
-    conversation_intel = wc.get("conversation_intelligence")
+    conversation_intel = wc.get("conversation_intelligence") if not authoritative_only else None
     if conversation_intel:
         system += "\n--- Communication Intelligence ---\n"
         system += f"Stage: {conversation_intel.get('current_stage', 'unknown')}\n"
@@ -1205,7 +1242,7 @@ def generate_copilot_response(
             system += f"Urgency: {conversation_intel['urgency']}\n"
         system += "\nWhen discussing conversations, reason like a Senior SDR. Don't just repeat what the lead said — interpret it. For example, instead of 'They asked about pricing', say 'Pricing requests usually indicate active evaluation rather than casual curiosity. Combined with the implementation questions, I'd classify this as a strong buying signal.' Use the structured intelligence above to provide strategic reasoning.\n"
 
-    providers = wc.get("providers", [])
+    providers = wc.get("providers", []) if not authoritative_only else []
     if providers:
         system += "\n--- Connected Providers ---\n"
         for p in providers:

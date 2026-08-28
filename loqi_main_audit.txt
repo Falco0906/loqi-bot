@@ -1,0 +1,286 @@
+_get_feedback | HELPER | Shared | Coordinates services.learning.behavior_tracker, services.learning.feedback_interpreter. | None identified | MAIN
+_abandoned_registration_cleanup_interval | HELPER | Shared | Seconds between abandoned-registration cleanup cycles (min 60s). | None identified | MAIN
+_cancel_and_wait | HELPER | Shared | Cancel background tasks and await them with a bounded timeout. | None identified | MAIN
+lifespan | ORCHESTRATION | Shared | Coordinates asyncio, os, services.communication.communication_store, and other services. | services/communication/** | services/communication/**
+require_web_session_auth | BUSINESS-LOGIC | Identity/Auth | PR10.8.3.1: every /api/web/session/... | services/identity/** | services/identity/**
+_IDENTITY_STATUS | STATE | Application State | In-process main.py state: {AuthenticationException: 401, EmailAlreadyExistsException: 409, RefreshTokenExpiredException: 401, RefreshTokenRevokedE. | services/workspace_state.py / durable repositories where applicable | MAIN
+_embed_delta_into_snapshot | HELPER | Workspace | Embed delta metadata into snapshot for Executive Brief consumption. | services/workspace_context.py / services/workspace_state.py | services/workspace_context.py / services/workspace_state.py
+_identity_status | AUTH | Identity/Auth | Local application helper or response-shaping logic. | services/identity/** | services/identity/**
+_FAIL_LABELS | STATE | Application State | In-process main.py state: {'RefreshTokenRevokedException': 'replay', 'RefreshTokenExpiredException': 'fail', 'InvalidCredentialsException': 'fail'. | services/workspace_state.py / durable repositories where applicable | MAIN
+_record_auth_metric | HELPER | Identity/Auth | Coordinates services.identity.metrics. | services/identity/** | services/identity/**
+_SAFE_IDENTITY_MESSAGES | STATE | Application State | In-process main.py state: {'EmailAlreadyExistsException': 'An account with this email already exists', 'UserNotFoundException': 'User not found', . | services/workspace_state.py / durable repositories where applicable | MAIN
+_safe_identity_message | AUTH | Identity/Auth | Client-safe message that never echoes or discloses internals. | services/identity/** | services/identity/**
+identity_exception_handler | AUTH | Identity/Auth | Coordinates services.identity.schemas, starlette.responses. | services/identity/** | services/identity/**
+unhandled_exception_handler | BUSINESS-LOGIC | Shared | Production-safe catch-all for unexpected exceptions. | None identified | MAIN
+http_exception_handler | BUSINESS-LOGIC | Provider/OAuth | Sanitize server-error (5xx) responses end to end. | services/communication/** / services/identity/** | services/communication/** / services/identity/**
+_credential_registry | STATE | Application State | In-process main.py state: CredentialRegistry(). | services/workspace_state.py / durable repositories where applicable | MAIN
+_execution_adapter_registry | STATE | Application State | In-process main.py state: ExecutionAdapterRegistry(). | services/workspace_state.py / durable repositories where applicable | MAIN
+batch_jobs | STATE | Application State | In-process main.py state: {}. | services/workspace_state.py / durable repositories where applicable | MAIN
+draft_store | STATE | Application State | In-process main.py state: {}. | services/workspace_state.py / durable repositories where applicable | MAIN
+campaign_store | STATE | Application State | In-process main.py state: {}. | services/workspace_state.py / durable repositories where applicable | MAIN
+STRATEGY_JOBS | STATE | Application State | In-process main.py state: {}. | services/workspace_state.py / durable repositories where applicable | MAIN
+_create_batch_job | JOBS | Campaigns | Coordinates datetime. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+_launch_batch_task | HELPER | Identity/Auth | Start a draft batch and retain the task so it survives GC mid-run. | services/identity/** | services/identity/**
+_reconcile_campaign_generation | HELPER | Campaigns | Resolve a campaign whose draft batch was interrupted. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+_reconcile_stale_generating_campaigns | HELPER | Campaigns | One-shot startup recovery for draft batches interrupted by a restart. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+_campaign_generation_still_processing | HELPER | Campaigns | Re-read the campaign's generation right before reconciling. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+STALE_SEARCH_JOB_GRACE_SECONDS | STATE | Application State | In-process main.py state: 300. | services/workspace_state.py / durable repositories where applicable | MAIN
+_reconcile_stale_search_jobs | JOBS | Discovery/Jobs | One-shot startup recovery for search jobs/discoveries interrupted by a restart. | services/job_engine/** / workflow_dispatcher.py | services/job_engine/** / workflow_dispatcher.py
+_build_copilot_workspace_context | WORKSPACE | Copilot | Coordinates services.communication.communication_store, services.communication.provider_registry, services.conversation_memory, and other services. | services/communication/** | services/communication/**
+_parse_draft_body | HELPER | Drafts/Outbound | Local application helper or response-shaping logic. | services/outbound/** | services/outbound/**
+_find_outbound_gmail_provider_id | HELPER | Drafts/Outbound | Find the first registered Gmail outbound provider instance ID. | services/outbound/** | services/outbound/**
+_provider_owned_by | HELPER | Provider/OAuth | True only when the provider instance is registered and belongs to the durable workspace owner. | services/communication/** | services/communication/**
+_provider_record_owned_by | HELPER | Provider/OAuth | True when the communication-store record for ``provider_id`` belongs to ``owner_id``. | services/communication/** | services/communication/**
+_outbound_draft_owned_by | HELPER | Drafts/Outbound | True only when the outbound draft provably belongs to ``owner_id``. | services/communication/** | services/communication/**
+_require_canonical_outbound_draft | HELPER | Drafts/Outbound | Resolve an authenticated workspace-scoped canonical Draft. | services/outbound/** | services/outbound/**
+_conversation_owned_by | HELPER | Provider/OAuth | True only when the conversation provably belongs to ``owner_id``. | services/communication/** | services/communication/**
+_conversation_in_workspace | WORKSPACE | Inbox/Conversations | Fail closed unless a durable Inbox snapshot belongs to this workspace. | services/conversations/** / services/communication/** | services/conversations/** / services/communication/**
+_resolve_owner_gmail_provider | HELPER | Drafts/Outbound | Resolve the workspace owner's current connected Gmail provider. | services/communication/**; services/outbound/** | services/communication/**; services/outbound/**
+_register_outbound_gmail_instance | HELPER | Drafts/Outbound | Create and register a GmailOutboundProvider instance from a connected communication provider. | services/communication/**; services/outbound/** | services/communication/**; services/outbound/**
+_restore_providers_on_startup | PERSISTENCE | Provider/OAuth | On startup, load saved provider credentials from Supabase and restore instances. | services/communication/**; services/outbound/** | services/communication/**; services/outbound/**
+_get_outbound_provider_for_draft | HELPER | Drafts/Outbound | Get a working outbound provider ID for a draft. | services/outbound/** | services/outbound/**
+_resolve_provider_for_conversation | HELPER | Drafts/Outbound | Resolve the connected Gmail provider used to send a conversation reply. | services/communication/**; services/outbound/** | services/communication/**; services/outbound/**
+_sync_draft_to_outbound | ORCHESTRATION | Campaigns | Sync a legacy campaign draft into the outbound DraftStore. | services/communication/**; services/outbound/** | services/communication/**; services/outbound/**
+_outbound_to_legacy_draft | HELPER | Drafts/Outbound | Convert an outbound DraftMessage back to legacy dict format for backward compat. | services/outbound/** | services/outbound/**
+_get_outbound_drafts_for_session | HELPER | Drafts/Outbound | Get all legacy-format drafts for a session from the outbound DraftStore. | services/outbound/** | services/outbound/**
+_SYNONYM_STRATEGY_TABLE | STATE | Application State | In-process main.py state: [(['short', 'concise', 'punchy', 'tighten', 'trim', 'cut', 'fluff', 'reduce'], 'shorten'), (['longer', 'expand', 'more d. | services/workspace_state.py / durable repositories where applicable | MAIN
+_classify_rewrite_strategy | HELPER | Strategy | Map a user's edit instruction to a rewrite strategy using synonym matching. | services/strategic/** / services/planner/** | services/strategic/** / services/planner/**
+_evidence_trace | HELPER | Campaigns | Retain internal provenance for every generated draft. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+_run_draft_with_retry | HELPER | Drafts/Outbound | Run a single draft workflow, retrying transient OpenAI failures. | services/outbound/** | services/outbound/**
+_process_batch_drafts | ORCHESTRATION | Drafts/Outbound | Coordinates asyncio, datetime, services.workspace_timeline, and other services. | services/workspace_timeline.py | services/workspace_timeline.py
+_RATE_LIMIT_IDENTITY_TTL_SECONDS | STATE | Application State | In-process main.py state: 30.0. | services/workspace_state.py / durable repositories where applicable | MAIN
+_RATE_LIMIT_IDENTITY_CACHE_MAX | STATE | Application State | In-process main.py state: 5000. | services/workspace_state.py / durable repositories where applicable | MAIN
+_rate_limit_identity_cache | STATE | Application State | In-process main.py state: {}. | services/workspace_state.py / durable repositories where applicable | MAIN
+_resolve_rate_limit_identity | AUTH | Inbox/Conversations | Return the user id owning this web-session token (""). | services/conversations/** / services/communication/** | services/conversations/** / services/communication/**
+rate_limit_middleware | BUSINESS-LOGIC | Drafts/Outbound | PR10.5 — production rate limiting. | services/outbound/** | services/outbound/**
+log_requests | BUSINESS-LOGIC | Shared | Coordinates services.operations, time, uuid. | None identified | MAIN
+_discovery_query_from_search_context | HELPER | Provider/OAuth | Build the provider query from the validated structured search state. | services/communication/** / services/identity/** | services/communication/** / services/identity/**
+_discovery_title_from_search_context | HELPER | Discovery | Return a concise display label without changing the execution query. | services/discovery.py / services/job_engine/** | services/discovery.py / services/job_engine/**
+_run_copilot_discovery | ORCHESTRATION | Copilot | Discovery tool adapter; the existing search-run pipeline remains authoritative. | services/copilot_tools.py / services/copilot_orchestrator.py | services/copilot_tools.py / services/copilot_orchestrator.py
+_run_copilot_campaign | ORCHESTRATION | Copilot | Campaign tool adapter over the existing workspace and job services. | services/copilot_tools.py / services/copilot_orchestrator.py | services/copilot_tools.py / services/copilot_orchestrator.py
+_run_copilot_outreach | ORCHESTRATION | Copilot | Thin Copilot adapter over the canonical workspace/outbound draft paths. | services/outbound/** | services/outbound/**
+_run_copilot_inbox | ORCHESTRATION | Copilot | Copilot adapter over the canonical conversation and reply services. | services/copilot_tools.py / services/copilot_orchestrator.py | services/copilot_tools.py / services/copilot_orchestrator.py
+_run_copilot_knowledge | ORCHESTRATION | Copilot | Read-only Copilot adapter over the canonical Knowledge service. | services/copilot_tools.py / services/copilot_orchestrator.py | services/copilot_tools.py / services/copilot_orchestrator.py
+_run_copilot_analytics | ORCHESTRATION | Copilot | Read-only adapter over the existing workspace snapshot aggregations. | services/copilot_tools.py / services/copilot_orchestrator.py | services/copilot_tools.py / services/copilot_orchestrator.py
+_copilot_read_message | HELPER | Copilot | Local application helper or response-shaping logic. | services/copilot_tools.py / services/copilot_orchestrator.py | services/copilot_tools.py / services/copilot_orchestrator.py
+_copilot_grounded_response_text | HELPER | Copilot | Explain an authoritative read result without inventing workspace facts. | services/copilot_tools.py / services/copilot_orchestrator.py | services/copilot_tools.py / services/copilot_orchestrator.py
+_register_outbound_providers | HELPER | Drafts/Outbound | Local application helper or response-shaping logic. | services/outbound/** | services/outbound/**
+_register_execution_adapters | HELPER | Provider/OAuth | Coordinates services.execution. | services/execution/** | services/execution/**
+_register_credential_descriptors | HELPER | Provider/OAuth | Coordinates services.adapters.credentials. | services/communication/** / services/identity/** | services/communication/** / services/identity/**
+_register_credential_instance | HELPER | Provider/OAuth | Coordinates services.adapters.credentials. | services/communication/** / services/identity/** | services/communication/** / services/identity/**
+_restore_providers_for_startup | PERSISTENCE | Drafts/Outbound | Restore provider instances and recover interrupted work at startup. | services/communication/** | services/communication/**
+_reconcile_runtime_providers | HELPER | Provider/OAuth | Enforce the one-active-provider-per-(user, provider_type) invariant. | services/communication/** | services/communication/**
+_start_outbound_scheduler | HELPER | Drafts/Outbound | Coordinates asyncio. | services/outbound/** | services/outbound/**
+read_root | ROUTE | Application/HTTP | HTTP handler for GET /. | None identified | MAIN
+gmail_auth_url | ROUTE | Provider/OAuth | HTTP handler for GET /api/auth/gmail/url. | services/communication/** / services/identity/** | services/communication/** / services/identity/**
+_GMAIL_CONNECT_LOCKS_MAX | STATE | Application State | In-process main.py state: 4096. | services/workspace_state.py / durable repositories where applicable | MAIN
+_gmail_connect_locks | STATE | Application State | In-process main.py state: {}. | services/workspace_state.py / durable repositories where applicable | MAIN
+_gmail_connect_lock | HELPER | Provider/OAuth | Coordinates asyncio. | services/communication/** / services/identity/** | services/communication/** / services/identity/**
+_remove_existing_gmail_provider | HELPER | Provider/OAuth | Disconnect and remove any running Gmail provider instances for a user. | services/communication/** | services/communication/**
+_frontend_postmessage_origin | HELPER | Provider/OAuth | Origin the OAuth callback may postMessage to (the Loqi frontend). | services/communication/** / services/identity/** | services/communication/** / services/identity/**
+_resolve_oauth_state_user | HELPER | Provider/OAuth | Resolve the OAuth callback state to the durable Loqi user id. | services/communication/** / services/identity/** | services/communication/** / services/identity/**
+_perform_gmail_oauth_persistence | PERSISTENCE | Provider/OAuth | PR-2A: complete one Gmail connection for a user. | services/communication/** | services/communication/**
+gmail_auth_callback | ROUTE | Provider/OAuth | HTTP handler for GET /api/auth/gmail/callback. | services/communication/** / services/identity/** | services/communication/** / services/identity/**
+health | ROUTE | Provider/OAuth | HTTP handler for GET /health. | services/communication/** / services/identity/** | services/communication/** / services/identity/**
+telegram_webhook | ROUTE | Application/HTTP | HTTP handler for POST /webhook. | None identified | MAIN
+create_web_session | ROUTE | Identity/Auth | HTTP handler for POST /api/web/session. | services/identity/** | services/identity/**
+get_web_session | ROUTE | Identity/Auth | HTTP handler for GET /api/web/session/{session_token}. | services/identity/** | services/identity/**
+get_web_session_messages | ROUTE | Identity/Auth | HTTP handler for GET /api/web/session/{session_token}/messages. | services/identity/** | services/identity/**
+post_web_session_message | ROUTE | Identity/Auth | HTTP handler for POST /api/web/session/{session_token}/messages. | services/identity/** | services/identity/**
+VALID_CAMPAIGN_STATUSES | STATE | Application State | In-process main.py state: {'planning', 'active', 'paused', 'completed', 'archived', 'cancelled', 'failed', 'deleted'}. | services/workspace_state.py / durable repositories where applicable | MAIN
+batch_draft | ROUTE | Drafts/Outbound | HTTP handler for POST /api/web/session/{session_token}/batch-draft. | services/outbound/** | services/outbound/**
+batch_status | ROUTE | Campaigns | HTTP handler for GET /api/web/session/{session_token}/batch-status/{batch_id}. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+analyze_campaigns_endpoint | ROUTE | Campaigns | HTTP handler for POST /api/web/session/{session_token}/analyze-campaigns. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+list_drafts | ROUTE | Drafts/Outbound | HTTP handler for GET /api/web/session/{session_token}/drafts. | services/outbound/** | services/outbound/**
+update_draft | ROUTE | Drafts/Outbound | HTTP handler for PUT /api/web/session/{session_token}/drafts/{draft_id}. | services/outbound/** | services/outbound/**
+refine_draft | ROUTE | Drafts/Outbound | HTTP handler for POST /api/web/session/{session_token}/drafts/{draft_id}/refine. | services/outbound/** | services/outbound/**
+analyze_draft_endpoint | ROUTE | Campaigns | HTTP handler for POST /api/web/session/{session_token}/drafts/analyze. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+ask_draft_question_endpoint | ROUTE | Campaigns | HTTP handler for POST /api/web/session/{session_token}/drafts/ask. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+_call_outbound_approval | HELPER | Drafts/Outbound | Adapter: after legacy approval, also execute through outbound engine. | services/outbound/** | services/outbound/**
+_emit_draft_event | HELPER | Campaigns | PR-3E: draft lifecycle event via Redis pub/sub. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+approve_draft | ROUTE | Drafts/Outbound | HTTP handler for POST /api/web/session/{session_token}/drafts/{draft_id}/approve. | services/outbound/** | services/outbound/**
+undo_draft | ROUTE | Drafts/Outbound | HTTP handler for POST /api/web/session/{session_token}/drafts/{draft_id}/undo. | services/outbound/** | services/outbound/**
+draft_rewrite_history | ROUTE | Drafts/Outbound | HTTP handler for GET /api/web/session/{session_token}/drafts/{draft_id}/history. | services/outbound/** | services/outbound/**
+compare_draft_versions | ROUTE | Drafts/Outbound | HTTP handler for POST /api/web/session/{session_token}/drafts/compare. | services/outbound/** | services/outbound/**
+communication_analyze | ROUTE | Inbox/Conversations | HTTP handler for POST /api/web/session/{session_token}/communication/analyze. | services/conversations/** / services/communication/** | services/conversations/** / services/communication/**
+communication_memory_update | ROUTE | Inbox/Conversations | HTTP handler for POST /api/web/session/{session_token}/communication/memory/update. | services/conversations/** / services/communication/** | services/conversations/** / services/communication/**
+communication_recommend | ROUTE | Inbox/Conversations | HTTP handler for POST /api/web/session/{session_token}/communication/recommend. | services/conversations/** / services/communication/** | services/conversations/** / services/communication/**
+communication_summary | ROUTE | Inbox/Conversations | HTTP handler for POST /api/web/session/{session_token}/communication/summary. | services/conversations/** / services/communication/** | services/conversations/** / services/communication/**
+communication_timeline | ROUTE | Inbox/Conversations | HTTP handler for GET /api/web/session/{session_token}/communication/{conversation_id}/timeline. | services/conversations/** / services/communication/** | services/conversations/** / services/communication/**
+list_workspaces | ROUTE | Workspace | List workspaces in every organization the caller actively belongs to. | services/workspace_context.py / services/workspace_state.py | services/workspace_context.py / services/workspace_state.py
+select_workspace | ROUTE | Workspace | Validate + return the context for an explicitly selected workspace. | services/workspace_context.py / services/workspace_state.py | services/workspace_context.py / services/workspace_state.py
+create_workspace | ROUTE | Workspace | Create an additional workspace in an organization the caller is an ACTIVE member of (owner/admin role required). | services/workspace_context.py / services/workspace_state.py | services/workspace_context.py / services/workspace_state.py
+_default_workspace_slug | WORKSPACE | Workspace | Local application helper or response-shaping logic. | services/workspace_context.py / services/workspace_state.py | services/workspace_context.py / services/workspace_state.py
+dev_workspace_context | ROUTE | Copilot | HTTP handler for GET /api/web/session/{session_token}/workspace-context. | services/copilot_tools.py / services/copilot_orchestrator.py | services/copilot_tools.py / services/copilot_orchestrator.py
+provider_connect | ROUTE | Provider/OAuth | HTTP handler for POST /api/web/session/{session_token}/providers/connect. | services/communication/** | services/communication/**
+provider_disconnect | ROUTE | Provider/OAuth | HTTP handler for POST /api/web/session/{session_token}/providers/{provider_id}/disconnect. | services/communication/** | services/communication/**
+provider_list | ROUTE | Provider/OAuth | PR-2A: durable-source-of-truth provider listing. | services/communication/** | services/communication/**
+provider_health | ROUTE | Provider/OAuth | HTTP handler for GET /api/web/session/{session_token}/providers/{provider_id}/health. | services/communication/** | services/communication/**
+provider_sync | ROUTE | Provider/OAuth | HTTP handler for POST /api/web/session/{session_token}/providers/{provider_id}/sync. | services/communication/** | services/communication/**
+provider_status | ROUTE | Provider/OAuth | HTTP handler for GET /api/web/session/{session_token}/providers/{provider_id}/status. | services/communication/** | services/communication/**
+provider_threads | ROUTE | Provider/OAuth | List all tracked thread mappings for a provider. | services/communication/** / services/identity/** | services/communication/** / services/identity/**
+provider_messages | ROUTE | Provider/OAuth | Get message count, mailbox info, and recent activity for a provider. | services/communication/** | services/communication/**
+provider_events_endpoint | ROUTE | Provider/OAuth | HTTP handler for GET /api/web/session/{session_token}/providers/events. | services/communication/** | services/communication/**
+provider_registered_types | ROUTE | Provider/OAuth | HTTP handler for GET /api/web/session/{session_token}/providers/registered. | services/communication/** | services/communication/**
+outbound_create_draft | ROUTE | Drafts/Outbound | HTTP handler for POST /api/web/session/{session_token}/outbound/drafts. | services/outbound/** | services/outbound/**
+outbound_update_draft | ROUTE | Drafts/Outbound | HTTP handler for PATCH /api/web/session/{session_token}/outbound/drafts/{draft_id}. | services/outbound/** | services/outbound/**
+outbound_delete_draft | ROUTE | Drafts/Outbound | HTTP handler for DELETE /api/web/session/{session_token}/outbound/drafts/{draft_id}. | services/outbound/** | services/outbound/**
+_test_recipient_override_enabled | HELPER | Shared | Coordinates os. | None identified | MAIN
+send_draft | ROUTE | Drafts/Outbound | HTTP handler for POST /api/web/session/{session_token}/drafts/{draft_id}/send. | services/communication/**; services/outbound/** | services/communication/**; services/outbound/**
+schedule_draft | ROUTE | Drafts/Outbound | HTTP handler for POST /api/web/session/{session_token}/drafts/{draft_id}/schedule. | services/outbound/** | services/outbound/**
+cancel_schedule_draft | ROUTE | Drafts/Outbound | HTTP handler for POST /api/web/session/{session_token}/drafts/{draft_id}/cancel-schedule. | services/outbound/** | services/outbound/**
+outbound_send | ROUTE | Drafts/Outbound | Compatibility alias for canonical Draft send; payload is not authority. | services/outbound/** | services/outbound/**
+outbound_schedule | ROUTE | Drafts/Outbound | HTTP handler for POST /api/web/session/{session_token}/outbound/schedule. | services/outbound/** | services/outbound/**
+outbound_cancel_schedule | ROUTE | Drafts/Outbound | HTTP handler for DELETE /api/web/session/{session_token}/outbound/schedule/{schedule_id}. | services/outbound/** | services/outbound/**
+outbound_list_drafts | ROUTE | Drafts/Outbound | HTTP handler for GET /api/web/session/{session_token}/outbound/drafts. | services/outbound/** | services/outbound/**
+outbound_get_draft | ROUTE | Drafts/Outbound | HTTP handler for GET /api/web/session/{session_token}/outbound/drafts/{draft_id}. | services/outbound/** | services/outbound/**
+outbound_approve_draft | ROUTE | Drafts/Outbound | HTTP handler for POST /api/web/session/{session_token}/outbound/drafts/{draft_id}/approve. | services/outbound/** | services/outbound/**
+outbound_reject_draft | ROUTE | Drafts/Outbound | HTTP handler for POST /api/web/session/{session_token}/outbound/drafts/{draft_id}/reject. | services/outbound/** | services/outbound/**
+outbound_approve_all | ROUTE | Drafts/Outbound | HTTP handler for POST /api/web/session/{session_token}/outbound/approve-all. | services/outbound/** | services/outbound/**
+outbound_history | ROUTE | Drafts/Outbound | HTTP handler for GET /api/web/session/{session_token}/outbound/history. | services/outbound/** | services/outbound/**
+outbound_events_endpoint | ROUTE | Drafts/Outbound | HTTP handler for GET /api/web/session/{session_token}/outbound/events. | services/outbound/** | services/outbound/**
+outbound_draft_versions | ROUTE | Drafts/Outbound | HTTP handler for GET /api/web/session/{session_token}/outbound/drafts/{draft_id}/versions. | services/outbound/** | services/outbound/**
+_knowledge_service | HELPER | Knowledge | Local application helper or response-shaping logic. | services/knowledge/** | services/knowledge/**
+_knowledge_workspace | WORKSPACE | Knowledge | Resolve (owner_id, workspace_id) for the authenticated session. | services/knowledge/** | services/knowledge/**
+list_knowledge | ROUTE | Knowledge | HTTP handler for GET /api/web/session/{session_token}/knowledge. | services/knowledge/** | services/knowledge/**
+create_knowledge_item | ROUTE | Knowledge | HTTP handler for POST /api/web/session/{session_token}/knowledge. | services/knowledge/** | services/knowledge/**
+list_knowledge_sources | ROUTE | Knowledge | HTTP handler for GET /api/web/session/{session_token}/knowledge/sources. | services/knowledge/** | services/knowledge/**
+create_knowledge_source | ROUTE | Knowledge | HTTP handler for POST /api/web/session/{session_token}/knowledge/sources. | services/knowledge/** | services/knowledge/**
+update_knowledge_source | ROUTE | Knowledge | HTTP handler for PUT /api/web/session/{session_token}/knowledge/sources/{source_id}. | services/knowledge/** | services/knowledge/**
+archive_knowledge_source | ROUTE | Knowledge | HTTP handler for DELETE /api/web/session/{session_token}/knowledge/sources/{source_id}. | services/knowledge/** | services/knowledge/**
+get_knowledge_item | ROUTE | Knowledge | HTTP handler for GET /api/web/session/{session_token}/knowledge/{item_id}. | services/knowledge/** | services/knowledge/**
+update_knowledge_item | ROUTE | Knowledge | HTTP handler for PUT /api/web/session/{session_token}/knowledge/{item_id}. | services/knowledge/** | services/knowledge/**
+archive_knowledge_item | ROUTE | Knowledge | HTTP handler for DELETE /api/web/session/{session_token}/knowledge/{item_id}. | services/knowledge/** | services/knowledge/**
+_strategic_service | HELPER | Shared | Local application helper or response-shaping logic. | None identified | MAIN
+list_strategic_updates | ROUTE | Identity/Auth | HTTP handler for GET /api/web/session/{session_token}/strategic-updates. | services/identity/** | services/identity/**
+refresh_strategic_updates | ROUTE | Workspace | HTTP handler for POST /api/web/session/{session_token}/strategic-updates/refresh. | services/workspace_context.py / services/workspace_state.py | services/workspace_context.py / services/workspace_state.py
+list_strategic_actions | ROUTE | Workspace | HTTP handler for GET /api/web/session/{session_token}/strategic-updates/{update_id}/actions. | services/workspace_context.py / services/workspace_state.py | services/workspace_context.py / services/workspace_state.py
+propose_strategic_action | ROUTE | Workspace | HTTP handler for POST /api/web/session/{session_token}/strategic-updates/{update_id}/actions. | services/workspace_context.py / services/workspace_state.py | services/workspace_context.py / services/workspace_state.py
+get_strategic_update | ROUTE | Workspace | HTTP handler for GET /api/web/session/{session_token}/strategic-updates/{update_id}. | services/workspace_context.py / services/workspace_state.py | services/workspace_context.py / services/workspace_state.py
+_strategic_action_service | HELPER | Shared | Local application helper or response-shaping logic. | None identified | MAIN
+_strategic_action_http_error | HELPER | Shared | Coordinates fastapi. | None identified | MAIN
+_action_route_call | HELPER | Shared | Local application helper or response-shaping logic. | None identified | MAIN
+approve_strategic_action | ROUTE | Workspace | HTTP handler for POST /api/web/session/{session_token}/strategic-actions/{action_id}/approve. | services/workspace_context.py / services/workspace_state.py | services/workspace_context.py / services/workspace_state.py
+dismiss_strategic_action | ROUTE | Workspace | HTTP handler for POST /api/web/session/{session_token}/strategic-actions/{action_id}/dismiss. | services/workspace_context.py / services/workspace_state.py | services/workspace_context.py / services/workspace_state.py
+refine_strategic_action | ROUTE | Workspace | HTTP handler for POST /api/web/session/{session_token}/strategic-actions/{action_id}/refine. | services/workspace_context.py / services/workspace_state.py | services/workspace_context.py / services/workspace_state.py
+execute_strategic_action | ROUTE | Workspace | HTTP handler for POST /api/web/session/{session_token}/strategic-actions/{action_id}/execute. | services/workspace_context.py / services/workspace_state.py | services/workspace_context.py / services/workspace_state.py
+archive_strategic_update | ROUTE | Workspace | HTTP handler for DELETE /api/web/session/{session_token}/strategic-updates/{update_id}. | services/workspace_context.py / services/workspace_state.py | services/workspace_context.py / services/workspace_state.py
+_workspace_owner | WORKSPACE | Workspace | Resolve the durable workspace owner, never the temporary web token. | services/workspace_context.py / services/workspace_state.py | services/workspace_context.py / services/workspace_state.py
+_session_token_from_request | HELPER | Identity/Auth | Return the web-session token from the Authorization header only. | services/identity/** | services/identity/**
+_copilot_tool_failure_reason | HELPER | Copilot | Return a stable user-facing failure without leaking driver details. | services/copilot_tools.py / services/copilot_orchestrator.py | services/copilot_tools.py / services/copilot_orchestrator.py
+_LEGACY_USER_BRIDGE_TTL_SECONDS | STATE | Application State | In-process main.py state: 60. | services/workspace_state.py / durable repositories where applicable | MAIN
+_ensure_authenticated_web_user_bridge | AUTH | Jobs | Provision the legacy job/workflow user row for an authenticated web user. | services/identity/** | services/identity/**
+_resolve_session_context | AUTH | Identity/Auth | Return ``(owner_id, web_session_token)`` from the Authorization header. | services/identity/** | services/identity/**
+_BINDING_TTL_SECONDS | STATE | Application State | In-process main.py state: 10. | services/workspace_state.py / durable repositories where applicable | MAIN
+_web_session_binding | HELPER | Identity/Auth | Resolve the canonical web-session binding for a bearer token. | services/identity/** | services/identity/**
+_cached_session_identity | AUTH | Provider/OAuth | PR-2B: minimal per-token identity with a 15s TTL. | services/communication/** / services/identity/** | services/communication/** / services/identity/**
+_workspace_owner_and_summary | WORKSPACE | Workspace | Resolve the durable workspace owner and the web-session summary. | services/workspace_context.py / services/workspace_state.py | services/workspace_context.py / services/workspace_state.py
+_workspace_campaigns | WORKSPACE | Campaigns | Local application helper or response-shaping logic. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+_workspace_drafts | WORKSPACE | Drafts/Outbound | Local application helper or response-shaping logic. | services/outbound/** | services/outbound/**
+_workspace_id_from_request | WORKSPACE | Workspace | The explicitly selected workspace id (header), if any. | services/workspace_context.py / services/workspace_state.py | services/workspace_context.py / services/workspace_state.py
+_resolve_selected_workspace_context | WORKSPACE | Workspace | Resolve + validate the selected workspace context for the caller. | services/workspace_context.py / services/workspace_state.py | services/workspace_context.py / services/workspace_state.py
+_selected_workspace_id | WORKSPACE | Workspace | The validated selected workspace id for the caller (raises on error). | services/workspace_context.py / services/workspace_state.py | services/workspace_context.py / services/workspace_state.py
+_resolved_workspace_id_or_default | WORKSPACE | Workspace | Selected workspace, falling back to the owner-based single-workspace default when membership resolution finds no accessible workspace (legacy / fixture accounts without a dura | services/workspace_context.py / services/workspace_state.py | services/workspace_context.py / services/workspace_state.py
+save_campaign | ROUTE | Campaigns | HTTP handler for POST /api/web/session/{session_token}/campaigns. | services/workspace_timeline.py | services/workspace_timeline.py
+list_campaigns | ROUTE | Campaigns | HTTP handler for GET /api/web/session/{session_token}/campaigns. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+campaign_summary | ROUTE | Campaigns | HTTP handler for GET /api/web/session/{session_token}/campaigns/summary. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+get_campaign | ROUTE | Campaigns | HTTP handler for GET /api/web/session/{session_token}/campaigns/{campaign_id}. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+campaign_launch_progress | ROUTE | Campaigns | HTTP handler for GET /api/web/session/{session_token}/campaigns/{campaign_id}/launch-progress. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+campaign_timeline | ROUTE | Campaigns | HTTP handler for GET /api/web/session/{session_token}/campaigns/{campaign_id}/timeline. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+update_campaign | ROUTE | Campaigns | HTTP handler for PUT /api/web/session/{session_token}/campaigns/{campaign_id}. | services/workspace_timeline.py | services/workspace_timeline.py
+_build_strategy_context | HELPER | Campaigns | Assemble the strategy-generation context from a campaign's persisted state. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+_run_strategy_job | JOBS | Jobs | Generate + persist a campaign strategy off the request path. | services/job_engine/** | services/job_engine/**
+generate_campaign_strategy | ROUTE | Campaigns | HTTP handler for POST /api/web/session/{session_token}/campaigns/{campaign_id}/generate-strategy. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+_persist_strategy_job_meta | JOBS | Campaigns | PR-3F: persist strategy-job lifecycle into campaign settings so job state survives process restarts (Supabase = source of truth). | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+_load_strategy_job_meta | JOBS | Campaigns | Coordinates asyncio. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+_reconcile_strategy_meta | HELPER | Jobs | Lazy restart reconciliation. | services/job_engine/** | services/job_engine/**
+_reconcile_stale_strategy_jobs | JOBS | Campaigns | Mark interrupted persisted strategy runs terminal after a restart. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+_enqueue_strategy_job | JOBS | Campaigns | Enqueue a strategy generation job, reusing any in-flight job. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+_maybe_auto_strategy | HELPER | Campaigns | Carry discovery research into the campaign as its strategy — once. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+strategy_job_status | ROUTE | Campaigns | Poll endpoint for a background strategy generation job. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+add_campaign_lead | ROUTE | Campaigns | HTTP handler for POST /api/web/session/{session_token}/campaigns/{campaign_id}/leads. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+decide_workspace_lead | ROUTE | Discovery | HTTP handler for POST /api/web/session/{session_token}/leads/decision. | services/discovery.py / services/job_engine/** | services/discovery.py / services/job_engine/**
+_dispatch_campaign_sends | ORCHESTRATION | Campaigns | Coordinates services.communication.reply_simulator, services.outbound.draft_store, services.outbound.outbound_executor, and other services. | services/communication/**; services/outbound/** | services/communication/**; services/outbound/**
+_update_campaign_launch_progress | HELPER | Campaigns | Persist launch progress onto the durable campaign row for polling. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+delete_campaign | ROUTE | Campaigns | HTTP handler for DELETE /api/web/session/{session_token}/campaigns/{campaign_id}. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+duplicate_campaign | ROUTE | Campaigns | HTTP handler for POST /api/web/session/{session_token}/campaigns/{campaign_id}/duplicate. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+attach_discovery_to_campaign | ROUTE | Campaigns | HTTP handler for POST /api/web/session/{session_token}/campaigns/{campaign_id}/attach-discovery. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+list_campaign_drafts | ROUTE | Campaigns | HTTP handler for GET /api/web/session/{session_token}/campaigns/{campaign_id}/drafts. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+generate_campaign_drafts | ROUTE | Campaigns | HTTP handler for POST /api/web/session/{session_token}/campaigns/{campaign_id}/generate-drafts. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+campaign_generation_status | ROUTE | Campaigns | HTTP handler for GET /api/web/session/{session_token}/campaigns/{campaign_id}/generation-status. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+_launch_initial_research | ORCHESTRATION | Discovery/Jobs | Start first research immediately after onboarding finalization. | services/job_engine/**; services/workspace_timeline.py | services/job_engine/**; services/workspace_timeline.py
+_mc_phase | HELPER | Shared | Coordinates time. | None identified | MAIN
+mission_control_summary | ROUTE | Mission Control | HTTP handler for GET /api/web/session/{session_token}/mission-control. | services/job_engine/** | services/job_engine/**
+briefing_endpoint | ROUTE | Mission Control | HTTP handler for GET /api/web/session/{session_token}/briefing. | services/mission_control/** | services/mission_control/**
+export_csv | ROUTE | Drafts/Outbound | HTTP handler for GET /api/web/session/{session_token}/export-csv. | services/outbound/** | services/outbound/**
+select_lead_endpoint | ROUTE | Identity/Auth | HTTP handler for POST /api/web/session/{session_token}/select-lead. | services/identity/** | services/identity/**
+preview_lead_endpoint | ROUTE | Identity/Auth | HTTP handler for POST /api/web/session/{session_token}/preview-lead. | services/identity/** | services/identity/**
+get_web_session_internal | HELPER | Inbox/Conversations | Local application helper or response-shaping logic. | services/conversations/** / services/communication/** | services/conversations/** / services/communication/**
+ensure_workflow_session_internal | ORCHESTRATION | Inbox/Conversations | Local application helper or response-shaping logic. | services/conversations/** / services/communication/** | services/conversations/** / services/communication/**
+log_conversation_internal | PERSISTENCE | Inbox/Conversations | Local application helper or response-shaping logic. | services/conversations/** / services/communication/** | services/conversations/** / services/communication/**
+get_web_gmail_status | ROUTE | Provider/OAuth | HTTP handler for GET /api/web/session/{session_token}/gmail. | services/communication/** / services/identity/** | services/communication/** / services/identity/**
+google_callback | ROUTE | Provider/OAuth | Legacy Telegram Gmail-connect callback. | services/communication/** / services/identity/** | services/communication/** / services/identity/**
+_resolve_web_user_id | AUTH | Discovery | Resolve (user_id, session_token) for web job/discovery endpoints. | services/discovery.py / services/job_engine/** | services/discovery.py / services/job_engine/**
+_create_search_run | JOBS | Discovery/Jobs | Create a first-class discovery entity AND the search job that fills it. | services/job_engine/** | services/job_engine/**
+start_search | ROUTE | Discovery/Jobs | HTTP handler for POST /api/jobs/search. | services/job_engine/** / workflow_dispatcher.py | services/job_engine/** / workflow_dispatcher.py
+create_discovery_endpoint | ROUTE | Discovery | Create a new research run as a first-class discovery entity. | services/discovery.py / services/job_engine/** | services/discovery.py / services/job_engine/**
+list_discoveries_endpoint | ROUTE | Discovery | Recent discoveries for the workspace, newest first. | services/discovery.py / services/job_engine/** | services/discovery.py / services/job_engine/**
+get_discovery_endpoint | ROUTE | Discovery | One discovery with its surfaced companies and leads. | services/discovery.py / services/job_engine/** | services/discovery.py / services/job_engine/**
+get_job | ROUTE | Jobs | HTTP handler for GET /api/jobs/{job_id}. | services/job_engine/** | services/job_engine/**
+get_job_results | ROUTE | Jobs | HTTP handler for GET /api/jobs/{job_id}/results. | services/job_engine/** | services/job_engine/**
+list_jobs | ROUTE | Jobs | HTTP handler for GET /api/jobs. | services/job_engine/** | services/job_engine/**
+plan_workflow_endpoint | ROUTE | Campaigns | HTTP handler for POST /api/web/session/{session_token}/plan. | Campaign application service (not yet extracted) | Campaign application service (not yet extracted)
+execute_workflow_endpoint | ROUTE | Identity/Auth | HTTP handler for POST /api/web/session/{session_token}/workflows/execute. | services/identity/** | services/identity/**
+_require_workflow_owned | ROUTE | Identity/Auth | Return the workflow runtime only when it belongs to the caller's session. | services/identity/** | services/identity/**
+get_workflow_status | ORCHESTRATION | Identity/Auth | Coordinates services.workflow_progress. | services/identity/** | services/identity/**
+get_workflow_events_endpoint | ROUTE | Identity/Auth | HTTP handler for GET /api/web/session/{session_token}/workflows/{workflow_id}/events. | services/identity/** | services/identity/**
+approve_workflow_step | ROUTE | Identity/Auth | HTTP handler for POST /api/web/session/{session_token}/workflows/{workflow_id}/approve. | services/identity/** | services/identity/**
+list_workflows | ROUTE | Identity/Auth | HTTP handler for GET /api/web/session/{session_token}/workflows. | services/identity/** | services/identity/**
+workflow_history | ROUTE | Identity/Auth | HTTP handler for GET /api/web/session/{session_token}/workflows/history. | services/identity/** | services/identity/**
+workflow_events_after | ROUTE | Identity/Auth | HTTP handler for GET /api/web/session/{session_token}/workflows/{workflow_id}/events/stream. | services/identity/** | services/identity/**
+pause_workflow_endpoint | ROUTE | Identity/Auth | HTTP handler for POST /api/web/session/{session_token}/workflows/{workflow_id}/pause. | services/identity/** | services/identity/**
+resume_workflow_endpoint | ROUTE | Identity/Auth | HTTP handler for POST /api/web/session/{session_token}/workflows/{workflow_id}/resume. | services/identity/** | services/identity/**
+cancel_workflow_endpoint | ROUTE | Identity/Auth | HTTP handler for POST /api/web/session/{session_token}/workflows/{workflow_id}/cancel. | services/identity/** | services/identity/**
+list_conversations_route | ROUTE | Inbox/Conversations | HTTP handler for GET /api/web/session/{session_token}/conversations. | services/conversations/** / services/communication/** | services/conversations/** / services/communication/**
+get_conversation_route | ROUTE | Inbox/Conversations | HTTP handler for GET /api/web/session/{session_token}/conversations/{conversation_id}. | services/conversations/** / services/communication/** | services/conversations/** / services/communication/**
+get_conversation_timeline_route | ROUTE | Inbox/Conversations | HTTP handler for GET /api/web/session/{session_token}/conversations/{conversation_id}/timeline. | services/conversations/** / services/communication/** | services/conversations/** / services/communication/**
+get_conversation_messages_route | ROUTE | Inbox/Conversations | HTTP handler for GET /api/web/session/{session_token}/conversations/{conversation_id}/messages. | services/conversations/** / services/communication/** | services/conversations/** / services/communication/**
+get_conversation_reasoning_route | ROUTE | Inbox/Conversations | HTTP handler for GET /api/web/session/{session_token}/conversations/{conversation_id}/reasoning. | services/conversations/** / services/communication/** | services/conversations/** / services/communication/**
+get_conversation_plan_route | ROUTE | Inbox/Conversations | HTTP handler for POST /api/web/session/{session_token}/conversations/{conversation_id}/plan. | services/planner/** | services/planner/**
+_build_plan_explainability | HELPER | Shared | Local application helper or response-shaping logic. | None identified | MAIN
+generate_reply_route | ROUTE | Inbox/Conversations | HTTP handler for POST /api/web/session/{session_token}/conversations/{conversation_id}/generate-reply. | services/conversations/** / services/communication/** | services/conversations/** / services/communication/**
+send_conversation_reply_route | ROUTE | Inbox/Conversations | HTTP handler for POST /api/web/session/{session_token}/conversations/{conversation_id}/reply. | services/outbound/** | services/outbound/**
+send_conversation_followup_route | ROUTE | Inbox/Conversations | HTTP handler for POST /api/web/session/{session_token}/conversations/{conversation_id}/follow-up. | services/outbound/** | services/outbound/**
+_SSE_HEARTBEAT_SECONDS | STATE | Application State | In-process main.py state: 15.0. | services/workspace_state.py / durable repositories where applicable | MAIN
+_SSE_REVOCATION_CHECK_SECONDS | STATE | Application State | In-process main.py state: 30.0. | services/workspace_state.py / durable repositories where applicable | MAIN
+events_stream | ROUTE | Identity/Auth | User-scoped Server-Sent Events gateway (PR-3D). | services/identity/** | services/identity/**
+TOTAL meaningful units | 256
+ROUTES | 128
+BUSINESS-LOGIC | 5
+HELPERS | 57
+PERSISTENCE | 4
+ORCHESTRATION | 13
+STATE | 21
+DUPLICATE/OVERLAPPING UNITS | 221
+UNIQUE MAIN-ONLY RESPONSIBILITIES | 35
+20 LARGEST/HIGHEST-COUPLING SECTIONS |
+post_web_session_message | lines 3688-4302 | Identity/Auth | 615 lines; 5 imported-service dependencies; coupling score 690
+lifespan | lines 190-446 | Shared | 257 lines; 6 imported-service dependencies; coupling score 347
+_build_copilot_workspace_context | lines 1121-1337 | Copilot | 217 lines; 6 imported-service dependencies; coupling score 307
+save_campaign | lines 6796-6931 | Campaigns | 136 lines; 7 imported-service dependencies; coupling score 241
+_restore_providers_on_startup | lines 1527-1662 | Provider/OAuth | 136 lines; 7 imported-service dependencies; coupling score 241
+_process_batch_drafts | lines 1969-2129 | Drafts/Outbound | 161 lines; 5 imported-service dependencies; coupling score 236
+_run_copilot_campaign | lines 2369-2548 | Copilot | 180 lines; 3 imported-service dependencies; coupling score 225
+mission_control_summary | lines 8158-8304 | Mission Control | 147 lines; 5 imported-service dependencies; coupling score 222
+_run_copilot_inbox | lines 2675-2843 | Copilot | 169 lines; 3 imported-service dependencies; coupling score 214
+send_draft | lines 5656-5777 | Drafts/Outbound | 122 lines; 6 imported-service dependencies; coupling score 212
+send_conversation_reply_route | lines 9353-9517 | Inbox/Conversations | 165 lines; 3 imported-service dependencies; coupling score 210
+_dispatch_campaign_sends | lines 7656-7804 | Campaigns | 149 lines; 4 imported-service dependencies; coupling score 209
+_reconcile_stale_search_jobs | lines 926-1118 | Discovery/Jobs | 193 lines; 1 imported-service dependencies; coupling score 208
+_create_search_run | lines 8554-8688 | Discovery/Jobs | 135 lines; 4 imported-service dependencies; coupling score 195
+_perform_gmail_oauth_persistence | lines 3392-3506 | Provider/OAuth | 115 lines; 5 imported-service dependencies; coupling score 190
+send_conversation_followup_route | lines 9521-9660 | Inbox/Conversations | 140 lines; 3 imported-service dependencies; coupling score 185
+refine_draft | lines 4483-4599 | Drafts/Outbound | 117 lines; 4 imported-service dependencies; coupling score 177
+google_callback | lines 8474-8534 | Provider/OAuth | 61 lines; 7 imported-service dependencies; coupling score 166
+provider_list | lines 5175-5278 | Provider/OAuth | 104 lines; 4 imported-service dependencies; coupling score 164
+_run_copilot_outreach | lines 2551-2672 | Copilot | 122 lines; 2 imported-service dependencies; coupling score 152

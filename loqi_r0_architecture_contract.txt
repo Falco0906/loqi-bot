@@ -1,0 +1,320 @@
+R0 — LOQI BACKEND ARCHITECTURE CONTRACT
+========================================
+Status: planning only. No source, schema, API, or behavior change is authorized
+by this document.
+
+0. PURPOSE
+----------
+This is the architecture to migrate toward while preserving the current
+Supabase schema/data, 128 direct HTTP routes plus mounted routers, auth/session
+behavior, provider integrations, job/SSE behavior, and legacy client behavior.
+
+The target is deliberately boring: a small composition root, thin route
+adapters, explicit application services, durable repositories/integrations,
+and no domain logic hidden in generic managers or helpers.
+
+1. FINAL PRODUCTION TREE (33 MEANINGFUL MODULES)
+------------------------------------------------
+
+backend/
+  main.py                         Compose app, middleware, routers, lifespan only.
+
+  api/
+    identity.py                   HTTP translation for auth/onboarding/org/session routes.
+    workspace.py                  HTTP translation for workspace, providers, knowledge,
+                                  strategic, and Mission Control read/write routes.
+    operations.py                 HTTP translation for discovery, campaigns, drafts,
+                                  outbound, jobs, and workflow routes.
+    events.py                     HTTP translation for SSE streams only.
+
+  platform/
+    supabase.py                   Shared Supabase client, RPC, bounded persistence retry.
+    audit.py                      Structured safe audit writes and action observability.
+    runtime.py                    Lifespan worker startup/recovery registration only.
+
+  identity/
+    service.py                    Signup/login/verification/session/legacy-user bridge.
+    repository.py                 Users, credentials, identities, sessions, memberships.
+    providers.py                  Email/Google identity-provider interfaces/adapters.
+
+  workspace/
+    access.py                     Authenticated selected-workspace resolution/authorization.
+    state.py                      Bounded canonical workspace projection for reads only.
+
+  discovery/
+    service.py                    Discovery lifecycle: create, search request, finalize,
+                                  cancel, list/get, lead decisions/attachment, recovery.
+    providers.py                  Provider-agnostic lead-search dispatcher and adapters.
+
+  campaigns/
+    service.py                    Campaign CRUD, selected-lead/discovery attachment,
+                                  strategy/draft job starts, canonical refreshed result.
+
+  drafts/
+    service.py                    Canonical Draft lifecycle: create/edit/refine/review,
+                                  approve/reject/version, batch generation coordination.
+
+  outbound/
+    service.py                    Confirmed schedule/send/reply, durable status transition,
+                                  provider projection and reconciliation.
+    gmail.py                      Gmail OAuth/provider ownership, sync and API adapter.
+
+  inbox/
+    service.py                    Conversation sync/read/reply/follow-up/reasoning use cases.
+    repository.py                 Durable workspace-scoped conversation snapshot access.
+
+  jobs/
+    service.py                    Durable job creation, status, result, cancel, recovery.
+    workers.py                    Discovery/strategy/draft worker dispatch and reconciliation.
+
+  knowledge/
+    service.py                    Knowledge/source CRUD and workspace-scoped retrieval.
+    repository.py                 Knowledge/source durable queries.
+
+  mission_control/
+    service.py                    One bounded briefing payload from canonical state/activity.
+    reasoning.py                  Existing health/recommendation/narrative composition only.
+
+  copilot/
+    service.py                    Authenticated request → context → decision → response.
+    tools.py                      Small explicit registry over domain service operations.
+    memory.py                     Bounded derived, workspace/user-scoped conversation context.
+    executions.py                 Mutation confirmation/idempotency/audit/verification ledger.
+
+  workflows/
+    service.py                    Compatibility facade for Telegram/legacy workflow endpoints.
+    runtime.py                    The single legacy workflow state machine, locks and recovery.
+
+Notes:
+* Models/schemas live next to their owning module unless a stable shared DTO is
+  genuinely used by more than one domain.
+* Supabase table-specific implementations may remain internal to a domain. Do
+  not recreate a repository file merely because a table exists.
+* The tree is a target responsibility map, not an instruction to create all
+  directories/files before a caller needs them.
+
+2. OWNERSHIP AND DEPENDENCY DIRECTION
+-------------------------------------
+
+  main.py
+      ↓
+  api/* (HTTP parse/validate/response only)
+      ↓
+  identity/workspace access + application services
+      ↓
+  domain repositories/integrations/jobs
+      ↓
+  platform/supabase, external providers
+
+Allowed cross-domain calls (explicit, one-way):
+* campaigns.service → jobs.service to start a strategy/draft job.
+* drafts.service → outbound.service only after canonical Draft persistence.
+* inbox.service → outbound.service for a confirmed reply/follow-up.
+* copilot.tools → named domain service operations, never routes/main.py.
+* mission_control.service → bounded READ methods from workspace/campaigns/
+  drafts/inbox/jobs; it must never mutate them to assemble a briefing.
+* workflows.service → the same domain service operations while legacy clients
+  remain. It may not maintain a second campaign/draft/discovery implementation.
+
+Forbidden:
+* service/domain module importing main.py or api/*.
+* API route calling Supabase/provider directly for business behavior.
+* direct access to another domain's in-memory mutable store.
+* model/user-supplied workspace or owner ID being treated as authority.
+* a second job queue, second Draft authority, second conversation authority,
+  or a second Copilot context authority.
+
+3. WHAT main.py OWNS AFTER MIGRATION
+-------------------------------------
+* FastAPI app creation and router inclusion.
+* middleware: CORS, request ID, rate limit wiring, safe exceptions.
+* dependency/configuration wiring.
+* lifespan startup/shutdown: register provider clients, start workers/scheduler,
+  trigger idempotent recovery sweeps, dispose resources.
+* no route-specific business policies, database writes, provider calls,
+  workspace selection logic, domain stores, Copilot adapters, or worker logic.
+
+Every route must look like:
+  dependency resolution → request DTO → one service call → response DTO/error
+
+4. CANONICAL IMPLEMENTATION MAP
+--------------------------------
+
+Capability                  Canonical target owner       Existing code to preserve/reuse
+-------------------------  ---------------------------  ---------------------------------
+Identity/session           identity.service/repository  services/identity/**,
+                                                            web_session_binding/supabase bridge
+Workspace access           workspace.access             workspace_context.py
+Workspace reads            workspace.state              workspace_state.py canonical-only path
+Discovery                  discovery.service            discovery.py + canonical persistence
+Lead providers             discovery.providers          existing provider factory/dispatcher
+Jobs/recovery              jobs.service/workers         job_engine/** and proven recovery paths
+Campaign lifecycle         campaigns.service            canonical workspace/campaign persistence
+Strategy/draft starts      campaigns.service + jobs      current durable strategy/batch semantics
+Canonical Draft            drafts.service               Draft repositories + durable Draft paths
+Outbound/Gmail             outbound.service/gmail        outbound/** + communication Gmail ownership
+Inbox persistence          inbox.repository             conversations/persistence.py + snapshots
+Inbox operations           inbox.service                conversations/** + safe reply lifecycle
+Knowledge                  knowledge.service/repository knowledge/service.py/context adapter
+Mission Control            mission_control.service      briefing.py, reasoners, timeline reads
+Copilot                    copilot.service/tools        copilot_tools/orchestrator/memory/ledger
+Legacy workflows           workflows.service/runtime    conversation_engine/workflow runtime only
+Audit/observability        platform.audit               AuditLogRepository + structured safe logging
+
+5. CURRENT FILES → TARGET DISPOSITION BY DOMAIN
+-------------------------------------------------
+
+KEEP AS SOURCE DURING MIGRATION (then co-locate/rename only when safe)
+* identity/**, organizations/**, onboarding/**, billing/**: preserve their
+  tested persistence/auth behavior; consolidate route wiring only.
+* persistence/launch/**: preserve canonical entities/repositories/schema
+  semantics. Fold only duplicated access wrappers into owning domains.
+* job_engine/**: preserve durable job model/status/results/recovery behavior.
+* conversations/persistence.py and conversations/conversation_store.py:
+  preserve durable Inbox snapshot behavior as the eventual canonical owner.
+* knowledge/**, mission_control/briefing.py, workspace_context.py:
+  preserve their domain logic while moving route coupling out.
+* copilot_tools.py, copilot_orchestrator.py, copilot_memory.py,
+  copilot_execution_ledger.py: preserve contracts; co-locate under copilot/.
+* all tests: preserve behavioral/security tests; reorganize only after each
+  migrated boundary is protected by the same tests.
+
+MERGE (same product responsibility, retain one canonical implementation)
+* conversation_store.py web/workflow session functions → workflows/service or
+  inbox compatibility facade; do not leave a second conversation authority.
+* workflows.py, workflow_dispatcher.py, workflow_executor.py, workflow_*.py,
+  execution/**, planner/** → one workflows.runtime plus jobs.service boundary.
+  Existing planner/reasoning code survives only if it is actually called.
+* campaign_store, draft_store, batch_jobs, STRATEGY_JOBS in main.py → canonical
+  campaign/draft/jobs persistence. These are temporary compatibility
+  projections, never final authorities.
+* outbound/draft_store projection + canonical Draft persistence → drafts is
+  authoritative; outbound only projects to/synchronizes providers.
+* providers/**, adapters/**, communication provider code, execution adapter
+  registries → exactly two concepts: discovery provider dispatcher and Gmail
+  outbound adapter. Optional providers remain only if configured/used.
+* workspace_reasoner.py, recommendation_engine.py, executive_brief.py,
+  narrative_engine.py, intentions/**, reasoning/** → mission_control.reasoning
+  with named pure stages; no parallel “intelligence platforms.”
+
+MOVE (valid code at wrong layer)
+* main.py auth/session/workspace helpers → identity.service/workspace.access.
+* main.py _run_copilot_* adapters/context → copilot.service/tools.
+* main.py campaign/strategy/draft batch helpers → campaigns.service/jobs.
+* main.py Gmail OAuth/provider/sending helpers → outbound.gmail/service.
+* main.py conversation reply/follow-up orchestration → inbox.service/outbound.
+* mission_control/payload.py helper imported from main.py → mission_control or
+  world-model-owned pure helper; service → main.py import must disappear.
+* legacy_workspace_migration.py → an explicit operator migration package, not
+  a normal runtime service.
+* one-off diagnostic scripts → tools/ or operator documentation, outside the
+  production import graph.
+
+DELETE ONLY AFTER PROOF
+* services/gmail.py direct Gmail sender after outbound.gmail covers its callers.
+* backend/state/memory.py, strategy_comparison.py, unused normalization helper
+  only after dynamic/import/deployment searches are clean.
+* optional provider implementations/registries only after deployed provider
+  configuration proves they are not reachable.
+* compatibility JSON fallbacks only after production schema checks and durable
+  stores have replaced every caller; never remove local/test fixtures blindly.
+
+6. MIGRATION ORDER AND CUTOVER RULES
+------------------------------------
+
+R1 — Boundary tests and contracts
+* Freeze route OpenAPI/request/response fixtures, status values, error shapes,
+  auth headers, SSE events, and database invariants.
+* Add characterization tests before moving high-coupling behavior.
+
+R2 — Remove upward dependency and extract access
+* Move the Mission Control helper out of main.py.
+* Extract authenticated request + selected workspace dependencies.
+* Cutover point: every migrated route gets identity/workspace from one tested
+  dependency, with no behavior change.
+
+R3 — Extract read-only domain services
+* Discovery reads, campaign reads, draft reads, Inbox reads, Knowledge,
+  Mission Control. Use existing repositories. No mutation logic changes.
+* Cutover point: route behavior fixtures match byte-for-byte where practical.
+
+R4 — Jobs and Discovery lifecycle
+* Move create/finalize/reconcile search logic behind jobs/discovery services.
+* Cutover point: durable job IDs/status/results/recovery tests pass; no new job
+  system and no job runs without a canonical discovery ID.
+
+R5 — Campaign/Draft/Outbound lifecycle
+* Move campaign attachment/strategy/draft generation and Draft lifecycle.
+* Remove main.py stores only after canonical persistence is authoritative for
+  create/read/reload/recovery and all UI refresh paths.
+
+R6 — Inbox and provider consolidation
+* Make durable conversation snapshots the sole Inbox authority; preserve web/
+  Telegram compatibility facade.
+* Consolidate Gmail OAuth/sync/send ownership; delete direct Gmail path only
+  after real provider failure/retry/ownership tests pass.
+
+R7 — Copilot consolidation
+* Move Copilot request orchestration into copilot.service, retain tool,
+  confirmation, async, memory, idempotency and audit contracts unchanged.
+* Cutover point: same tool results, workspace scope, operation IDs, failures,
+  and UI response envelope.
+
+R8 — Workflow compatibility and deletion
+* Make legacy workflows invoke the same domain services. Remove duplicate
+  runtime/stores only after Telegram and web characterization tests pass.
+
+R9 — Provider/orphan cleanup
+* Trace deployed provider configuration/registries. Delete proven unused files
+  and compatibility paths in small, separately-tested commits.
+
+7. CONTRACTS THAT MUST NOT CHANGE
+---------------------------------
+* Existing database schema, row ownership, foreign keys, status values, JSON
+  columns, migrations/RPC behavior, audit records, and durable-job semantics.
+* Every existing HTTP path/verb/status/body/error contract until a deliberate
+  versioned API change is approved.
+* Bearer auth, web-session alias, selected workspace header, timezone, CORS,
+  session revocation, provider ownership, confirmation, and rate-limit rules.
+* Discovery → results persistence → completed job behavior.
+* Campaign selected-lead attachment/count behavior, strategy/draft async jobs.
+* Canonical Draft before provider-projection success; no silent send/reply.
+* Conversation persistence across restarts and workspace/owner filtering.
+* Copilot truthfulness, read scoping, confirmation, async jobs, bounded plans,
+  memory-as-context, idempotency, verification, audit and error behavior.
+* Telegram/legacy workflow clients until an explicit consumer migration.
+
+8. ANTI-FRAGMENTATION RULES FOR ALL LATER PHASES
+-------------------------------------------------
+1. No new module until its owner and caller are named in this contract.
+2. No route contains database/provider/job business logic.
+3. No domain imports main.py or api/*.
+4. One writable authority per entity; caches/projections are read-through or
+   explicitly rebuildable and cannot report success independently.
+5. Async work always creates/uses durable jobs; no request-owned background
+   task is an authority for operation state.
+6. Cross-domain coordination is named in one application service, not copied
+   into each route, Copilot adapter, or workflow.
+7. No generic manager/coordinator/helper layer without at least two concrete,
+   identical callers and an explicit owner.
+8. All legacy paths carry an owner, compatibility purpose, exit criterion, and
+   deletion phase. New features may not depend on them.
+9. Move → update all callers → characterize → delete old path. Never clone.
+10. A module earns its existence by owning a stable product responsibility,
+    not by matching a table, framework, or prior AI phase.
+
+9. R0 ARCHITECTURE CONTRACT
+---------------------------
+Later rebuild phases MUST:
+* preserve the public/database/auth/provider contracts in section 7;
+* converge each capability on the owner in sections 1 and 4;
+* respect the dependency direction in section 2;
+* use the cutover order in section 6 unless a documented dependency requires
+  a different order;
+* retain legacy behavior behind one named compatibility facade only;
+* delete replaced implementations instead of retaining duplicate active paths;
+* prove every cutover with authorization, persistence, job/recovery, and API
+  characterization tests before moving to the next capability.
+
+R0 does NOT authorize: schema replacement, API version changes, frontend
+rewrites, provider changes, a second backend, or bulk file deletion.

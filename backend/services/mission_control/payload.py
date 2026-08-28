@@ -35,6 +35,28 @@ _inflight: dict[tuple, asyncio.Future] = {}
 _MAX_ENTRIES = 8
 
 
+def embed_delta_into_snapshot(snapshot: dict, delta: WorkspaceDelta) -> None:
+    """Add World Model delta metadata required by the executive brief."""
+    snapshot["_delta"] = {
+        "first_visit": delta.first_visit,
+        "event_count": delta.event_count,
+        "event_range": list(delta.event_range),
+        "new_campaigns": len(delta.new_campaigns),
+        "changed_campaigns": len(delta.changed_campaigns),
+        "new_drafts": len(delta.new_drafts),
+        "scheduled_drafts": len(delta.scheduled_drafts),
+        "sent_outreach": len(delta.sent_outreach),
+        "new_leads": len(delta.new_leads),
+        "new_providers": len(delta.new_providers),
+        "new_conversations": len(delta.new_conversations),
+        "escalated_conversations": len(delta.escalated_conversations),
+        "completed_jobs": len(delta.completed_jobs),
+        "learned_preferences": len(delta.learned_preferences),
+        "new_insights": len(delta.new_insights),
+        "has_delta": not delta.is_empty(),
+    }
+
+
 def _content_fingerprint(campaigns: list[dict], drafts: list[dict]) -> str:
     campaign_rows = [
         (
@@ -126,7 +148,6 @@ async def compute_shared_payload(
 ) -> dict[str, Any]:
     """Load state once and compute {campaigns, drafts, snapshot, analysis,
     recommendations, brief}; dedupe concurrent callers per key."""
-    from main import _embed_delta_into_snapshot
     from services.workspace_state import load_workspace_state
     from services.workspace_snapshot import build_snapshot
     from services.recommendation_engine import generate_recommendations
@@ -173,7 +194,7 @@ async def compute_shared_payload(
                 snap = build_snapshot(
                     session_token, campaigns, drafts, total_leads, user_id=db_user_id,
                 )
-                _embed_delta_into_snapshot(snap, delta)
+                embed_delta_into_snapshot(snap, delta)
                 recs = generate_recommendations(snap, use_narrative=include_narrative)
                 if include_narrative:
                     brf = generate_brief(snap, recs, user_timezone=resolved_timezone)

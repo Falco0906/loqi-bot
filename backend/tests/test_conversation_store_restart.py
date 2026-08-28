@@ -49,6 +49,11 @@ def _clean_simulator(monkeypatch, tmp_path):
     monkeypatch.setattr(sim, "rng", random.Random(7))
     monkeypatch.setattr(sim, "_pending", [])
     monkeypatch.setattr(sim, "_loaded", False)
+    # conftest's global isolation fixture reloads before this fixture runs.
+    # Rehydrate once more after selecting this test's local-only persistence
+    # backend so pre-existing Supabase snapshots cannot contaminate a restart
+    # round-trip assertion.
+    conversation_store.reload()
 
 
 def _auth_request(token="session-under-test"):

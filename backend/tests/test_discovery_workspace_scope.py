@@ -50,8 +50,8 @@ async def test_discovery_create_list_and_get_share_authenticated_workspace(monke
         assert discovery_id == "discovery-1"
         return {"id": discovery_id, "workspace_id": workspace_id}
 
-    monkeypatch.setattr(main, "_resolve_web_user_id", resolve_user)
-    monkeypatch.setattr(main, "_resolved_workspace_id_or_default", resolve_workspace)
+    monkeypatch.setattr(main.identity_dependencies, "resolve_web_session", resolve_user)
+    monkeypatch.setattr(main.workspace_access, "resolve_legacy_workspace_id", resolve_workspace)
     monkeypatch.setattr(main, "_create_search_run", create_run)
     monkeypatch.setattr("services.discovery.list_discoveries", list_rows)
     monkeypatch.setattr("services.discovery.get_discovery", get_row)

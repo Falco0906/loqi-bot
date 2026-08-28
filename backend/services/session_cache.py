@@ -149,7 +149,8 @@ class LocalMirror:
 class SessionCache:
     """Public API (unchanged names from Phase 2B; methods are now async).
 
-    Callers: main.py::_cached_session_identity (+ invalidation call sites)
+    Callers: services.identity.dependencies.cached_web_session_identity
+    (+ invalidation call sites)
     and tests. Multi-worker safe when REDIS_URL is configured: worker A's
     set_identity is visible to worker B, and A's invalidate_user drops B's
     cached entries on the next read.

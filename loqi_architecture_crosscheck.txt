@@ -1,0 +1,129 @@
+lifespan | services/communication/** | LEGITIMATE-ENTRYPOINT | Keep in main.py as lifecycle/HTTP composition; extract only domain policy added later.
+require_web_session_auth | services/identity/** | BYPASSING-SERVICE | Extract this coordination into the named existing service boundary while preserving its route/API behavior.
+_IDENTITY_STATUS | MAIN infrastructure/configuration state | LEGITIMATE-ENTRYPOINT | Keep in main.py as lifecycle/HTTP composition; extract only domain policy added later.
+_embed_delta_into_snapshot | services/workspace_context.py / services/workspace_state.py | SHARED-HELPER | Move this pure helper to a neutral shared module and update callers without semantic change.
+_identity_status | services/identity/** | LEGITIMATE-ENTRYPOINT | Keep in main.py as lifecycle/HTTP composition; extract only domain policy added later.
+_FAIL_LABELS | MAIN infrastructure/configuration state | LEGITIMATE-ENTRYPOINT | Keep in main.py as lifecycle/HTTP composition; extract only domain policy added later.
+_record_auth_metric | services/identity/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_SAFE_IDENTITY_MESSAGES | MAIN infrastructure/configuration state | LEGITIMATE-ENTRYPOINT | Keep in main.py as lifecycle/HTTP composition; extract only domain policy added later.
+_safe_identity_message | services/identity/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+identity_exception_handler | services/identity/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+http_exception_handler | services/communication/** / services/identity/** | BYPASSING-SERVICE | Extract this coordination into the named existing service boundary while preserving its route/API behavior.
+_credential_registry | services/adapters/credential_registry.py | DUPLICATE | Consolidate behind the existing durable/canonical service only after behavior parity is covered.
+_execution_adapter_registry | services/execution/adapter_registry.py | DUPLICATE | Consolidate behind the existing durable/canonical service only after behavior parity is covered.
+batch_jobs | services/job_engine/** | DUPLICATE | Consolidate behind the existing durable/canonical service only after behavior parity is covered.
+draft_store | services/outbound/draft_store.py / services/outbound/outbound_persistence.py | DUPLICATE | Consolidate behind the existing durable/canonical service only after behavior parity is covered.
+campaign_store | services/workspace_state.py / services/persistence/launch/repositories.py | DUPLICATE | Consolidate behind the existing durable/canonical service only after behavior parity is covered.
+STRATEGY_JOBS | services/job_engine/** / services/strategic/** | DUPLICATE | Consolidate behind the existing durable/canonical service only after behavior parity is covered.
+_create_batch_job | Campaign application service (not yet extracted) | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_launch_batch_task | services/identity/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_reconcile_campaign_generation | Campaign application service (not yet extracted) | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_reconcile_stale_generating_campaigns | Campaign application service (not yet extracted) | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_campaign_generation_still_processing | Campaign application service (not yet extracted) | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+STALE_SEARCH_JOB_GRACE_SECONDS | MAIN infrastructure/configuration state | LEGITIMATE-ENTRYPOINT | Keep in main.py as lifecycle/HTTP composition; extract only domain policy added later.
+_reconcile_stale_search_jobs | services/job_engine/** / workflow_dispatcher.py | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_build_copilot_workspace_context | services/communication/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_parse_draft_body | services/outbound/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_find_outbound_gmail_provider_id | services/outbound/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_provider_owned_by | services/communication/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_provider_record_owned_by | services/communication/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_outbound_draft_owned_by | services/communication/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_require_canonical_outbound_draft | services/outbound/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_conversation_owned_by | services/communication/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_conversation_in_workspace | services/conversations/** / services/communication/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_resolve_owner_gmail_provider | services/communication/**; services/outbound/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_register_outbound_gmail_instance | services/communication/**; services/outbound/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_restore_providers_on_startup | services/communication/**; services/outbound/** | LEGITIMATE-ENTRYPOINT | Keep in main.py as lifecycle/HTTP composition; extract only domain policy added later.
+_get_outbound_provider_for_draft | services/outbound/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_resolve_provider_for_conversation | services/communication/**; services/outbound/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_sync_draft_to_outbound | services/communication/**; services/outbound/** | BYPASSING-SERVICE | Extract this coordination into the named existing service boundary while preserving its route/API behavior.
+_outbound_to_legacy_draft | services/outbound/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_get_outbound_drafts_for_session | services/outbound/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_SYNONYM_STRATEGY_TABLE | MAIN infrastructure/configuration state | LEGITIMATE-ENTRYPOINT | Keep in main.py as lifecycle/HTTP composition; extract only domain policy added later.
+_classify_rewrite_strategy | services/strategic/** / services/planner/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_evidence_trace | Campaign application service (not yet extracted) | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_run_draft_with_retry | services/outbound/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_process_batch_drafts | services/workspace_timeline.py | BYPASSING-SERVICE | Extract this coordination into the named existing service boundary while preserving its route/API behavior.
+_RATE_LIMIT_IDENTITY_TTL_SECONDS | MAIN infrastructure/configuration state | LEGITIMATE-ENTRYPOINT | Keep in main.py as lifecycle/HTTP composition; extract only domain policy added later.
+_RATE_LIMIT_IDENTITY_CACHE_MAX | MAIN infrastructure/configuration state | LEGITIMATE-ENTRYPOINT | Keep in main.py as lifecycle/HTTP composition; extract only domain policy added later.
+_rate_limit_identity_cache | MAIN infrastructure/configuration state | LEGITIMATE-ENTRYPOINT | Keep in main.py as lifecycle/HTTP composition; extract only domain policy added later.
+_resolve_rate_limit_identity | services/conversations/** / services/communication/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+rate_limit_middleware | services/outbound/** | BYPASSING-SERVICE | Extract this coordination into the named existing service boundary while preserving its route/API behavior.
+_discovery_query_from_search_context | services/communication/** / services/identity/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_discovery_title_from_search_context | services/discovery.py / services/job_engine/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_run_copilot_discovery | services/copilot_tools.py / services/copilot_orchestrator.py | BYPASSING-SERVICE | Extract this coordination into the named existing service boundary while preserving its route/API behavior.
+_run_copilot_campaign | services/copilot_tools.py / services/copilot_orchestrator.py | BYPASSING-SERVICE | Extract this coordination into the named existing service boundary while preserving its route/API behavior.
+_run_copilot_outreach | services/outbound/** | BYPASSING-SERVICE | Extract this coordination into the named existing service boundary while preserving its route/API behavior.
+_run_copilot_inbox | services/copilot_tools.py / services/copilot_orchestrator.py | BYPASSING-SERVICE | Extract this coordination into the named existing service boundary while preserving its route/API behavior.
+_run_copilot_knowledge | services/copilot_tools.py / services/copilot_orchestrator.py | BYPASSING-SERVICE | Extract this coordination into the named existing service boundary while preserving its route/API behavior.
+_run_copilot_analytics | services/copilot_tools.py / services/copilot_orchestrator.py | BYPASSING-SERVICE | Extract this coordination into the named existing service boundary while preserving its route/API behavior.
+_copilot_read_message | services/copilot_tools.py / services/copilot_orchestrator.py | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_copilot_grounded_response_text | services/copilot_tools.py / services/copilot_orchestrator.py | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_register_outbound_providers | services/outbound/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_register_execution_adapters | services/execution/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_register_credential_descriptors | services/communication/** / services/identity/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_register_credential_instance | services/communication/** / services/identity/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_restore_providers_for_startup | services/communication/** | BYPASSING-SERVICE | Extract this coordination into the named existing service boundary while preserving its route/API behavior.
+_reconcile_runtime_providers | services/communication/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_start_outbound_scheduler | services/outbound/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_GMAIL_CONNECT_LOCKS_MAX | MAIN infrastructure/configuration state | LEGITIMATE-ENTRYPOINT | Keep in main.py as lifecycle/HTTP composition; extract only domain policy added later.
+_gmail_connect_locks | MAIN infrastructure/configuration state | LEGITIMATE-ENTRYPOINT | Keep in main.py as lifecycle/HTTP composition; extract only domain policy added later.
+_gmail_connect_lock | services/communication/** / services/identity/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_remove_existing_gmail_provider | services/communication/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_frontend_postmessage_origin | services/communication/** / services/identity/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_resolve_oauth_state_user | services/communication/** / services/identity/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_perform_gmail_oauth_persistence | services/communication/** | BYPASSING-SERVICE | Extract this coordination into the named existing service boundary while preserving its route/API behavior.
+VALID_CAMPAIGN_STATUSES | MAIN infrastructure/configuration state | LEGITIMATE-ENTRYPOINT | Keep in main.py as lifecycle/HTTP composition; extract only domain policy added later.
+_call_outbound_approval | services/outbound/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_emit_draft_event | Campaign application service (not yet extracted) | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_default_workspace_slug | services/workspace_context.py / services/workspace_state.py | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_knowledge_service | services/knowledge/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_knowledge_workspace | services/knowledge/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_workspace_owner | services/workspace_context.py / services/workspace_state.py | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_session_token_from_request | services/identity/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_copilot_tool_failure_reason | services/copilot_tools.py / services/copilot_orchestrator.py | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_LEGACY_USER_BRIDGE_TTL_SECONDS | MAIN infrastructure/configuration state | LEGITIMATE-ENTRYPOINT | Keep in main.py as lifecycle/HTTP composition; extract only domain policy added later.
+_ensure_authenticated_web_user_bridge | services/identity/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_resolve_session_context | services/identity/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_BINDING_TTL_SECONDS | MAIN infrastructure/configuration state | LEGITIMATE-ENTRYPOINT | Keep in main.py as lifecycle/HTTP composition; extract only domain policy added later.
+_web_session_binding | services/identity/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_cached_session_identity | services/communication/** / services/identity/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_workspace_owner_and_summary | services/workspace_context.py / services/workspace_state.py | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_workspace_campaigns | Campaign application service (not yet extracted) | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_workspace_drafts | services/outbound/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_workspace_id_from_request | services/workspace_context.py / services/workspace_state.py | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_resolve_selected_workspace_context | services/workspace_context.py / services/workspace_state.py | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_selected_workspace_id | services/workspace_context.py / services/workspace_state.py | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_resolved_workspace_id_or_default | services/workspace_context.py / services/workspace_state.py | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_build_strategy_context | Campaign application service (not yet extracted) | SHARED-HELPER | Move this pure helper to a neutral shared module and update callers without semantic change.
+_run_strategy_job | services/job_engine/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_persist_strategy_job_meta | Campaign application service (not yet extracted) | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_load_strategy_job_meta | Campaign application service (not yet extracted) | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_reconcile_strategy_meta | services/job_engine/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_reconcile_stale_strategy_jobs | Campaign application service (not yet extracted) | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_enqueue_strategy_job | Campaign application service (not yet extracted) | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_maybe_auto_strategy | Campaign application service (not yet extracted) | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_dispatch_campaign_sends | services/communication/**; services/outbound/** | BYPASSING-SERVICE | Extract this coordination into the named existing service boundary while preserving its route/API behavior.
+_update_campaign_launch_progress | Campaign application service (not yet extracted) | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_launch_initial_research | services/job_engine/**; services/workspace_timeline.py | BYPASSING-SERVICE | Extract this coordination into the named existing service boundary while preserving its route/API behavior.
+get_web_session_internal | services/conversations/** / services/communication/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+ensure_workflow_session_internal | services/conversations/** / services/communication/** | BYPASSING-SERVICE | Extract this coordination into the named existing service boundary while preserving its route/API behavior.
+log_conversation_internal | services/conversations/** / services/communication/** | BYPASSING-SERVICE | Extract this coordination into the named existing service boundary while preserving its route/API behavior.
+_resolve_web_user_id | services/discovery.py / services/job_engine/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_create_search_run | services/job_engine/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+get_workflow_status | services/identity/** | WRAPPER | Keep as a thin HTTP/composition wrapper; move domain decisions incrementally to the named service.
+_SSE_HEARTBEAT_SECONDS | MAIN infrastructure/configuration state | LEGITIMATE-ENTRYPOINT | Keep in main.py as lifecycle/HTTP composition; extract only domain policy added later.
+_SSE_REVOCATION_CHECK_SECONDS | MAIN infrastructure/configuration state | LEGITIMATE-ENTRYPOINT | Keep in main.py as lifecycle/HTTP composition; extract only domain policy added later.
+DUPLICATED RESPONSIBILITIES | 6
+BYPASSED EXISTING SERVICES | 17
+LEGITIMATE MAIN.PY RESPONSIBILITIES | 18
+BIGGEST ARCHITECTURAL DUPLICATIONS | In-process campaign/draft/job state in main.py overlaps durable workspace, outbound, and job-engine persistence.
+BIGGEST ARCHITECTURAL DUPLICATIONS | Legacy workflows.py/workflow_dispatcher.py/workflow_*.py overlap planner/** and execution/**.
+BIGGEST ARCHITECTURAL DUPLICATIONS | Conversation state spans conversation_store.py, conversations/**, communication/**, and compatibility JSON persistence.
+BIGGEST ARCHITECTURAL DUPLICATIONS | Provider behavior spans providers/**, adapters/**, communication/**, outbound/**, and execution adapter registries.
+STALE/ORPHANED MODULE CLUSTERS | Optional provider implementations under services/providers/google/**, hunter/**, linkedin/**, and people_data_labs/** lack non-test static references; verify registry/runtime configuration before removal.
+STALE/ORPHANED MODULE CLUSTERS | CRM/memory adapter implementations plus older state/messaging utilities lack non-test static importers; candidates for runtime tracing, not deletion.
+CANONICAL OWNERS | identity/** for authentication/session/membership; workspace_context.py and workspace_state.py for selected-workspace state.
+CANONICAL OWNERS | job_engine/** for durable jobs; outbound/** for canonical draft/outbound mutations; conversations/** plus communication/** for inbox persistence/sync.
+CANONICAL OWNERS | mission_control/** for briefing assembly; copilot_tools.py/copilot_orchestrator.py for Copilot execution; strategic/** and planner/** for strategy planning.
+REWRITE ASSESSMENT | No rewrite is justified. Evidence supports gradual extraction into existing service boundaries with current route/integration contracts preserved.

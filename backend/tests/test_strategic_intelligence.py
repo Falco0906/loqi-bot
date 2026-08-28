@@ -266,11 +266,11 @@ class TestStrategicUpdateRoutes:
         async def owner_b(request, session_token):
             return OWNER_B
 
-        monkeypatch.setattr(main_module, "_workspace_owner", owner_a)
+        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner_a)
         refresh = asyncio.run(main_module.refresh_strategic_updates("session", object()))
         update_id = refresh["updates"][0]["id"]
 
-        monkeypatch.setattr(main_module, "_workspace_owner", owner_b)
+        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner_b)
         listing = asyncio.run(main_module.list_strategic_updates("session", object()))
         with pytest.raises(Exception) as error:
             asyncio.run(main_module.get_strategic_update("session", update_id, object()))

@@ -426,7 +426,7 @@ class TestSettingsApiDedup:
                 metadata={"email": email, "account_id": "google-sub-1"},
             ))
         healthy = SimpleNamespaceStatus(ProviderStatus.HEALTHY)
-        monkeypatch.setattr(main_module, "_workspace_owner", AsyncMock(return_value="owner-1"))
+        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-1"))
 
         def _fake_get_provider(pid):
             inst = MagicMock()

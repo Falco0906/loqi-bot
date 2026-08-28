@@ -35,9 +35,9 @@ async def test_manual_campaign_returns_after_four_selected_leads_are_durable(mon
         strategy_started.set()
         await release_strategy.wait()
 
-    monkeypatch.setattr(main_module, "_session_token_from_request", lambda _request: "session-1")
-    monkeypatch.setattr(main_module, "_workspace_owner", lambda *_args, **_kwargs: _async_value("owner-1"))
-    monkeypatch.setattr(main_module, "_resolved_workspace_id_or_default", lambda *_args, **_kwargs: _async_value("workspace-1"))
+    monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda _request: "session-1")
+    monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", lambda *_args, **_kwargs: _async_value("owner-1"))
+    monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", lambda *_args, **_kwargs: _async_value("workspace-1"))
     monkeypatch.setattr("services.discovery.get_discovery", lambda discovery_id, workspace_id="": {
         "id": discovery_id, "workspace_id": workspace_id,
     })
@@ -94,9 +94,9 @@ async def test_manual_campaign_without_leads_returns_when_compatibility_event_is
         release_event.wait(timeout=2)
         return True
 
-    monkeypatch.setattr(main_module, "_session_token_from_request", lambda _request: "session-1")
-    monkeypatch.setattr(main_module, "_workspace_owner", lambda *_args, **_kwargs: _async_value("owner-1"))
-    monkeypatch.setattr(main_module, "_resolved_workspace_id_or_default", lambda *_args, **_kwargs: _async_value("workspace-1"))
+    monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda _request: "session-1")
+    monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", lambda *_args, **_kwargs: _async_value("owner-1"))
+    monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", lambda *_args, **_kwargs: _async_value("workspace-1"))
     monkeypatch.setattr("services.workspace_state.persist_campaign_row", persist_campaign)
     monkeypatch.setattr("services.workspace_state.load_campaign_state", lambda _owner, campaign_id, workspace_id="": {
         **persisted, "id": campaign_id, "lead_count": 0, "leads": [],

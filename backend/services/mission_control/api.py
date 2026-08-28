@@ -1,35 +1,40 @@
-"""Mission Control API endpoint handlers.
-
-These are thin wrappers that can be registered as route handlers in main.py.
-They avoid circular imports by accepting all data as parameters.
-"""
+"""HTTP routes for the Mission Control domain."""
 from __future__ import annotations
 
+from fastapi import APIRouter, Request
+
+from services.identity import dependencies as identity_dependencies
 from services.mission_control.briefing import get_service
 
+router = APIRouter(tags=["Mission Control"])
 
-async def handle_get_briefing(
+@router.get("/api/web/session/{session_token}/mission-control")
+async def mission_control_summary(
     session_token: str,
-    campaigns: list[dict],
-    drafts: list[dict],
-    total_leads: int = 0,
-    db_user_id: str | None = None,
-    prebuilt: dict | None = None,
+    request: Request,
+    onboarding_user_id: str = "",
 ):
-    """Handler for GET /api/web/session/{session_token}/briefing.
-
-    Call this from main.py with the resolved campaign_store, draft_store, etc.
-    ``prebuilt`` carries the shared Mission Control payload (snapshot,
-    analysis, recommendations, brief) so the narrative steps are not
-    recomputed per endpoint.
-    """
-    service = get_service()
-    return service.get_briefing(
+    """Return the authenticated user's current Mission Control summary."""
+    del onboarding_user_id
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    return await get_service().get_summary(
+        owner_id=owner_id,
         session_token=session_token,
-        campaigns=campaigns,
-        drafts=drafts,
-        total_leads=total_leads,
-        user_id=session_token,
-        db_user_id=db_user_id,
-        prebuilt=prebuilt,
+    )
+
+@router.get("/api/web/session/{session_token}/briefing")
+async def briefing_endpoint(
+    session_token: str,
+    request: Request,
+    onboarding_user_id: str = "",
+):
+    """Return the authenticated user's current grounded briefing."""
+    del onboarding_user_id
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    return await get_service().get_workspace_briefing(
+        owner_id=owner_id,
+        session_token=session_token,
+        user_timezone=request.headers.get("x-timezone"),
     )

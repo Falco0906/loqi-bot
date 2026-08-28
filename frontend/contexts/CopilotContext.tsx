@@ -13,6 +13,7 @@ import {
 import { useRouter, usePathname } from "next/navigation";
 import { AuthContext } from "./AuthContext";
 import { ApiError, copilotMessage, getJob, getJobResults } from "../lib/api";
+import { onServerEvent } from "../lib/event-client";
 import {
   fetchBriefing,
   fetchDiscoveryFresh,
@@ -446,18 +447,26 @@ export function CopilotProvider({
   }, []);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // SSE is only a wake-up signal. Every event triggers a REST re-read of the
+  // durable job row; it never becomes Copilot state by itself.
+  const pollEventUnsubscribeRef = useRef<(() => void) | null>(null);
   const busyRef = useRef(false);
   const sessionRef = useRef(0);
   const activeGroupTitleRef = useRef("");
 
   const askAgent = useCallback(async (text: string, conversation: CopilotMessage[], requestSession: number): Promise<AgentTurn> => {
     try {
+      const requestId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `copilot-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const response = await copilotMessage(getTokenForActions(), {
         text,
         currentPage: pageContextRef.current?.page,
         pageContext: mergeCopilotResourceContext(pageContextRef.current?.data, resourceContext),
         availableActions: AGENT_ACTION_TYPES,
         messageHistory: conversation.slice(-12).map((message) => ({ role: message.role, text: message.content })),
+        conversationId: activeChatId,
+        requestId,
         activeSearch: activeSearchRef.current || undefined,
       });
       if (sessionRef.current !== requestSession) return {};
@@ -515,11 +524,13 @@ export function CopilotProvider({
       };
     }
     return {};
-  }, [appendMessage, resourceContext]);
+  }, [activeChatId, appendMessage, resourceContext]);
 
   useEffect(() => {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
+      pollEventUnsubscribeRef.current?.();
+      pollEventUnsubscribeRef.current = null;
     };
   }, []);
 
@@ -557,6 +568,10 @@ export function CopilotProvider({
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
+    }
+    if (pollEventUnsubscribeRef.current) {
+      pollEventUnsubscribeRef.current();
+      pollEventUnsubscribeRef.current = null;
     }
   }, []);
 
@@ -787,7 +802,7 @@ export function CopilotProvider({
         }
       };
 
-      pollRef.current = setInterval(async () => {
+      const pollOnce = async () => {
         if (sessionRef.current !== mySession) {
           stopPolling();
           return;
@@ -796,21 +811,28 @@ export function CopilotProvider({
         pollInFlight = true;
         try {
           const job = await getJob(jobId);
+          if (job.status === "completed" && !completed) {
+            markCurrentStep(groupId, "done");
+            void finish();
+            return;
+          }
+          if (job.status === "failed") {
+            stopPolling();
+            failWork(groupId, "Research failed — no results were saved.");
+            return;
+          }
+          if (job.status === "cancelled") {
+            stopPolling();
+            failWork(groupId, "Research was cancelled — no results were saved.");
+            return;
+          }
           const stage = job.stage ?? "";
           if (stage && stage !== lastStage) {
             lastStage = stage;
-            if (job.status === "completed") {
-              markCurrentStep(groupId, "done");
-              void finish();
-            } else if (job.status === "failed" || job.status === "cancelled") {
-              stopPolling();
-              failWork(groupId, "Research stopped early — nothing was changed.");
-            } else if (!RESEARCH_SKIPPED_STAGES.has(stage)) {
+            if (!RESEARCH_SKIPPED_STAGES.has(stage)) {
               markCurrentStep(groupId, "done");
               addStep(groupId, RESEARCH_STAGE_LABELS[stage] ?? "Working on it…", "active");
             }
-          } else if (job.status === "completed" && !completed) {
-            void finish();
           }
         } catch (err) {
           // PR-4 HOTFIX: a 401 means the session is gone — stop hammering
@@ -824,7 +846,22 @@ export function CopilotProvider({
         } finally {
           pollInFlight = false;
         }
-      }, 1500);
+      };
+
+      // The event stream is authenticated and user-scoped. An event merely
+      // asks us to re-read the durable job row, which keeps polling/SSE
+      // semantics identical and prevents stale or forged event data from
+      // being rendered as progress.
+      pollEventUnsubscribeRef.current = onServerEvent((event) => {
+        if (
+          event.job_id === jobId
+          && (event.type === "job.progress" || event.type === "job.completed")
+        ) {
+          void pollOnce();
+        }
+      });
+      void pollOnce();
+      pollRef.current = setInterval(() => { void pollOnce(); }, 1500);
     },
     [addStep, markCurrentStep, failWork, completeWork, prepareDestination, fetchDiscoveryFresh, stopPolling],
   );

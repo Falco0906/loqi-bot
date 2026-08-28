@@ -191,7 +191,7 @@ def test_status_endpoint_reconciles_stale_running(durable, monkeypatch):
 
     async def owner(request=None, session_token=None):
         return OWNER_A
-    monkeypatch.setattr(m, "_workspace_owner", owner)
+    monkeypatch.setattr(m.identity_dependencies, "authenticated_user_id", owner)
 
     # Process died mid-generation: no in-memory job; durable says RUNNING.
     durable.rows["cmp-stale"] = {
@@ -215,7 +215,7 @@ def test_completed_durable_record_reports_completed(durable, monkeypatch):
 
     async def owner(request=None, session_token=None):
         return OWNER_A
-    monkeypatch.setattr(m, "_workspace_owner", owner)
+    monkeypatch.setattr(m.identity_dependencies, "authenticated_user_id", owner)
     durable.rows["cmp-ok"] = {
         "id": "job-done", "status": "completed",
         "started_at": "", "finished_at": "", "error": None,
@@ -235,7 +235,7 @@ def test_tenant_isolation_strategy_status(durable, monkeypatch):
 
     async def owner_b(request=None, session_token=None):
         return OWNER_B
-    monkeypatch.setattr(m, "_workspace_owner", owner_b)
+    monkeypatch.setattr(m.identity_dependencies, "authenticated_user_id", owner_b)
 
     request = type("R", (), {"headers": {}})()
 

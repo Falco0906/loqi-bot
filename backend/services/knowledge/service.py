@@ -18,6 +18,7 @@ future PRs will use to feed Discovery / Strategy / Drafts / Replies.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from typing import Any
@@ -434,6 +435,7 @@ class KnowledgeService:
         query: str | None = None,
         categories: list[str] | None = None,
         limit: int = DEFAULT_CONTEXT_LIMIT,
+        workspace_id: str = "",
     ) -> dict[str, Any]:
         """Deterministic, bounded, owner-scoped retrieval for future agents.
 
@@ -442,7 +444,7 @@ class KnowledgeService:
         """
         if not owner_id:
             return {"items": [], "sources": [], "owner_id": "", "limit": limit}
-        workspace_id = await self._resolve_workspace(owner_id)
+        workspace_id = await self._resolve_workspace(owner_id, workspace_id)
         if not workspace_id:
             return {"items": [], "sources": [], "owner_id": owner_id, "limit": limit}
 
@@ -478,7 +480,30 @@ class KnowledgeService:
 
     # ─── helpers ──────────────────────────────────────────────────────
 
-    async def _resolve_workspace(self, owner_id: str) -> str | None:
+    async def _resolve_workspace(
+        self,
+        owner_id: str,
+        requested_workspace_id: str = "",
+    ) -> str | None:
+        if requested_workspace_id:
+            # Callers may pass an explicit active workspace, but it is still
+            # only usable when the owner has an active membership there.
+            from services.workspace_context import (
+                AmbiguousWorkspaceError,
+                NoWorkspaceAvailable,
+                WorkspaceAccessDenied,
+                resolve_workspace_context,
+            )
+            try:
+                context = await asyncio.to_thread(
+                    resolve_workspace_context,
+                    None,
+                    owner_id,
+                    requested_workspace_id,
+                )
+                return context.workspace_id
+            except (WorkspaceAccessDenied, NoWorkspaceAvailable, AmbiguousWorkspaceError):
+                return None
         from services.workspace_state import _async_workspace
         return await _async_workspace(owner_id)
 
@@ -539,6 +564,7 @@ async def get_knowledge_context(
     query: str | None = None,
     categories: list[str] | None = None,
     limit: int = DEFAULT_CONTEXT_LIMIT,
+    workspace_id: str = "",
 ) -> dict[str, Any]:
     """Public retrieval seam for future agents.
 
@@ -550,4 +576,5 @@ async def get_knowledge_context(
         query=query,
         categories=categories,
         limit=limit,
+        workspace_id=workspace_id,
     )

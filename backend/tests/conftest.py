@@ -10,7 +10,7 @@ import main as main_module
 
 # Captured BEFORE any test patches, so the security suite can exercise the
 # real authentication resolver directly.
-REAL_RESOLVE_SESSION_CONTEXT = main_module._resolve_session_context
+REAL_RESOLVE_WEB_SESSION = main_module.identity_dependencies.resolve_web_session
 
 
 @pytest.fixture(autouse=True)
@@ -20,15 +20,15 @@ def _session_auth_shim(monkeypatch):
     In tests we resolve any present Bearer token to a deterministic owner so
     the rest of the suite does not depend on a live Supabase session. Requests
     WITHOUT a header still fail with 401 (fail closed), preserving the auth
-    behavior the security suite asserts. The security suite tests the REAL
-    resolver directly via ``_REAL_RESOLVE_SESSION_CONTEXT``.
+    behavior the security suite asserts. The security suite tests the real
+    canonical resolver directly via ``REAL_RESOLVE_WEB_SESSION``.
     """
     import main as main_module
 
-    real_resolve = main_module._resolve_session_context
+    real_resolve = main_module.identity_dependencies.resolve_web_session
 
-    async def _test_resolve_session_context(request):
-        token = main_module._session_token_from_request(request)
+    async def _test_resolve_web_session(request):
+        token = main_module.identity_dependencies.web_session_token(request)
         if not token:
             raise HTTPException(status_code=401, detail="Authentication required")
         try:
@@ -38,7 +38,7 @@ def _session_auth_shim(monkeypatch):
             return "test-owner", token
 
     monkeypatch.setattr(
-        main_module, "_resolve_session_context", _test_resolve_session_context,
+        main_module.identity_dependencies, "resolve_web_session", _test_resolve_web_session,
     )
     yield
 

@@ -70,7 +70,7 @@ def _clean_stores(monkeypatch):
     _draft_batch_tasks.clear()
     async def workspace(*_args, **_kwargs):
         return "workspace-1"
-    monkeypatch.setattr(main_module, "_resolved_workspace_id_or_default", workspace)
+    monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", workspace)
     yield
     batch_jobs.clear()
     _draft_batch_tasks.clear()
@@ -219,7 +219,7 @@ class TestGenerationStatus:
     async def test_no_active_job_uses_durable_state(self, monkeypatch, fake_persist):
         campaign = _campaign()
         monkeypatch.setattr(
-            main_module, "_workspace_owner", _fake_owner("owner-1"))
+            main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(
             main_module, "_workspace_campaigns", lambda uid, tok="", **_kwargs: [campaign])
         monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
@@ -244,7 +244,7 @@ class TestGenerationStatus:
             },
         )
         monkeypatch.setattr(
-            main_module, "_workspace_owner", _fake_owner("owner-1"))
+            main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(
             main_module, "_workspace_campaigns", lambda uid, tok="", **_kwargs: [campaign])
         monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
@@ -260,7 +260,7 @@ class TestGenerationStatus:
 
     async def test_missing_campaign_returns_inactive(self, monkeypatch):
         monkeypatch.setattr(
-            main_module, "_workspace_owner", _fake_owner("owner-1"))
+            main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(
             main_module, "_workspace_campaigns", lambda uid, tok="", **_kwargs: [])
 
@@ -287,7 +287,7 @@ class TestGenerateDraftsGuard:
         campaign = _campaign()
         _create_batch_job("b1", campaign["id"], 4)
         monkeypatch.setattr(
-            main_module, "_workspace_owner", _fake_owner("owner-1"))
+            main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(
             main_module, "_workspace_campaigns", lambda uid, tok="": [campaign])
         monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
@@ -307,7 +307,7 @@ class TestGenerateDraftsGuard:
     ):
         campaign = _campaign()
         monkeypatch.setattr(
-            main_module, "_workspace_owner", _fake_owner("owner-1"))
+            main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(
             main_module, "_workspace_campaigns", lambda uid, tok="": [campaign])
         monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
@@ -332,7 +332,7 @@ class TestGenerateDraftsGuard:
     async def test_missing_leads_rejected(self, monkeypatch):
         campaign = _campaign(status="active", leads=[], generation=None)
         monkeypatch.setattr(
-            main_module, "_workspace_owner", _fake_owner("owner-1"))
+            main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(
             main_module, "_workspace_campaigns", lambda uid, tok="": [campaign])
         monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)

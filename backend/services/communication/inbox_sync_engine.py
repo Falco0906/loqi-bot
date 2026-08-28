@@ -71,7 +71,13 @@ class InboxSyncEngine:
             pass
         logger.info("[inbox-sync] engine stopped")
 
-    async def _sync_single_provider(self, provider_id: str, provider) -> Any:
+    async def _sync_single_provider(
+        self,
+        provider_id: str,
+        provider,
+        *,
+        cursor: str = "",
+    ) -> Any:
         """Serialize per-mailbox work on a bounded provider-scoped lock.
 
         Lock wait + duration are instrumented with truncated provider ids
@@ -83,9 +89,18 @@ class InboxSyncEngine:
             wait_ms = int((time.monotonic() - wait_start) * 1000)
             t0 = time.monotonic()
             try:
-                result = await asyncio.to_thread(sync_all, provider)
+                if cursor:
+                    result = await asyncio.to_thread(
+                        provider_registry.sync_provider,
+                        provider_id,
+                        cursor,
+                    )
+                else:
+                    result = await asyncio.to_thread(sync_all, provider)
             finally:
                 duration_ms = int((time.monotonic() - t0) * 1000)
+            if result is None:
+                return None
             logger.info(
                 "[inbox-sync] provider=%s complete threads=%d messages=%d conversations=%d errors=%d "
                 "duration_ms=%d lock_wait_ms=%d",
@@ -93,6 +108,13 @@ class InboxSyncEngine:
                 result.new_conversations, len(result.errors), result.duration_ms, wait_ms,
             )
             return result
+
+    async def sync_provider_now(self, provider_id: str, cursor: str = "") -> Any:
+        """Run one user-requested sync through the same mailbox lock as polling."""
+        provider = provider_registry.get_provider(provider_id)
+        if provider is None:
+            return None
+        return await self._sync_single_provider(provider_id, provider, cursor=cursor)
 
     async def sync_once(self, provider_ids: list[str] | None = None) -> dict:
         import time as _time

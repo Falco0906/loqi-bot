@@ -21,7 +21,10 @@ rather than silently picking an arbitrary tenant.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
+
+from fastapi import HTTPException, Request
 
 from services.supabase import get_supabase_client
 
@@ -150,3 +153,68 @@ def resolve_workspace_context(
         membership_role=role,
         membership_status="active",
     )
+
+
+def requested_workspace_id(request: Request | None) -> str:
+    """Read the untrusted selected-workspace header from a request."""
+    if request is None:
+        return ""
+    try:
+        value = request.headers.get("x-workspace-id", "")
+    except Exception:
+        return ""
+    return value.strip() if isinstance(value, str) else ""
+
+
+async def resolve_selected_workspace_context(
+    request: Request | None,
+    user_id: str,
+) -> WorkspaceContext:
+    """Resolve the membership-authorized workspace selected for a request."""
+    try:
+        return await asyncio.to_thread(
+            resolve_workspace_context,
+            None,
+            user_id,
+            requested_workspace_id(request),
+        )
+    except WorkspaceAccessDenied as error:
+        raise HTTPException(status_code=404, detail="Workspace not found") from error
+    except NoWorkspaceAvailable as error:
+        raise HTTPException(status_code=404, detail="No accessible workspace") from error
+    except AmbiguousWorkspaceError as error:
+        raise HTTPException(
+            status_code=409,
+            detail="Multiple workspaces available; select one via the X-Workspace-Id header",
+        ) from error
+
+
+async def resolve_selected_workspace_id(
+    request: Request | None,
+    user_id: str,
+) -> str:
+    """Return the explicitly or implicitly selected authorized workspace id."""
+    context = await resolve_selected_workspace_context(request, user_id)
+    return context.workspace_id
+
+
+async def resolve_legacy_workspace_id(
+    request: Request | None,
+    user_id: str,
+) -> str:
+    """Resolve selected workspace, with the sole legacy owner-default fallback.
+
+    The compatibility fallback applies only when the user has no active
+    membership-backed workspace. Explicit inaccessible selections and
+    ambiguous workspace choices remain authorization errors.
+    """
+    try:
+        return await resolve_selected_workspace_id(request, user_id)
+    except HTTPException as error:
+        if error.status_code != 404 or error.detail != "No accessible workspace":
+            raise
+    try:
+        from services.workspace_state import _async_workspace
+        return await _async_workspace(user_id) or ""
+    except Exception:
+        return ""

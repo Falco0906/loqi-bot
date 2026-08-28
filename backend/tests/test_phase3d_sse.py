@@ -49,7 +49,7 @@ def fake_redis(monkeypatch):
 def app(monkeypatch, fake_redis):
     async def fake_owner(request=None, session_token=None):
         return USER_A, TOKEN_A
-    monkeypatch.setattr(main_module, "_resolve_session_context", fake_owner)
+    monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", fake_owner)
 
     application = FastAPI()
     application.add_api_route("/api/events/stream", main_module.events_stream, methods=["GET"])
@@ -76,14 +76,14 @@ def test_a_unauthenticated_stream_rejected(app, fake_redis):
         raise main_module.HTTPException(status_code=401, detail="Authentication required")
 
     # Override the resolver to reject (simulates missing/invalid bearer).
-    original = main_module._resolve_session_context
-    main_module._resolve_session_context = none_owner
+    original = main_module.identity_dependencies.resolve_web_session
+    main_module.identity_dependencies.resolve_web_session = none_owner
     try:
         with pytest.raises(main_module.HTTPException) as exc:
             asyncio.run(main_module.events_stream(request=None))
         assert exc.value.status_code == 401
     finally:
-        main_module._resolve_session_context = original
+        main_module.identity_dependencies.resolve_web_session = original
 
 
 def test_b_user_isolation_channel_scoping(app, fake_redis, monkeypatch):
@@ -169,13 +169,17 @@ def test_e_identity_loss_closes_stream(fake_redis, monkeypatch):
             return {"user_id": USER_A, "display_name": "", "gmail_connected": False}
         return None  # revocation / expiry
 
-    monkeypatch.setattr(main_module, "_cached_session_identity", flaky_identity)
+    monkeypatch.setattr(
+        main_module.identity_dependencies,
+        "cached_web_session_identity",
+        flaky_identity,
+    )
     monkeypatch.setattr(main_module, "_SSE_HEARTBEAT_SECONDS", 0.1)
     monkeypatch.setattr(main_module, "_SSE_REVOCATION_CHECK_SECONDS", 0.3)
 
     async def fake_owner(request=None, session_token=None):
         return USER_A, TOKEN_A
-    monkeypatch.setattr(main_module, "_resolve_session_context", fake_owner)
+    monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", fake_owner)
 
     async def run():
         request = type("R", (), {})()

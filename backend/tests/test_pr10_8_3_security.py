@@ -137,7 +137,7 @@ class TestProviderRouteOwnership:
         # A provider owned by "owner-b" (the victim).
         store._providers["prov-b"] = _provider_record("prov-b", "victim@b.com", user_id="owner-b")
         store._user_providers["owner-b"] = ["prov-b"]
-        monkeypatch.setattr(main_module, "_workspace_owner", AsyncMock(return_value="owner-a"))
+        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-a"))
         return main_module
 
     def test_health_denied_for_another_users_provider(self, monkeypatch):
@@ -170,7 +170,7 @@ class TestProviderRouteOwnership:
         m = self._setup(monkeypatch)
         store._providers["prov-a"] = _provider_record("prov-a", "a@a.com", user_id="owner-a")
         store._user_providers["owner-a"] = ["prov-a"]
-        monkeypatch.setattr(m, "_workspace_owner", AsyncMock(return_value="owner-a"))
+        monkeypatch.setattr(m.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-a"))
         monkeypatch.setattr(m, "get_provider", lambda pid: _fake_instance("healthy"))
         result = asyncio.run(m.provider_health("tok", "prov-a", MagicMock()))
         assert result["ok"] is True
@@ -268,7 +268,7 @@ class TestSendDraftOwnership:
             sender=Recipient(email="victim@b.com", name="Victim"),
         )
         draft_store.create(draft)
-        monkeypatch.setattr(main_module, "_workspace_owner", AsyncMock(return_value="owner-a"))
+        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-a"))
         request = MagicMock()
         with pytest.raises(Exception) as exc:
             asyncio.run(main_module.send_draft("tok", "draft-b-1", request))
@@ -300,7 +300,7 @@ class TestConversationSendOwnership:
     def test_reply_denied_for_another_users_conversation(self, monkeypatch):
         import main as main_module
         convo = self._convo()
-        monkeypatch.setattr(main_module, "_workspace_owner", AsyncMock(return_value="owner-a"))
+        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-a"))
         payload = MagicMock()
         payload.body = "reply"
         payload.test_recipient = ""
@@ -316,7 +316,7 @@ class TestConversationSendOwnership:
     def test_followup_denied_for_another_users_conversation(self, monkeypatch):
         import main as main_module
         convo = self._convo()
-        monkeypatch.setattr(main_module, "_workspace_owner", AsyncMock(return_value="owner-a"))
+        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-a"))
         payload = MagicMock()
         payload.body = "follow-up"
         payload.test_recipient = ""
@@ -332,7 +332,7 @@ class TestConversationSendOwnership:
     def test_timeline_denied_for_another_users_conversation(self, monkeypatch):
         import main as main_module
         convo = self._convo()
-        monkeypatch.setattr(main_module, "_workspace_owner", AsyncMock(return_value="owner-a"))
+        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-a"))
         request = MagicMock()
         with pytest.raises(Exception) as exc:
             asyncio.run(main_module.communication_timeline("tok", convo.conversation_id, request))

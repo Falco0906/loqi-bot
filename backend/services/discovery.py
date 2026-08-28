@@ -241,12 +241,14 @@ async def finalize_discovery(job) -> bool:
         if discovery_id:
             client = get_supabase_client()
             try:
-                result = (
-                    client.table("discoveries")
-                    .select(_DISCOVERY_SELECT)
-                    .eq("id", discovery_id)
-                    .limit(1)
-                    .execute()
+                result = await asyncio.to_thread(
+                    lambda: (
+                        client.table("discoveries")
+                        .select(_DISCOVERY_SELECT)
+                        .eq("id", discovery_id)
+                        .limit(1)
+                        .execute()
+                    )
                 )
                 rows = getattr(result, "data", None) or []
                 row = rows[0] if rows else None
@@ -322,7 +324,12 @@ async def finalize_discovery(job) -> bool:
         await asyncio.to_thread(mark_discovery_status, discovery_id, "failed", error)
         try:
             client = get_supabase_client()
-            client.table("discoveries").update({"summary": summary}).eq("id", discovery_id).execute()
+            await asyncio.to_thread(
+                lambda: client.table("discoveries")
+                .update({"summary": summary})
+                .eq("id", discovery_id)
+                .execute()
+            )
         except Exception:
             pass
         return False
@@ -351,7 +358,12 @@ async def finalize_discovery(job) -> bool:
     }
     try:
         client = get_supabase_client()
-        client.table("discoveries").update(updates).eq("id", discovery_id).execute()
+        await asyncio.to_thread(
+            lambda: client.table("discoveries")
+            .update(updates)
+            .eq("id", discovery_id)
+            .execute()
+        )
         _log(
             f"finalized discovery {discovery_id}: "
             f"{company_count} companies / {lead_count} leads"

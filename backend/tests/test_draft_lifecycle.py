@@ -78,9 +78,9 @@ class TestApprovalLifecycle:
             persisted.append((user_id, draft_id, updates, workspace_id))
             return True
 
-        monkeypatch.setattr(main_module, "_workspace_owner", _fake_owner("owner-1"))
+        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(
-            main_module, "_resolved_workspace_id_or_default",
+            main_module.workspace_access, "resolve_legacy_workspace_id",
             _fake_workspace(),
         )
         monkeypatch.setattr(
@@ -99,9 +99,9 @@ class TestApprovalLifecycle:
 
     async def test_B_approve_sent_draft_rejected_409(self, monkeypatch):
         drafts = [{"id": "d-sent", "status": "sent", "campaign_id": None}]
-        monkeypatch.setattr(main_module, "_workspace_owner", _fake_owner("owner-1"))
+        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(
-            main_module, "_resolved_workspace_id_or_default",
+            main_module.workspace_access, "resolve_legacy_workspace_id",
             _fake_workspace(),
         )
         monkeypatch.setattr(
@@ -118,9 +118,9 @@ class TestApprovalLifecycle:
 
     async def test_B2_approve_sending_draft_rejected_409(self, monkeypatch):
         drafts = [{"id": "d-sending", "status": "sending", "campaign_id": None}]
-        monkeypatch.setattr(main_module, "_workspace_owner", _fake_owner("owner-1"))
+        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(
-            main_module, "_resolved_workspace_id_or_default",
+            main_module.workspace_access, "resolve_legacy_workspace_id",
             _fake_workspace(),
         )
         monkeypatch.setattr(
@@ -159,9 +159,9 @@ class TestApprovalLifecycle:
             persisted.append((user_id, draft_id, updates, workspace_id))
             return True
 
-        monkeypatch.setattr(main_module, "_workspace_owner", _fake_owner("owner-1"))
+        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(
-            main_module, "_resolved_workspace_id_or_default",
+            main_module.workspace_access, "resolve_legacy_workspace_id",
             _fake_workspace(),
         )
         monkeypatch.setattr(
@@ -272,7 +272,7 @@ class TestSendDraftGuard:
     async def test_D3_durable_sent_draft_guard_fires_before_sync(self, monkeypatch):
         """A durable-row sent draft is caught before _sync_draft_to_outbound."""
         synced: list = []
-        monkeypatch.setattr(main_module, "_workspace_owner", _fake_owner("owner-1"))
+        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(
             main_module, "_workspace_drafts",
             lambda uid, tok="", **_kwargs: [{"id": "d-durable-sent", "status": "sent"}],

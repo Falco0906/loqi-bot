@@ -110,6 +110,7 @@ class TestKnowledgeAdapter:
         assert format_knowledge_context(context) == ""
         assert calls == [("owner-a", {
             "query": "company positioning", "categories": ["company"], "limit": 8,
+            "workspace_id": "",
         })]
 
     async def test_relevant_retrieval_preserves_attribution(self, monkeypatch):
@@ -133,6 +134,22 @@ class TestKnowledgeAdapter:
         assert "not prospect-specific evidence" in block
         assert "Structured content" in block
 
+    async def test_explicit_workspace_is_forwarded_to_canonical_retrieval(self, monkeypatch):
+        async def fake_get(owner_id, **kwargs):
+            assert owner_id == "owner-a"
+            assert kwargs["workspace_id"] == "workspace-a"
+            return {"items": [_knowledge_item()], "sources": []}
+
+        monkeypatch.setattr(
+            "services.knowledge.context_adapter.get_knowledge_context", fake_get)
+        context = await retrieve_knowledge_context(
+            "owner-a",
+            query="ICP",
+            workspace_id="workspace-a",
+        )
+
+        assert context.item_ids == ["ki-1"]
+
     async def test_owner_scope_is_never_replaced_by_client_identifier(self, monkeypatch):
         seen = []
 
@@ -148,6 +165,17 @@ class TestKnowledgeAdapter:
         assert seen == ["owner-a", "owner-b"]
         assert a.item_ids == ["owner-a-item"]
         assert b.item_ids == ["owner-b-item"]
+
+    async def test_explicit_knowledge_workspace_is_denied_without_membership(self, monkeypatch):
+        from services.knowledge.service import KnowledgeService
+        from services.workspace_context import WorkspaceAccessDenied
+
+        monkeypatch.setattr(
+            "services.workspace_context.resolve_workspace_context",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(WorkspaceAccessDenied("workspace-b")),
+        )
+        resolved = await KnowledgeService()._resolve_workspace("owner-a", "workspace-b")
+        assert resolved is None
 
 
 class TestReplyGenerationContext:
@@ -234,10 +262,10 @@ class TestReplyGenerationContext:
         async def fake_owner(request, session_token):
             return "owner-a"
 
-        monkeypatch.setattr(main_module, "_workspace_owner", fake_owner)
+        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", fake_owner)
         async def _resolve(request):
             return "owner-a", "session"
-        monkeypatch.setattr(main_module, "_resolve_session_context", _resolve)
+        monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", _resolve)
         monkeypatch.setattr("services.reply_generation.generation_pipeline.GenerationPipeline", FakePipeline)
         monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", fake_retrieve)
 

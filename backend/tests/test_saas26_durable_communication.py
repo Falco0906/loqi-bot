@@ -200,6 +200,19 @@ class TestProviderEventRepository:
 
 class TestCommunicationPersistenceHelpers:
 
+    def test_persistence_runner_accepts_sync_or_async_repository_writes(self):
+        from services.persistence.launch import communication_persistence
+        calls: list[str] = []
+
+        communication_persistence._run_threaded(lambda: calls.append("sync"))
+
+        async def async_write():
+            calls.append("async")
+
+        communication_persistence._run_threaded(async_write)
+
+        assert calls == ["sync", "async"]
+
     def test_list_outbound_history_is_tenant_scoped(self):
         from services.persistence import (
             set_connection_manager, reset_connection_manager,

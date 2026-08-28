@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import asyncio
+import re
 from typing import Any, Awaitable, Callable
 
 
@@ -236,6 +237,53 @@ _INBOX_MUTATION_TOOLS = {"inbox.reply.send"}
 _KNOWLEDGE_READ_TOOLS = {"knowledge.search", "knowledge.read"}
 _ANALYTICS_READ_TOOLS = set(ANALYTICS_TOOLS)
 
+# Phase 2 deliberately enables only mutations with an immediate canonical
+# persistence and verification boundary. Campaign creation/attachment and
+# job-producing operations remain outside this set until their multi-step
+# recovery/atomicity contracts are addressed in a later phase.
+PHASE2_MUTATION_TOOLS = frozenset({
+    "lead.save",
+    "lead.approve",
+    "lead.reject",
+    "campaign.refine",
+    "outreach.draft.refine",
+    "outreach.draft.approve",
+    "inbox.reply.send",
+})
+
+_MUTATION_CONFIRMATION_WORDS: dict[str, tuple[str, ...]] = {
+    "lead.save": ("save",),
+    "lead.approve": ("approve",),
+    "lead.reject": ("reject",),
+    "campaign.refine": ("update", "rename", "change", "edit", "refine"),
+    "outreach.draft.refine": ("rewrite", "refine", "update", "edit", "change"),
+    "outreach.draft.approve": ("approve",),
+    "inbox.reply.send": ("send",),
+}
+
+
+def mutation_confirmation_state(tool_name: str, user_text: str) -> str:
+    """Return confirmed, declined, or required from the user's own text.
+
+    The model may select a tool, but it cannot authorize a mutation by setting
+    a JSON field. We accept only a direct, tool-specific user command and
+    fail closed for negations or vague acknowledgements such as "yes".
+    """
+    text = " ".join(str(user_text or "").lower().split())
+    if re.search(r"\b(?:do not|don't|dont|cancel|never mind|not now|stop)\b", text):
+        return "declined"
+    # An initial imperative (for example, "change the campaign objective") is
+    # a request to propose a mutation, not confirmation to perform it. Require
+    # an unambiguous confirmation phrase from the user and the action verb for
+    # the selected tool. This deliberately does not treat "yes" as consent:
+    # confirmation is not persisted across turns in Phase 2.
+    if not re.search(r"\b(?:confirm|confirmed|confirmation)\b", text):
+        return "required"
+    words = _MUTATION_CONFIRMATION_WORDS.get(tool_name, ())
+    if any(re.search(rf"\b{re.escape(word)}\b", text) for word in words):
+        return "confirmed"
+    return "required"
+
 
 def select_copilot_tool(decision: dict[str, Any]) -> str | None:
     """Map an intent decision to a registered tool without executing it."""
@@ -369,6 +417,7 @@ async def execute_copilot_tool(
                 user_id,
                 context,
                 session_token,
+                workspace_id=workspace_id,
             ),
         }
 
@@ -533,23 +582,41 @@ async def execute_copilot_tool(
         }
 
     if tool_name == "lead.save":
+        from services.persistence.launch import WorkspaceLeadRepository
         from services.workspace_state import _normalize_lead
         saved_ids = [
             saved for saved in await asyncio.gather(*[
                 _normalize_lead(workspace_id, lead) for lead in leads
             ]) if saved
         ]
+        if len(saved_ids) != len(leads):
+            return {"ok": False, "status": "failed", "tool": tool_name,
+                    "reason": "One or more selected leads could not be saved."}
+        repository = WorkspaceLeadRepository()
+        verified = await asyncio.gather(*[
+            repository.get_for_workspace(saved_id, workspace_id) for saved_id in saved_ids
+        ])
+        if any(item is None for item in verified):
+            return {"ok": False, "status": "verification_failed", "tool": tool_name,
+                    "reason": "Lead save could not be verified in this workspace."}
         return {"ok": True, "status": "completed", "tool": tool_name, "result": {**_lead_result(discovery, leads), "saved_ids": saved_ids}}
 
     if tool_name in {"lead.approve", "lead.reject"}:
-        from services.workspace_state import persist_lead_decision
+        from services.workspace_state import persist_lead_decision_awaited
         approved = tool_name == "lead.approve"
-        updated = [
-            persist_lead_decision(user_id, lead, approved) for lead in leads
-        ]
-        if not all(updated):
+        updated = await asyncio.gather(*[
+            persist_lead_decision_awaited(
+                user_id,
+                lead,
+                approved,
+                workspace_id=workspace_id,
+            )
+            for lead in leads
+        ])
+        if any(not lead_id for lead_id in updated):
             return {"ok": False, "status": "failed", "tool": tool_name, "reason": "Lead decision could not be persisted."}
-        return {"ok": True, "status": "completed", "tool": tool_name, "result": {**_lead_result(discovery, leads), "approved": approved}}
+        return {"ok": True, "status": "completed", "tool": tool_name,
+                "result": {**_lead_result(discovery, leads), "approved": approved, "updated_ids": [str(lead_id) for lead_id in updated]}}
 
     if tool_name == "lead.attach":
         campaign_id = str(decision.get("campaign_id") or (decision.get("page_context") or {}).get("campaign_id") or "")

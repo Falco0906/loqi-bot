@@ -56,6 +56,10 @@ def _reset():
 
 @pytest.fixture
 def client():
+    # HTTP characterization exercises the auth API, not the configured
+    # production email transport. Keep this test client on the same
+    # deterministic in-memory service used by the lifecycle tests.
+    _fresh_service()
     from main import app
     return TestClient(app)
 

@@ -299,7 +299,7 @@ class TestDraftBatchIdempotency:
             "started_at": _now(),
             "finished_at": _now(),
         }
-        monkeypatch.setattr(main_module, "_workspace_owner", _fake_owner("owner-1"))
+        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(main_module, "_workspace_campaigns",
                             lambda uid, tok="": [campaign])
         launched: list = []
@@ -327,7 +327,7 @@ class TestDraftBatchIdempotency:
             "error": "interrupted",
             "started_at": _now(),
         }
-        monkeypatch.setattr(main_module, "_workspace_owner", _fake_owner("owner-1"))
+        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(main_module, "_workspace_campaigns",
                             lambda uid, tok="": [campaign])
         monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": [])

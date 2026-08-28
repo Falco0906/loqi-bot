@@ -102,18 +102,18 @@ def _clean_runtime_state(monkeypatch):
     job_manager._storage = _FakeJobStorage()
     # Deterministic per-token owner resolution for two-user tests.
     async def _resolve(request):
-        token = main_module._session_token_from_request(request)
+        token = main_module.identity_dependencies.web_session_token(request)
         if not token:
             raise HTTPException(status_code=401, detail="Authentication required")
         return _OWNERS.get(token, "test-owner"), token
-    monkeypatch.setattr(main_module, "_resolve_session_context", _resolve)
+    monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", _resolve)
 
     async def _owner(request, session_token=""):
-        token = main_module._session_token_from_request(request)
+        token = main_module.identity_dependencies.web_session_token(request)
         if not token:
             raise HTTPException(status_code=401, detail="Authentication required")
         return _OWNERS.get(token, "test-owner")
-    monkeypatch.setattr(main_module, "_workspace_owner", _owner)
+    monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", _owner)
     yield
 
 

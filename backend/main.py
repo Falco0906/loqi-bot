@@ -21,6 +21,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from services.agent import process_message
+import services.identity.dependencies as identity_dependencies
+import services.workspace_context as workspace_access
 from services.identity.api import router as auth_router
 from services.onboarding.api import router as onboarding_router
 from services.organizations.api import router as organizations_router, _build_org_deps, register_deps as register_org_deps
@@ -28,6 +30,8 @@ from services.billing.api import router as billing_router, _build_billing_deps, 
 from services.billing.config import BillingConfig
 from services.billing.api import register_provider_and_config as _register_billing_provider_config
 from services.capabilities.api import router as capabilities_router, register_deps as register_capability_deps, CapabilityDeps
+from services.knowledge.api import router as knowledge_router
+from services.mission_control.api import router as mission_control_router
 from services.capabilities.config import CapabilityConfig
 from services.capabilities.services import CapabilityService
 from services.capabilities.repositories import (
@@ -69,13 +73,10 @@ from services.workspace_timeline import (
     record_drafts_generated,
     record_draft_approved,
     record_campaign_launched,
-    get_grouped_events,
 )
 from services.workspace_snapshot import build_snapshot
-from services.recommendation_engine import generate_recommendations
 from services.learning.behavior_tracker import get_tracker as _get_behavior_tracker
 from services.learning.feedback_interpreter import FeedbackInterpreter as _FeedbackInterpreter
-from services.executive_brief import generate_brief
 from services.draft_intelligence import analyze_draft as analyze_draft_intelligence
 from services.strategic_intelligence_api import router as strategic_intelligence_router
 from services.rewrite_engine import execute_rewrite
@@ -108,7 +109,6 @@ from services.communication.provider_models import (
 from services.communication.communication_store import store as communication_store
 from services.communication.provider_events import get_events as get_provider_events, latest_sequence
 from services.communication.gmail_provider import GmailProvider
-from services.communication.gmail_sync import sync_all, sync_thread
 from services.communication.reply_simulator import maybe_schedule as simulate_reply
 from services.reply_intelligence import analyze_message
 from services.conversation_memory import memory_store, create_or_update_memory
@@ -467,7 +467,7 @@ async def require_web_session_auth(request: Request, call_next):
     if path == "/api/web/session" or not path.startswith("/api/web/session/"):
         return await call_next(request)
     try:
-        await _resolve_session_context(request)  # raises 401 when unauthenticated
+        await identity_dependencies.resolve_web_session(request)  # raises 401 when unauthenticated
     except HTTPException as exc:
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
     return await call_next(request)
@@ -479,7 +479,9 @@ app.include_router(onboarding_router)
 app.include_router(organizations_router, prefix="/api/v1")
 app.include_router(billing_router)
 app.include_router(capabilities_router)
+app.include_router(knowledge_router)
 app.include_router(strategic_intelligence_router)
+app.include_router(mission_control_router)
 
 # ── Wire Organization Platform services ──
 _org_deps = _build_org_deps()
@@ -545,33 +547,6 @@ _IDENTITY_STATUS: dict[type, int] = {
     SessionRevokedException: 401,
     IdentityException: 400,
 }
-
-
-def _embed_delta_into_snapshot(snapshot: dict, delta: "WorkspaceDelta") -> None:
-    """Embed delta metadata into snapshot for Executive Brief consumption.
-
-    The Executive Brief's public interface (``generate_brief(snapshot, recommendations)``)
-    stays unchanged — it reads delta fields from the snapshot dict.
-    """
-    import dataclasses
-    snapshot["_delta"] = {
-        "first_visit": delta.first_visit,
-        "event_count": delta.event_count,
-        "event_range": list(delta.event_range),
-        "new_campaigns": len(delta.new_campaigns),
-        "changed_campaigns": len(delta.changed_campaigns),
-        "new_drafts": len(delta.new_drafts),
-        "scheduled_drafts": len(delta.scheduled_drafts),
-        "sent_outreach": len(delta.sent_outreach),
-        "new_leads": len(delta.new_leads),
-        "new_providers": len(delta.new_providers),
-        "new_conversations": len(delta.new_conversations),
-        "escalated_conversations": len(delta.escalated_conversations),
-        "completed_jobs": len(delta.completed_jobs),
-        "learned_preferences": len(delta.learned_preferences),
-        "new_insights": len(delta.new_insights),
-        "has_delta": not delta.is_empty(),
-    }
 
 
 def _identity_status(exc: IdentityException) -> int:
@@ -960,13 +935,15 @@ async def _reconcile_stale_search_jobs() -> int:
     recovered = 0
 
     try:
-        rows = (
-            client.table("jobs")
-            .select("id, discovery_id")
-            .eq("type", "search")
-            .in_("status", ["queued", "running"])
-            .lt("updated_at", grace_iso)
-            .execute()
+        rows = await asyncio.to_thread(
+            lambda: (
+                client.table("jobs")
+                .select("id, discovery_id")
+                .eq("type", "search")
+                .in_("status", ["queued", "running"])
+                .lt("updated_at", grace_iso)
+                .execute()
+            )
         )
         orphaned = getattr(rows, "data", None) or []
     except Exception as error:
@@ -977,11 +954,13 @@ async def _reconcile_stale_search_jobs() -> int:
     jobs_with_results: set[str] = set()
     for chunk in _chunked(orphan_ids):
         try:
-            result_rows = (
-                client.table("search_results")
-                .select("job_id")
-                .in_("job_id", chunk)
-                .execute()
+            result_rows = await asyncio.to_thread(
+                lambda: (
+                    client.table("search_results")
+                    .select("job_id")
+                    .in_("job_id", chunk)
+                    .execute()
+                )
             )
             jobs_with_results.update(
                 str(r.get("job_id")) for r in (result_rows.data or []) if r.get("job_id")
@@ -993,11 +972,13 @@ async def _reconcile_stale_search_jobs() -> int:
     orphan_disc_status: dict[str, str] = {}
     for chunk in _chunked(orphan_disc_ids):
         try:
-            disc_rows = (
-                client.table("discoveries")
-                .select("id, status")
-                .in_("id", chunk)
-                .execute()
+            disc_rows = await asyncio.to_thread(
+                lambda: (
+                    client.table("discoveries")
+                    .select("id, status")
+                    .in_("id", chunk)
+                    .execute()
+                )
             )
             orphan_disc_status.update(
                 {str(d.get("id")): str(d.get("status")) for d in (disc_rows.data or [])}
@@ -1012,10 +993,11 @@ async def _reconcile_stale_search_jobs() -> int:
         try:
             has_results = job_id in jobs_with_results
             if has_results:
-                job = storage.get_job(job_id)
+                job = await asyncio.to_thread(storage.get_job, job_id)
                 finalized = bool(job and await finalize_discovery(job))
                 if finalized:
-                    storage.update_job(
+                    await asyncio.to_thread(
+                        storage.update_job,
                         job_id,
                         status=JobStatus.COMPLETED,
                         stage="Complete",
@@ -1025,7 +1007,8 @@ async def _reconcile_stale_search_jobs() -> int:
                     )
                     log.info("[recovery] finalized orphaned search job %s", job_id)
                 else:
-                    storage.update_job(
+                    await asyncio.to_thread(
+                        storage.update_job,
                         job_id,
                         status=JobStatus.FAILED,
                         stage="Failed",
@@ -1035,7 +1018,8 @@ async def _reconcile_stale_search_jobs() -> int:
                     log.warning("[recovery] orphaned search job %s failed finalization", job_id)
             else:
                 reason = "Search run interrupted by restart"
-                storage.update_job(
+                await asyncio.to_thread(
+                    storage.update_job,
                     job_id,
                     status=JobStatus.FAILED,
                     stage="Failed",
@@ -1044,8 +1028,11 @@ async def _reconcile_stale_search_jobs() -> int:
                 )
                 if row.get("discovery_id"):
                     if orphan_disc_status.get(str(row["discovery_id"])) == "searching":
-                        mark_discovery_status(
-                            str(row["discovery_id"]), "failed", reason
+                        await asyncio.to_thread(
+                            mark_discovery_status,
+                            str(row["discovery_id"]),
+                            "failed",
+                            reason,
                         )
                 log.info("[recovery] failed orphaned search job %s", job_id)
             recovered += 1
@@ -1053,15 +1040,17 @@ async def _reconcile_stale_search_jobs() -> int:
             log.warning("[recovery] stale search job %s reconcile failed: %s", job_id, error)
 
     try:
-        rows = (
-            client.table("jobs")
-            .select("id, status, error_message, discovery_id")
-            .eq("type", "search")
-            .in_("status", ["completed", "failed"])
-            .not_.is_("discovery_id", "null")
-            .order("created_at", desc=True)
-            .limit(200)
-            .execute()
+        rows = await asyncio.to_thread(
+            lambda: (
+                client.table("jobs")
+                .select("id, status, error_message, discovery_id")
+                .eq("type", "search")
+                .in_("status", ["completed", "failed"])
+                .not_.is_("discovery_id", "null")
+                .order("created_at", desc=True)
+                .limit(200)
+                .execute()
+            )
         )
         completed = getattr(rows, "data", None) or []
     except Exception as error:
@@ -1072,11 +1061,13 @@ async def _reconcile_stale_search_jobs() -> int:
     discovery_by_id: dict[str, dict] = {}
     for chunk in _chunked(discovery_ids):
         try:
-            disc_rows = (
-                client.table("discoveries")
-                .select("id, status")
-                .in_("id", chunk)
-                .execute()
+            disc_rows = await asyncio.to_thread(
+                lambda: (
+                    client.table("discoveries")
+                    .select("id, status")
+                    .in_("id", chunk)
+                    .execute()
+                )
             )
             for disc in disc_rows.data or []:
                 discovery_by_id[str(disc.get("id"))] = disc
@@ -1091,12 +1082,13 @@ async def _reconcile_stale_search_jobs() -> int:
             if not discovery or (discovery or {}).get("status") != "searching":
                 continue
             if job_status == JobStatus.COMPLETED.value:
-                job = storage.get_job(job_id)
+                job = await asyncio.to_thread(storage.get_job, job_id)
                 if job and await finalize_discovery(job):
                     log.info("[recovery] finalized completed search job %s", job_id)
                     recovered += 1
                 elif job:
-                    storage.update_job(
+                    await asyncio.to_thread(
+                        storage.update_job,
                         job_id,
                         status=JobStatus.FAILED,
                         stage="Failed",
@@ -1106,7 +1098,8 @@ async def _reconcile_stale_search_jobs() -> int:
                     log.warning("[recovery] completed search job %s failed finalization", job_id)
                     recovered += 1
             elif job_status == JobStatus.FAILED.value:
-                mark_discovery_status(
+                await asyncio.to_thread(
+                    mark_discovery_status,
                     str(discovery["id"]),
                     "failed",
                     row.get("error_message") or "Search run failed",
@@ -1118,29 +1111,36 @@ async def _reconcile_stale_search_jobs() -> int:
     return recovered
 
 
-def _build_copilot_workspace_context(session_token: str, current_page: str | None = None, page_context: dict | None = None, conversation_id: str | None = None, user_id: str | None = None) -> dict:
+def _build_copilot_workspace_context(
+    session_token: str,
+    current_page: str | None = None,
+    page_context: dict | None = None,
+    conversation_id: str | None = None,
+    user_id: str | None = None,
+    workspace_id: str | None = None,
+) -> dict:
     # Copilot is a read/analyze surface. Its workspace context must come from
     # the canonical workspace projection so a reload, another tab, or a
     # previous session cannot leave the assistant reasoning over stale
     # session-local campaign/draft state.
     campaigns = []
     drafts = []
-    if user_id:
+    if user_id and workspace_id:
         try:
             from services.workspace_state import load_workspace_state
-            state = load_workspace_state(user_id, include_details=False)
+            state = load_workspace_state(
+                user_id,
+                include_details=False,
+                workspace_id=workspace_id,
+                canonical_only=True,
+            )
             campaigns = state.get("campaigns") or []
             drafts = state.get("drafts") or []
-            # Legacy sessions may still have an event-projected view while
-            # canonical backfill is incomplete. Prefer canonical data, but
-            # retain that existing projection only when it is the sole source
-            # available; never merge the two sources.
-            if not campaigns and not drafts:
-                campaigns = campaign_store.get(session_token, [])
-                drafts = draft_store.get(session_token, [])
         except Exception as error:
             log.warning("Copilot canonical workspace context unavailable: %s", error)
-    if not campaigns and not drafts and not user_id:
+    elif not user_id:
+        # Kept only for unauthenticated legacy callers. Authenticated Copilot
+        # requests always supply a membership-authorized workspace id above.
         campaigns = campaign_store.get(session_token, [])
         drafts = draft_store.get(session_token, [])
     # Scope the prompt-facing operational set to the active resource. The
@@ -1160,21 +1160,43 @@ def _build_copilot_workspace_context(session_token: str, current_page: str | Non
         drafts = [d for d in drafts if str(d.get("id") or "") == active_draft_id]
     campaigns = campaigns[:20]
     drafts = drafts[:50]
-    total_leads = sum(c.get("lead_count", 0) or 0 for c in campaigns)
-    from services.workspace_snapshot import build_snapshot
-    snapshot = build_snapshot(session_token, campaigns, drafts, total_leads, user_id=user_id)
-    analysis = snapshot.get("analysis", {})
+    # Keep turn context deliberately narrow and workspace-scoped. The legacy
+    # snapshot helper also hydrates session memory/timeline and user-wide jobs;
+    # those are not authoritative for an explicitly selected workspace. Live
+    # questions use their canonical read tool after intent selection.
+    from services.workspace_snapshot import enrich_campaigns
+    from services.workspace_reasoner import WorkspaceReasoner
 
-    active_workflows = get_active_runtimes(session_token)
-    workflow_context = []
-    for wf in active_workflows:
-        progress = calculate_progress(wf)
-        workflow_context.append({
-            "workflow_id": wf.workflow_id,
-            "goal": wf.plan.get("goal", ""),
-            "status": wf.status.value,
-            "progress": progress,
-        })
+    enriched_campaigns = enrich_campaigns(campaigns, drafts)
+    total_leads = sum(int(c.get("lead_count") or 0) for c in enriched_campaigns)
+    pending_drafts = sum(1 for draft in drafts if str(draft.get("status") or "") == "pending")
+    approved_drafts = sum(1 for draft in drafts if str(draft.get("status") or "") == "approved")
+    prompt_campaigns = [
+        {
+            "id": str(campaign.get("id") or ""),
+            "name": str(campaign.get("name") or ""),
+            "status": str(campaign.get("status") or "planning"),
+            "current_step": str(campaign.get("current_step") or ""),
+            "lead_count": int(campaign.get("lead_count") or 0),
+            "pending_drafts": int(campaign.get("pending_drafts") or 0),
+            "approved_drafts": int(campaign.get("approved_drafts") or 0),
+            "created_at": campaign.get("created_at") or "",
+            "updated_at": campaign.get("updated_at") or "",
+        }
+        for campaign in enriched_campaigns
+    ]
+    snapshot = {
+        "campaigns": prompt_campaigns,
+        "campaign_count": len(prompt_campaigns),
+        "campaigns_ready": sum(1 for campaign in prompt_campaigns if campaign["current_step"] == "sending"),
+        "campaigns_draft_review": sum(1 for campaign in prompt_campaigns if campaign["current_step"] == "review"),
+        "drafts": {"total": len(drafts), "pending": pending_drafts, "approved": approved_drafts},
+        "total_leads": total_leads,
+        "jobs": {"running": [], "recently_completed": []},
+        "memory": {},
+        "timeline": [],
+    }
+    analysis = WorkspaceReasoner(snapshot).analyze().to_dict()
 
     result = {
         "snapshot": {
@@ -1187,7 +1209,7 @@ def _build_copilot_workspace_context(session_token: str, current_page: str | Non
             "jobs": snapshot.get("jobs", {}),
             "memory": snapshot.get("memory", {}),
             "timeline": snapshot.get("timeline", []),
-            "active_workflows": workflow_context,
+            "active_workflows": [],
         },
         "analysis": {
             "current_focus": analysis.get("current_focus"),
@@ -1274,7 +1296,11 @@ def _build_copilot_workspace_context(session_token: str, current_page: str | Non
     if conversation_id and user_id:
         from services.conversations.conversation_store import conversation_store
         convo = conversation_store.get_conversation(conversation_id)
-        if convo is not None and _conversation_owned_by(convo, user_id):
+        if (
+            convo is not None
+            and _conversation_owned_by(convo, user_id)
+            and _conversation_in_workspace(convo, str(workspace_id or ""))
+        ):
             mem = memory_store.get(conversation_id)
             if mem:
                 events = get_conversation_events(conversation_id)
@@ -1379,8 +1405,8 @@ async def _require_canonical_outbound_draft(
     ``outbound_draft_store`` is hydrated only after this boundary succeeds;
     it is a provider projection/cache, never an ownership authority.
     """
-    owner_id = await _workspace_owner(request, session_token)
-    workspace_id = await _resolved_workspace_id_or_default(request, owner_id)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     canonical = next(
         (draft for draft in _workspace_drafts(owner_id, session_token, workspace_id=workspace_id)
          if str(draft.get("id") or "") == str(draft_id)),
@@ -1423,6 +1449,16 @@ def _conversation_owned_by(conversation: "object", owner_id: str) -> bool:
     if provider is None:
         return False  # fail closed: provider cannot be resolved
     return str(provider.user_id) == str(owner_id)
+
+
+def _conversation_in_workspace(conversation: "object", workspace_id: str) -> bool:
+    """Fail closed unless a durable Inbox snapshot belongs to this workspace."""
+    if not workspace_id:
+        return False
+    metadata = getattr(conversation, "metadata", {}) or {}
+    if not isinstance(metadata, dict):
+        return False
+    return str(metadata.get("workspace_id") or "") == str(workspace_id)
 
 
 def _resolve_owner_gmail_provider(owner_id: str) -> str:
@@ -2162,7 +2198,7 @@ async def rate_limit_middleware(request: Request, call_next):
     if limit <= 0:
         return await call_next(request)
 
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     identity = f"ip:{request.client.host if request.client else 'unknown'}"
     if session_token:
         user_id = await _resolve_rate_limit_identity(session_token)
@@ -2234,6 +2270,10 @@ class CopilotContextModel(BaseModel):
     page_context: dict | None = None
     available_actions: list[str] | None = None
     message_history: list[dict] | None = None
+    conversation_id: str | None = None
+    # A browser-generated turn identifier. It is an idempotency correlation
+    # key only, never user/workspace authority.
+    request_id: str | None = None
     active_search: dict | None = None
 
 
@@ -2309,6 +2349,8 @@ async def _run_copilot_discovery(
     user_id: str,
     search_context: dict,
     session_token: str,
+    *,
+    workspace_id: str,
 ) -> dict:
     """Discovery tool adapter; the existing search-run pipeline remains authoritative."""
     discovery_query = _discovery_query_from_search_context(search_context)
@@ -2317,6 +2359,7 @@ async def _run_copilot_discovery(
         discovery_query,
         session_token,
         display_title=_discovery_title_from_search_context(search_context),
+        workspace_id=workspace_id,
     )
 
 
@@ -2453,7 +2496,15 @@ async def _run_copilot_campaign(
             return {"ok": False, "status": "unavailable", "tool": tool_name, "reason": "No campaign changes were specified."}
         if not await persist_campaign_update_awaited(user_id, campaign_id, updates, workspace_id=workspace_id):
             return {"ok": False, "status": "failed", "tool": tool_name, "reason": "Campaign changes could not be persisted."}
-        updated = await asyncio.to_thread(load_campaign_state, user_id, campaign_id, workspace_id=workspace_id) or {**target, **updates}
+        updated = await asyncio.to_thread(
+            load_campaign_state,
+            user_id,
+            campaign_id,
+            workspace_id=workspace_id,
+        )
+        if not updated or any(updated.get(key) != value for key, value in updates.items()):
+            return {"ok": False, "status": "verification_failed", "tool": tool_name,
+                    "reason": "Campaign changes could not be verified in this workspace."}
         return {"ok": True, "status": "completed", "tool": tool_name, "result": {"campaign": updated}}
 
     if tool_name == "campaign.plan":
@@ -2535,9 +2586,17 @@ async def _run_copilot_outreach(
         updated_text = str(getattr(rewrite, "text", "") or previous)
         if not await persist_draft_update_awaited(user_id, str(target.get("id")), {"body": updated_text, "text": updated_text, "status": "pending"}, workspace_id=workspace_id):
             return {"ok": False, "status": "failed", "tool": tool_name, "reason": "Draft refinement could not be persisted."}
-        target = {**target, "text": updated_text, "body": updated_text, "status": "pending"}
-        await _emit_draft_event(user_id, "draft.updated", draft_id=str(target.get("id")), campaign_id=str(target.get("campaign_id") or ""))
-        return {"ok": True, "status": "completed", "tool": tool_name, "result": {"draft": target, "drafts": [target]}}
+        verified = next(
+            (draft for draft in await asyncio.to_thread(load_drafts_only, user_id, workspace_id)
+             if str(draft.get("id") or "") == str(target.get("id") or "")),
+            None,
+        )
+        verified_text = str((verified or {}).get("text") or (verified or {}).get("body") or "")
+        if not verified or verified_text != updated_text or verified.get("status") != "pending":
+            return {"ok": False, "status": "verification_failed", "tool": tool_name,
+                    "reason": "Draft refinement could not be verified in this workspace."}
+        await _emit_draft_event(user_id, "draft.updated", draft_id=str(verified.get("id")), campaign_id=str(verified.get("campaign_id") or ""))
+        return {"ok": True, "status": "completed", "tool": tool_name, "result": {"draft": verified, "drafts": [verified]}}
 
     if tool_name == "outreach.draft.generate":
         if not campaign_id:
@@ -2565,12 +2624,21 @@ async def _run_copilot_outreach(
         return {"ok": False, "status": "failed", "tool": tool_name, "reason": "The draft is not owned by this workspace."}
 
     if tool_name == "outreach.draft.approve":
-        approved = outbound_store.approve(target_id)
-        if not approved:
-            return {"ok": False, "status": "failed", "tool": tool_name, "reason": "Draft approval failed."}
-        await persist_draft_update_awaited(user_id, target_id, {"status": "approved"}, workspace_id=workspace_id)
-        await _emit_draft_event(user_id, "draft.approved", draft_id=target_id, campaign_id=str(target.get("campaign_id") or ""))
-        return {"ok": True, "status": "completed", "tool": tool_name, "result": {"draft": _outbound_to_legacy_draft(approved)}}
+        if not await persist_draft_update_awaited(user_id, target_id, {"status": "approved"}, workspace_id=workspace_id):
+            return {"ok": False, "status": "failed", "tool": tool_name, "reason": "Draft approval could not be persisted."}
+        verified = next(
+            (draft for draft in await asyncio.to_thread(load_drafts_only, user_id, workspace_id)
+             if str(draft.get("id") or "") == target_id),
+            None,
+        )
+        if not verified or verified.get("status") != "approved":
+            return {"ok": False, "status": "verification_failed", "tool": tool_name,
+                    "reason": "Draft approval could not be verified in this workspace."}
+        # The outbound store is a projection. Canonical approval above is the
+        # success boundary; a projection problem must not rewrite durable state.
+        outbound_store.approve(target_id)
+        await _emit_draft_event(user_id, "draft.approved", draft_id=target_id, campaign_id=str(verified.get("campaign_id") or ""))
+        return {"ok": True, "status": "completed", "tool": tool_name, "result": {"draft": verified}}
 
     provider_id = _get_outbound_provider_for_draft(outbound, user_id)
     if not provider_id:
@@ -2583,13 +2651,17 @@ async def _run_copilot_outreach(
             await persist_draft_update_awaited(user_id, target_id, {"status": "scheduled"}, workspace_id=workspace_id)
             await _emit_draft_event(user_id, "draft.scheduled", draft_id=target_id, campaign_id=str(target.get("campaign_id") or ""))
     else:
-        result = outbound_executor.execute("send_reply", {
-            "provider_id": provider_id, "draft_id": target_id,
-            "conversation_id": outbound.conversation_id, "thread_id": outbound.thread_id,
-            "workflow_id": outbound.workflow_id, "subject": outbound.subject, "body": outbound.body,
-            "recipient": {"email": outbound.recipient.email, "name": outbound.recipient.name},
-            "sender": {"email": outbound.sender.email, "name": outbound.sender.name},
-        })
+        result = await asyncio.to_thread(
+            outbound_executor.execute,
+            "send_reply",
+            {
+                "provider_id": provider_id, "draft_id": target_id,
+                "conversation_id": outbound.conversation_id, "thread_id": outbound.thread_id,
+                "workflow_id": outbound.workflow_id, "subject": outbound.subject, "body": outbound.body,
+                "recipient": {"email": outbound.recipient.email, "name": outbound.recipient.name},
+                "sender": {"email": outbound.sender.email, "name": outbound.sender.name},
+            },
+        )
         if result.get("ok"):
             outbound_store.mark_sent(target_id)
             await persist_draft_update_awaited(user_id, target_id, {"status": "sent"}, workspace_id=workspace_id)
@@ -2631,7 +2703,10 @@ async def _run_copilot_inbox(
         # intelligence once per conversation here.
         attention = []
         for candidate in conversation_store.list_conversations(limit=50):
-            if not _conversation_owned_by(candidate, user_id):
+            if (
+                not _conversation_owned_by(candidate, user_id)
+                or not _conversation_in_workspace(candidate, workspace_id)
+            ):
                 continue
             summary = candidate.summary.to_dict() if candidate.summary else {}
             needs_attention = (
@@ -2658,9 +2733,13 @@ async def _run_copilot_inbox(
             "tool": tool_name,
             "result": {"conversations": attention[:10], "count": len(attention[:10])},
         }
-    if not convo or not _conversation_owned_by(convo, user_id):
+    if (
+        not convo
+        or not _conversation_owned_by(convo, user_id)
+        or not _conversation_in_workspace(convo, workspace_id)
+    ):
         return {"ok": False, "status": "unavailable", "tool": tool_name,
-                "reason": "No owned Inbox conversation is selected."}
+                "reason": "No owned Inbox conversation is selected in this workspace."}
     messages = conversation_store.get_messages_for_conversation(conversation_id)
     latest = messages[-1] if messages else None
     latest_text = (latest.body or latest.body_preview or "") if latest else ""
@@ -2698,6 +2777,7 @@ async def _run_copilot_inbox(
             retrieved = await retrieve_knowledge_context(
                 user_id, query=" ".join(part for part in ("reply", subject, latest_text[:500]) if part),
                 categories=["company", "messaging", "sales_offer"], limit=8,
+                workspace_id=workspace_id,
             )
             knowledge_context = retrieved.to_dict()
         except Exception as error:
@@ -2734,7 +2814,33 @@ async def _run_copilot_inbox(
             )
         except HTTPException as error:
             return {"ok": False, "status": "failed", "tool": tool_name, "reason": str(error.detail)}
-        return {"ok": True, "status": "completed", "tool": tool_name, "result": sent}
+        refreshed = conversation_store.get_conversation(conversation_id)
+        sent_message_id = str(sent.get("message_id") or "")
+        persisted_messages = conversation_store.get_messages_for_conversation(conversation_id)
+        message_persisted = any(
+            str(message.message_id or "") == sent_message_id
+            for message in persisted_messages
+        )
+        if (
+            not refreshed
+            or not _conversation_owned_by(refreshed, user_id)
+            or not _conversation_in_workspace(refreshed, workspace_id)
+            or str(getattr(refreshed.status, "value", "")) != "sent"
+            or not sent_message_id
+            or not message_persisted
+        ):
+            return {
+                "ok": False,
+                "status": "verification_failed",
+                "tool": tool_name,
+                "reason": "The reply provider accepted the request, but Loqi could not verify the durable conversation update.",
+            }
+        return {
+            "ok": True,
+            "status": "completed",
+            "tool": tool_name,
+            "result": {**sent, "conversation": refreshed.to_dict()},
+        }
     return {"ok": False, "status": "unsupported", "tool": tool_name}
 
 
@@ -2770,7 +2876,11 @@ async def _run_copilot_knowledge(
                 "result": {"items": [item_to_dict(item)], "sources": [], "query": query}}
 
     context = await retrieve_knowledge_context(
-        user_id, query=query, categories=categories, limit=8,
+        user_id,
+        query=query,
+        categories=categories,
+        limit=8,
+        workspace_id=workspace_id,
     )
     result = context.to_dict()
     result["context"] = {"page": page, "workspace_id": workspace_id}
@@ -3158,7 +3268,7 @@ async def gmail_auth_url(request: Request, session_token: str = ""):
             # Only accept a web-session token that actually resolves to a user.
             # PR-2B: identity-only + cached; the full summary was overkill here.
             try:
-                summary = await _cached_session_identity(session_token)
+                summary = await identity_dependencies.cached_web_session_identity(session_token)
             except Exception:
                 summary = None
             if summary and summary.get("user_id"):
@@ -3275,7 +3385,7 @@ async def _resolve_oauth_state_user(state: str) -> str:
     if not user_id or user_id == "gmail_user":
         return ""
     from services.supabase import get_user
-    if get_user(user_id):
+    if await asyncio.to_thread(get_user, user_id):
         return user_id
     return user_id
 
@@ -3415,7 +3525,7 @@ async def gmail_auth_callback(code: str = "", state: str = "", error: str = ""):
         if not _user_id:
             raise Exception("Invalid or expired OAuth state")
         log.info("[oauth] state accepted user=%s", _user_id[:8])
-        tokens = exchange_code_for_tokens(code)
+        tokens = await asyncio.to_thread(exchange_code_for_tokens, code)
         access_token = tokens.get("access_token", "")
         refresh_token = tokens.get("refresh_token", "")
         email_val = tokens.get("email", "")
@@ -3459,19 +3569,6 @@ if (window.opener) {{
 </script>
 </body></html>"""
     return HTMLResponse(content=html)
-
-
-@app.get("/health")
-def health():
-    # Liveness only: no external calls (no Supabase/Gmail/OpenAI), no secrets.
-    return {
-        "status": "healthy",
-        "version": "v2",
-        "build": get_build_metadata(),
-        "uptime": int(time.time() - _start_time),
-        "database": "configured" if os.getenv("SUPABASE_URL") else "unconfigured",
-        "providers": "ready",
-    }
 
 
 @app.post("/webhook")
@@ -3537,7 +3634,7 @@ async def create_web_session(payload: CreateWebSessionRequest, request: Request)
                 user_id = None
                 canonical_session_id = ""
         if user_id:
-            await _ensure_authenticated_web_user_bridge(user_id)
+            await identity_dependencies.ensure_legacy_user_bridge(user_id)
         result = await asyncio.to_thread(
             engine.create_web_session,
             display_name=payload.display_name,
@@ -3559,7 +3656,7 @@ async def create_web_session(payload: CreateWebSessionRequest, request: Request)
 
 @app.get("/api/web/session/{session_token}")
 async def get_web_session(session_token: str, request: Request = None):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     data = await asyncio.to_thread(engine.get_web_session_summary, session_token)
     if data is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -3568,7 +3665,7 @@ async def get_web_session(session_token: str, request: Request = None):
 
 @app.get("/api/web/session/{session_token}/messages")
 async def get_web_session_messages(session_token: str, request: Request = None):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     return {
         "ok": True,
         "messages": engine.list_messages(channel="web", external_user_id=session_token),
@@ -3581,7 +3678,7 @@ async def post_web_session_message(
     payload: SendWebMessageRequest,
     request: Request,
 ):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     import time; _t0 = time.time()
     print(f"[TRACE] 1 | ENTERED ENDPOINT | post_web_session_message | +0ms")
     summary = await asyncio.to_thread(engine.get_web_session_summary, session_token)
@@ -3599,7 +3696,7 @@ async def post_web_session_message(
                 user_id = None
                 canonical_session_id = ""
         if user_id:
-            await _ensure_authenticated_web_user_bridge(user_id)
+            await identity_dependencies.ensure_legacy_user_bridge(user_id)
         created = engine.create_web_session(
             display_name="web-user",
             user_id=user_id,
@@ -3633,17 +3730,54 @@ async def post_web_session_message(
         # Copilot conversation state is supplied explicitly by the Copilot
         # surface. Do not hydrate it from legacy conversations/user_messages;
         # those fields belong exclusively to ConversationEngine callers.
+        # The authenticated request is the only identity authority for
+        # Copilot. A web-session summary is useful conversation metadata but
+        # must never select the user or workspace used for reads/tools.
+        user_id, _canonical_session_id = await identity_dependencies.resolve_web_session(request)
+        selected_workspace = await workspace_access.resolve_selected_workspace_context(request, user_id)
+        workspace_id = str(selected_workspace.workspace_id or "")
+        if not workspace_id:
+            raise HTTPException(status_code=404, detail="No accessible workspace")
+        from services.copilot_memory import CopilotMemoryService, merge_turn_history
+        conversation_key = str(payload.copilot.conversation_id or "").strip()[:128]
+        if not conversation_key:
+            # Older clients do not send a chat id. Keep their memory isolated
+            # without persisting a bearer/session token itself.
+            conversation_key = "legacy-" + hashlib.sha256(session_token.encode()).hexdigest()[:32]
+        copilot_memory = CopilotMemoryService()
+        remembered_context = await copilot_memory.retrieve(
+            user_id=user_id,
+            workspace_id=workspace_id,
+            conversation_key=conversation_key,
+        )
+        try:
+            from services.supabase import get_user_preferences
+            user_preferences = await asyncio.to_thread(get_user_preferences, user_id)
+        except Exception:
+            user_preferences = None
+        if isinstance(user_preferences, dict):
+            remembered_context["user_preferences"] = user_preferences
+        bounded_history = merge_turn_history(
+            remembered_context,
+            payload.copilot.message_history,
+        )
         log.info(
-            "COPILOT_REQUEST path=post_web_session_message page=%s text_chars=%s",
+            "COPILOT_REQUEST path=post_web_session_message workspace=%s page=%s text_chars=%s",
+            workspace_id,
             payload.copilot.current_page or "(unset)",
             len(payload.text or ""),
         )
-        workspace_context = _build_copilot_workspace_context(
+        workspace_context = await asyncio.to_thread(
+            _build_copilot_workspace_context,
             session_token,
             current_page=payload.copilot.current_page,
             page_context=payload.copilot.page_context,
-            user_id=summary.get("user_id"),
+            user_id=user_id,
+            workspace_id=workspace_id,
         )
+        # This is derived conversational context, never a replacement for the
+        # canonical workspace projection above or tool reads below.
+        workspace_context["copilot_memory"] = remembered_context
         analysis = workspace_context.get("analysis", {})
         snapshot = workspace_context.get("snapshot", {})
         cf = analysis.get("current_focus", {})
@@ -3671,77 +3805,53 @@ async def post_web_session_message(
             payload.text,
             page_context=payload.copilot.page_context,
             active_search=payload.copilot.active_search,
-            message_history=payload.copilot.message_history,
+            message_history=bounded_history,
         )
         if decision is None:
             decision = await asyncio.to_thread(
                 decide_copilot_intent,
                 payload.text,
                 workspace_context=workspace_context,
-                message_history=payload.copilot.message_history,
+                message_history=bounded_history,
                 active_search=payload.copilot.active_search,
             )
         decision = {
             **decision,
             "user_message": payload.text,
-            "message_history": payload.copilot.message_history or [],
+            "message_history": bounded_history,
             "active_search": payload.copilot.active_search or {},
             "page_context": payload.copilot.page_context or {},
             "current_page": payload.copilot.current_page or "",
         }
-        # Retrieval follows classification: operational records were loaded
-        # structurally above, while semantic Knowledge is added only for a
-        # question that can benefit from it. Knowledge tools return their own
-        # authoritative result and therefore do not need a second retrieval.
-        if (
-            decision.get("intent") in {"read", "clarification"}
-            and not str(decision.get("action") or "").startswith("knowledge.")
-            and decision.get("action") != "inbox.reply.generate"
-        ):
-            try:
-                from services.knowledge.context_adapter import retrieve_knowledge_context
-                knowledge = await retrieve_knowledge_context(
-                    str(summary.get("user_id") or ""),
-                    query=str(decision.get("knowledge_query") or payload.text),
-                    categories=decision.get("knowledge_categories") or None,
-                )
-                workspace_context["knowledge_context"] = knowledge.to_dict()
-            except Exception as error:
-                log.warning("Copilot semantic Knowledge retrieval unavailable: %s", error)
+        await copilot_memory.record_turn(
+            user_id=user_id,
+            workspace_id=workspace_id,
+            conversation_key=conversation_key,
+            user_text=payload.text,
+            intent=str(decision.get("intent") or ""),
+            tool=str(decision.get("action") or ""),
+        )
         from services.copilot_tools import execute_copilot_tool, select_copilot_tool
-        tool_name = select_copilot_tool(decision)
-        if tool_name:
-            # MVP Copilot is a strategic read/analyze assistant. Keep
-            # state-changing capabilities behind their existing product UI
-            # until each action has a separately verified confirmation and
-            # reconciliation path. Read tools still execute against the
-            # canonical services below.
+        from services.copilot_orchestrator import execute_copilot_plan, has_multi_step_plan
+
+        async def execute_at_copilot_boundary(
+            requested_tool_name: str,
+            requested_decision: dict[str, Any],
+        ) -> dict[str, Any]:
+            """Run tools through the authenticated, durable Phase 6 boundary."""
             from services.copilot_tools import COPILOT_TOOLS
-            if not COPILOT_TOOLS[tool_name].read_only and tool_name not in {"discovery.search", "discovery.refine"}:
-                return {
-                    "ok": False,
-                    "intent": decision.get("intent"),
-                    "messages": [_message(
-                        role="assistant", message_type="text",
-                        text="I can analyze that in Copilot, but state-changing actions still need to be completed from the relevant Loqi workspace view.",
-                        data={"tool": tool_name, "status": "read_only_mvp"},
-                    )],
-                    "events": [{"type": "tool.unavailable", "tool": tool_name}],
-                }
-            user_id = str(summary.get("user_id") or "")
-            from services.workspace_state import ensure_workspace
-            workspace_id = await asyncio.to_thread(ensure_workspace, user_id)
-            log.info(
-                "COPILOT_DECISION intent=%s tool=%s mode=%s",
-                decision.get("intent"), tool_name, decision.get("mode"),
-            )
-            try:
-                tool_result = await execute_copilot_tool(
-                    tool_name,
+
+            registered_tool = COPILOT_TOOLS.get(requested_tool_name)
+            if registered_tool is None:
+                return {"ok": False, "status": "unsupported", "tool": requested_tool_name}
+
+            async def invoke() -> dict[str, Any]:
+                return await execute_copilot_tool(
+                    requested_tool_name,
                     user_id=user_id,
-                    workspace_id=workspace_id or "",
+                    workspace_id=workspace_id,
                     session_token=session_token,
-                    decision=decision,
+                    decision=requested_decision,
                     discovery_runner=_run_copilot_discovery,
                     campaign_runner=_run_copilot_campaign,
                     outreach_runner=_run_copilot_outreach,
@@ -3749,6 +3859,192 @@ async def post_web_session_message(
                     knowledge_runner=_run_copilot_knowledge,
                     analytics_runner=_run_copilot_analytics,
                 )
+
+            if registered_tool.read_only:
+                return await invoke()
+
+            # The selected workspace was resolved from the authenticated
+            # request before this closure was constructed. Model/page ids do
+            # not participate in selecting either authority value.
+            from services.copilot_execution_ledger import CopilotExecutionService
+            return await CopilotExecutionService().execute(
+                tool_name=requested_tool_name,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                request_id=payload.copilot.request_id,
+                conversation_key=conversation_key,
+                decision=requested_decision,
+                operation=invoke,
+            )
+
+        async def execute_planned_tool(planned_tool_name: str, planned_decision: dict[str, Any]) -> dict[str, Any]:
+            """Run one planned step through the same Phase 2 guard as a turn.
+
+            The planner has no authority to confirm a mutation.  Each planned
+            mutation is evaluated against this user message before the
+            existing tool executor receives it.
+            """
+            from services.copilot_tools import (
+                COPILOT_TOOLS,
+                PHASE2_MUTATION_TOOLS,
+                mutation_confirmation_state,
+            )
+
+            tool = COPILOT_TOOLS.get(planned_tool_name)
+            if tool is None:
+                return {"ok": False, "status": "unavailable", "tool": planned_tool_name,
+                        "reason": "That planned capability is not available."}
+            guarded_decision = dict(planned_decision)
+            if not tool.read_only and planned_tool_name not in {"discovery.search", "discovery.refine"}:
+                if planned_tool_name not in PHASE2_MUTATION_TOOLS:
+                    return {"ok": False, "status": "unavailable", "tool": planned_tool_name,
+                            "reason": "That operation is not available in Copilot yet because its safe execution path has not been verified."}
+                confirmation = mutation_confirmation_state(planned_tool_name, payload.text)
+                if confirmation == "declined":
+                    return {"ok": False, "status": "declined", "tool": planned_tool_name,
+                            "reason": "Understood — no changes were made."}
+                if confirmation != "confirmed":
+                    return {"ok": False, "status": "confirmation_required", "tool": planned_tool_name,
+                            "reason": f"I have not made any changes. Explicitly confirm this by using the requested action, for example: ‘Confirm {planned_tool_name.replace('.', ' ')}.’"}
+                guarded_decision["confirmed"] = True
+            return await execute_at_copilot_boundary(planned_tool_name, guarded_decision)
+
+        if has_multi_step_plan(decision):
+            orchestration = await execute_copilot_plan(decision, execute_planned_tool)
+            await copilot_memory.record_outcome(
+                user_id=user_id,
+                workspace_id=workspace_id,
+                conversation_key=conversation_key,
+                tool="copilot.orchestration",
+                status=str(orchestration.get("status") or ""),
+                operation=orchestration.get("operation"),
+            )
+            if orchestration.get("status") == "accepted":
+                started = orchestration.get("operation") or {}
+                search_context = decision.get("search_context") or {}
+                active_context = {
+                    **search_context,
+                    "discovery_id": started.get("discovery_id"),
+                    "job_id": started.get("job_id"),
+                }
+                return {
+                    "ok": bool(orchestration.get("ok")),
+                    "intent": decision.get("intent"),
+                    "messages": [_message(
+                        role="assistant", message_type="tool",
+                        text="I’m starting a Discovery search and will report back when the results are persisted.",
+                        data={"operation": "search_discovery", "tool": "copilot.orchestration", "search_context": active_context, **started},
+                    )],
+                    "events": [{"type": "tool.started", "tool": "copilot.orchestration", "operation": "search_discovery", **started}],
+                    "operation": {"kind": "search_discovery", "tool": "copilot.orchestration", "search_context": active_context, **started},
+                }
+            if not orchestration.get("ok"):
+                return {
+                    "ok": False,
+                    "intent": decision.get("intent"),
+                    "messages": [_message(
+                        role="assistant", message_type="tool",
+                        text=str(orchestration.get("reason") or "Copilot could not complete the planned steps."),
+                        data={"tool": "copilot.orchestration", "status": orchestration.get("status"), "steps": orchestration.get("steps") or []},
+                    )],
+                    "events": [{"type": "tool.failed", "tool": "copilot.orchestration", "status": orchestration.get("status")}],
+                    "operation": {"kind": "copilot.orchestration", "status": orchestration.get("status"), "error": orchestration.get("reason")},
+                }
+            steps = orchestration.get("steps") or []
+            completed_tools = [str(step.get("tool") or "") for step in steps if step.get("ok")]
+            verified = any(str(step.get("source") or "").startswith("verify:") for step in steps)
+            text = "Retrieved the requested current workspace data."
+            if completed_tools:
+                prefix = "Completed and verified" if verified else "Retrieved"
+                text = f"{prefix}: {', '.join(completed_tools)}."
+            return {
+                "ok": True,
+                "intent": decision.get("intent"),
+                "messages": [_message(
+                    role="assistant", message_type="text", text=text,
+                    data={"tool": "copilot.orchestration", "result": orchestration.get("result") or {}, "steps": steps, "verified": verified},
+                )],
+                "events": [{"type": "tool.completed", "tool": "copilot.orchestration", "steps": steps}],
+            }
+
+        tool_name = select_copilot_tool(decision)
+        # Retrieval follows classification: operational records were loaded
+        # structurally above. Semantic Knowledge is only retrieved for a
+        # deliberately knowledge-grounded non-tool response; read tools fetch
+        # their own canonical records, so a broad second snapshot is avoided.
+        if (
+            tool_name is None
+            and decision.get("intent") in {"read", "clarification"}
+            and (
+                decision.get("knowledge_categories")
+                or str(decision.get("knowledge_query") or "").strip()
+            )
+        ):
+            try:
+                from services.knowledge.context_adapter import retrieve_knowledge_context
+                knowledge = await retrieve_knowledge_context(
+                    user_id,
+                    query=str(decision.get("knowledge_query") or payload.text),
+                    categories=decision.get("knowledge_categories") or None,
+                    workspace_id=workspace_id,
+                )
+                workspace_context["knowledge_context"] = knowledge.to_dict()
+            except Exception as error:
+                log.warning("Copilot semantic Knowledge retrieval unavailable: %s", error)
+        if tool_name:
+            from services.copilot_tools import (
+                COPILOT_TOOLS,
+                PHASE2_MUTATION_TOOLS,
+                mutation_confirmation_state,
+            )
+            tool = COPILOT_TOOLS[tool_name]
+            if not tool.read_only and tool_name not in {"discovery.search", "discovery.refine"}:
+                if tool_name not in PHASE2_MUTATION_TOOLS:
+                    return {
+                        "ok": False,
+                        "intent": decision.get("intent"),
+                        "messages": [_message(
+                            role="assistant", message_type="text",
+                            text="That operation is not available in Copilot yet because its safe execution path has not been verified.",
+                            data={"tool": tool_name, "status": "unavailable"},
+                        )],
+                        "events": [{"type": "tool.unavailable", "tool": tool_name}],
+                        "operation": {"kind": tool_name, "status": "unavailable"},
+                    }
+                confirmation = mutation_confirmation_state(tool_name, payload.text)
+                if confirmation == "declined":
+                    return {
+                        "ok": False,
+                        "intent": decision.get("intent"),
+                        "messages": [_message(
+                            role="assistant", message_type="text",
+                            text="Understood — no changes were made.",
+                            data={"tool": tool_name, "status": "declined"},
+                        )],
+                        "events": [{"type": "tool.declined", "tool": tool_name}],
+                        "operation": {"kind": tool_name, "status": "declined"},
+                    }
+                if confirmation != "confirmed":
+                    return {
+                        "ok": False,
+                        "intent": decision.get("intent"),
+                        "messages": [_message(
+                            role="assistant", message_type="text",
+                            text=f"I have not made any changes. Explicitly confirm this by using the requested action, for example: ‘Confirm {tool_name.replace('.', ' ')}.’",
+                            data={"tool": tool_name, "status": "confirmation_required"},
+                        )],
+                        "events": [{"type": "tool.confirmation_required", "tool": tool_name}],
+                        "operation": {"kind": tool_name, "status": "confirmation_required"},
+                    }
+                # The user's own message, not a model-emitted JSON flag, is
+                # the confirmation authority passed to legacy adapters.
+                decision["confirmed"] = True
+            log.info(
+                "COPILOT_DECISION workspace=%s intent=%s tool=%s mode=%s",
+                workspace_id, decision.get("intent"), tool_name, decision.get("mode"),
+            )
+            try:
+                tool_result = await execute_at_copilot_boundary(tool_name, decision)
             except Exception as error:
                 log.exception("Copilot tool failed tool=%s", tool_name)
                 tool_result = {
@@ -3759,6 +4055,14 @@ async def post_web_session_message(
                     # driver errors are not a safe Copilot-facing contract.
                     "reason": _copilot_tool_failure_reason(tool_name),
                 }
+            await copilot_memory.record_outcome(
+                user_id=user_id,
+                workspace_id=workspace_id,
+                conversation_key=conversation_key,
+                tool=tool_name,
+                status=str(tool_result.get("status") or ""),
+                operation=tool_result.get("operation"),
+            )
             if tool_name.startswith("campaign."):
                 if tool_result.get("ok"):
                     result = tool_result.get("result") or {}
@@ -3774,7 +4078,7 @@ async def post_web_session_message(
                             payload.text, decision, workspace_context, tool_name, result,
                         )
                     elif campaign:
-                        text = f"Campaign “{campaign.get('name') or 'Untitled campaign'}” is ready in your workspace."
+                        text = f"Campaign “{campaign.get('name') or 'Untitled campaign'}” was updated and verified in your workspace."
                     else:
                         text = f"{tool_name.replace('.', ' ').capitalize()} completed."
                     response: dict[str, Any] = {
@@ -3811,6 +4115,10 @@ async def post_web_session_message(
                         )
                     elif tool_name == "outreach.draft.generate":
                         text = "Draft generation has started for this campaign."
+                    elif tool_name == "outreach.draft.refine":
+                        text = "The draft was updated and verified in your workspace."
+                    elif tool_name == "outreach.draft.approve":
+                        text = "The draft was approved and verified in your workspace."
                     else:
                         text = f"{tool_name.replace('.', ' ').capitalize()} completed."
                     response = {
@@ -3845,7 +4153,8 @@ async def post_web_session_message(
                             payload.text, decision, workspace_context, tool_name, result,
                         )
                     elif tool_name == "inbox.reply.send":
-                        text = "Reply sent successfully."
+                        conversation = result.get("conversation") or {}
+                        text = f"The reply was sent and the conversation is now {conversation.get('status') or result.get('status') or 'updated'}."
                     else:
                         text = f"{tool_name.replace('.', ' ').capitalize()} completed."
                     return {
@@ -3940,7 +4249,7 @@ async def post_web_session_message(
                             payload.text, decision, workspace_context, tool_name, result,
                         )
                     else:
-                        text = f"{tool_name.replace('.', ' ').capitalize()} completed for {len(result.get('leads') or [])} lead(s)."
+                        text = f"{tool_name.replace('.', ' ').capitalize()} was completed and verified for {len(result.get('leads') or [])} lead(s)."
                     return {
                         "ok": True,
                         "intent": decision.get("intent"),
@@ -4022,6 +4331,7 @@ async def post_web_session_message(
             copilot_context={
                 **(payload.copilot.model_dump()),
                 "intent": decision.get("intent"),
+                "message_history": bounded_history,
                 "workspace_context": workspace_context,
                 "mvp_read_only": True,
             },
@@ -4072,41 +4382,6 @@ class RefineDraftRequest(BaseModel):
 
 class UpdateDraftRequest(BaseModel):
     text: str
-
-
-class KnowledgeItemCreateRequest(BaseModel):
-    category: str
-    title: str
-    summary: str = ""
-    content: dict = Field(default_factory=dict)
-    tags: list[str] = Field(default_factory=list)
-    source_type: str = "user_input"
-    source_id: str = ""
-
-
-class KnowledgeItemUpdateRequest(BaseModel):
-    title: str | None = None
-    summary: str | None = None
-    content: dict | None = None
-    tags: list[str] | None = None
-    source_type: str | None = None
-    source_id: str | None = None
-
-
-class KnowledgeSourceCreateRequest(BaseModel):
-    title: str
-    source_type: str = "user_input"
-    content: str = ""
-    reference: str = ""
-    metadata: dict = Field(default_factory=dict)
-
-
-class KnowledgeSourceUpdateRequest(BaseModel):
-    title: str | None = None
-    source_type: str | None = None
-    content: str | None = None
-    reference: str | None = None
-    metadata: dict | None = None
 
 
 class SaveCampaignRequest(BaseModel):
@@ -4164,13 +4439,13 @@ class SelectLeadRequest(BaseModel):
 
 @app.post("/api/web/session/{session_token}/batch-draft", status_code=202)
 async def batch_draft(session_token: str, payload: BatchDraftRequest, request: Request):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     if not payload.leads:
         raise HTTPException(status_code=400, detail="No leads provided")
     batch_id = str(uuid.uuid4())
     total = len(payload.leads)
     _create_batch_job(batch_id, payload.campaign_id, total)
-    owner_id = await _workspace_owner(request, session_token)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     _launch_batch_task(session_token, batch_id, payload.leads, owner_id)
     return {"ok": True, "batch_id": batch_id, "total": total}
 
@@ -4180,7 +4455,7 @@ async def batch_status(session_token: str, batch_id: str, request: Request = Non
     job = batch_jobs.get(batch_id)
     if not job:
         raise HTTPException(status_code=404, detail="Batch not found")
-    owner_id = await _workspace_owner(request, session_token) if request is not None else ""
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token) if request is not None else ""
     campaign_id = job.get("campaign_id") or ""
     if campaign_id:
         campaigns = _workspace_campaigns(owner_id, session_token) if owner_id else []
@@ -4196,11 +4471,11 @@ async def analyze_campaigns_endpoint(session_token: str, payload: BatchDraftRequ
 
 @app.get("/api/web/session/{session_token}/drafts")
 async def list_drafts(session_token: str, request: Request):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     import time as _t
     _t0 = _t.perf_counter()
-    owner_id = await _workspace_owner(request, session_token)
-    ws_id = await _resolved_workspace_id_or_default(request, owner_id)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     drafts = await asyncio.to_thread(_workspace_drafts, owner_id, session_token, workspace_id=ws_id)
     log.info("[perf] route=/drafts owner=%s ms=%.0f drafts=%d",
              owner_id[:8], (_t.perf_counter() - _t0) * 1000, len(drafts))
@@ -4209,8 +4484,8 @@ async def list_drafts(session_token: str, request: Request):
 
 @app.put("/api/web/session/{session_token}/drafts/{draft_id}")
 async def update_draft(session_token: str, draft_id: str, payload: UpdateDraftRequest, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     drafts = _workspace_drafts(owner_id, session_token)
     for d in drafts:
         if d.get("id") == draft_id:
@@ -4230,8 +4505,8 @@ async def update_draft(session_token: str, draft_id: str, payload: UpdateDraftRe
 
 @app.post("/api/web/session/{session_token}/drafts/{draft_id}/refine")
 async def refine_draft(session_token: str, draft_id: str, payload: RefineDraftRequest, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     drafts = _workspace_drafts(owner_id, session_token)
     target = next((d for d in drafts if d.get("id") == draft_id), None)
     if not target:
@@ -4495,9 +4770,9 @@ async def _emit_draft_event(user_id: str, event_type: str, *, draft_id: str = ""
 
 @app.post("/api/web/session/{session_token}/drafts/{draft_id}/approve")
 async def approve_draft(session_token: str, draft_id: str, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
-    workspace_id = await _resolved_workspace_id_or_default(request, owner_id)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     from services.workspace_state import load_workspace_state
     state = await asyncio.to_thread(
         load_workspace_state, owner_id, include_details=False, workspace_id=workspace_id,
@@ -4547,8 +4822,8 @@ async def approve_draft(session_token: str, draft_id: str, request: Request):
 
 @app.post("/api/web/session/{session_token}/drafts/{draft_id}/undo")
 async def undo_draft(session_token: str, draft_id: str, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     drafts = _workspace_drafts(owner_id, session_token)
     target = next((d for d in drafts if d.get("id") == draft_id), None)
     if not target:
@@ -4572,8 +4847,8 @@ async def undo_draft(session_token: str, draft_id: str, request: Request):
 
 @app.get("/api/web/session/{session_token}/drafts/{draft_id}/history")
 async def draft_rewrite_history(session_token: str, draft_id: str, request: Request = None):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token) if request is not None else ""
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token) if request is not None else ""
     draft = outbound_draft_store.get(draft_id) if hasattr(outbound_draft_store, "get") else None
     if not _outbound_draft_owned_by(draft, owner_id):
         raise HTTPException(status_code=404, detail="Draft not found")
@@ -4635,7 +4910,7 @@ async def communication_analyze(session_token: str, payload: AnalyzeMessageReque
 
 @app.post("/api/web/session/{session_token}/communication/memory/update")
 async def communication_memory_update(session_token: str, payload: AnalyzeMessageRequest, request: Request = None):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     msg = ConversationMessage(text=payload.text, sender=payload.sender, subject=payload.subject)
     cid = payload.conversation_id or msg.id
     from services.intent_detector import detect_intents
@@ -4709,8 +4984,8 @@ async def communication_summary(session_token: str, payload: SummaryRequest):
 
 @app.get("/api/web/session/{session_token}/communication/{conversation_id}/timeline")
 async def communication_timeline(session_token: str, conversation_id: str, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     from services.conversations.conversation_store import conversation_store
     convo = conversation_store.get_conversation(conversation_id)
     if convo is None or not _conversation_owned_by(convo, owner_id):
@@ -4743,8 +5018,8 @@ class CreateWorkspaceRequest(BaseModel):
 @app.get("/api/web/session/{session_token}/workspaces")
 async def list_workspaces(session_token: str, request: Request):
     """List workspaces in every organization the caller actively belongs to."""
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     from services.workspace_context import workspaces_for_user
     ws = await asyncio.to_thread(workspaces_for_user, None, owner_id)
     return {"ok": True, "workspaces": ws}
@@ -4753,9 +5028,9 @@ async def list_workspaces(session_token: str, request: Request):
 @app.post("/api/web/session/{session_token}/workspaces/select")
 async def select_workspace(session_token: str, request: Request):
     """Validate + return the context for an explicitly selected workspace."""
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
-    ctx = await _resolve_selected_workspace_context(request, owner_id)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    ctx = await workspace_access.resolve_selected_workspace_context(request, owner_id)
     return {
         "ok": True,
         "workspace": {
@@ -4779,8 +5054,8 @@ async def create_workspace(session_token: str, payload: CreateWorkspaceRequest, 
     organization_id = the validated org. No duplicate organization is created
     and no existing workspace is modified.
     """
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     org_id = (payload.organization_id or "").strip()
 
     from services.workspace_context import active_memberships
@@ -4821,14 +5096,17 @@ def _default_workspace_slug(workspace_id: str, name: str = "Workspace") -> str:
 
 @app.get("/api/web/session/{session_token}/workspace-context")
 async def dev_workspace_context(session_token: str, conversation_id: str = "", request: Request = None):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     """Returns workspace context with provider info for the dev providers page."""
-    owner_id = await _workspace_owner(request, session_token)
-    ctx = _build_copilot_workspace_context(
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    selected_workspace = await workspace_access.resolve_selected_workspace_context(request, owner_id)
+    ctx = await asyncio.to_thread(
+        _build_copilot_workspace_context,
         session_token,
         current_page="Mission Control",
         conversation_id=conversation_id or None,
         user_id=owner_id,
+        workspace_id=selected_workspace.workspace_id,
     )
     return ctx
 
@@ -4845,7 +5123,7 @@ class ProviderConnectRequest(BaseModel):
 
 @app.post("/api/web/session/{session_token}/providers/connect")
 async def provider_connect(session_token: str, payload: ProviderConnectRequest, request: Request = None):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     # PR10.8.3: this legacy dev-only route accepts raw OAuth tokens and lets a
     # caller attach a Gmail provider without the OAuth flow. In production,
     # Gmail connection must go through /api/auth/gmail/url + callback.
@@ -4893,8 +5171,8 @@ async def provider_connect(session_token: str, payload: ProviderConnectRequest, 
 
 @app.post("/api/web/session/{session_token}/providers/{provider_id}/disconnect")
 async def provider_disconnect(session_token: str, provider_id: str, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     if not _provider_record_owned_by(provider_id, owner_id):
         raise HTTPException(status_code=404, detail="Provider not found or already disconnected")
     success = registry_disconnect(provider_id)
@@ -4931,8 +5209,8 @@ async def provider_list(session_token: str, request: Request):
     Response shape is unchanged: {ok, providers:[{id, provider_type, status,
     email, last_sync, sync_cursor, created_at}]}.
     """
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
 
     # ── Durable records (authoritative) ──
     # Single indexed query; no Gmail calls, no messages, no session summary.
@@ -4974,7 +5252,7 @@ async def provider_list(session_token: str, request: Request):
             status_val = ProviderStatus.AUTH_FAILED.value
         elif runtime_instance is not None:
             try:
-                status_val = runtime_instance.health().value
+                status_val = (await asyncio.to_thread(runtime_instance.health)).value
             except Exception as error:
                 # PR-2A: a Gmail/network hiccup while probing one live
                 # instance must never fail the whole provider list.
@@ -5015,7 +5293,7 @@ async def provider_list(session_token: str, request: Request):
         result.append({
             "id": p.id,
             "provider_type": p.provider_type.value,
-            "status": instance.health().value if instance else p.status.value,
+            "status": (await asyncio.to_thread(instance.health)).value if instance else p.status.value,
             "email": p.metadata.get("email", ""),
             "last_sync": p.last_sync,
             "sync_cursor": p.sync_cursor,
@@ -5027,20 +5305,20 @@ async def provider_list(session_token: str, request: Request):
 
 @app.get("/api/web/session/{session_token}/providers/{provider_id}/health")
 async def provider_health(session_token: str, provider_id: str, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     if not _provider_record_owned_by(provider_id, owner_id):
         raise HTTPException(status_code=404, detail="Provider not found")
     instance = get_provider(provider_id)
     if not instance:
         raise HTTPException(status_code=404, detail="Provider not found")
-    status = instance.health()
+    status = await asyncio.to_thread(instance.health)
     provider = communication_store.get_provider(provider_id)
     # Persisted auth_failed wins over a still-valid runtime access token.
     if provider is not None and provider.provider_type == ProviderType.GMAIL:
         try:
             from services.supabase import is_connected_account_reauth_required
-            if is_connected_account_reauth_required(provider.user_id, "google"):
+            if await asyncio.to_thread(is_connected_account_reauth_required, provider.user_id, "google"):
                 status = ProviderStatus.AUTH_FAILED
         except Exception:
             pass
@@ -5054,19 +5332,14 @@ async def provider_health(session_token: str, provider_id: str, request: Request
 
 @app.post("/api/web/session/{session_token}/providers/{provider_id}/sync")
 async def provider_sync(session_token: str, provider_id: str, request: Request, cursor: str = ""):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     if not _provider_record_owned_by(provider_id, owner_id):
         raise HTTPException(status_code=404, detail="Provider not found")
-    from services.communication.provider_registry import sync_provider as registry_sync
-    if cursor:
-        result = registry_sync(provider_id, cursor=cursor)
-    else:
-        from services.communication.gmail_sync import sync_all
-        instance = get_provider(provider_id)
-        if not instance:
-            raise HTTPException(status_code=404, detail="Provider not found")
-        result = sync_all(instance)
+    from services.communication.inbox_sync_engine import inbox_sync_engine
+    result = await inbox_sync_engine.sync_provider_now(provider_id, cursor=cursor)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Provider not found")
     publish(session_token, WMEventType.SYNC_COMPLETED, {
         "provider_id": provider_id,
         "new_messages": result.new_messages if result else 0,
@@ -5080,15 +5353,15 @@ async def provider_sync(session_token: str, provider_id: str, request: Request, 
 
 @app.get("/api/web/session/{session_token}/providers/{provider_id}/status")
 async def provider_status(session_token: str, provider_id: str, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     if not _provider_record_owned_by(provider_id, owner_id):
         raise HTTPException(status_code=404, detail="Provider not found")
     provider = communication_store.get_provider(provider_id)
     if not provider:
         raise HTTPException(status_code=404, detail="Provider not found")
     instance = get_provider(provider_id)
-    health_val = instance.health().value if instance else provider.status.value
+    health_val = (await asyncio.to_thread(instance.health)).value if instance else provider.status.value
     cursor = communication_store.get_cursor(provider_id)
     return {
         "ok": True,
@@ -5105,7 +5378,7 @@ async def provider_status(session_token: str, provider_id: str, request: Request
 @app.get("/api/web/session/{session_token}/providers/{provider_id}/threads")
 async def provider_threads(session_token: str, provider_id: str, request: Request = None):
     """List all tracked thread mappings for a provider."""
-    owner_id = await _workspace_owner(request, session_token) if request is not None else ""
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token) if request is not None else ""
     if not _provider_record_owned_by(provider_id, owner_id):
         raise HTTPException(status_code=404, detail="Provider not found")
     store = communication_store
@@ -5122,7 +5395,7 @@ async def provider_threads(session_token: str, provider_id: str, request: Reques
 @app.get("/api/web/session/{session_token}/providers/{provider_id}/messages")
 async def provider_messages(session_token: str, provider_id: str, request: Request = None):
     """Get message count, mailbox info, and recent activity for a provider."""
-    owner_id = await _workspace_owner(request, session_token) if request is not None else ""
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token) if request is not None else ""
     if not _provider_record_owned_by(provider_id, owner_id):
         raise HTTPException(status_code=404, detail="Provider not found")
     count = communication_store.message_count()
@@ -5142,9 +5415,9 @@ async def provider_events_endpoint(session_token: str, request: Request, provide
     # SaaS-2.6: also surface the caller's durable, tenant-scoped provider events.
     durable = []
     try:
-        owner_id = await _workspace_owner(request, session_token)
+        owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
         from services.workspace_state import ensure_workspace
-        ws = await _resolved_workspace_id_or_default(request, owner_id)
+        ws = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
         if ws:
             from services.persistence.launch.communication_persistence import list_provider_events
             durable = await asyncio.to_thread(list_provider_events, ws, provider_id, 100)
@@ -5265,8 +5538,8 @@ class OutboundDeleteDraftRequest(BaseModel):
 
 @app.post("/api/web/session/{session_token}/outbound/drafts")
 async def outbound_create_draft(session_token: str, payload: OutboundCreateDraftRequest, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     if not _provider_owned_by(payload.provider_id, owner_id):
         raise HTTPException(status_code=404, detail="Provider not found")
     draft = OutboundDraftMessage(
@@ -5325,7 +5598,7 @@ async def outbound_create_draft(session_token: str, payload: OutboundCreateDraft
 
 @app.patch("/api/web/session/{session_token}/outbound/drafts/{draft_id}")
 async def outbound_update_draft(session_token: str, draft_id: str, payload: OutboundUpdateDraftRequest, request: Request):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     owner_id, workspace_id, _canonical, existing = await _require_canonical_outbound_draft(
         request, session_token, draft_id, provider_id=payload.provider_id,
     )
@@ -5364,7 +5637,7 @@ async def outbound_update_draft(session_token: str, draft_id: str, payload: Outb
 
 @app.delete("/api/web/session/{session_token}/outbound/drafts/{draft_id}")
 async def outbound_delete_draft(session_token: str, draft_id: str, provider_id: str = "", request: Request = None):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     if request is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     owner_id, workspace_id, _canonical, draft = await _require_canonical_outbound_draft(
@@ -5401,7 +5674,7 @@ def _test_recipient_override_enabled() -> bool:
 
 @app.post("/api/web/session/{session_token}/drafts/{draft_id}/send")
 async def send_draft(session_token: str, draft_id: str, request: Request, payload: SendDraftRequest = None):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     from services.outbound.draft_store import draft_store as outbound_draft_store
     payload = payload or SendDraftRequest()
     test_recipient = payload.test_recipient or ""
@@ -5445,17 +5718,21 @@ async def send_draft(session_token: str, draft_id: str, request: Request, payloa
                  recipient_email, test_recipient)
 
     log.info("[send_draft] Sending draft %s via provider %s", draft_id, real_provider_id)
-    result = outbound_executor.execute("send_reply", {
-        "provider_id": real_provider_id,
-        "draft_id": outbound_draft.id,
-        "conversation_id": outbound_draft.conversation_id,
-        "thread_id": outbound_draft.thread_id,
-        "workflow_id": outbound_draft.workflow_id,
-        "subject": outbound_draft.subject,
-        "body": outbound_draft.body,
-        "recipient": send_recipient,
-        "sender": {"email": outbound_draft.sender.email, "name": outbound_draft.sender.name},
-    })
+    result = await asyncio.to_thread(
+        outbound_executor.execute,
+        "send_reply",
+        {
+            "provider_id": real_provider_id,
+            "draft_id": outbound_draft.id,
+            "conversation_id": outbound_draft.conversation_id,
+            "thread_id": outbound_draft.thread_id,
+            "workflow_id": outbound_draft.workflow_id,
+            "subject": outbound_draft.subject,
+            "body": outbound_draft.body,
+            "recipient": send_recipient,
+            "sender": {"email": outbound_draft.sender.email, "name": outbound_draft.sender.name},
+        },
+    )
     if result.get("ok"):
         from services.workspace_state import persist_draft_update_awaited
         if not await persist_draft_update_awaited(
@@ -5530,7 +5807,7 @@ class ScheduleDraftRequest(BaseModel):
 
 @app.post("/api/web/session/{session_token}/drafts/{draft_id}/schedule")
 async def schedule_draft(session_token: str, draft_id: str, payload: ScheduleDraftRequest, request: Request):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     from services.outbound.draft_store import draft_store as outbound_draft_store
     from services.outbound.outbound_scheduler import outbound_scheduler
     from services.outbound.outbound_models import DraftStatus
@@ -5565,7 +5842,7 @@ async def schedule_draft(session_token: str, draft_id: str, payload: ScheduleDra
 
 @app.post("/api/web/session/{session_token}/drafts/{draft_id}/cancel-schedule")
 async def cancel_schedule_draft(session_token: str, draft_id: str, request: Request):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     from services.outbound.draft_store import draft_store as outbound_draft_store
     from services.outbound.outbound_scheduler import outbound_scheduler
     owner_id, ws_id, _canonical, outbound_draft = await _require_canonical_outbound_draft(
@@ -5608,7 +5885,7 @@ async def outbound_schedule(session_token: str, payload: OutboundScheduleRequest
 async def outbound_cancel_schedule(session_token: str, schedule_id: str, provider_id: str = "", request: Request = None):
     if request is None:
         raise HTTPException(status_code=401, detail="Authentication required")
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     from services.outbound.outbound_scheduler import outbound_scheduler
     from services.outbound.draft_store import draft_store as outbound_draft_store
     owner_id, ws_id, _canonical, draft = await _require_canonical_outbound_draft(
@@ -5626,8 +5903,8 @@ async def outbound_cancel_schedule(session_token: str, schedule_id: str, provide
 
 @app.get("/api/web/session/{session_token}/outbound/drafts")
 async def outbound_list_drafts(session_token: str, request: Request, provider_id: str = ""):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     if provider_id and not _provider_owned_by(provider_id, owner_id):
         raise HTTPException(status_code=404, detail="Provider not found")
     if provider_id:
@@ -5640,7 +5917,7 @@ async def outbound_list_drafts(session_token: str, request: Request, provider_id
 
 @app.get("/api/web/session/{session_token}/outbound/drafts/{draft_id}")
 async def outbound_get_draft(session_token: str, draft_id: str, request: Request):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     _owner_id, _ws_id, canonical, _draft = await _require_canonical_outbound_draft(
         request, session_token, draft_id,
     )
@@ -5651,7 +5928,7 @@ async def outbound_get_draft(session_token: str, draft_id: str, request: Request
 async def outbound_approve_draft(session_token: str, draft_id: str, auto: bool = False, request: Request = None):
     if request is None:
         raise HTTPException(status_code=401, detail="Authentication required")
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     owner_id, ws_id, _canonical, draft = await _require_canonical_outbound_draft(request, session_token, draft_id)
     result = outbound_draft_store.approve(draft_id, auto=auto)
     if not result:
@@ -5701,7 +5978,7 @@ async def outbound_approve_draft(session_token: str, draft_id: str, auto: bool =
 async def outbound_reject_draft(session_token: str, draft_id: str, request: Request = None):
     if request is None:
         raise HTTPException(status_code=401, detail="Authentication required")
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     owner_id, ws_id, _canonical, draft = await _require_canonical_outbound_draft(request, session_token, draft_id)
     result = outbound_draft_store.reject(draft_id)
     if not result:
@@ -5726,9 +6003,9 @@ class ApproveAllRequest(BaseModel):
 async def outbound_approve_all(session_token: str, payload: ApproveAllRequest, request: Request = None):
     if request is None:
         raise HTTPException(status_code=401, detail="Authentication required")
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
-    ws_id = await _resolved_workspace_id_or_default(request, owner_id)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     pending = [
         draft for draft in _workspace_drafts(owner_id, session_token, workspace_id=ws_id)
         if str(draft.get("status") or "") in ("draft", "pending_approval")
@@ -5778,9 +6055,9 @@ async def outbound_approve_all(session_token: str, payload: ApproveAllRequest, r
 
 @app.get("/api/web/session/{session_token}/outbound/history")
 async def outbound_history(session_token: str, request: Request, provider_id: str = ""):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
-    ws = await _resolved_workspace_id_or_default(request, owner_id)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    ws = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     if provider_id and not _provider_record_owned_by(provider_id, owner_id):
         raise HTTPException(status_code=404, detail="Provider not found")
     history = [
@@ -5819,8 +6096,8 @@ async def outbound_history(session_token: str, request: Request, provider_id: st
 
 @app.get("/api/web/session/{session_token}/outbound/events")
 async def outbound_events_endpoint(session_token: str, request: Request, provider_id: str = "", after: int = 0):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     if provider_id and not _provider_owned_by(provider_id, owner_id):
         raise HTTPException(status_code=404, detail="Provider not found")
     events = [
@@ -5847,214 +6124,13 @@ async def outbound_events_endpoint(session_token: str, request: Request, provide
 
 @app.get("/api/web/session/{session_token}/outbound/drafts/{draft_id}/versions")
 async def outbound_draft_versions(session_token: str, draft_id: str, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     draft = outbound_draft_store.get(draft_id)
     if not _outbound_draft_owned_by(draft, owner_id):
         raise HTTPException(status_code=404, detail="Draft not found")
     versions = outbound_draft_store.get_versions(draft_id)
     return {"ok": True, "versions": [v.model_dump() for v in versions]}
-
-
-# ── Knowledge Endpoints ──
-# User-owned Knowledge foundation (PR5). Ownership is always resolved from
-# the authenticated session via _workspace_owner → _async_workspace; the
-# client can never supply a workspace/user id.
-
-def _knowledge_service():
-    # Construct per request so repositories resolve the current connection
-    # manager. This matters during reconnects and keeps tests from retaining a
-    # client that was created before the authenticated request was handled.
-    from services.knowledge.service import KnowledgeService
-    return KnowledgeService()
-
-
-async def _knowledge_workspace(request: Request, session_token: str) -> tuple[str, str]:
-    """Resolve (owner_id, workspace_id) for the authenticated session.
-
-    The workspace is the membership-validated selected workspace (or the
-    single-workspace default). A genuine ambiguous multi-workspace request
-    (409) is re-raised so the client must select; when the user has no
-    accessible workspace via membership (e.g. legacy/fixture contexts), fall
-    back to the owner-based single-workspace default for compatibility.
-    """
-    owner_id = await _workspace_owner(request, session_token)
-    try:
-        workspace_id = await _selected_workspace_id(request, owner_id)
-    except HTTPException as exc:
-        if exc.status_code == 409:
-            raise
-        from services.workspace_state import _async_workspace
-        workspace_id = await _async_workspace(owner_id)
-    if not workspace_id:
-        raise HTTPException(status_code=503, detail="Workspace could not be resolved")
-    return owner_id, workspace_id
-
-
-@app.get("/api/web/session/{session_token}/knowledge")
-async def list_knowledge(
-    session_token: str,
-    request: Request,
-    category: str = "",
-    q: str = "",
-    limit: int = 200,
-):
-    session_token = _session_token_from_request(request)
-    from services.knowledge.service import KnowledgeValidationError
-    owner_id, workspace_id = await _knowledge_workspace(request, session_token)
-    try:
-        items = await _knowledge_service().list_items(
-            workspace_id, category=category or None, q=q or None, limit=limit)
-    except KnowledgeValidationError as error:
-        raise HTTPException(status_code=400, detail=str(error))
-    return {"ok": True, "items": items, "owner_id": owner_id}
-
-
-@app.post("/api/web/session/{session_token}/knowledge")
-async def create_knowledge_item(
-    session_token: str, payload: KnowledgeItemCreateRequest, request: Request,
-):
-    session_token = _session_token_from_request(request)
-    from services.knowledge.service import KnowledgeValidationError
-    owner_id, workspace_id = await _knowledge_workspace(request, session_token)
-    try:
-        item = await _knowledge_service().create_item(
-            owner_id=owner_id,
-            workspace_id=workspace_id,
-            category=payload.category,
-            title=payload.title,
-            summary=payload.summary,
-            content=payload.content,
-            tags=payload.tags,
-            source_type=payload.source_type,
-            source_id=payload.source_id,
-        )
-    except KnowledgeValidationError as error:
-        raise HTTPException(status_code=400, detail=str(error))
-    return {"ok": True, "item": item}
-
-
-@app.get("/api/web/session/{session_token}/knowledge/sources")
-async def list_knowledge_sources(
-    session_token: str,
-    request: Request,
-    q: str = "",
-    limit: int = 200,
-):
-    session_token = _session_token_from_request(request)
-    owner_id, workspace_id = await _knowledge_workspace(request, session_token)
-    sources = await _knowledge_service().list_sources(
-        workspace_id, q=q or None, limit=limit)
-    return {"ok": True, "sources": sources, "owner_id": owner_id}
-
-
-@app.post("/api/web/session/{session_token}/knowledge/sources")
-async def create_knowledge_source(
-    session_token: str, payload: KnowledgeSourceCreateRequest, request: Request,
-):
-    session_token = _session_token_from_request(request)
-    from services.knowledge.service import KnowledgeValidationError
-    owner_id, workspace_id = await _knowledge_workspace(request, session_token)
-    try:
-        source = await _knowledge_service().create_source(
-            owner_id=owner_id,
-            workspace_id=workspace_id,
-            title=payload.title,
-            source_type=payload.source_type,
-            content=payload.content,
-            reference=payload.reference,
-            metadata=payload.metadata,
-        )
-    except KnowledgeValidationError as error:
-        raise HTTPException(status_code=400, detail=str(error))
-    return {"ok": True, "source": source}
-
-
-@app.put("/api/web/session/{session_token}/knowledge/sources/{source_id}")
-async def update_knowledge_source(
-    session_token: str, source_id: str,
-    payload: KnowledgeSourceUpdateRequest, request: Request,
-):
-    session_token = _session_token_from_request(request)
-    from services.knowledge.service import KnowledgeValidationError
-    owner_id, workspace_id = await _knowledge_workspace(request, session_token)
-    try:
-        source = await _knowledge_service().update_source(
-            owner_id=owner_id,
-            workspace_id=workspace_id,
-            source_id=source_id,
-            title=payload.title,
-            source_type=payload.source_type,
-            content=payload.content,
-            reference=payload.reference,
-            metadata=payload.metadata,
-        )
-    except KnowledgeValidationError as error:
-        raise HTTPException(status_code=400, detail=str(error))
-    if source is None:
-        raise HTTPException(status_code=404, detail="Knowledge source not found")
-    return {"ok": True, "source": source}
-
-
-@app.delete("/api/web/session/{session_token}/knowledge/sources/{source_id}")
-async def archive_knowledge_source(
-    session_token: str, source_id: str, request: Request,
-):
-    session_token = _session_token_from_request(request)
-    owner_id, workspace_id = await _knowledge_workspace(request, session_token)
-    source = await _knowledge_service().archive_source(
-        owner_id=owner_id, workspace_id=workspace_id, source_id=source_id)
-    if source is None:
-        raise HTTPException(status_code=404, detail="Knowledge source not found")
-    return {"ok": True, "source": source}
-
-
-@app.get("/api/web/session/{session_token}/knowledge/{item_id}")
-async def get_knowledge_item(session_token: str, item_id: str, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id, workspace_id = await _knowledge_workspace(request, session_token)
-    item = await _knowledge_service().get_item(workspace_id, item_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail="Knowledge item not found")
-    return {"ok": True, "item": item}
-
-
-@app.put("/api/web/session/{session_token}/knowledge/{item_id}")
-async def update_knowledge_item(
-    session_token: str, item_id: str,
-    payload: KnowledgeItemUpdateRequest, request: Request,
-):
-    session_token = _session_token_from_request(request)
-    from services.knowledge.service import KnowledgeValidationError
-    owner_id, workspace_id = await _knowledge_workspace(request, session_token)
-    try:
-        item = await _knowledge_service().update_item(
-            owner_id=owner_id,
-            workspace_id=workspace_id,
-            item_id=item_id,
-            title=payload.title,
-            summary=payload.summary,
-            content=payload.content,
-            tags=payload.tags,
-            source_type=payload.source_type,
-            source_id=payload.source_id,
-        )
-    except KnowledgeValidationError as error:
-        raise HTTPException(status_code=400, detail=str(error))
-    if item is None:
-        raise HTTPException(status_code=404, detail="Knowledge item not found")
-    return {"ok": True, "item": item}
-
-
-@app.delete("/api/web/session/{session_token}/knowledge/{item_id}")
-async def archive_knowledge_item(session_token: str, item_id: str, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id, workspace_id = await _knowledge_workspace(request, session_token)
-    item = await _knowledge_service().archive_item(
-        owner_id=owner_id, workspace_id=workspace_id, item_id=item_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail="Knowledge item not found")
-    return {"ok": True, "item": item}
 
 
 # ── Strategic Intelligence Endpoints ──
@@ -6075,8 +6151,8 @@ async def list_strategic_updates(
     q: str = "",
     include_archived: bool = False,
 ):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     updates = await _strategic_service().list_updates(
         owner_id,
         update_type=update_type or None,
@@ -6093,15 +6169,15 @@ async def list_strategic_updates(
 
 @app.post("/api/web/session/{session_token}/strategic-updates/refresh")
 async def refresh_strategic_updates(session_token: str, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     return await _strategic_service().refresh(owner_id)
 
 
 @app.get("/api/web/session/{session_token}/strategic-updates/{update_id}/actions")
 async def list_strategic_actions(session_token: str, update_id: str, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     actions = await _strategic_action_service().list_actions(owner_id, update_id)
     return {"ok": True, "actions": actions}
 
@@ -6110,9 +6186,9 @@ async def list_strategic_actions(session_token: str, update_id: str, request: Re
 async def propose_strategic_action(
     session_token: str, update_id: str, request: Request, payload: dict = None,
 ):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     from services.strategic.actions import StrategicActionError
-    owner_id = await _workspace_owner(request, session_token)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     action_type = str((payload or {}).get("action_type") or "").strip()
     try:
         action = await _strategic_action_service().propose(owner_id, update_id, action_type)
@@ -6123,8 +6199,8 @@ async def propose_strategic_action(
 
 @app.get("/api/web/session/{session_token}/strategic-updates/{update_id}")
 async def get_strategic_update(session_token: str, update_id: str, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     update = await _strategic_service().get_update(owner_id, update_id)
     if update is None:
         raise HTTPException(status_code=404, detail="Strategic Update not found")
@@ -6151,15 +6227,15 @@ async def _action_route_call(method: str, owner_id: str, action_id: str, *args):
 
 @app.post("/api/web/session/{session_token}/strategic-actions/{action_id}/approve")
 async def approve_strategic_action(session_token: str, action_id: str, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     return {"ok": True, "action": await _action_route_call("approve", owner_id, action_id)}
 
 
 @app.post("/api/web/session/{session_token}/strategic-actions/{action_id}/dismiss")
 async def dismiss_strategic_action(session_token: str, action_id: str, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     return {"ok": True, "action": await _action_route_call("dismiss", owner_id, action_id)}
 
 
@@ -6167,23 +6243,23 @@ async def dismiss_strategic_action(session_token: str, action_id: str, request: 
 async def refine_strategic_action(
     session_token: str, action_id: str, request: Request, payload: dict = None,
 ):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     changes = (payload or {}).get("changes") if isinstance(payload, dict) else {}
     return {"ok": True, "action": await _action_route_call("refine", owner_id, action_id, changes or {})}
 
 
 @app.post("/api/web/session/{session_token}/strategic-actions/{action_id}/execute")
 async def execute_strategic_action(session_token: str, action_id: str, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     return {"ok": True, "action": await _action_route_call("execute", owner_id, action_id)}
 
 
 @app.delete("/api/web/session/{session_token}/strategic-updates/{update_id}")
 async def archive_strategic_update(session_token: str, update_id: str, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     update = await _strategic_service().archive_update(owner_id, update_id)
     if update is None:
         raise HTTPException(status_code=404, detail="Strategic Update not found")
@@ -6193,261 +6269,9 @@ async def archive_strategic_update(session_token: str, update_id: str, request: 
 # ── Campaign Endpoints ──
 
 
-async def _workspace_owner(request: Request, session_token: str) -> str:
-    """Resolve the durable workspace owner, never the temporary web token."""
-    owner_id, _ = await _workspace_owner_and_summary(request, session_token)
-    return owner_id
-
-
-def _session_token_from_request(request: Request) -> str:
-    """Return the web-session token from the Authorization header only.
-
-    PR10.8.3.1: session credentials are never accepted from URL paths, query
-    parameters, or fragments. The frontend sends ``Authorization: Bearer`` and
-    uses a fixed ``_`` placeholder in legacy URL paths.
-    """
-    if request is None:
-        return ""
-    headers = getattr(request, "headers", None)
-    if headers is None:
-        return ""
-    try:
-        authorization = headers.get("authorization", "")
-    except Exception:
-        return ""
-    if not isinstance(authorization, str):
-        authorization = str(authorization)
-    if not authorization:
-        return ""
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token.strip():
-        return ""
-    return token.strip()
-
-
 def _copilot_tool_failure_reason(tool_name: str) -> str:
     """Return a stable user-facing failure without leaking driver details."""
     return f"{tool_name} could not be completed. Please try again."
-
-
-_LEGACY_USER_BRIDGE_TTL_SECONDS = 60
-_legacy_user_bridge_verified: dict[str, float] = {}
-
-
-async def _ensure_authenticated_web_user_bridge(user_id: str) -> None:
-    """Provision the legacy job/workflow user row for an authenticated web user.
-
-    The Identity platform is authoritative for authentication and owns
-    ``identity_users``.  Some pre-existing durable workflow tables still use
-    ``users(id)`` foreign keys, so web-session creation must establish the
-    same-id bridge before exposing that identity to the web workflow surface.
-    This is intentionally outside Discovery: every authenticated web session
-    receives the invariant, while anonymous sessions retain their existing
-    isolated behaviour.
-    """
-    canonical_id = str(user_id or "").strip()
-    if not canonical_id:
-        raise HTTPException(status_code=401, detail="Authentication required")
-
-    # The auth middleware and the route body both resolve the same request's
-    # caller.  Without this short cache each protected route paid two
-    # identity-user reads plus two legacy-user reads, multiplying Supabase
-    # latency across pages that load several resources concurrently. The
-    # authenticated session remains the authority; this only memoizes the
-    # already-verified same-id bridge row for a bounded interval.
-    now = time.monotonic()
-    expires_at = _legacy_user_bridge_verified.get(canonical_id, 0.0)
-    if expires_at > now:
-        return
-    if len(_legacy_user_bridge_verified) > 2048:
-        _legacy_user_bridge_verified.clear()
-
-    display_name = ""
-    try:
-        from services.identity.api import get_auth_user_service
-        user_service = get_auth_user_service()
-        if user_service is not None:
-            identity_user = await user_service.get_user(canonical_id)
-            display_name = str(identity_user.display_name or "")
-    except Exception as error:  # noqa: BLE001 -- bridge can use a safe fallback name
-        log.warning(
-            "legacy_user_bridge_identity_lookup_failed user_id=%s error_type=%s",
-            canonical_id, type(error).__name__,
-        )
-
-    from services.supabase import ensure_legacy_user_bridge
-    row = await asyncio.to_thread(
-        ensure_legacy_user_bridge, canonical_id, display_name,
-    )
-    if row is None or str(row.get("id") or "") != canonical_id:
-        log.error("legacy_user_bridge_failed user_id=%s", canonical_id)
-        raise HTTPException(
-            status_code=503,
-            detail="Authenticated user provisioning is temporarily unavailable",
-        )
-    _legacy_user_bridge_verified[canonical_id] = now + _LEGACY_USER_BRIDGE_TTL_SECONDS
-
-
-async def _resolve_session_context(request: Request) -> tuple[str, str]:
-    """Return ``(owner_id, web_session_token)`` from the Authorization header.
-
-    Supports both the identity access token and the legacy web-session token.
-    Never trusts client-supplied path params or user_ids. Raises 401 when the
-    request is not authenticated (PR10.8.3.1 — fail closed, no URL fallback).
-
-    SaaS-1.6 authority rule: when the web-session token is bound to a
-    canonical identity session (web_session_bindings), the actor is the
-    canonical user and the request is authorized ONLY while that canonical
-    session remains valid (not revoked / not expired). A canonical-session
-    revocation (logout, password change, password reset) therefore
-    invalidates the bound web-session bearer.
-    """
-    token = _session_token_from_request(request)
-    if not token:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    try:
-        from services.identity.api import get_authenticated_user_id
-        user_id = await get_authenticated_user_id(request)
-    except HTTPException:
-        user_id = ""
-    if user_id:
-        resolved_id = str(user_id)
-        # Provisioning failures are deliberately NOT treated as an invalid
-        # token.  Returning the explicit 503 keeps the authenticated caller
-        # from silently falling through to an unrelated web-session identity.
-        await _ensure_authenticated_web_user_bridge(resolved_id)
-        return resolved_id, token
-    # PR-2B: this resolver previously fetched the FULL session summary
-    # (~9-10 Supabase queries) and used only ``user_id``. The minimal cached
-    # identity serves the same decision with 2-4 queries at most, and a 15s
-    # TTL absorbs the per-request repetition.
-    identity = await _cached_session_identity(token)
-    if identity and identity.get("user_id"):
-        binding = await _web_session_binding(token)
-        if binding is not None:
-            # The web-session is bound to a canonical session: require that
-            # session to be valid before authorizing (sliding activity).
-            from services.identity.api import _get_service
-            try:
-                await _get_service()._session_svc.touch_session(binding.canonical_session_id)
-            except Exception as exc:  # noqa: BLE001
-                raise HTTPException(
-                    status_code=401, detail="Invalid or expired session",
-                ) from exc
-            await _ensure_authenticated_web_user_bridge(binding.canonical_user_id)
-            return binding.canonical_user_id, token
-        resolved_id = str(identity["user_id"])
-        await _ensure_authenticated_web_user_bridge(resolved_id)
-        return resolved_id, token
-    raise HTTPException(status_code=401, detail="Invalid or expired session")
-
-
-_BINDING_TTL_SECONDS = 10
-
-
-async def _web_session_binding(token: str):
-    """Resolve the canonical web-session binding for a bearer token.
-
-    PR-3A: cached in Redis (shared across workers) for 10s, including
-    explicit negatives. Authority is NOT the cache: for bound sessions the
-    resolver still calls ``touch_session`` on EVERY request, which fails
-    closed (401) when the canonical session is revoked/expired — so
-    revocation enforcement stays immediate regardless of cached contents.
-    The cache only removes a repeated binding SELECT per request.
-    """
-    import json as _json
-    from services import redis_client
-    from services.session_cache import _token_hash
-
-    key = redis_client.k_session_binding(_token_hash(token))
-    local = getattr(_web_session_binding, "_local", None)
-    if local is None:
-        local = _web_session_binding._local = {}
-
-    now = time.monotonic()
-    entry = local.get(key)
-    if entry is not None:
-        expires_at, value = entry
-        if expires_at > now:
-            return value[1] if value[0] else None
-        local.pop(key, None)
-
-    client = await redis_client.get_client()
-    if client is not None:
-        try:
-            raw = await asyncio.wait_for(client.get(key), redis_client.OPERATION_TIMEOUT)
-            if raw is not None:
-                data = _json.loads(raw)
-                found = data.get("b") if isinstance(data, dict) else None
-                local[key] = (now + _BINDING_TTL_SECONDS, (1, found))
-                return found
-        except Exception as error:  # noqa: BLE001 — degraded mode only
-            log.debug("binding_cache_read_failed error_type=%s", type(error).__name__)
-            client = None
-
-    from services.web_session_binding import find_binding
-    binding = await find_binding(token)
-
-    if client is not None:
-        try:
-            payload = {"b": binding} if binding is not None else {}
-            await asyncio.wait_for(
-                client.set(key, _json.dumps(payload, separators=(",", ":")), ex=_BINDING_TTL_SECONDS),
-                redis_client.OPERATION_TIMEOUT,
-            )
-        except Exception as error:  # noqa: BLE001
-            log.debug("binding_cache_write_failed error_type=%s", type(error).__name__)
-    local[key] = (
-        now + _BINDING_TTL_SECONDS,
-        (0 if binding is None else 1, binding),
-    )
-    return binding
-
-
-async def _cached_session_identity(token: str) -> dict | None:
-    """PR-2B: minimal per-token identity with a 15s TTL.
-
-    Returns {user_id, display_name, gmail_connected} or None. Cache holds no
-    credentials; invalidated on provider connect/disconnect and session
-    revocation. Redis replaces the backing store pre-launch without caller
-    changes (see services/session_cache.py).
-    """
-    from services.session_cache import session_cache, SessionIdentity
-
-    # PR-3A: Redis-backed (shared across workers); local mirror only serves
-    # while Redis is unavailable. None → caller falls back to Supabase.
-    cached = await session_cache.get_identity(token)
-    if cached is not None:
-        return cached
-    try:
-        identity = await asyncio.to_thread(engine.get_web_session_identity, token)
-    except Exception as error:
-        log.warning("session_identity_lookup_failed error_type=%s", type(error).__name__)
-        return None
-    if identity and identity.get("user_id"):
-        await session_cache.set_identity(token, SessionIdentity(
-            user_id=str(identity["user_id"]),
-            display_name=str(identity.get("display_name") or ""),
-            gmail_connected=bool(identity.get("gmail_connected")),
-        ))
-    return identity
-
-
-async def _workspace_owner_and_summary(request: Request, session_token: str = "") -> tuple[str, dict | None]:
-    """Resolve the durable workspace owner and the web-session summary.
-
-    PR10.8.3.1: authentication comes from the Authorization header only; the
-    legacy ``{session_token}`` URL path parameter is ignored and never used as
-    a credential.
-
-    PR-2B: every current caller reads only ``summary["user_id"]`` — the full
-    ~9-query summary fetch has been replaced with the cached minimal
-    identity. The returned "summary" keeps its historical shape
-    (``{"user_id": ...}``) so callers are untouched.
-    """
-    owner_id, token = await _resolve_session_context(request)
-    identity = await _cached_session_identity(token)
-    return owner_id, ({"user_id": identity["user_id"]} if identity else None)
 
 
 def _workspace_campaigns(user_id: str, session_token: str = "", workspace_id: str = "",
@@ -6462,86 +6286,9 @@ def _workspace_drafts(user_id: str, session_token: str = "", workspace_id: str =
     return load_drafts_only(user_id, workspace_id=workspace_id)
 
 
-def _workspace_id_from_request(request: Request) -> str:
-    """The explicitly selected workspace id (header), if any.
-
-    This is a non-authoritative input: it is independently validated against
-    the authenticated user's ACTIVE memberships before use.
-    """
-    if request is None:
-        return ""
-    try:
-        value = request.headers.get("x-workspace-id") if hasattr(request, "headers") else ""
-    except Exception:  # noqa: BLE001
-        return ""
-    if not isinstance(value, str):
-        return ""
-    return value.strip()
-
-
-async def _resolve_selected_workspace_context(request: Request, owner_id: str):
-    """Resolve + validate the selected workspace context for the caller.
-
-    Raises a safe HTTP error when the requested workspace is inaccessible, the
-    user has no accessible workspace, or multiple accessible workspaces exist
-    without an explicit selection. Never trusts the client id as authority.
-    """
-    from services.workspace_context import (
-        AmbiguousWorkspaceError,
-        NoWorkspaceAvailable,
-        WorkspaceAccessDenied,
-        resolve_workspace_context,
-    )
-    requested = _workspace_id_from_request(request)
-    try:
-        ctx = await asyncio.to_thread(
-            resolve_workspace_context, None, owner_id, requested,
-        )
-    except WorkspaceAccessDenied:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-    except NoWorkspaceAvailable:
-        raise HTTPException(status_code=404, detail="No accessible workspace")
-    except AmbiguousWorkspaceError:
-        raise HTTPException(
-            status_code=409,
-            detail="Multiple workspaces available; select one via the X-Workspace-Id header",
-        )
-    return ctx
-
-
-async def _selected_workspace_id(request: Request, owner_id: str) -> str:
-    """The validated selected workspace id for the caller (raises on error)."""
-    ctx = await _resolve_selected_workspace_context(request, owner_id)
-    return ctx.workspace_id
-
-
-async def _resolved_workspace_id_or_default(request: Request, owner_id: str) -> str:
-    """Selected workspace, falling back to the owner-based single-workspace
-    default when membership resolution finds no accessible workspace (legacy /
-    fixture accounts without a durable membership).
-
-    A genuine ambiguous multi-workspace request (409) is re-raised so the
-    client must select; never silently picks a workspace when multiple are
-    accessible.
-    """
-    try:
-        return await _selected_workspace_id(request, owner_id)
-    except HTTPException as exc:
-        if exc.status_code == 409:
-            raise
-        # Owner-based single-workspace default (legacy / fixture accounts
-        # without a durable membership). Defensive: an invalid/non-uuid owner
-        # id in a test/legacy context must not break the request.
-        try:
-            from services.workspace_state import _async_workspace
-            return await _async_workspace(owner_id) or ""
-        except Exception:  # noqa: BLE001
-            return ""
-
-
 @app.post("/api/web/session/{session_token}/campaigns")
 async def save_campaign(session_token: str, payload: SaveCampaignRequest, request: Request):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     request_id = uuid.uuid4().hex[:12]
     started_at = time.perf_counter()
 
@@ -6555,9 +6302,9 @@ async def save_campaign(session_token: str, payload: SaveCampaignRequest, reques
         )
 
     _campaign_timing("received")
-    owner_id = await _workspace_owner(request, session_token)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     _campaign_timing("workspace_owner_resolved")
-    ws_id = await _resolved_workspace_id_or_default(request, owner_id)
+    ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     _campaign_timing("workspace_resolved")
     if payload.discovery_id:
         from services.discovery import get_discovery
@@ -6680,12 +6427,12 @@ async def save_campaign(session_token: str, payload: SaveCampaignRequest, reques
 
 @app.get("/api/web/session/{session_token}/campaigns")
 async def list_campaigns(session_token: str, request: Request):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     import time as _t
     _t0 = _t.perf_counter()
     from services.workspace_snapshot import enrich_campaigns
-    owner_id = await _workspace_owner(request, session_token)
-    ws_id = await _resolved_workspace_id_or_default(request, owner_id)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     # PR-3B: (a) campaigns load COUNTS-ONLY — the list page never renders
     # nested leads/strategies, so the previous full graph fan-out
     # (ws_leads/leads/companies/strategies per id) was pure overfetch;
@@ -6703,10 +6450,10 @@ async def list_campaigns(session_token: str, request: Request):
 
 @app.get("/api/web/session/{session_token}/campaigns/summary")
 async def campaign_summary(session_token: str, request: Request):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     from services.workspace_snapshot import enrich_campaigns
-    owner_id = await _workspace_owner(request, session_token)
-    ws_id = await _resolved_workspace_id_or_default(request, owner_id)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=ws_id)
     drafts = _workspace_drafts(owner_id, session_token, workspace_id=ws_id)
     enriched = enrich_campaigns(campaigns, drafts)
@@ -6723,10 +6470,10 @@ async def campaign_summary(session_token: str, request: Request):
 
 @app.get("/api/web/session/{session_token}/campaigns/{campaign_id}")
 async def get_campaign(session_token: str, campaign_id: str, request: Request):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     from services.workspace_snapshot import enrich_campaigns
-    owner_id = await _workspace_owner(request, session_token)
-    ws_id = await _resolved_workspace_id_or_default(request, owner_id)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=ws_id)
     drafts = _workspace_drafts(owner_id, session_token, workspace_id=ws_id)
     enriched = enrich_campaigns(campaigns, drafts)
@@ -6739,9 +6486,9 @@ async def get_campaign(session_token: str, campaign_id: str, request: Request):
 
 @app.get("/api/web/session/{session_token}/campaigns/{campaign_id}/launch-progress")
 async def campaign_launch_progress(session_token: str, campaign_id: str, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
-    ws_id = await _resolved_workspace_id_or_default(request, owner_id)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=ws_id)
     target = next((c for c in campaigns if c.get("id") == campaign_id), None)
     if not target:
@@ -6756,15 +6503,15 @@ async def campaign_launch_progress(session_token: str, campaign_id: str, request
 
 @app.get("/api/web/session/{session_token}/campaigns/{campaign_id}/timeline")
 async def campaign_timeline(session_token: str, campaign_id: str, request: Request):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     """Read-only campaign event timeline derived from World Model events.
 
     Aggregates events carrying this campaign_id (draft generated/updated/
     approved/sent/failed, campaign status changes) from the in-memory WM
     log, ordered by sequence. No new persistence — read-only projection.
     """
-    owner_id = await _workspace_owner(request, session_token)
-    workspace_id = await _resolved_workspace_id_or_default(request, owner_id)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=workspace_id)
     target = next((c for c in campaigns if c.get("id") == campaign_id), None)
     if not target:
@@ -6787,9 +6534,9 @@ async def campaign_timeline(session_token: str, campaign_id: str, request: Reque
 
 @app.put("/api/web/session/{session_token}/campaigns/{campaign_id}")
 async def update_campaign(session_token: str, campaign_id: str, payload: UpdateCampaignRequest, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
-    ws_id = await _resolved_workspace_id_or_default(request, owner_id)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=ws_id)
     target = next((c for c in campaigns if c.get("id") == campaign_id), None)
     if not target:
@@ -7052,7 +6799,7 @@ async def _run_strategy_job(
 
 @app.post("/api/web/session/{session_token}/campaigns/{campaign_id}/generate-strategy", status_code=202)
 async def generate_campaign_strategy(session_token: str, campaign_id: str, payload: RegenerateStrategyRequest | None, request: Request):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     """Generate (or regenerate) and persist the strategy artifact for a campaign.
 
     Returns 202 immediately and runs generation as a background job; poll
@@ -7069,8 +6816,8 @@ async def generate_campaign_strategy(session_token: str, campaign_id: str, paylo
     Lifecycle status is untouched — workflow progression is derived
     (current_step) from persisted state.
     """
-    owner_id = await _workspace_owner(request, session_token)
-    workspace_id = await _resolved_workspace_id_or_default(request, owner_id)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=workspace_id)
     target = next((c for c in campaigns if c.get("id") == campaign_id), None)
     if not target:
@@ -7283,9 +7030,9 @@ async def strategy_job_status(session_token: str, campaign_id: str, job_id: str,
     ``settings.strategy_job`` record is reconciled lazily — a stale
     queued/running entry becomes an explicit FAILED with an actionable
     message instead of leaving the client polling forever."""
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
-    workspace_id = await _resolved_workspace_id_or_default(request, owner_id)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     job = STRATEGY_JOBS.get(job_id)
     if not job or job.get("campaign_id") != campaign_id or job.get("workspace_id") != workspace_id:
         meta = await _load_strategy_job_meta(owner_id, campaign_id, workspace_id=workspace_id)
@@ -7323,9 +7070,9 @@ async def strategy_job_status(session_token: str, campaign_id: str, job_id: str,
 
 @app.post("/api/web/session/{session_token}/campaigns/{campaign_id}/leads")
 async def add_campaign_lead(session_token: str, campaign_id: str, payload: AddCampaignLeadRequest, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
-    ws_id = await _resolved_workspace_id_or_default(request, owner_id)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=ws_id)
     target = next((c for c in campaigns if c.get("id") == campaign_id), None)
     if not target:
@@ -7381,9 +7128,9 @@ async def add_campaign_lead(session_token: str, campaign_id: str, payload: AddCa
 
 @app.post("/api/web/session/{session_token}/leads/decision")
 async def decide_workspace_lead(session_token: str, payload: LeadDecisionRequest, request: Request):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     """Persist Discovery approval/rejection in the authenticated workspace."""
-    owner_id = await _workspace_owner(request, session_token)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     lead = dict(payload.lead)
     lead_id = str(lead.get("id") or lead.get("linkedin_url") or lead.get("email") or "")
     if not lead_id:
@@ -7459,17 +7206,21 @@ async def _dispatch_campaign_sends(session_token: str, campaign: dict, owner_id:
                 await _update_campaign_launch_progress(
                     owner_id, session_token, campaign_id, sent_count, failed_count, len(approved))
                 continue
-            r = outbound_executor.execute("send_reply", {
-                "provider_id": real_provider_id,
-                "draft_id": draft.id,
-                "conversation_id": draft.conversation_id,
-                "thread_id": draft.thread_id,
-                "workflow_id": draft.workflow_id,
-                "subject": draft.subject,
-                "body": draft.body,
-                "recipient": {"email": draft.recipient.email, "name": draft.recipient.name},
-                "sender": {"email": draft.sender.email, "name": draft.sender.name},
-            })
+            r = await asyncio.to_thread(
+                outbound_executor.execute,
+                "send_reply",
+                {
+                    "provider_id": real_provider_id,
+                    "draft_id": draft.id,
+                    "conversation_id": draft.conversation_id,
+                    "thread_id": draft.thread_id,
+                    "workflow_id": draft.workflow_id,
+                    "subject": draft.subject,
+                    "body": draft.body,
+                    "recipient": {"email": draft.recipient.email, "name": draft.recipient.name},
+                    "sender": {"email": draft.sender.email, "name": draft.sender.name},
+                },
+            )
             if r.get("ok"):
                 from services.workspace_state import persist_draft_update_awaited
                 if not await persist_draft_update_awaited(
@@ -7577,13 +7328,13 @@ async def _update_campaign_launch_progress(owner_id: str, session_token: str, ca
 
 @app.delete("/api/web/session/{session_token}/campaigns/{campaign_id}")
 async def delete_campaign(session_token: str, campaign_id: str, request: Request):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     """Soft-delete a campaign: status='deleted' + deleted_at.
 
     The row is kept for audit/restore but hidden from all normal reads.
     """
-    owner_id = await _workspace_owner(request, session_token)
-    ws_id = await _resolved_workspace_id_or_default(request, owner_id)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     # A delete only needs to authorize one canonical campaign. Loading the
     # complete workspace graph here (campaigns, links, leads, companies and
     # strategies) made this otherwise small mutation hit the client timeout.
@@ -7613,14 +7364,14 @@ async def delete_campaign(session_token: str, campaign_id: str, request: Request
 
 @app.post("/api/web/session/{session_token}/campaigns/{campaign_id}/duplicate")
 async def duplicate_campaign(session_token: str, campaign_id: str, request: Request):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     """Deep-copy a campaign: campaign row + current strategy + lead links.
 
     Drafts, inbox threads, sent mail, analytics and runtime state are never
     duplicated. The copy starts fresh in planning so the pipeline can rerun.
     """
-    owner_id = await _workspace_owner(request, session_token)
-    ws_id = await _resolved_workspace_id_or_default(request, owner_id)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     from services.workspace_state import duplicate_campaign as _duplicate_campaign
     copy = await _duplicate_campaign(owner_id, campaign_id, workspace_id=ws_id)
     if copy is None:
@@ -7635,10 +7386,10 @@ async def duplicate_campaign(session_token: str, campaign_id: str, request: Requ
 
 @app.post("/api/web/session/{session_token}/campaigns/{campaign_id}/attach-discovery")
 async def attach_discovery_to_campaign(session_token: str, campaign_id: str, payload: AttachDiscoveryRequest, request: Request):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     """Attach every lead surfaced by an existing Discovery to the campaign."""
-    owner_id = await _workspace_owner(request, session_token)
-    workspace_id = await _resolved_workspace_id_or_default(request, owner_id)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=workspace_id)
     target = next((c for c in campaigns if c.get("id") == campaign_id), None)
     if not target:
@@ -7713,9 +7464,9 @@ async def attach_discovery_to_campaign(session_token: str, campaign_id: str, pay
 
 @app.get("/api/web/session/{session_token}/campaigns/{campaign_id}/drafts")
 async def list_campaign_drafts(session_token: str, campaign_id: str, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
-    workspace_id = await _resolved_workspace_id_or_default(request, owner_id)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     all_drafts = _workspace_drafts(owner_id, session_token, workspace_id=workspace_id)
     filtered = [d for d in all_drafts if d.get("campaign_id") == campaign_id]
     return {"ok": True, "drafts": filtered}
@@ -7723,9 +7474,9 @@ async def list_campaign_drafts(session_token: str, campaign_id: str, request: Re
 
 @app.post("/api/web/session/{session_token}/campaigns/{campaign_id}/generate-drafts", status_code=202)
 async def generate_campaign_drafts(session_token: str, campaign_id: str, request: Request):
-    session_token = _session_token_from_request(request)
-    owner_id = await _workspace_owner(request, session_token)
-    workspace_id = await _resolved_workspace_id_or_default(request, owner_id)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     from services.workspace_state import load_campaign_state
     target = await asyncio.to_thread(load_campaign_state, owner_id, campaign_id, workspace_id=workspace_id)
     if not target:
@@ -7786,7 +7537,7 @@ async def generate_campaign_drafts(session_token: str, campaign_id: str, request
 
 @app.get("/api/web/session/{session_token}/campaigns/{campaign_id}/generation-status")
 async def campaign_generation_status(session_token: str, campaign_id: str, request: Request):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     active_jobs = [
         job for job in batch_jobs.values()
         if job.get("campaign_id") == campaign_id and job.get("status") == "processing"
@@ -7802,8 +7553,8 @@ async def campaign_generation_status(session_token: str, campaign_id: str, reque
             "batch_id": latest.get("batch_id"),
         }
 
-    owner_id = await _workspace_owner(request, session_token)
-    workspace_id = await _resolved_workspace_id_or_default(request, owner_id)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=workspace_id)
     target = next((c for c in campaigns if c.get("id") == campaign_id), None)
     if not target:
@@ -7895,196 +7646,9 @@ async def _launch_initial_research(
 set_onboarding_completion_handler(_launch_initial_research)
 
 
-def _mc_phase(name: str, t: list[float]) -> None:
-    now = time.monotonic()
-    print(f"[MC-DIAG] {name}: {(now - t[0]) * 1000:.0f}ms", flush=True)
-    t[0] = now
-
-
-@app.get("/api/web/session/{session_token}/mission-control")
-async def mission_control_summary(session_token: str, request: Request, onboarding_user_id: str = ""):
-    session_token = _session_token_from_request(request)
-    _mc_t = [time.monotonic()]
-    _t_start = _mc_t[0]
-    owner_id, summary = await _workspace_owner_and_summary(request, session_token)
-    _mc_phase("auth/owner", _mc_t)
-    from services.mission_control.payload import compute_shared_payload
-    payload = await compute_shared_payload(
-        owner_id, session_token, summary.get("user_id") if summary else None,
-        include_narrative=False,
-    )
-    campaigns = payload["campaigns"]
-    drafts = payload["drafts"]
-    snapshot = payload["snapshot"]
-    analysis = payload["analysis"]
-    recommendations = payload["recommendations"]
-    brief = payload["brief"]
-    _mc_phase("shared payload", _mc_t)
-    now = datetime.now(timezone.utc)
-
-    total_leads = sum(c.get("lead_count", 0) or 0 for c in campaigns)
-
-    db_user_id = summary.get("user_id") if summary else None
-    _mc_phase("session summary", _mc_t)
-
-    # ── Phase 4: compute delta from World Model ──
-    wm_store = get_wm_store()
-    last_seq = wm_store.get_last_sequence(session_token)
-    delta = payload["delta"]
-    _mc_phase("wm delta", _mc_t)
-    log.info(
-        f"[phase4] delta: first_visit={delta.first_visit}, "
-        f"events={delta.event_count}, range={delta.event_range}, "
-        f"new_campaigns={len(delta.new_campaigns)}, "
-        f"changed_campaigns={len(delta.changed_campaigns)}, "
-        f"new_drafts={len(delta.new_drafts)}, "
-        f"new_leads={len(delta.new_leads)}"
-    )
-
-    snapshot = payload["snapshot"]
-
-    # Embed delta into snapshot for Executive Brief (no interface change)
-    _embed_delta_into_snapshot(snapshot, delta)
-
-    _mc_phase("snapshot+analysis", _mc_t)
-    _mc_phase("recommendations", _mc_t)
-    _mc_phase("brief", _mc_t)
-
-    # Record acknowledgement after generating the brief
-    ack_ts, ack_seq = wm_store.record_acknowledgement(session_token)
-    log.info(f"[phase4] acknowledgement recorded at seq={ack_seq}")
-    _mc_phase("ack", _mc_t)
-
-    # Phase 3: use snapshot-derived values (which come from World Model when available)
-    campaign_list = snapshot.get("campaigns", [])
-    draft_counts = snapshot.get("drafts", {"total": 0, "pending": 0, "approved": 0})
-    pending_drafts = draft_counts.get("pending", 0)
-    approved_drafts = draft_counts.get("approved", 0)
-    total_drafts = draft_counts.get("total", 0)
-    snapshot_total_leads = snapshot.get("total_leads", total_leads)
-    reply_rate_heuristic = round((approved_drafts / total_drafts * 100) if total_drafts else 0)
-
-    # PR-3E: wizard/jobs/timeline reads are mutually independent — run them
-    # concurrently instead of sequentially on the cache-miss path.
-    async def _load_current_jobs():
-        try:
-            return job_manager.list_active_jobs(db_user_id) if db_user_id else []
-        except Exception:
-            return []
-
-    async def _load_initial_research():
-        if not db_user_id:
-            return None, None
-        try:
-            wizard = await _onboarding_svc.get_wizard_data(db_user_id)
-            job_id = str(wizard.get("initial_research_job_id") or "")
-            if not job_id:
-                recent_searches = [
-                    job for job in job_manager.list_recent_jobs(db_user_id)
-                    if job.get("type") == "search"
-                ]
-                if recent_searches:
-                    job_id = str(recent_searches[0].get("id") or "")
-            if not job_id:
-                return None, None
-            job = job_manager.get_job(job_id)
-            count = None
-            if job and job.get("status") == "completed":
-                result = job_manager.get_job_results(job_id)
-                if result and result.get("ok"):
-                    count = len(result.get("leads") or [])
-            return job, count
-        except Exception:
-            return None, None
-
-    current_jobs, (initial_research, initial_research_result_count), grouped_activity = await asyncio.gather(
-        _load_current_jobs(),
-        _load_initial_research(),
-        asyncio.to_thread(get_grouped_events, session_token, 10),
-    )
-    _mc_phase("wizard+jobs+timeline", _mc_t)
-
-    attention_items = analysis.get("attention_items", [])[:4]
-    needs_attention = [
-        {
-            "type": a.get("action", "").lower().replace(" ", "_"),
-            "campaign_id": a.get("campaign_id"),
-            "campaign_name": a.get("campaign_name"),
-            "label": a.get("title", ""),
-            "action": a.get("action", "review"),
-        }
-        for a in attention_items
-    ]
-
-    phases_ms = [round((_mc_t[i + 1] - _mc_t[i]) * 1000) for i in range(len(_mc_t) - 1)]
-    log.info("[perf] route=/mission-control owner=%s total_ms=%.0f phases_ms=%s",
-             owner_id[:8], (time.monotonic() - _t_start) * 1000, phases_ms)
-
-    return {
-        "ok": True,
-        "campaigns": campaign_list[:4],
-        "draft_counts": draft_counts,
-        "needs_attention": needs_attention,
-        "live_activity": grouped_activity,
-        "campaign_count": len(campaign_list),
-        "active_jobs": current_jobs,
-        "initial_research": initial_research,
-        "initial_research_result_count": initial_research_result_count,
-        "recommendations": recommendations[:3],
-        "kpis": {
-            "estimated_reply_rate": reply_rate_heuristic,
-            "pending_reviews": pending_drafts,
-            "campaigns_ready": analysis.get("workspace_health", {}).get("campaigns_ready", 0),
-        },
-        "total_leads": snapshot_total_leads,
-        "brief": brief,
-        "workspace_memory": snapshot.get("memory", {}),
-        "delta": snapshot.get("_delta", {}),
-        "workspace_analysis": {
-            "current_focus": analysis.get("current_focus"),
-            "recommended_next_action": analysis.get("recommended_next_action"),
-            "campaign_priorities": analysis.get("campaign_priorities", [])[:8],
-            "workspace_health": analysis.get("workspace_health"),
-            "cross_campaign_insights": analysis.get("cross_campaign_insights", []),
-            "workflow_continuation": analysis.get("workflow_continuation"),
-        },
-    }
-
-
-@app.get("/api/web/session/{session_token}/briefing")
-async def briefing_endpoint(session_token: str, request: Request, onboarding_user_id: str = ""):
-    session_token = _session_token_from_request(request)
-    from services.mission_control.api import handle_get_briefing
-
-    _mc_t = [time.monotonic()]
-    owner_id, summary = await _workspace_owner_and_summary(request, session_token)
-    _mc_phase("auth/owner", _mc_t)
-    from services.mission_control.payload import compute_shared_payload
-    payload = await compute_shared_payload(
-        owner_id, session_token, summary.get("user_id") if summary else None,
-        user_timezone=request.headers.get("x-timezone"),
-    )
-    _mc_phase("shared payload", _mc_t)
-
-    db_user_id = summary.get("user_id") if summary else None
-    _mc_phase("session summary", _mc_t)
-
-    result = await handle_get_briefing(
-        session_token=session_token,
-        campaigns=payload["campaigns"],
-        drafts=payload["drafts"],
-        total_leads=payload["total_leads"],
-        db_user_id=db_user_id,
-        prebuilt=payload,
-    )
-    _mc_phase("handler total", _mc_t)
-    print(f"[MC-DIAG] briefing_endpoint TOTAL: {(time.monotonic() - _mc_t[0]) * 1000:.0f}ms", flush=True)
-    return result
-
-
 @app.get("/api/web/session/{session_token}/export-csv")
 async def export_csv(session_token: str, request: Request = None):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     leads: list[dict] = []
     for d in draft_store.get(session_token, []):
         lead = d.get("lead")
@@ -8124,7 +7688,7 @@ async def export_csv(session_token: str, request: Request = None):
 
 @app.post("/api/web/session/{session_token}/select-lead")
 async def select_lead_endpoint(session_token: str, payload: SelectLeadRequest, request: Request = None):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     from services.supabase import get_pending_leads, get_user
 
     user = get_web_session_internal(session_token)
@@ -8160,7 +7724,7 @@ class PreviewLeadRequest(BaseModel):
 
 @app.post("/api/web/session/{session_token}/preview-lead")
 async def preview_lead_endpoint(session_token: str, payload: PreviewLeadRequest, request: Request = None):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     user = get_web_session_internal(session_token)
     if user is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -8200,9 +7764,9 @@ def log_conversation_internal(user_id: str, role: str, text: str) -> None:
 
 @app.get("/api/web/session/{session_token}/gmail")
 async def get_web_gmail_status(session_token: str, request: Request = None):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     # PR-2B: only user_id + gmail_connected are used — cached identity.
-    summary = await _cached_session_identity(session_token)
+    summary = await identity_dependencies.cached_web_session_identity(session_token)
     if summary is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -8236,8 +7800,9 @@ async def google_callback(code: str, state: str):
     transport_id = str(context.get("transport_id", "") or "")
 
     try:
-        tokens = exchange_code_for_tokens(code)
-        saved_user = save_google_tokens(
+        tokens = await asyncio.to_thread(exchange_code_for_tokens, code)
+        saved_user = await asyncio.to_thread(
+            save_google_tokens,
             user_id,
             email=tokens.get("email", ""),
             telegram_chat_id=int(transport_id) if channel == "telegram" else None,
@@ -8256,7 +7821,8 @@ async def google_callback(code: str, state: str):
         }, actor="user")
 
         if channel == "telegram":
-            send_message(
+            await asyncio.to_thread(
+                send_message,
                 chat_id=int(transport_id),
                 text="Gmail connected successfully. You can send emails now.",
             )
@@ -8285,17 +7851,6 @@ async def google_callback(code: str, state: str):
 
 class StartSearchRequest(BaseModel):
     query: str
-
-
-async def _resolve_web_user_id(request: Request) -> tuple[str, str]:
-    """Resolve (user_id, session_token) for web job/discovery endpoints.
-
-    PR10.8.3.3: the user is derived ONLY from ``Authorization: Bearer``
-    (identity or web-session token). The legacy ``x-session-token`` header has
-    been removed — it is no longer a supported authentication channel. A
-    client-supplied user_id query parameter is never trusted.
-    """
-    return await _resolve_session_context(request)
 
 
 async def _create_search_run(
@@ -8437,10 +7992,10 @@ async def _create_search_run(
 
 @app.post("/api/jobs/search")
 async def start_search(payload: StartSearchRequest, request: Request):
-    user_id, session_token = await _resolve_web_user_id(request)
+    user_id, session_token = await identity_dependencies.resolve_web_session(request)
     if not user_id:
         raise HTTPException(status_code=401, detail="Valid session required")
-    workspace_id = await _resolved_workspace_id_or_default(request, user_id)
+    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, user_id)
     return await _create_search_run(
         user_id, payload.query, session_token, workspace_id=workspace_id,
     )
@@ -8460,11 +8015,11 @@ async def create_discovery_endpoint(payload: CreateDiscoveryRequest, request: Re
     existing one. Returns the discovery + job ids so clients can navigate
     straight to the new entity.
     """
-    user_id, session_token = await _resolve_web_user_id(request)
+    user_id, session_token = await identity_dependencies.resolve_web_session(request)
     if not user_id:
         raise HTTPException(status_code=401, detail="Valid session required")
     log.info("[kickoff] POST /api/discoveries: user=%s query=%r", user_id, payload.query)
-    workspace_id = await _resolved_workspace_id_or_default(request, user_id)
+    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, user_id)
     result = await _create_search_run(
         user_id, payload.query, session_token, workspace_id=workspace_id,
     )
@@ -8477,13 +8032,13 @@ async def create_discovery_endpoint(payload: CreateDiscoveryRequest, request: Re
 async def list_discoveries_endpoint(request: Request):
     """Recent discoveries for the workspace, newest first."""
     from services.discovery import list_discoveries
-    user_id, _ = await _resolve_web_user_id(request)
+    user_id, _ = await identity_dependencies.resolve_web_session(request)
     if not user_id:
         raise HTTPException(status_code=401, detail="Valid session required")
     # Creation and detail both use the authenticated selected workspace.
     # Listing must use the identical authority; ``ensure_workspace`` may
     # create/select a different owner-default workspace for legacy sessions.
-    workspace_id = await _resolved_workspace_id_or_default(request, user_id)
+    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, user_id)
     discoveries = await asyncio.to_thread(list_discoveries, workspace_id)
     return {"ok": True, "discoveries": discoveries}
 
@@ -8492,11 +8047,11 @@ async def list_discoveries_endpoint(request: Request):
 async def get_discovery_endpoint(discovery_id: str, request: Request):
     """One discovery with its surfaced companies and leads."""
     from services.discovery import get_discovery
-    user_id, _ = await _resolve_web_user_id(request)
+    user_id, _ = await identity_dependencies.resolve_web_session(request)
     if not user_id:
         raise HTTPException(status_code=401, detail="Valid session required")
     log.info("[kickoff] GET /api/discoveries/%s: user=%s", discovery_id, user_id)
-    workspace_id = await _resolved_workspace_id_or_default(request, user_id)
+    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, user_id)
     # SaaS-2.5: constrain the lookup to the caller's workspace so a foreign
     # discovery id cannot return another tenant's PII even before the check.
     discovery = await asyncio.to_thread(get_discovery, discovery_id, workspace_id)
@@ -8507,10 +8062,10 @@ async def get_discovery_endpoint(discovery_id: str, request: Request):
 
 @app.get("/api/jobs/{job_id}")
 async def get_job(job_id: str, request: Request):
-    user_id, _ = await _resolve_web_user_id(request)
+    user_id, _ = await identity_dependencies.resolve_web_session(request)
     if not user_id:
         raise HTTPException(status_code=401, detail="Valid session required")
-    job = job_manager.get_job(job_id)
+    job = await asyncio.to_thread(job_manager.get_job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     # PR10.8.3.2: jobs are tenant-scoped — a user may only read their own job.
@@ -8521,15 +8076,15 @@ async def get_job(job_id: str, request: Request):
 
 @app.get("/api/jobs/{job_id}/results")
 async def get_job_results(job_id: str, request: Request):
-    user_id, _ = await _resolve_web_user_id(request)
+    user_id, _ = await identity_dependencies.resolve_web_session(request)
     if not user_id:
         raise HTTPException(status_code=401, detail="Valid session required")
-    job = job_manager.get_job(job_id)
+    job = await asyncio.to_thread(job_manager.get_job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     if str(job.get("user_id") or "") != str(user_id):
         raise HTTPException(status_code=404, detail="Job not found")
-    result = job_manager.get_job_results(job_id)
+    result = await asyncio.to_thread(job_manager.get_job_results, job_id)
     if not result:
         raise HTTPException(status_code=404, detail="Job not found")
     if not result.get("ok"):
@@ -8541,21 +8096,21 @@ async def get_job_results(job_id: str, request: Request):
 async def list_jobs(request: Request):
     # PR10.8.3.2: the user is derived ONLY from the credential — never from a
     # client-supplied user_id query parameter (parameter-substitution IDOR).
-    user_id, _ = await _resolve_web_user_id(request)
+    user_id, _ = await identity_dependencies.resolve_web_session(request)
     if not user_id:
         return {"jobs": []}
-    jobs = job_manager.list_recent_jobs(user_id)
+    jobs = await asyncio.to_thread(job_manager.list_recent_jobs, user_id)
     return {"jobs": jobs}
 
 
 @app.post("/api/web/session/{session_token}/plan")
 async def plan_workflow_endpoint(session_token: str, payload: PlanningInput, request: Request = None):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     campaigns = campaign_store.get(session_token, [])
     drafts = draft_store.get(session_token, [])
     total_leads = sum(c.get("lead_count", 0) or 0 for c in campaigns)
     # PR-2B: only the owning user id is consumed here — cached identity.
-    _summary = await _cached_session_identity(session_token)
+    _summary = await identity_dependencies.cached_web_session_identity(session_token)
     _db_user_id = _summary.get("user_id") if _summary else None
     snapshot = await asyncio.to_thread(
         build_snapshot, session_token, campaigns, drafts, total_leads, user_id=_db_user_id,
@@ -8586,7 +8141,7 @@ class ExecuteWorkflowRequest(BaseModel):
 
 @app.post("/api/web/session/{session_token}/workflows/execute")
 async def execute_workflow_endpoint(session_token: str, payload: ExecuteWorkflowRequest, request: Request = None):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     plan = WorkflowPlan(
         id=payload.plan_id,
         goal=payload.goal,
@@ -8625,7 +8180,7 @@ def _require_workflow_owned(workflow_id: str, request: Request, session_token: s
     runtime = get_runtime(workflow_id)
     if runtime is None:
         raise HTTPException(status_code=404, detail="Workflow not found")
-    caller_token = _session_token_from_request(request) if request is not None else session_token
+    caller_token = identity_dependencies.web_session_token(request) if request is not None else session_token
     if not caller_token or runtime.session_token != caller_token:
         raise HTTPException(status_code=404, detail="Workflow not found")
     return runtime
@@ -8652,7 +8207,7 @@ async def get_workflow_events_endpoint(session_token: str, workflow_id: str, req
 
 @app.post("/api/web/session/{session_token}/workflows/{workflow_id}/approve")
 async def approve_workflow_step(session_token: str, workflow_id: str, request: Request = None):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     _require_workflow_owned(workflow_id, request, session_token)
     try:
         runtime = approve_workflow(workflow_id)
@@ -8674,7 +8229,7 @@ async def approve_workflow_step(session_token: str, workflow_id: str, request: R
 
 @app.get("/api/web/session/{session_token}/workflows")
 async def list_workflows(session_token: str, request: Request = None):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     workflows = get_all_runtimes(session_token)
     return {
         "ok": True,
@@ -8685,7 +8240,7 @@ async def list_workflows(session_token: str, request: Request = None):
 
 @app.get("/api/web/session/{session_token}/workflows/history")
 async def workflow_history(session_token: str, status: str | None = None, limit: int = 50, request: Request = None):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     return {
         "ok": True,
         "history": get_workflow_history(session_token, status_filter=status, limit=limit),
@@ -8704,7 +8259,7 @@ async def workflow_events_after(session_token: str, workflow_id: str, after: int
 
 @app.post("/api/web/session/{session_token}/workflows/{workflow_id}/pause")
 async def pause_workflow_endpoint(session_token: str, workflow_id: str, request: Request = None):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     _require_workflow_owned(workflow_id, request, session_token)
     try:
         runtime = pause_workflow(workflow_id)
@@ -8725,7 +8280,7 @@ async def pause_workflow_endpoint(session_token: str, workflow_id: str, request:
 
 @app.post("/api/web/session/{session_token}/workflows/{workflow_id}/resume")
 async def resume_workflow_endpoint(session_token: str, workflow_id: str, request: Request = None):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     _require_workflow_owned(workflow_id, request, session_token)
     try:
         runtime = resume_workflow(workflow_id)
@@ -8746,7 +8301,7 @@ async def resume_workflow_endpoint(session_token: str, workflow_id: str, request
 
 @app.post("/api/web/session/{session_token}/workflows/{workflow_id}/cancel")
 async def cancel_workflow_endpoint(session_token: str, workflow_id: str, request: Request = None):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     _require_workflow_owned(workflow_id, request, session_token)
     try:
         runtime = cancel_workflow(workflow_id)
@@ -8768,7 +8323,7 @@ async def cancel_workflow_endpoint(session_token: str, workflow_id: str, request
 @app.get("/api/web/session/{session_token}/conversations")
 async def list_conversations_route(session_token: str, request: Request = None):
     from services.conversations.conversation_store import conversation_store
-    owner_id = await _resolve_session_context(request) if request is not None else ("", "")
+    owner_id = await identity_dependencies.resolve_web_session(request) if request is not None else ("", "")
     owner_id = owner_id[0]
     conversations = conversation_store.list_conversations(limit=1000)
     # Fail-closed: only conversations that provably belong to the owner are
@@ -8782,7 +8337,7 @@ async def list_conversations_route(session_token: str, request: Request = None):
 
 @app.get("/api/web/session/{session_token}/conversations/{conversation_id}")
 async def get_conversation_route(session_token: str, conversation_id: str, request: Request = None):
-    owner_id = (await _resolve_session_context(request))[0] if request is not None else ""
+    owner_id = (await identity_dependencies.resolve_web_session(request))[0] if request is not None else ""
     from services.conversations.conversation_store import conversation_store
     convo = conversation_store.get_conversation(conversation_id)
     if not convo or not _conversation_owned_by(convo, owner_id):
@@ -8795,7 +8350,7 @@ async def get_conversation_route(session_token: str, conversation_id: str, reque
 
 @app.get("/api/web/session/{session_token}/conversations/{conversation_id}/timeline")
 async def get_conversation_timeline_route(session_token: str, conversation_id: str, request: Request = None):
-    owner_id = (await _resolve_session_context(request))[0] if request is not None else ""
+    owner_id = (await identity_dependencies.resolve_web_session(request))[0] if request is not None else ""
     from services.conversations.conversation_store import conversation_store
     convo = conversation_store.get_conversation(conversation_id)
     if not convo or not _conversation_owned_by(convo, owner_id):
@@ -8809,7 +8364,7 @@ async def get_conversation_timeline_route(session_token: str, conversation_id: s
 
 @app.get("/api/web/session/{session_token}/conversations/{conversation_id}/messages")
 async def get_conversation_messages_route(session_token: str, conversation_id: str, request: Request = None):
-    owner_id = (await _resolve_session_context(request))[0] if request is not None else ""
+    owner_id = (await identity_dependencies.resolve_web_session(request))[0] if request is not None else ""
     from services.conversations.conversation_store import conversation_store
     convo = conversation_store.get_conversation(conversation_id)
     if not convo or not _conversation_owned_by(convo, owner_id):
@@ -8823,7 +8378,7 @@ async def get_conversation_messages_route(session_token: str, conversation_id: s
 
 @app.get("/api/web/session/{session_token}/conversations/{conversation_id}/reasoning")
 async def get_conversation_reasoning_route(session_token: str, conversation_id: str, request: Request = None):
-    owner_id = (await _resolve_session_context(request))[0] if request is not None else ""
+    owner_id = (await identity_dependencies.resolve_web_session(request))[0] if request is not None else ""
     from services.conversations.conversation_store import conversation_store
     from services.conversation_intelligence.intelligence_pipeline import IntelligencePipeline
     from services.reasoning.reasoning_pipeline import get_pipeline as get_reasoning_pipeline
@@ -8860,7 +8415,7 @@ async def get_conversation_reasoning_route(session_token: str, conversation_id: 
 
 @app.post("/api/web/session/{session_token}/conversations/{conversation_id}/plan")
 async def get_conversation_plan_route(session_token: str, conversation_id: str, request: Request = None):
-    owner_id = (await _resolve_session_context(request))[0] if request is not None else ""
+    owner_id = (await identity_dependencies.resolve_web_session(request))[0] if request is not None else ""
     from services.conversations.conversation_store import conversation_store
     from services.conversation_intelligence.intelligence_pipeline import IntelligencePipeline
     from services.reasoning.reasoning_pipeline import get_pipeline as get_reasoning_pipeline
@@ -8976,8 +8531,8 @@ async def generate_reply_route(
     body: dict = None,
     request: Request = None,
 ):
-    session_token = _session_token_from_request(request)
-    owner_id = (await _resolve_session_context(request))[0]
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = (await identity_dependencies.resolve_web_session(request))[0]
     from services.conversations.conversation_store import conversation_store
     from services.conversation_intelligence.intelligence_pipeline import IntelligencePipeline
     from services.reasoning.reasoning_pipeline import get_pipeline as get_reasoning_pipeline
@@ -9015,7 +8570,7 @@ async def generate_reply_route(
     owner_id = ""
     if request is not None:
         try:
-            owner_id = await _workspace_owner(request, session_token)
+            owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
         except HTTPException:
             owner_id = ""
 
@@ -9103,7 +8658,7 @@ async def send_conversation_reply_route(
     body: SendConversationReplyRequest = None,
     request: Request = None,
 ):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     """Send an outbound reply from a conversation via the connected Gmail provider.
 
     Resolves the provider from the conversation's thread/draft first, then the
@@ -9138,7 +8693,7 @@ async def send_conversation_reply_route(
     # resolvable and the conversation must belong to that owner.
     if request is None:
         raise HTTPException(status_code=401, detail="Authentication required")
-    owner_id = await _workspace_owner(request, session_token)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     if not _conversation_owned_by(convo, owner_id):
         # Safe not-found: foreign-but-existing conversation is indistinguishable
         # from nonexistent (no existence leak).
@@ -9203,7 +8758,8 @@ async def send_conversation_reply_route(
         envelope_name = (payload.test_recipient_name or "Test Recipient").strip()
         log.info("[TEST RECIPIENT] original_recipient=%s effective_recipient=%s", contact_email, test_recipient)
 
-    result = outbound_executor.execute(
+    result = await asyncio.to_thread(
+        outbound_executor.execute,
         OutboundActionType.SEND_REPLY,
         {
             "provider_id": provider_id,
@@ -9271,7 +8827,7 @@ async def send_conversation_followup_route(
     body: SendConversationReplyRequest = None,
     request: Request = None,
 ):
-    session_token = _session_token_from_request(request)
+    session_token = identity_dependencies.web_session_token(request)
     """Send a follow-up email on the conversation's existing thread.
 
     Distinct from /reply: a follow-up continues the original outbound
@@ -9308,7 +8864,7 @@ async def send_conversation_followup_route(
     # resolvable and the conversation must belong to that owner.
     if request is None:
         raise HTTPException(status_code=401, detail="Authentication required")
-    owner_id = await _workspace_owner(request, session_token)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     if not _conversation_owned_by(convo, owner_id):
         # Safe not-found: foreign-but-existing conversation is indistinguishable
         # from nonexistent (no existence leak).
@@ -9348,7 +8904,8 @@ async def send_conversation_followup_route(
         envelope_name = (payload.test_recipient_name or "Test Recipient").strip()
         log.info("[TEST RECIPIENT] original_recipient=%s effective_recipient=%s", contact_email, test_recipient)
 
-    result = outbound_executor.execute(
+    result = await asyncio.to_thread(
+        outbound_executor.execute,
         OutboundActionType.SEND_REPLY,
         {
             "provider_id": provider_id,
@@ -9439,7 +8996,7 @@ async def events_stream(request: Request):
     from services.events_bus import event_bus
 
     try:
-        owner_id, token = await _resolve_session_context(request)
+        owner_id, token = await identity_dependencies.resolve_web_session(request)
     except HTTPException:
         raise
     if not owner_id or not token:
@@ -9491,13 +9048,16 @@ async def events_stream(request: Request):
 
                 if now - last_revocation_check >= _SSE_REVOCATION_CHECK_SECONDS:
                     last_revocation_check = now
-                    identity = await _cached_session_identity(token)
+                    identity = await identity_dependencies.cached_web_session_identity(token)
                     if identity is None or identity.get("user_id") != owner_id:
                         log.info("[sse] stream closing: identity no longer valid user=%s", owner_id[:8])
                         still_valid = False
                         break
 
-                await asyncio.sleep(0.05)
+                # With Redis unavailable there is no event source to poll.
+                # Wake at the same cadence as the pub/sub wait instead of
+                # spinning 20 times per second for every degraded stream.
+                await asyncio.sleep(0.5 if pubsub is None else 0.05)
         except asyncio.CancelledError:
             pass
         finally:

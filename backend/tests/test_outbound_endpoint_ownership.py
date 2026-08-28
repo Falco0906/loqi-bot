@@ -10,8 +10,8 @@ from fastapi import HTTPException
 async def test_outbound_list_rejects_an_unowned_provider(monkeypatch):
     import main as main_module
 
-    monkeypatch.setattr(main_module, "_session_token_from_request", lambda _request: "session-1")
-    monkeypatch.setattr(main_module, "_workspace_owner", lambda *_args: _value("owner-1"))
+    monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda _request: "session-1")
+    monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", lambda *_args: _value("owner-1"))
     monkeypatch.setattr(main_module, "_provider_owned_by", lambda _provider, _owner: False)
 
     with pytest.raises(HTTPException) as error:
@@ -26,8 +26,8 @@ async def test_outbound_list_filters_unowned_drafts(monkeypatch):
 
     owned = SimpleNamespace(id="owned", model_dump=lambda: {"id": "owned"})
     foreign = SimpleNamespace(id="foreign", model_dump=lambda: {"id": "foreign"})
-    monkeypatch.setattr(main_module, "_session_token_from_request", lambda _request: "session-1")
-    monkeypatch.setattr(main_module, "_workspace_owner", lambda *_args: _value("owner-1"))
+    monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda _request: "session-1")
+    monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", lambda *_args: _value("owner-1"))
     monkeypatch.setattr(
         main_module.outbound_draft_store,
         "list_all",

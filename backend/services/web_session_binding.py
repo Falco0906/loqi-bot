@@ -2,7 +2,7 @@
 
 When the web-session bootstrap is invoked with a valid canonical access token,
 the issued web-session token is durably bound to the canonical user + session.
-`main._resolve_session_context` then resolves bound web-sessions through the
+`services.identity.dependencies.resolve_web_session` then resolves bound web-sessions through the
 canonical identity model:
 
 - the actor is the canonical user (one authoritative identity),

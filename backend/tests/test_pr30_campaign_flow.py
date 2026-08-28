@@ -204,13 +204,13 @@ async def _generate_strategy_direct(main_module, token, campaign_id) -> dict:
     async def _owner(request, session_token):
         return user_id
 
-    original = main_module._workspace_owner
-    main_module._workspace_owner = _owner
+    original = main_module.identity_dependencies.authenticated_user_id
+    main_module.identity_dependencies.authenticated_user_id = _owner
     try:
         started = await main_module.generate_campaign_strategy(
             token, campaign_id, MagicMock())
     finally:
-        main_module._workspace_owner = original
+        main_module.identity_dependencies.authenticated_user_id = original
     assert started.get("ok") is True and started.get("job_id"), started
     job_id = started["job_id"]
 
@@ -242,13 +242,13 @@ async def _start_draft_batch(main_module, token, campaign_id, user_id):
     async def _owner(request, session_token):
         return user_id
 
-    original = main_module._workspace_owner
-    main_module._workspace_owner = _owner
+    original = main_module.identity_dependencies.authenticated_user_id
+    main_module.identity_dependencies.authenticated_user_id = _owner
     try:
         return await main_module.generate_campaign_drafts(
             token, campaign_id, MagicMock())
     finally:
-        main_module._workspace_owner = original
+        main_module.identity_dependencies.authenticated_user_id = original
 
 
 async def _await_batch_done(main_module, token, campaign_id, timeout=150):
@@ -276,13 +276,13 @@ async def _await_batch_done(main_module, token, campaign_id, timeout=150):
     async def _owner(request, session_token):
         return user_id
 
-    original = main_module._workspace_owner
-    main_module._workspace_owner = _owner
+    original = main_module.identity_dependencies.authenticated_user_id
+    main_module.identity_dependencies.authenticated_user_id = _owner
     try:
         status = await main_module.campaign_generation_status(
             token, campaign_id, MagicMock())
     finally:
-        main_module._workspace_owner = original
+        main_module.identity_dependencies.authenticated_user_id = original
     return batch_id, status
 
 

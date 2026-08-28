@@ -58,6 +58,11 @@ def _get_service() -> OnboardingService:
     return _onboarding_service
 
 
+def get_onboarding_service() -> OnboardingService:
+    """Return the application-configured onboarding service."""
+    return _get_service()
+
+
 def set_onboarding_service(svc: OnboardingService | None) -> None:
     global _onboarding_service
     _onboarding_service = svc

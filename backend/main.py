@@ -33,6 +33,8 @@ from services.capabilities.api import router as capabilities_router, register_de
 from services.knowledge.api import router as knowledge_router
 from services.mission_control.api import router as mission_control_router
 from services.discovery.api import router as discovery_router
+from services.campaigns.api import router as campaigns_router
+from services.campaigns.service import load_campaigns
 from services.capabilities.config import CapabilityConfig
 from services.capabilities.services import CapabilityService
 from services.capabilities.repositories import (
@@ -65,7 +67,7 @@ from services.campaign_planner import analyze_campaigns
 from workflows import run_workflow
 from services.job_engine import job_manager
 from workflow_dispatcher import register_workflows
-from services.workspace_memory import record as record_memory, record_campaign_open, record_draft_review, record_search
+from services.workspace_memory import record as record_memory, record_draft_review, record_search
 from services.workspace_timeline import (
     add_event as add_timeline_event,
     record_search_started,
@@ -134,7 +136,7 @@ from services.operations import (
     startup_diagnostics,
     redact_session_path,
 )
-from services.world_model import EventType as WMEventType, get_store as get_wm_store, publish
+from services.world_model import EventType as WMEventType, publish
 
 _feedback_interpreter: _FeedbackInterpreter | None = None
 
@@ -484,6 +486,7 @@ app.include_router(knowledge_router)
 app.include_router(strategic_intelligence_router)
 app.include_router(mission_control_router)
 app.include_router(discovery_router)
+app.include_router(campaigns_router)
 
 # ── Wire Organization Platform services ──
 _org_deps = _build_org_deps()
@@ -6427,119 +6430,12 @@ async def save_campaign(session_token: str, payload: SaveCampaignRequest, reques
     return {"ok": True, "campaign": campaign}
 
 
-@app.get("/api/web/session/{session_token}/campaigns")
-async def list_campaigns(session_token: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    import time as _t
-    _t0 = _t.perf_counter()
-    from services.workspace_snapshot import enrich_campaigns
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    # PR-3B: (a) campaigns load COUNTS-ONLY — the list page never renders
-    # nested leads/strategies, so the previous full graph fan-out
-    # (ws_leads/leads/companies/strategies per id) was pure overfetch;
-    # (b) campaigns + drafts are independent once ws_id is known → run
-    # concurrently instead of serially.
-    campaigns, drafts = await asyncio.gather(
-        asyncio.to_thread(_workspace_campaigns, owner_id, session_token,
-                          workspace_id=ws_id, include_details=False),
-        asyncio.to_thread(_workspace_drafts, owner_id, session_token, workspace_id=ws_id),
-    )
-    log.info("[perf] route=/campaigns owner=%s ms=%.0f campaigns=%d",
-             owner_id[:8], (_t.perf_counter() - _t0) * 1000, len(campaigns))
-    return {"ok": True, "campaigns": enrich_campaigns(campaigns, drafts)}
-
-
-@app.get("/api/web/session/{session_token}/campaigns/summary")
-async def campaign_summary(session_token: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    from services.workspace_snapshot import enrich_campaigns
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=ws_id)
-    drafts = _workspace_drafts(owner_id, session_token, workspace_id=ws_id)
-    enriched = enrich_campaigns(campaigns, drafts)
-    items = [{
-        "id": c.get("id", ""),
-        "name": c.get("name", ""),
-        "status": c.get("status", "planning"),
-        "lead_count": c.get("lead_count", 0),
-        "pending_drafts": c.get("pending_drafts", 0),
-        "updated_at": c.get("updated_at", ""),
-    } for c in enriched]
-    return {"ok": True, "campaigns": items}
-
-
-@app.get("/api/web/session/{session_token}/campaigns/{campaign_id}")
-async def get_campaign(session_token: str, campaign_id: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    from services.workspace_snapshot import enrich_campaigns
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=ws_id)
-    drafts = _workspace_drafts(owner_id, session_token, workspace_id=ws_id)
-    enriched = enrich_campaigns(campaigns, drafts)
-    target = next((c for c in enriched if c.get("id") == campaign_id), None)
-    if not target:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    record_campaign_open(session_token, campaign_id, target.get("name", ""))
-    return {"ok": True, "campaign": target}
-
-
-@app.get("/api/web/session/{session_token}/campaigns/{campaign_id}/launch-progress")
-async def campaign_launch_progress(session_token: str, campaign_id: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=ws_id)
-    target = next((c for c in campaigns if c.get("id") == campaign_id), None)
-    if not target:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    return {
-        "ok": True,
-        "launch_sent": target.get("launch_sent", 0),
-        "launch_total": target.get("launch_total", 0),
-        "launch_complete": target.get("launch_sent", 0) >= target.get("launch_total", 0) if target.get("launch_total", 0) > 0 else False,
-    }
-
-
-@app.get("/api/web/session/{session_token}/campaigns/{campaign_id}/timeline")
-async def campaign_timeline(session_token: str, campaign_id: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    """Read-only campaign event timeline derived from World Model events.
-
-    Aggregates events carrying this campaign_id (draft generated/updated/
-    approved/sent/failed, campaign status changes) from the in-memory WM
-    log, ordered by sequence. No new persistence — read-only projection.
-    """
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=workspace_id)
-    target = next((c for c in campaigns if c.get("id") == campaign_id), None)
-    if not target:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    store = get_wm_store()
-    events: list[dict] = []
-    after_sequence = 0
-    while True:
-        batch = store.get_events(session_token, after_sequence=after_sequence, limit=100)
-        if not batch:
-            break
-        after_sequence = batch[-1].sequence
-        for event in batch:
-            if event.data.get("campaign_id") == campaign_id:
-                events.append(event.to_dict())
-        if len(batch) < 100:
-            break
-    return {"ok": True, "campaign_id": campaign_id, "events": events}
-
-
 @app.put("/api/web/session/{session_token}/campaigns/{campaign_id}")
 async def update_campaign(session_token: str, campaign_id: str, payload: UpdateCampaignRequest, request: Request):
     session_token = identity_dependencies.web_session_token(request)
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=ws_id)
+    campaigns = load_campaigns(owner_id, workspace_id=ws_id)
     target = next((c for c in campaigns if c.get("id") == campaign_id), None)
     if not target:
         raise HTTPException(status_code=404, detail="Campaign not found")
@@ -6820,7 +6716,7 @@ async def generate_campaign_strategy(session_token: str, campaign_id: str, paylo
     """
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=workspace_id)
+    campaigns = load_campaigns(owner_id, workspace_id=workspace_id)
     target = next((c for c in campaigns if c.get("id") == campaign_id), None)
     if not target:
         raise HTTPException(status_code=404, detail="Campaign not found")
@@ -7075,7 +6971,7 @@ async def add_campaign_lead(session_token: str, campaign_id: str, payload: AddCa
     session_token = identity_dependencies.web_session_token(request)
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=ws_id)
+    campaigns = load_campaigns(owner_id, workspace_id=ws_id)
     target = next((c for c in campaigns if c.get("id") == campaign_id), None)
     if not target:
         raise HTTPException(status_code=404, detail="Campaign not found")
@@ -7392,7 +7288,7 @@ async def attach_discovery_to_campaign(session_token: str, campaign_id: str, pay
     """Attach every lead surfaced by an existing Discovery to the campaign."""
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=workspace_id)
+    campaigns = load_campaigns(owner_id, workspace_id=workspace_id)
     target = next((c for c in campaigns if c.get("id") == campaign_id), None)
     if not target:
         raise HTTPException(status_code=404, detail="Campaign not found")
@@ -7557,7 +7453,7 @@ async def campaign_generation_status(session_token: str, campaign_id: str, reque
 
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    campaigns = _workspace_campaigns(owner_id, session_token, workspace_id=workspace_id)
+    campaigns = load_campaigns(owner_id, workspace_id=workspace_id)
     target = next((c for c in campaigns if c.get("id") == campaign_id), None)
     if not target:
         return {"ok": True, "active": False, "status": "unknown", "jobs": []}
@@ -7691,14 +7587,19 @@ async def export_csv(session_token: str, request: Request = None):
 @app.post("/api/web/session/{session_token}/select-lead")
 async def select_lead_endpoint(session_token: str, payload: SelectLeadRequest, request: Request = None):
     session_token = identity_dependencies.web_session_token(request)
-    from services.supabase import get_pending_leads, get_user
+    from services.conversation_store import ensure_workflow_session, get_web_session
+    from services.supabase import log_conversation
 
-    user = get_web_session_internal(session_token)
+    user = get_web_session(session_token)
     if user is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
     engine = ConversationEngine()
-    workflow_session_id = ensure_workflow_session_internal(user["id"], session_token)
+    workflow_session_id = ensure_workflow_session(
+        user_id=user["id"],
+        channel="web",
+        session_key=session_token,
+    )
     result = engine.select_lead_and_draft(
         user_id=user["id"],
         lead_index=payload.index,
@@ -7711,7 +7612,7 @@ async def select_lead_endpoint(session_token: str, payload: SelectLeadRequest, r
         if message.get("role") == "assistant":
             text = (message.get("text") or "").strip()
             if text:
-                log_conversation_internal(user["id"], "assistant", text)
+                log_conversation(user["id"], "assistant", text)
 
     publish(session_token, WMEventType.LEAD_SELECTED, {
         "lead_index": payload.index,
@@ -7727,7 +7628,9 @@ class PreviewLeadRequest(BaseModel):
 @app.post("/api/web/session/{session_token}/preview-lead")
 async def preview_lead_endpoint(session_token: str, payload: PreviewLeadRequest, request: Request = None):
     session_token = identity_dependencies.web_session_token(request)
-    user = get_web_session_internal(session_token)
+    from services.conversation_store import get_web_session
+
+    user = get_web_session(session_token)
     if user is None:
         raise HTTPException(status_code=404, detail="Session not found")
 

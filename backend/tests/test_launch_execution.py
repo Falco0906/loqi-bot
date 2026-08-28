@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 import main as main_module
+import services.campaigns.api as campaign_api
 def _auth_request(token="pr3b-tok-1"):
     from unittest.mock import MagicMock
     request = MagicMock()
@@ -95,7 +96,7 @@ def env(monkeypatch):
         return {"ok": True, "send_result": {"thread_id": "th-1", "external_message_id": "em-1"}}
 
     monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", fake_owner)
-    monkeypatch.setattr(main_module, "_workspace_campaigns", fake_campaigns)
+    monkeypatch.setattr(main_module, "load_campaigns", fake_campaigns)
     monkeypatch.setattr(main_module, "_workspace_drafts", fake_drafts)
     monkeypatch.setattr(workspace_state, "persist_campaign_update_awaited", fake_persist_campaign)
     monkeypatch.setattr(workspace_state, "persist_draft_update_awaited", fake_persist_draft)
@@ -104,6 +105,17 @@ def env(monkeypatch):
     monkeypatch.setattr(main_module, "record_campaign_launched", lambda *a, **k: None)
     monkeypatch.setattr(main_module, "_get_feedback", lambda: _FakeFeedback())
     monkeypatch.setattr(main_module.outbound_executor, "execute", fake_execute)
+
+    async def fake_route_owner(_request, _session_token: str) -> str:
+        return "owner-1"
+
+    async def fake_workspace(_request, _owner_id: str) -> str:
+        return "workspace-test"
+
+    monkeypatch.setattr(campaign_api.identity_dependencies, "web_session_token", lambda request: request.headers.get("authorization", "").removeprefix("Bearer "))
+    monkeypatch.setattr(campaign_api.identity_dependencies, "authenticated_user_id", fake_route_owner)
+    monkeypatch.setattr(campaign_api.workspace_access, "resolve_legacy_workspace_id", fake_workspace)
+    monkeypatch.setattr(campaign_api, "load_campaigns", fake_campaigns)
 
     return {"state": state, "calls": calls}
 
@@ -196,7 +208,7 @@ async def test_launch_progress_endpoint_reads_durable_values(env):
         "launch_total": 2,
         "launch_failed": 1,
     }]
-    result = await main_module.campaign_launch_progress("s-1", "c-1", request=None)
+    result = await campaign_api.campaign_launch_progress("s-1", "c-1", _auth_request("s-1"))
     assert result["launch_sent"] == 1
     assert result["launch_total"] == 2
     assert result["launch_complete"] is False
@@ -214,7 +226,7 @@ async def test_campaign_timeline_endpoint_filters_wm_events(env):
     wm_publish("pr3b-tok-1", WMET.DRAFT_SENT, {
         "draft_id": "d3", "campaign_id": "c-9", "recipient_email": "zed@acme.com"})
 
-    result = await main_module.campaign_timeline("_", "c-1", _auth_request("pr3b-tok-1"))
+    result = await campaign_api.campaign_timeline("_", "c-1", _auth_request("pr3b-tok-1"))
     assert result["ok"] is True
     assert [e["type"] for e in result["events"]] == ["draft_sent", "draft_failed"]
     assert all(e["data"]["campaign_id"] == "c-1" for e in result["events"])

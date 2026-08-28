@@ -315,7 +315,7 @@ class TestDraftHistoryAndBatchIdor:
         victim_campaign = "campaign-b"
         batch_id = f"batch-{uuid.uuid4().hex[:8]}"
         batch_jobs[batch_id] = {"campaign_id": victim_campaign, "status": "processing"}
-        main_module._workspace_campaigns = lambda owner_id, session_token="": (
+        main_module.load_campaigns = lambda owner_id, **_kwargs: (
             [{"id": "campaign-a"}] if owner_id == OWNER_A else []
         )
         with pytest.raises(HTTPException) as exc:

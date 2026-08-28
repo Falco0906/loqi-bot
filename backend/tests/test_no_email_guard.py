@@ -249,7 +249,7 @@ class TestLaunchDispatchGuard:
         async def fake_owner(session_token: str, request=None) -> str:
             return "owner-1"
 
-        def fake_campaigns(owner_id: str, session_token: str = "") -> list[dict]:
+        def fake_campaigns(owner_id: str, workspace_id: str = "") -> list[dict]:
             return list(state["campaigns"])
 
         def fake_drafts(owner_id: str, session_token: str = "") -> list[dict]:
@@ -271,7 +271,7 @@ class TestLaunchDispatchGuard:
             return {"ok": True, "send_result": {"thread_id": "th-1", "external_message_id": "em-1"}}
 
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", fake_owner)
-        monkeypatch.setattr(main_module, "_workspace_campaigns", fake_campaigns)
+        monkeypatch.setattr(main_module, "load_campaigns", fake_campaigns)
         monkeypatch.setattr(main_module, "_workspace_drafts", fake_drafts)
         monkeypatch.setattr(workspace_state, "persist_campaign_update_awaited", fake_persist_campaign)
         monkeypatch.setattr(workspace_state, "persist_draft_update_awaited", fake_persist_draft)

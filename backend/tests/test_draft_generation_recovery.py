@@ -221,7 +221,7 @@ class TestGenerationStatus:
         monkeypatch.setattr(
             main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(
-            main_module, "_workspace_campaigns", lambda uid, tok="", **_kwargs: [campaign])
+            main_module, "load_campaigns", lambda uid, **_kwargs: [campaign])
         monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
         monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": [])
 
@@ -246,7 +246,7 @@ class TestGenerationStatus:
         monkeypatch.setattr(
             main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(
-            main_module, "_workspace_campaigns", lambda uid, tok="", **_kwargs: [campaign])
+            main_module, "load_campaigns", lambda uid, **_kwargs: [campaign])
         monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
         monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": [])
 
@@ -262,7 +262,7 @@ class TestGenerationStatus:
         monkeypatch.setattr(
             main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(
-            main_module, "_workspace_campaigns", lambda uid, tok="", **_kwargs: [])
+            main_module, "load_campaigns", lambda uid, **_kwargs: [])
 
         result = await main_module.campaign_generation_status("token", "nope", MagicMock())
 
@@ -289,7 +289,7 @@ class TestGenerateDraftsGuard:
         monkeypatch.setattr(
             main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(
-            main_module, "_workspace_campaigns", lambda uid, tok="": [campaign])
+            main_module, "load_campaigns", lambda uid, **_kwargs: [campaign])
         monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
         launched: list = []
         monkeypatch.setattr(main_module, "_launch_batch_task",
@@ -309,7 +309,7 @@ class TestGenerateDraftsGuard:
         monkeypatch.setattr(
             main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(
-            main_module, "_workspace_campaigns", lambda uid, tok="": [campaign])
+            main_module, "load_campaigns", lambda uid, **_kwargs: [campaign])
         monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
         monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": [])
         launched: list = []
@@ -334,7 +334,7 @@ class TestGenerateDraftsGuard:
         monkeypatch.setattr(
             main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(
-            main_module, "_workspace_campaigns", lambda uid, tok="": [campaign])
+            main_module, "load_campaigns", lambda uid, **_kwargs: [campaign])
         monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
         monkeypatch.setattr(main_module, "_launch_batch_task",
                             lambda *args, **kwargs: None)

@@ -45,7 +45,7 @@ async def test_delete_campaign_uses_scoped_lookup_not_workspace_graph(monkeypatc
 
     monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner)
     monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", workspace)
-    monkeypatch.setattr(main_module, "_workspace_campaigns", unexpected_workspace_load)
+    monkeypatch.setattr(main_module, "load_campaigns", unexpected_workspace_load)
     monkeypatch.setattr(CampaignRepository, "get_for_workspace", get_for_workspace)
     monkeypatch.setattr(workspace_state, "persist_campaign_update_awaited", persist)
     monkeypatch.setattr(main_module, "publish", lambda *_args, **_kwargs: None)
@@ -56,4 +56,3 @@ async def test_delete_campaign_uses_scoped_lookup_not_workspace_graph(monkeypatc
     assert result["ok"] is True
     assert result["campaign"]["id"] == "campaign-1"
     assert result["campaign"]["status"] == "deleted"
-

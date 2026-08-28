@@ -1,0 +1,136 @@
+"""Read-only HTTP routes for workspace-scoped campaigns."""
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+
+from fastapi import APIRouter, HTTPException, Request
+
+from services import workspace_context as workspace_access
+from services.campaigns.service import load_campaigns
+from services.identity import dependencies as identity_dependencies
+from services.workspace_memory import record_campaign_open
+from services.workspace_snapshot import enrich_campaigns
+from services.workspace_state import load_drafts_only
+from services.world_model import get_store as get_wm_store
+
+
+router = APIRouter(tags=["Campaigns"])
+log = logging.getLogger("loqi")
+
+
+async def _authorized_workspace(request: Request) -> tuple[str, str, str]:
+    """Resolve the authenticated caller, bearer token, and selected workspace."""
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
+    return owner_id, session_token, workspace_id
+
+
+@router.get("/api/web/session/{session_token}/campaigns")
+async def list_campaigns(session_token: str, request: Request):
+    """Return enriched campaign list data without loading full campaign graphs."""
+    del session_token
+    started_at = time.perf_counter()
+    owner_id, bearer_token, workspace_id = await _authorized_workspace(request)
+    campaigns, drafts = await asyncio.gather(
+        asyncio.to_thread(
+            load_campaigns,
+            owner_id,
+            workspace_id=workspace_id,
+            include_details=False,
+        ),
+        asyncio.to_thread(load_drafts_only, owner_id, workspace_id=workspace_id),
+    )
+    log.info(
+        "[perf] route=/campaigns owner=%s ms=%.0f campaigns=%d",
+        owner_id[:8],
+        (time.perf_counter() - started_at) * 1000,
+        len(campaigns),
+    )
+    del bearer_token
+    return {"ok": True, "campaigns": enrich_campaigns(campaigns, drafts)}
+
+
+@router.get("/api/web/session/{session_token}/campaigns/summary")
+async def campaign_summary(session_token: str, request: Request):
+    """Return the compact campaign summary used by workspace views."""
+    del session_token
+    owner_id, _, workspace_id = await _authorized_workspace(request)
+    campaigns = load_campaigns(owner_id, workspace_id=workspace_id)
+    drafts = load_drafts_only(owner_id, workspace_id=workspace_id)
+    enriched = enrich_campaigns(campaigns, drafts)
+    items = [{
+        "id": campaign.get("id", ""),
+        "name": campaign.get("name", ""),
+        "status": campaign.get("status", "planning"),
+        "lead_count": campaign.get("lead_count", 0),
+        "pending_drafts": campaign.get("pending_drafts", 0),
+        "updated_at": campaign.get("updated_at", ""),
+    } for campaign in enriched]
+    return {"ok": True, "campaigns": items}
+
+
+@router.get("/api/web/session/{session_token}/campaigns/{campaign_id}")
+async def get_campaign(session_token: str, campaign_id: str, request: Request):
+    """Return one enriched campaign scoped to the selected workspace."""
+    del session_token
+    owner_id, bearer_token, workspace_id = await _authorized_workspace(request)
+    campaigns = load_campaigns(owner_id, workspace_id=workspace_id)
+    drafts = load_drafts_only(owner_id, workspace_id=workspace_id)
+    target = next(
+        (campaign for campaign in enrich_campaigns(campaigns, drafts)
+         if campaign.get("id") == campaign_id),
+        None,
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    record_campaign_open(bearer_token, campaign_id, target.get("name", ""))
+    return {"ok": True, "campaign": target}
+
+
+@router.get("/api/web/session/{session_token}/campaigns/{campaign_id}/launch-progress")
+async def campaign_launch_progress(session_token: str, campaign_id: str, request: Request):
+    """Return canonical launch counters for one selected-workspace campaign."""
+    del session_token
+    owner_id, _, workspace_id = await _authorized_workspace(request)
+    campaigns = load_campaigns(owner_id, workspace_id=workspace_id)
+    target = next((campaign for campaign in campaigns if campaign.get("id") == campaign_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    launch_sent = target.get("launch_sent", 0)
+    launch_total = target.get("launch_total", 0)
+    return {
+        "ok": True,
+        "launch_sent": launch_sent,
+        "launch_total": launch_total,
+        "launch_complete": launch_sent >= launch_total if launch_total > 0 else False,
+    }
+
+
+@router.get("/api/web/session/{session_token}/campaigns/{campaign_id}/timeline")
+async def campaign_timeline(session_token: str, campaign_id: str, request: Request):
+    """Return the existing session-scoped World Model campaign projection."""
+    del session_token
+    owner_id, bearer_token, workspace_id = await _authorized_workspace(request)
+    campaigns = load_campaigns(owner_id, workspace_id=workspace_id)
+    if not any(campaign.get("id") == campaign_id for campaign in campaigns):
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    events: list[dict] = []
+    after_sequence = 0
+    store = get_wm_store()
+    while True:
+        batch = store.get_events(bearer_token, after_sequence=after_sequence, limit=100)
+        if not batch:
+            break
+        after_sequence = batch[-1].sequence
+        events.extend(
+            event.to_dict()
+            for event in batch
+            if event.data.get("campaign_id") == campaign_id
+        )
+        if len(batch) < 100:
+            break
+    return {"ok": True, "campaign_id": campaign_id, "events": events}

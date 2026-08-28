@@ -300,8 +300,8 @@ class TestDraftBatchIdempotency:
             "finished_at": _now(),
         }
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
-        monkeypatch.setattr(main_module, "_workspace_campaigns",
-                            lambda uid, tok="": [campaign])
+        monkeypatch.setattr(main_module, "load_campaigns",
+                            lambda uid, **_kwargs: [campaign])
         launched: list = []
         monkeypatch.setattr(main_module, "_launch_batch_task",
                             lambda *args, **kwargs: launched.append(args))
@@ -328,8 +328,8 @@ class TestDraftBatchIdempotency:
             "started_at": _now(),
         }
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
-        monkeypatch.setattr(main_module, "_workspace_campaigns",
-                            lambda uid, tok="": [campaign])
+        monkeypatch.setattr(main_module, "load_campaigns",
+                            lambda uid, **_kwargs: [campaign])
         monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": [])
         launched: list = []
         monkeypatch.setattr(main_module, "_launch_batch_task",

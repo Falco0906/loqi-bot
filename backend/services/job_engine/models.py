@@ -13,6 +13,13 @@ class JobStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class BatchItemStatus(str, Enum):
+    PENDING = "pending"
+    GENERATING = "generating"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 @dataclass
 class JobProgress:
     stage: str = ""
@@ -85,6 +92,23 @@ class Job:
             updated_at=_parse_dt(data.get("updated_at")),
             completed_at=_parse_dt(data.get("completed_at")),
         )
+
+
+@dataclass
+class BatchItem:
+    job_id: str
+    workspace_id: str
+    campaign_id: str
+    position: int
+    lead_snapshot: dict[str, Any]
+    idempotency_key: str
+    id: str = field(default_factory=lambda: str(uuid4()))
+    status: BatchItemStatus = BatchItemStatus.PENDING
+    attempt_count: int = 0
+    last_error: str = ""
+    draft_id: str = ""
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 def _parse_dt(val) -> Optional[datetime]:

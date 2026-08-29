@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from services.job_engine.models import Job, JobStatus
+from services.job_engine.models import BatchItem, BatchItemStatus, Job, JobStatus
 from services.supabase import get_supabase_client
 
 
@@ -179,6 +179,15 @@ class JobStorage:
         client = get_supabase_client()
         if not client:
             return []
+        try:
+            result = (
+                client.table("jobs").select("*").eq("user_id", user_id)
+                .order("created_at", desc=True).limit(limit).execute()
+            )
+            return [Job.from_dict(row) for row in (getattr(result, "data", None) or [])]
+        except Exception as error:
+            _log(f"list_recent_jobs error: {error}")
+            return []
 
     def list_active_jobs_by_type(self, job_type: str) -> list[Job]:
         client = get_supabase_client()
@@ -192,17 +201,93 @@ class JobStorage:
         except Exception as error:
             _log(f"list_active_jobs_by_type error: {error}")
             return []
+
+    def create_batch_items(self, items: list[BatchItem]) -> bool:
+        """Insert batch items once; the database unique key is the retry guard."""
+        client = get_supabase_client()
+        if not client:
+            return False
         try:
-            result = (
-                client.table("jobs")
-                .select("*")
-                .eq("user_id", user_id)
-                .order("created_at", desc=True)
-                .limit(limit)
-                .execute()
-            )
-            rows = result.data if hasattr(result, "data") else []
-            return [Job.from_dict(r) for r in rows]
-        except Exception as e:
-            _log(f"list_recent_jobs error: {e}")
+            rows = [{
+                "id": item.id, "job_id": item.job_id, "workspace_id": item.workspace_id,
+                "campaign_id": item.campaign_id or None, "position": item.position,
+                "lead_snapshot": item.lead_snapshot, "idempotency_key": item.idempotency_key,
+                "status": item.status.value, "attempt_count": item.attempt_count,
+                "last_error": item.last_error, "draft_id": item.draft_id or None,
+            } for item in items]
+            if rows:
+                client.table("job_batch_items").upsert(rows, on_conflict="job_id,idempotency_key").execute()
+            return True
+        except Exception as error:
+            _log(f"create_batch_items error: {error}")
+            return False
+
+    def list_batch_resume_items(self, job_id: str, workspace_id: str) -> list[BatchItem]:
+        client = get_supabase_client()
+        if not client:
             return []
+        try:
+            result = client.table("job_batch_items").select("*").eq("job_id", job_id).eq(
+                "workspace_id", workspace_id
+            ).in_("status", ["pending", "generating", "failed"]).order("position").execute()
+            return [self._batch_item(row) for row in (getattr(result, "data", None) or [])]
+        except Exception as error:
+            _log(f"list_batch_resume_items error: {error}")
+            return []
+
+    def mark_batch_item_completed(self, job_id: str, idempotency_key: str, draft_id: str) -> bool:
+        """Complete once. A repeated completion preserves the first draft reference."""
+        client = get_supabase_client()
+        if not client:
+            return False
+        try:
+            existing = client.table("job_batch_items").select("id,status,draft_id").eq(
+                "job_id", job_id
+            ).eq("idempotency_key", idempotency_key).limit(1).execute()
+            rows = getattr(existing, "data", None) or []
+            if not rows:
+                return False
+            row = rows[0]
+            if row.get("status") == BatchItemStatus.COMPLETED.value:
+                return str(row.get("draft_id") or "") == draft_id
+            client.table("job_batch_items").update({"status": "completed", "draft_id": draft_id, "last_error": "", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", row["id"]).execute()
+            return True
+        except Exception as error:
+            _log(f"mark_batch_item_completed error: {error}")
+            return False
+
+    def mark_batch_item_generating(self, item_id: str) -> bool:
+        """Claim an item once and increment its persisted attempt count."""
+        client = get_supabase_client()
+        if not client:
+            return False
+        try:
+            row = client.table("job_batch_items").select("attempt_count,status").eq("id", item_id).limit(1).execute()
+            items = getattr(row, "data", None) or []
+            if not items or items[0].get("status") == BatchItemStatus.COMPLETED.value:
+                return False
+            client.table("job_batch_items").update({"status": "generating", "attempt_count": int(items[0].get("attempt_count") or 0) + 1, "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", item_id).execute()
+            return True
+        except Exception as error:
+            _log(f"mark_batch_item_generating error: {error}")
+            return False
+
+    def mark_batch_item_failed(self, item_id: str, error: str) -> bool:
+        client = get_supabase_client()
+        if not client:
+            return False
+        try:
+            client.table("job_batch_items").update({"status": "failed", "last_error": error[:1000], "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", item_id).execute()
+            return True
+        except Exception as error:
+            _log(f"mark_batch_item_failed error: {error}")
+            return False
+    @staticmethod
+    def _batch_item(row: dict) -> BatchItem:
+        return BatchItem(
+            id=str(row.get("id") or ""), job_id=str(row.get("job_id") or ""), workspace_id=str(row.get("workspace_id") or ""),
+            campaign_id=str(row.get("campaign_id") or ""), position=int(row.get("position") or 0),
+            lead_snapshot=dict(row.get("lead_snapshot") or {}), idempotency_key=str(row.get("idempotency_key") or ""),
+            status=BatchItemStatus(str(row.get("status") or "pending")), attempt_count=int(row.get("attempt_count") or 0),
+            last_error=str(row.get("last_error") or ""), draft_id=str(row.get("draft_id") or ""),
+        )

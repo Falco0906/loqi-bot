@@ -1,0 +1,368 @@
+LOQI RECONCILED BACKEND ARCHITECTURE CONTRACT
+==============================================
+
+Status: planning contract only. This document supersedes:
+
+* loqi_r0_architecture_contract.txt
+* loqi_backend_rebuild_spec.txt
+
+It does not authorize schema, API, frontend, provider, deployment, or runtime
+behavior changes by itself. Future architecture phases must use this document
+as the naming and ownership authority.
+
+1. PURPOSE
+----------
+
+Loqi will converge incrementally on a small, explicit backend while preserving
+the existing Supabase schema/data, public HTTP routes, browser/web-session
+behavior, tenant isolation, providers, durable jobs, SSE, Telegram, and legacy
+workflow clients.
+
+The target is not a second backend and not a file-count exercise. It is one
+canonical owner per product capability, thin HTTP adapters, durable state below
+application behavior, and a boring composition root.
+
+2. RESOLVED NAMING DECISIONS
+----------------------------
+
+Conflict                         Decision
+-------------------------------  ---------------------------------------------
+backend/main.py vs app_factory   Keep backend/main.py. It is the existing,
+                                 partially migrated entrypoint and the only
+                                 composition root. Do not add app_factory.py.
+
+top-level api/*.py vs domain API  Use services/<domain>/api.py. HTTP adapters
+                                 belong beside the domain they expose. Do not
+                                 add a generic backend/api/ package.
+
+service.py vs application.py      Use service.py for a domain's application
+                                 operations. It is shorter, matches existing
+                                 Loqi conventions, and does not imply a second
+                                 framework layer. Do not add application.py.
+
+repository.py vs repositories/   Use a domain-local repository.py only when
+                                 the domain needs a named durable-query owner.
+                                 Do not add a generic repositories/ root.
+
+platform/*.py vs repositories/   Use services/platform/ for genuinely shared
+                                 infrastructure: Supabase/RPC/retry primitives,
+                                 audit persistence, and runtime wiring. It is
+                                 not a business-domain service.
+
+dependencies.py                  Keep services/identity/dependencies.py for
+                                 HTTP identity resolution only. Workspace
+                                 authorization remains services/workspace_context.py
+                                 until it is deliberately co-located under the
+                                 workspace domain in a later phase.
+
+providers.py vs gmail.py          Use providers.py for a domain's provider
+                                 abstraction/dispatcher. Use gmail.py for the
+                                 one concrete Gmail integration. Do not create
+                                 provider managers or a second registry.
+
+models.py / schemas.py            Keep request/response DTOs and domain models
+                                 local to their domain. Use schemas.py only for
+                                 externally parsed/returned DTOs when models.py
+                                 would mix persistence/domain entities with HTTP
+                                 shapes. Do not create a global schemas package.
+
+api.py role                       api.py contains route registration, request
+                                 parsing, identity/workspace dependencies, and
+                                 HTTP error translation only. It never calls
+                                 Supabase, providers, jobs, or another domain's
+                                 mutable store directly.
+
+service.py role                   service.py owns the domain's use cases and
+                                 explicit cross-domain coordination. It never
+                                 imports main.py or another domain's api.py.
+
+3. FINAL TARGET TREE
+--------------------
+
+backend/
+  main.py
+    FastAPI construction; middleware/CORS; safe exception mapping; dependency
+    wiring; router registration; lifespan startup/shutdown only.
+
+  services/
+    platform/
+      supabase.py                Shared Supabase client, RPC, transaction and
+                                  bounded persistence-retry primitives only.
+      audit.py                   Safe structured audit writes and reads.
+      runtime.py                 Lifespan worker/scheduler/recovery wiring;
+                                  no domain business policies.
+
+    identity/
+      api.py                     Auth/session HTTP routes and adapters.
+      dependencies.py            Bearer/web-session request identity boundary.
+      service.py                 Signup, login, verification, refresh,
+                                  revocation, legacy-user bridge orchestration.
+      repository.py              Durable users, credentials, identities,
+                                  sessions, and membership access.
+      providers.py               Email and Google identity-provider adapters.
+
+    onboarding/
+      api.py                     Onboarding HTTP routes.
+      service.py                 Onboarding lifecycle and completion use cases.
+      repository.py              Durable onboarding/lifecycle state when it
+                                  remains independently owned.
+
+    organizations/
+      api.py                     Organization/member/invitation HTTP routes.
+      service.py                 Organization lifecycle and role operations.
+      repository.py              Organization/membership/invitation queries.
+
+    workspace/
+      api.py                     Workspace and selected-workspace HTTP reads
+                                  only if such routes remain a coherent family.
+      access.py                  Selected-workspace membership/role resolution.
+      state.py                   Bounded canonical workspace read projection.
+
+    discovery/
+      api.py                     Discovery/job-read/lead-read HTTP adapters.
+      service.py                 Create, search request, list/get, finalize,
+                                  cancel, lead decision/attachment, recovery.
+      repository.py              Discovery, result, company, and lead-link
+                                  persistence queries.
+      providers.py               Provider-agnostic lead-search dispatch.
+
+    campaigns/
+      api.py                     Campaign HTTP adapters.
+      service.py                 Campaign CRUD, selected-lead/discovery
+                                  attachment, strategy/draft job starts,
+                                  refreshed canonical campaign results.
+      repository.py              Campaign and campaign-lead persistence queries.
+
+    drafts/
+      api.py                     Draft review/generation HTTP adapters.
+      service.py                 Canonical Draft lifecycle, edit/refine/review,
+                                  batch-generation coordination and versions.
+      repository.py              Durable Draft and version persistence queries.
+
+    outbound/
+      api.py                     Outbound HTTP adapters.
+      service.py                 Confirmed schedule/send/reply transitions,
+                                  durable status verification and reconciliation.
+      gmail.py                   Gmail OAuth, provider ownership, sync, and
+                                  concrete provider projection.
+
+    inbox/
+      api.py                     Conversation/inbox HTTP adapters.
+      service.py                 Sync/read/reply/follow-up/reasoning use cases.
+      repository.py              Durable workspace-scoped conversation snapshot,
+                                  thread, message, and concurrency access.
+
+    jobs/
+      api.py                     Job status/result/event HTTP adapters.
+      service.py                 Durable job create/status/result/cancel and
+                                  recovery/reconciliation use cases.
+      workers.py                 Discovery, strategy, and draft worker dispatch.
+
+    knowledge/
+      api.py                     Knowledge/source HTTP adapters.
+      service.py                 Knowledge/source CRUD and scoped retrieval.
+      repository.py              Added only if current persistence ownership
+                                  cannot remain a clearly named internal detail.
+
+    strategic/
+      api.py                     Strategic update/action HTTP adapters.
+      service.py                 Grounded strategic update/action lifecycle.
+      repository.py              Durable strategic update/action queries.
+
+    mission_control/
+      api.py                     Briefing and Mission Control HTTP adapters.
+      service.py                 One bounded briefing payload assembled from
+                                  canonical read services.
+      reasoning.py               Health, recommendation, narrative, intention,
+                                  timeline/delta composition stages only.
+
+    copilot/
+      api.py                     Copilot HTTP/SSE adapter if not retained in
+                                  the legacy web-session message adapter.
+      service.py                 Authenticated request → grounded context →
+                                  decision → response orchestration.
+      tools.py                   Explicit adapters to named domain operations.
+      memory.py                  Bounded workspace/user-scoped context memory.
+      executions.py              Confirmation, idempotency, verification,
+                                  recovery, audit, and action ledger behavior.
+
+    workflows/
+      api.py                     Legacy web/Telegram workflow HTTP adapters.
+      service.py                 Compatibility facade over canonical domains.
+      runtime.py                 The one remaining workflow state machine,
+                                  locks, events, and recovery behavior.
+
+    billing/
+      api.py                     Existing billing HTTP routes.
+      service.py                 Billing/subscription use cases.
+      repository.py              Billing persistence/query ownership.
+      providers.py               Stripe adapter only.
+
+    capabilities/
+      api.py                     Existing capabilities HTTP routes.
+      service.py                 Capability and entitlement behavior.
+      repository.py              Capability persistence/query ownership.
+
+Notes:
+
+* A listed file is created only when that responsibility is actually migrated.
+* Existing `services/<domain>/api.py` and `service.py` files are canonical
+  seeds, not temporary wrappers to replace later.
+* A domain may keep persistence private inside service.py if a separate
+  repository.py would only wrap one obvious query implementation.
+* `platform/` must remain small and infrastructure-only. It is not a place for
+  campaigns, providers, access policy, or cross-domain business helpers.
+
+4. DEPENDENCY DIRECTION
+-----------------------
+
+  main.py
+      ↓
+  services/<domain>/api.py
+      ↓
+  services/identity/dependencies.py + services/workspace/access.py
+      ↓
+  services/<domain>/service.py
+      ↓
+  services/<domain>/repository.py and provider/integration modules
+      ↓
+  services/platform/* and external systems
+
+Allowed explicit cross-domain calls:
+
+* campaigns.service → jobs.service for strategy/draft starts.
+* drafts.service → outbound.service only after canonical Draft persistence.
+* inbox.service → outbound.service for an authorized, confirmed reply/follow-up.
+* mission_control.service → bounded read methods only; it never mutates a
+  source domain while creating a briefing.
+* copilot.tools → named domain service operations, never route modules/main.py.
+* workflows.service → the same domain service operations, never duplicate
+  campaign/discovery/draft implementations.
+
+Forbidden:
+
+* any service/domain module importing main.py or another domain's api.py;
+* API routes calling Supabase/provider/job business logic directly;
+* user/model-supplied user or workspace IDs becoming authority;
+* a second job queue, Draft authority, conversation authority, workspace
+  context authority, or Copilot context authority;
+* direct access to another domain's mutable in-memory projection.
+
+5. CANONICAL OWNERSHIP MAP
+--------------------------
+
+Capability                    Canonical owner
+----------------------------  -----------------------------------------------
+Composition/lifespan          main.py + platform.runtime
+Shared persistence primitives platform.supabase
+Audit records                 platform.audit
+Identity/session              identity.dependencies + identity.service
+Workspace authorization       workspace.access
+Workspace projections         workspace.state
+Discovery/leads               discovery.service
+Lead providers                discovery.providers
+Durable jobs/recovery         jobs.service + jobs.workers
+Campaign lifecycle            campaigns.service
+Canonical Draft lifecycle     drafts.service
+Outbound/Gmail                outbound.service + outbound.gmail
+Inbox durability/operations   inbox.repository + inbox.service
+Knowledge                     knowledge.service
+Strategic updates             strategic.service
+Mission Control               mission_control.service + reasoning
+Copilot                       copilot.service + tools/memory/executions
+Legacy workflows              workflows.service + runtime
+
+Current concrete mappings to preserve while migrating:
+
+* `services.identity.dependencies` is already the request identity owner.
+* `services.workspace_context` is the current workspace-access owner. It may
+  be renamed/moved to `services.workspace.access` only in the workspace phase,
+  after all callers migrate; no alias remains afterward.
+* `services.workspace_state` is the current canonical workspace-read seed.
+* `services.job_engine` is the durable job seed; it becomes jobs.service and
+  jobs.workers by moving behavior, not by creating a second queue.
+* `services.knowledge.service` and `services.knowledge.api` are canonical
+  Knowledge seeds.
+* `services.mission_control.api` and `briefing.py` are canonical Mission
+  Control seeds; `briefing.py` is renamed to service.py only when every caller
+  has migrated in the same change.
+* Existing Copilot tool, memory, execution-ledger, and orchestrator behavior
+  is consolidated under `services.copilot.*` only after its frozen contracts
+  are preserved.
+
+6. CONTRACTS THAT MUST NOT CHANGE
+---------------------------------
+
+* Existing Supabase tables, foreign keys, migrations, RPCs, JSON columns,
+  ownership fields, audit records, and status vocabulary.
+* Every HTTP path, verb, request/response/error shape, 202 async start,
+  legacy session alias, navigation link, and SSE event payload.
+* Bearer authentication, selected-workspace and timezone headers, CORS,
+  session revocation, provider ownership, confirmation, and rate limiting.
+* Discovery → durable result persistence → final status behavior.
+* Campaign selected-lead attachment/count behavior and strategy/draft jobs.
+* Canonical Draft persistence before provider-projection success.
+* Conversation persistence across restart plus workspace/owner filtering.
+* Copilot grounding, confirmation, async job, bounded planning, memory,
+  idempotency, verification, audit, and truthful failure behavior.
+* Telegram and legacy workflow contracts until consumer migration is explicit.
+
+7. MIGRATION AND DELETION RULES
+-------------------------------
+
+For every migration:
+
+1. Characterize observable behavior first.
+2. Identify the existing canonical seed and destination in this contract.
+3. Move actual logic and its router together where doing otherwise would split
+   one resource family. Moving a thin CRUD adapter does not change mutation
+   architecture when it continues to call the same service.
+4. Migrate all production callers and test patch targets.
+5. Verify authorization, workspace scope, persistence, job/recovery, response,
+   and provider behavior appropriate to that capability.
+6. Delete the old active implementation and search for stale references.
+7. Never use wrappers, aliases, compatibility copies, or a parallel state path
+   as a migration shortcut.
+
+Compatibility is allowed only when it has an explicit owner, purpose, exit
+criterion, and deletion phase. The legacy web-session route family and legacy
+workflow facade are named compatibility boundaries; they are not authorities.
+
+8. PHASE ORDER
+--------------
+
+R1  Contract characterization and route reconciliation.
+R2  Identity/workspace access extraction plus proven runtime safety fixes.
+R3  Read-only domain/router extraction: Knowledge, Mission Control, Discovery
+    reads, Campaign reads, Draft reads, Inbox reads, and bounded analytics.
+R4  Jobs and Discovery lifecycle/recovery.
+R5  Campaign, Draft, and Outbound lifecycle consolidation.
+R6  Inbox durability and provider consolidation.
+R7  Copilot consolidation.
+R8  Workflow compatibility consolidation and duplicate-state removal.
+R9  Provider/orphan cleanup after deployed/runtime verification.
+
+9. ANTI-FRAGMENTATION STANDARD
+------------------------------
+
+* No module exists merely to match a table, framework, or earlier AI phase.
+* No generic manager/coordinator/helper layer without a named owner and at
+  least two concrete identical uses.
+* One writable authority per entity. Caches/projections are rebuildable and
+  cannot independently report durable success.
+* Long-running work uses durable jobs; request-owned tasks are never the state
+  authority for an operation.
+* `main.py` contains only composition concerns after migration: FastAPI setup,
+  middleware, exception mapping, dependency wiring, router registration, and
+  lifespan orchestration.
+* A refactor is complete only after the old active path is deleted and searches
+  prove no caller remains.
+
+10. FINAL AUTHORITY
+-------------------
+
+This document is the sole target-tree and naming authority for Loqi backend
+architecture phases. Where either superseded document differs, this contract
+wins. It preserves their shared behavior/contract guarantees while resolving
+their structural disagreements in favor of existing Loqi conventions and the
+already-partially-migrated `main.py` entrypoint.

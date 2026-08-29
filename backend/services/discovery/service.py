@@ -24,10 +24,11 @@ Design notes
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import uuid4
 
+from services.job_engine import job_manager
 from services.supabase import get_supabase_client
 
 _DISCOVERY_SELECT = (
@@ -44,6 +45,15 @@ def _log(msg: str) -> None:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+class DiscoveryJobLifecycleError(Exception):
+    """A durable Discovery search could not be accepted for execution."""
+
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
 
 
 def _count_of(payload: Any) -> int:
@@ -98,6 +108,371 @@ def create_discovery(
     except Exception as e:
         _log(f"create_discovery error: {e}")
         return None
+
+
+async def create_search_run(
+    user_id: str,
+    query: str,
+    session_token: str = "",
+    *,
+    display_title: str | None = None,
+    workspace_id: str = "",
+    on_update=None,
+) -> dict:
+    """Create a durable Discovery, then schedule its linked search job.
+
+    Discovery is the ownership root for every search job. The durable row is
+    written before the job is scheduled, and the worker receives that exact
+    ``discovery_id`` for progress, failure, recovery, and finalization.
+    """
+    if not workspace_id:
+        from services.workspace_state import ensure_workspace
+
+        workspace_id = await asyncio.to_thread(ensure_workspace, user_id) or ""
+
+    _log(
+        "[kickoff] create_search_run: "
+        f"user={user_id} query={query!r} workspace_id={workspace_id or '(none)'}"
+    )
+    discovery = None
+    if workspace_id:
+        discovery = await asyncio.to_thread(
+            create_discovery,
+            workspace_id,
+            user_id,
+            query,
+            display_title,
+        )
+    discovery_id = str((discovery or {}).get("id") or "")
+    if not discovery_id:
+        raise DiscoveryJobLifecycleError(503, "Discovery could not be persisted")
+
+    async def emit_job_event(payload: dict) -> None:
+        try:
+            from services.events_bus import event_bus
+
+            event_type = (
+                "job.completed"
+                if payload.get("status") in ("completed", "failed", "cancelled")
+                else "job.progress"
+            )
+            data: dict = {
+                "stage": payload.get("stage", ""),
+                "discovery_id": discovery_id,
+            }
+            if payload.get("error"):
+                data["error"] = str(payload.get("error"))[:200]
+            await event_bus.publish_user_event(
+                user_id,
+                event_type,
+                data,
+                job_id=payload.get("job_id", ""),
+                status=str(payload.get("status") or ""),
+                progress=int(payload.get("progress") or 0),
+            )
+        except Exception:
+            # Redis fan-out is a projection. Durable Discovery/job state is
+            # already written by the runner and remains authoritative.
+            pass
+
+    def handle_update(payload: dict) -> None:
+        status = payload.get("status")
+        job_id = str(payload.get("job_id") or "")
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                loop.create_task(emit_job_event(payload))
+        except RuntimeError:
+            pass
+
+        if status in ("failed", "cancelled"):
+            linked_discovery = get_discovery_by_job_id(job_id)
+            if linked_discovery:
+                mark_discovery_status(
+                    str(linked_discovery["id"]),
+                    str(status),
+                    str(payload.get("error") or ""),
+                )
+        elif status == "running" and payload.get("stage"):
+            linked_discovery_id = get_discovery_id_for_job(job_id)
+            if linked_discovery_id:
+                update_discovery_progress(
+                    linked_discovery_id,
+                    str(payload["stage"]),
+                    int(payload.get("progress") or 0),
+                )
+
+        if on_update:
+            try:
+                on_update(payload)
+            except Exception as error:
+                _log(f"external search-job update callback failed: {error}")
+
+    result = await job_manager.create_search_job(
+        user_id=user_id,
+        query=query,
+        discovery_id=discovery_id,
+        on_update=handle_update,
+        on_complete=finalize_discovery,
+    )
+    if not result:
+        await asyncio.to_thread(
+            mark_discovery_status,
+            discovery_id,
+            "failed",
+            "Failed to create job",
+        )
+        raise DiscoveryJobLifecycleError(500, "Failed to create job")
+
+    if session_token:
+        try:
+            from services.world_model import EventType as WMEventType, publish
+
+            publish(
+                session_token,
+                WMEventType.LEAD_DISCOVERED,
+                {
+                    "job_id": result.get("job_id", ""),
+                    "discovery_id": discovery_id,
+                    "query": query,
+                    "status": "searching",
+                },
+                actor="user",
+            )
+        except Exception as error:
+            _log(f"publish(LEAD_DISCOVERED) failed (non-fatal): {error}")
+
+    return {**result, "discovery_id": discovery_id}
+
+
+async def get_job_for_user(job_id: str, user_id: str) -> Optional[dict]:
+    """Return one job only when it belongs to the authenticated user."""
+    job = await asyncio.to_thread(job_manager.get_job, job_id)
+    if not job or str(job.get("user_id") or "") != str(user_id):
+        return None
+    return job
+
+
+async def get_job_results_for_user(job_id: str, user_id: str) -> Optional[dict]:
+    """Return completed job results only when the job belongs to the user."""
+    job = await get_job_for_user(job_id, user_id)
+    if not job:
+        return None
+    return await asyncio.to_thread(job_manager.get_job_results, job_id)
+
+
+async def list_recent_jobs_for_user(user_id: str) -> list[dict]:
+    """Return recent durable jobs for the authenticated user only."""
+    return await asyncio.to_thread(job_manager.list_recent_jobs, user_id)
+
+
+STALE_SEARCH_JOB_GRACE_SECONDS = 300
+
+
+async def reconcile_stale_search_jobs() -> int:
+    """Reconcile durable search jobs interrupted by a process restart.
+
+    Jobs with persisted results are finalized against their linked Discovery;
+    jobs without results become an explicit failed job and failed Discovery.
+    A second pass repairs terminal jobs whose Discovery was not finalized
+    before the process stopped. Every operation is idempotent.
+    """
+    from services.job_engine.models import JobStatus
+    from services.job_engine.storage import JobStorage
+
+    client = get_supabase_client()
+    if client is None:
+        return 0
+
+    def chunks(values: list[str], size: int = 100) -> list[list[str]]:
+        return [values[index : index + size] for index in range(0, len(values), size)]
+
+    storage = JobStorage()
+    grace_iso = (
+        datetime.now(timezone.utc) - timedelta(seconds=STALE_SEARCH_JOB_GRACE_SECONDS)
+    ).isoformat()
+    recovered = 0
+
+    try:
+        rows = await asyncio.to_thread(
+            lambda: (
+                client.table("jobs")
+                .select("id, discovery_id")
+                .eq("type", "search")
+                .in_("status", ["queued", "running"])
+                .lt("updated_at", grace_iso)
+                .execute()
+            )
+        )
+        orphaned = getattr(rows, "data", None) or []
+    except Exception as error:
+        _log(f"stale search job scan failed: {error}")
+        orphaned = []
+
+    orphan_ids = [str(row.get("id")) for row in orphaned if row.get("id")]
+    jobs_with_results: set[str] = set()
+    for job_ids in chunks(orphan_ids):
+        try:
+            result_rows = await asyncio.to_thread(
+                lambda: (
+                    client.table("search_results")
+                    .select("job_id")
+                    .in_("job_id", job_ids)
+                    .execute()
+                )
+            )
+            jobs_with_results.update(
+                str(row.get("job_id"))
+                for row in (result_rows.data or [])
+                if row.get("job_id")
+            )
+        except Exception as error:
+            _log(f"search results batch lookup failed: {error}")
+
+    orphan_discovery_ids = [
+        str(row.get("discovery_id")) for row in orphaned if row.get("discovery_id")
+    ]
+    orphan_discovery_status: dict[str, str] = {}
+    for discovery_ids in chunks(orphan_discovery_ids):
+        try:
+            discovery_rows = await asyncio.to_thread(
+                lambda: (
+                    client.table("discoveries")
+                    .select("id, status")
+                    .in_("id", discovery_ids)
+                    .execute()
+                )
+            )
+            orphan_discovery_status.update({
+                str(row.get("id")): str(row.get("status"))
+                for row in (discovery_rows.data or [])
+            })
+        except Exception as error:
+            _log(f"orphan discoveries batch lookup failed: {error}")
+
+    for row in orphaned:
+        job_id = str(row.get("id") or "")
+        if not job_id:
+            continue
+        try:
+            if job_id in jobs_with_results:
+                job = await asyncio.to_thread(storage.get_job, job_id)
+                finalized = bool(job and await finalize_discovery(job))
+                if finalized:
+                    await asyncio.to_thread(
+                        storage.update_job,
+                        job_id,
+                        status=JobStatus.COMPLETED,
+                        stage="Complete",
+                        progress=100,
+                        result_ready=True,
+                        completed_at=datetime.now(timezone.utc),
+                    )
+                    _log(f"finalized orphaned search job {job_id}")
+                else:
+                    await asyncio.to_thread(
+                        storage.update_job,
+                        job_id,
+                        status=JobStatus.FAILED,
+                        stage="Failed",
+                        error_message="Discovery results could not be persisted after restart",
+                        completed_at=datetime.now(timezone.utc),
+                    )
+                    _log(f"orphaned search job {job_id} failed finalization")
+            else:
+                reason = "Search run interrupted by restart"
+                await asyncio.to_thread(
+                    storage.update_job,
+                    job_id,
+                    status=JobStatus.FAILED,
+                    stage="Failed",
+                    error_message=reason,
+                    completed_at=datetime.now(timezone.utc),
+                )
+                discovery_id = str(row.get("discovery_id") or "")
+                if orphan_discovery_status.get(discovery_id) == "searching":
+                    await asyncio.to_thread(
+                        mark_discovery_status,
+                        discovery_id,
+                        "failed",
+                        reason,
+                    )
+                _log(f"failed orphaned search job {job_id}")
+            recovered += 1
+        except Exception as error:
+            _log(f"stale search job {job_id} reconcile failed: {error}")
+
+    try:
+        rows = await asyncio.to_thread(
+            lambda: (
+                client.table("jobs")
+                .select("id, status, error_message, discovery_id")
+                .eq("type", "search")
+                .in_("status", ["completed", "failed"])
+                .not_.is_("discovery_id", "null")
+                .order("created_at", desc=True)
+                .limit(200)
+                .execute()
+            )
+        )
+        terminal_jobs = getattr(rows, "data", None) or []
+    except Exception as error:
+        _log(f"terminal search job scan failed: {error}")
+        terminal_jobs = []
+
+    terminal_discovery_ids = [
+        str(row.get("discovery_id")) for row in terminal_jobs if row.get("discovery_id")
+    ]
+    discoveries_by_id: dict[str, dict] = {}
+    for discovery_ids in chunks(terminal_discovery_ids):
+        try:
+            discovery_rows = await asyncio.to_thread(
+                lambda: (
+                    client.table("discoveries")
+                    .select("id, status")
+                    .in_("id", discovery_ids)
+                    .execute()
+                )
+            )
+            for discovery in discovery_rows.data or []:
+                discoveries_by_id[str(discovery.get("id"))] = discovery
+        except Exception as error:
+            _log(f"terminal discoveries batch lookup failed: {error}")
+
+    for row in terminal_jobs:
+        job_id = str(row.get("id") or "")
+        try:
+            discovery = discoveries_by_id.get(str(row.get("discovery_id") or ""))
+            if not discovery or discovery.get("status") != "searching":
+                continue
+            if row.get("status") == JobStatus.COMPLETED.value:
+                job = await asyncio.to_thread(storage.get_job, job_id)
+                if job and await finalize_discovery(job):
+                    _log(f"finalized completed search job {job_id}")
+                    recovered += 1
+                elif job:
+                    await asyncio.to_thread(
+                        storage.update_job,
+                        job_id,
+                        status=JobStatus.FAILED,
+                        stage="Failed",
+                        error_message="Discovery results could not be persisted after restart",
+                        completed_at=datetime.now(timezone.utc),
+                    )
+                    _log(f"completed search job {job_id} failed finalization")
+                    recovered += 1
+            elif row.get("status") == JobStatus.FAILED.value:
+                await asyncio.to_thread(
+                    mark_discovery_status,
+                    str(discovery["id"]),
+                    "failed",
+                    row.get("error_message") or "Search run failed",
+                )
+                _log(f"failed terminal search job {job_id}")
+                recovered += 1
+        except Exception as error:
+            _log(f"terminal search job {job_id} reconcile failed: {error}")
+    return recovered
 
 
 def get_discovery_id_for_job(job_id: str) -> str:

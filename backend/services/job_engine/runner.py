@@ -16,6 +16,9 @@ class BackgroundRunner:
         self._tasks: dict[str, asyncio.Task] = {}
 
     def start_job(self, job: Job, runner_fn, on_update=None, on_complete=None) -> None:
+        if not job.discovery_id:
+            _log(f"start_job rejected for job={job.id}: canonical discovery_id is required")
+            return
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -33,6 +36,26 @@ class BackgroundRunner:
         _log(f"[kickoff] start_job task created for job={job.id}")
 
     async def _run_wrapper(self, job: Job, runner_fn, on_update=None, on_complete=None) -> None:
+        if not job.discovery_id:
+            error = "Canonical discovery_id is required"
+            _log(f"_run_wrapper rejected job={job.id}: {error}")
+            await asyncio.to_thread(
+                self._storage.update_job,
+                job.id,
+                status=JobStatus.FAILED,
+                stage="Failed",
+                error_message=error,
+                completed_at=datetime.now(timezone.utc),
+            )
+            if on_update:
+                on_update({
+                    "job_id": job.id,
+                    "status": "failed",
+                    "stage": "Failed",
+                    "progress": 0,
+                    "error": error,
+                })
+            return
         _log(f"[kickoff] _run_wrapper TASK STARTED job={job.id} discovery_id={job.discovery_id}")
         def notify(status: str, stage: str, progress: int, error: str = "") -> None:
             if on_update:

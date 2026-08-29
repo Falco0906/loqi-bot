@@ -19,6 +19,10 @@ class JobManager:
         import asyncio
         from services.job_engine.registry import STAGES_SEARCH
 
+        if not discovery_id:
+            _log("create_search_job rejected: canonical discovery_id is required")
+            return None
+
         job = Job(
             user_id=user_id,
             type="search",

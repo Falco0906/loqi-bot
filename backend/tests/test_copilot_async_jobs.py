@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from types import SimpleNamespace
 
 import pytest
 
@@ -59,6 +60,106 @@ async def test_copilot_search_is_acknowledged_after_durable_job_schedule(monkeyp
     assert storage.jobs[created["job_id"]].discovery_id == "discovery-1"
     assert storage.jobs[created["job_id"]].status is JobStatus.QUEUED
     assert len(runner.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_job_cannot_be_created_or_started_without_discovery_id(monkeypatch):
+    """The durable job boundary rejects unattachable discovery work."""
+    import workflow_dispatcher
+
+    storage = DurableStorage()
+    manager = JobManager()
+    manager._storage = storage
+    runner = RecordingRunner()
+    manager._runner = runner
+    monkeypatch.setattr(workflow_dispatcher, "run_search_workflow", object())
+
+    created = await manager.create_search_job(user_id="owner-1", query="cafe owners")
+
+    assert created is None
+    assert storage.jobs == {}
+    assert runner.calls == []
+
+
+@pytest.mark.asyncio
+async def test_runner_rejects_an_unlinked_job_before_provider_work() -> None:
+    """A malformed persisted row still cannot execute provider work."""
+    storage = DurableStorage()
+    job = Job(id="job-unlinked", user_id="owner-1", type="search")
+    storage.create_job(job)
+    runner = BackgroundRunner(storage)
+    workflow_called = False
+
+    async def workflow(_job, _on_progress):
+        nonlocal workflow_called
+        workflow_called = True
+        return {"ok": True}
+
+    await runner._run_wrapper(job, workflow)
+
+    assert workflow_called is False
+    assert storage.jobs[job.id].status is JobStatus.FAILED
+    assert any(
+        update.get("error_message") == "Canonical discovery_id is required"
+        for update in storage.updates
+    )
+
+
+@pytest.mark.asyncio
+async def test_restart_recovery_fails_an_orphaned_discovery_job(monkeypatch) -> None:
+    """Recovery keeps the job and its linked Discovery in explicit terminal state."""
+    import services.discovery.service as discovery
+    import services.job_engine.storage as job_storage
+
+    updates: list[dict[str, object]] = []
+    discovery_statuses: list[tuple[str, str, str]] = []
+
+    class Query:
+        def __init__(self, table: str):
+            self.table = table
+            self.statuses: list[str] = []
+
+        def select(self, *_args): return self
+        def eq(self, *_args): return self
+        def in_(self, field, values):
+            if field == "status":
+                self.statuses = list(values)
+            return self
+        def lt(self, *_args): return self
+        def not_(self, *_args): return self
+        def order(self, *_args, **_kwargs): return self
+        def limit(self, *_args): return self
+        def execute(self):
+            if self.table == "jobs" and self.statuses == ["queued", "running"]:
+                return SimpleNamespace(data=[{"id": "job-1", "discovery_id": "discovery-1"}])
+            if self.table == "discoveries":
+                return SimpleNamespace(data=[{"id": "discovery-1", "status": "searching"}])
+            return SimpleNamespace(data=[])
+
+    class Client:
+        def table(self, table): return Query(table)
+
+    class Storage:
+        def get_job(self, _job_id): return None
+        def update_job(self, job_id, **values):
+            updates.append({"job_id": job_id, **values})
+            return True
+
+    monkeypatch.setattr(discovery, "get_supabase_client", lambda: Client())
+    monkeypatch.setattr(job_storage, "JobStorage", Storage)
+    monkeypatch.setattr(
+        discovery,
+        "mark_discovery_status",
+        lambda discovery_id, status, reason="": discovery_statuses.append((discovery_id, status, reason)),
+    )
+
+    recovered = await discovery.reconcile_stale_search_jobs()
+
+    assert recovered == 1
+    assert updates[0]["status"] is JobStatus.FAILED
+    assert discovery_statuses == [
+        ("discovery-1", "failed", "Search run interrupted by restart")
+    ]
 
 
 @pytest.mark.asyncio

@@ -139,8 +139,9 @@ class TestSearchPipelineCompletes:
     @pytest.mark.asyncio
     async def test_pipeline_completes_and_stores_leads(self, session_token):
         from main import engine
-        from services.job_engine.manager import JobManager
+        from services.discovery.service import create_search_run
         from services.job_engine.storage import JobStorage
+        from services.workspace_state import ensure_workspace
 
         summary = await asyncio.to_thread(
             engine.get_web_session_summary, session_token
@@ -148,8 +149,12 @@ class TestSearchPipelineCompletes:
         assert summary is not None and summary.get("user_id")
         user_id = summary["user_id"]
 
-        manager = JobManager()
-        created = await manager.create_search_job(user_id=user_id, query="AI startups")
+        workspace_id = await asyncio.to_thread(ensure_workspace, user_id)
+        created = await create_search_run(
+            user_id,
+            "AI startups",
+            workspace_id=workspace_id,
+        )
         assert created and created.get("job_id"), f"job creation failed: {created}"
         job_id = created["job_id"]
 

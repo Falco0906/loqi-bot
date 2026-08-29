@@ -8,6 +8,7 @@ from starlette.requests import Request
 
 import main
 import services.discovery.api as discovery_api
+import services.discovery.service as discovery_service
 
 
 def _request(workspace_id: str = "workspace-selected") -> Request:
@@ -53,15 +54,15 @@ async def test_discovery_create_list_and_get_share_authenticated_workspace(monke
         assert discovery_id == "discovery-1"
         return {"id": discovery_id, "workspace_id": workspace_id}
 
-    monkeypatch.setattr(main.identity_dependencies, "resolve_web_session", resolve_user)
-    monkeypatch.setattr(main.workspace_access, "resolve_legacy_workspace_id", resolve_workspace)
-    monkeypatch.setattr(main, "_create_search_run", create_run)
+    monkeypatch.setattr(discovery_api.identity_dependencies, "resolve_web_session", resolve_user)
+    monkeypatch.setattr(discovery_api.workspace_access, "resolve_legacy_workspace_id", resolve_workspace)
+    monkeypatch.setattr(discovery_api, "create_search_run", create_run)
     monkeypatch.setattr(discovery_api, "list_discoveries", list_rows)
     monkeypatch.setattr(discovery_api, "get_discovery", get_row)
 
     request = _request(selected_workspace)
-    created_response = await main.create_discovery_endpoint(
-        main.CreateDiscoveryRequest(query="cafe owners"), request,
+    created_response = await discovery_api.create_discovery_endpoint(
+        discovery_api.CreateDiscoveryRequest(query="cafe owners"), request,
     )
     listed_response = await discovery_api.list_discoveries_endpoint(request)
     detail_response = await discovery_api.get_discovery_endpoint("discovery-1", request)
@@ -78,7 +79,15 @@ async def test_discovery_create_list_and_get_share_authenticated_workspace(monke
 async def test_discovery_read_routes_keep_their_registered_http_contract(monkeypatch):
     """The read router keeps the legacy paths and their 404 response contract."""
     paths = [route.path for route in discovery_api.router.routes]
-    assert paths == ["/api/discoveries", "/api/discoveries/{discovery_id}"]
+    assert paths == [
+        "/api/jobs/search",
+        "/api/discoveries",
+        "/api/discoveries",
+        "/api/discoveries/{discovery_id}",
+        "/api/jobs/{job_id}",
+        "/api/jobs/{job_id}/results",
+        "/api/jobs",
+    ]
     assert any(
         getattr(route, "original_router", None) is discovery_api.router
         for route in main.app.routes
@@ -112,10 +121,10 @@ async def test_create_search_run_keeps_explicit_workspace(monkeypatch):
     async def create_job(**_kwargs):
         return {"job_id": "job-1"}
 
-    monkeypatch.setattr("services.discovery.service.create_discovery", create_discovery)
-    monkeypatch.setattr(main.job_manager, "create_search_job", create_job)
+    monkeypatch.setattr(discovery_service, "create_discovery", create_discovery)
+    monkeypatch.setattr(discovery_service.job_manager, "create_search_job", create_job)
 
-    result = await main._create_search_run(
+    result = await discovery_service.create_search_run(
         "owner-1", "cafe owners", workspace_id="workspace-selected",
     )
 

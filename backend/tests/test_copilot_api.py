@@ -966,7 +966,7 @@ class TestCopilotOperationBoundary:
         monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
         monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}))
         monkeypatch.setattr("services.workspace_state.ensure_workspace", lambda _user_id: "workspace-1")
-        monkeypatch.setattr(main_module, "_create_search_run", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("read/conversation must not create Discovery")))
+        monkeypatch.setattr("services.discovery.service.create_search_run", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("read/conversation must not create Discovery")))
         monkeypatch.setattr("services.discovery.service.get_discovery", lambda *_args: {"id": "d-1", "status": "completed", "title": "Restaurant leads", "discovery_leads": [], "discovery_companies": [], "summary": {}})
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
         payload = main_module.SendWebMessageRequest(text="hi", copilot=main_module.CopilotContextModel(current_page="Mission Control", message_history=[]))
@@ -1052,7 +1052,7 @@ class TestCopilotOperationBoundary:
         )
         monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
         monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", fake_knowledge)
-        monkeypatch.setattr(main_module, "_create_search_run", fake_create_search_run)
+        monkeypatch.setattr("services.discovery.service.create_search_run", fake_create_search_run)
 
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
         payload = main_module.SendWebMessageRequest(
@@ -1089,7 +1089,7 @@ class TestCopilotOperationBoundary:
         monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", empty_knowledge)
         async def fake_create_search_run(_user_id, _query, _session, **_kwargs):
             return {"discovery_id": "discovery-2", "job_id": "job-2", "status": "queued"}
-        monkeypatch.setattr(main_module, "_create_search_run", fake_create_search_run)
+        monkeypatch.setattr("services.discovery.service.create_search_run", fake_create_search_run)
 
         request = SimpleNamespace(
             headers=SimpleNamespace(
@@ -1259,7 +1259,7 @@ class TestStructuredContext:
             },
         )
 
-        monkeypatch.setattr(main_module, "_create_search_run", fake_create_search_run)
+        monkeypatch.setattr("services.discovery.service.create_search_run", fake_create_search_run)
         resp = client.post(
             f"/api/web/session/{session_token}/messages",
             json={

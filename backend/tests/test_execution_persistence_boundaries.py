@@ -16,17 +16,16 @@ from fastapi import HTTPException
 
 @pytest.mark.asyncio
 async def test_search_job_is_not_created_when_discovery_insert_fails(monkeypatch):
-    import main as main_module
     import services.discovery.service as discovery
     import services.workspace_state as workspace_state
 
     monkeypatch.setattr(workspace_state, "ensure_workspace", lambda _owner: "workspace-1")
     monkeypatch.setattr(discovery, "create_discovery", lambda *_args, **_kwargs: None)
     create_job = AsyncMock()
-    monkeypatch.setattr(main_module.job_manager, "create_search_job", create_job)
+    monkeypatch.setattr(discovery.job_manager, "create_search_job", create_job)
 
-    with pytest.raises(HTTPException) as error:
-        await main_module._create_search_run("owner-1", "cafe owners")
+    with pytest.raises(discovery.DiscoveryJobLifecycleError) as error:
+        await discovery.create_search_run("owner-1", "cafe owners")
 
     assert error.value.status_code == 503
     create_job.assert_not_awaited()
@@ -69,18 +68,18 @@ async def test_discovery_finalization_fails_when_canonical_lead_persistence_fail
 
 @pytest.mark.asyncio
 async def test_strategy_enqueue_does_not_start_without_durable_job_metadata(monkeypatch):
-    import main as main_module
+    import services.campaigns.service as campaign_service
 
-    main_module.STRATEGY_JOBS.clear()
-    monkeypatch.setattr(main_module, "_persist_strategy_job_meta", AsyncMock(return_value=False))
+    campaign_service.STRATEGY_JOBS.clear()
+    monkeypatch.setattr(campaign_service, "persist_strategy_job_meta", AsyncMock(return_value=False))
     runner = AsyncMock()
-    monkeypatch.setattr(main_module, "_run_strategy_job", runner)
+    monkeypatch.setattr(campaign_service, "run_strategy_job", runner)
 
     with pytest.raises(HTTPException) as error:
-        await main_module._enqueue_strategy_job(
+        await campaign_service.enqueue_strategy_job(
             "session-1", "owner-1", "campaign-1", "Goal", {}, workspace_id="workspace-1",
         )
 
     assert error.value.status_code == 503
     runner.assert_not_called()
-    assert not main_module.STRATEGY_JOBS
+    assert not campaign_service.STRATEGY_JOBS

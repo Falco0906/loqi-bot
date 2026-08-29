@@ -100,3 +100,41 @@ class EventBus:
 
 
 event_bus = EventBus()
+
+
+async def publish_draft_event(
+    user_id: str,
+    event_type: str,
+    *,
+    draft_id: str = "",
+    campaign_id: str = "",
+    lead_name: str = "",
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """Publish the existing best-effort draft lifecycle notification.
+
+    ``draft_id`` remains an accepted compatibility argument even though the
+    established delivery payload intentionally contains only campaign, lead,
+    and explicitly safe extra metadata.
+    """
+    del draft_id
+    try:
+        data: dict[str, Any] = {}
+        if campaign_id:
+            data["campaign_id"] = campaign_id
+        if lead_name:
+            data["lead"] = lead_name[:80]
+        if extra:
+            data.update({
+                key: value
+                for key, value in extra.items()
+                if not any(blocked in key.lower() for blocked in ("token", "secret", "body", "subject"))
+            })
+        await event_bus.publish_user_event(
+            user_id,
+            event_type,
+            data,
+            status=event_type.split(".", 1)[-1],
+        )
+    except Exception:
+        pass

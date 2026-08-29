@@ -269,6 +269,13 @@ class TestSendDraftOwnership:
         )
         draft_store.create(draft)
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-a"))
+        monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda request: "tok")
+
+        async def workspace(request, user_id):
+            return "workspace-owner-a"
+
+        monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", workspace)
+        monkeypatch.setattr(main_module, "_workspace_drafts", lambda *args, **kwargs: [])
         request = MagicMock()
         with pytest.raises(Exception) as exc:
             asyncio.run(main_module.send_draft("tok", "draft-b-1", request))

@@ -13,6 +13,8 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 import main as main_module
+import services.events_bus as events_bus
+import services.outbound.service as outbound_service
 
 OWNER = "3e-owner-0001"
 OTHER = "3e-owner-9999"
@@ -35,7 +37,7 @@ class _StubOutbound:
 def capture(monkeypatch):
     events: list[tuple[str, dict]] = []
 
-    async def fake_publish(self, user_id, event_type, data=None,
+    async def fake_publish(user_id, event_type, data=None,
                            job_id="", status="", progress=None):
         events.append((user_id, {"type": event_type, **(data or {})}))
         return True
@@ -67,7 +69,7 @@ def _wire_send_route(app, monkeypatch):
     monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", fake_owner)
     monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda r: SESSION)
     monkeypatch.setattr(main_module, "_test_recipient_override_enabled", lambda: False)
-    monkeypatch.setattr(main_module, "_get_outbound_provider_for_draft", lambda d, o: "prov-1")
+    monkeypatch.setattr(outbound_service, "resolve_provider_for_draft", lambda d, o: "prov-1")
 
     class StubExecutor:
         def execute(self, action, params):
@@ -85,6 +87,15 @@ def _wire_send_route(app, monkeypatch):
         approval_state=ApprovalState.APPROVED,
     )
     outbound_draft_store.create(draft)
+
+    async def fake_canonical_draft(*_args, **_kwargs):
+        return OWNER, "workspace-events", {"id": draft.id, "status": "approved"}, draft
+
+    async def fake_persist(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr(outbound_service, "require_canonical_outbound_draft", fake_canonical_draft)
+    monkeypatch.setattr("services.workspace_state.persist_draft_update_awaited", fake_persist)
 
     sess = type("S", (), {})
     sess.get = lambda _id: [d for d in []]  # legacy store empty → durable path unused
@@ -143,5 +154,5 @@ def test_event_helper_never_raises(monkeypatch):
     monkeypatch.setattr("services.events_bus.EventBus.publish_user_event", boom)
 
     async def run():
-        await main_module._emit_draft_event(OWNER, "draft.approved", draft_id="d1")
+        await events_bus.publish_draft_event(OWNER, "draft.approved", draft_id="d1")
     asyncio.run(run())  # must not raise

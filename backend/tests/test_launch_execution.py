@@ -15,6 +15,7 @@ import pytest
 
 import main as main_module
 import services.campaigns.api as campaign_api
+import services.outbound.service as outbound_service
 def _auth_request(token="pr3b-tok-1"):
     from unittest.mock import MagicMock
     request = MagicMock()
@@ -96,15 +97,16 @@ def env(monkeypatch):
         return {"ok": True, "send_result": {"thread_id": "th-1", "external_message_id": "em-1"}}
 
     monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", fake_owner)
-    monkeypatch.setattr(main_module, "load_campaigns", fake_campaigns)
+    monkeypatch.setattr(campaign_api.service, "load_campaigns", fake_campaigns)
     monkeypatch.setattr(main_module, "_workspace_drafts", fake_drafts)
+    monkeypatch.setattr(workspace_state, "load_drafts_only", lambda owner_id, workspace_id="": fake_drafts(owner_id, workspace_id=workspace_id))
     monkeypatch.setattr(workspace_state, "persist_campaign_update_awaited", fake_persist_campaign)
     monkeypatch.setattr(workspace_state, "persist_draft_update_awaited", fake_persist_draft)
-    monkeypatch.setattr(main_module, "_find_outbound_gmail_provider_id", lambda: "prov-1")
-    monkeypatch.setattr(main_module, "publish", lambda *a, **k: None)
-    monkeypatch.setattr(main_module, "record_campaign_launched", lambda *a, **k: None)
-    monkeypatch.setattr(main_module, "_get_feedback", lambda: _FakeFeedback())
-    monkeypatch.setattr(main_module.outbound_executor, "execute", fake_execute)
+    monkeypatch.setattr(outbound_service, "find_outbound_gmail_provider_id", lambda: "prov-1")
+    monkeypatch.setattr(campaign_api.service, "publish", lambda *a, **k: None)
+    monkeypatch.setattr("services.workspace_timeline.record_campaign_launched", lambda *a, **k: None)
+    monkeypatch.setattr(campaign_api.service, "_feedback", lambda: _FakeFeedback())
+    monkeypatch.setattr(outbound_service.outbound_executor, "execute", fake_execute)
 
     async def fake_route_owner(_request, _session_token: str) -> str:
         return "owner-1"
@@ -127,7 +129,7 @@ def _launch_progress(state) -> dict:
 
 async def test_launch_dispatch_reads_durable_approved_drafts(env):
     env["state"]["drafts"] = [_draft("d-1"), _draft("d-2")]
-    result = await main_module._dispatch_campaign_sends("tok-1", _campaign(), "owner-1")
+    result = await outbound_service.dispatch_campaign_sends("tok-1", _campaign(), "owner-1", workspace_id="workspace-test")
 
     assert result["total"] == 2
     assert result["sent"] == 2
@@ -150,7 +152,7 @@ async def test_dispatch_only_sends_approved_drafts(env):
         _draft("d-pending", status="pending"),
         _draft("d-sent", status="sent"),
     ]
-    result = await main_module._dispatch_campaign_sends("tok-1", _campaign(), "owner-1")
+    result = await outbound_service.dispatch_campaign_sends("tok-1", _campaign(), "owner-1", workspace_id="workspace-test")
     assert [c["draft_id"] for c in env["calls"]] == ["d-approved"]
     assert result["total"] == 1
     assert result["sent"] == 1
@@ -158,7 +160,7 @@ async def test_dispatch_only_sends_approved_drafts(env):
 
 async def test_dispatch_zero_approved_returns_error(env):
     env["state"]["drafts"] = [_draft("d-pending", status="pending")]
-    result = await main_module._dispatch_campaign_sends("tok-1", _campaign(), "owner-1")
+    result = await outbound_service.dispatch_campaign_sends("tok-1", _campaign(), "owner-1", workspace_id="workspace-test")
     assert result["ok"] is False
     assert "approve" in result["error"].lower()
     assert env["calls"] == []
@@ -174,8 +176,8 @@ async def test_dispatch_partial_failure_tracks_progress(env, monkeypatch):
             return {"ok": False, "error": "Gmail 403"}
         return {"ok": True, "send_result": {"thread_id": "th", "external_message_id": "em"}}
 
-    monkeypatch.setattr(main_module.outbound_executor, "execute", flaky)
-    result = await main_module._dispatch_campaign_sends("tok-1", _campaign(), "owner-1")
+    monkeypatch.setattr(outbound_service.outbound_executor, "execute", flaky)
+    result = await outbound_service.dispatch_campaign_sends("tok-1", _campaign(), "owner-1", workspace_id="workspace-test")
     assert result["sent"] == 1
     assert result["failed"] == 1
     assert _launch_progress(env["state"])["status"] == "partial"
@@ -183,9 +185,11 @@ async def test_dispatch_partial_failure_tracks_progress(env, monkeypatch):
 
 async def test_launch_requires_approved_drafts(env):
     env["state"]["drafts"] = [_draft("d-pending", status="pending")]
-    payload = SimpleNamespace(name=None, objective=None, strategy=None, status="completed")
+    payload = campaign_api.UpdateCampaignRequest(
+        name=None, objective=None, strategy=None, status="completed",
+    )
     with pytest.raises(Exception) as excinfo:
-        await main_module.update_campaign("tok-1", "c-1", payload, request=None)
+        await campaign_api.update_campaign("tok-1", "c-1", payload, request=_auth_request())
     assert excinfo.value.status_code == 400
     assert env["state"]["campaign_updates"] == []
     assert env["calls"] == []
@@ -193,8 +197,10 @@ async def test_launch_requires_approved_drafts(env):
 
 async def test_launch_persists_status_and_progress(env):
     env["state"]["drafts"] = [_draft("d-1")]
-    payload = SimpleNamespace(name=None, objective=None, strategy=None, status="completed")
-    result = await main_module.update_campaign("s-1", "c-1", payload, request=None)
+    payload = campaign_api.UpdateCampaignRequest(
+        name=None, objective=None, strategy=None, status="completed",
+    )
+    result = await campaign_api.update_campaign("s-1", "c-1", payload, request=_auth_request("s-1"))
     assert result["ok"] is True
     assert len(env["calls"]) == 1
     assert ("c-1", {"status": "completed"}) in env["state"]["campaign_updates"]

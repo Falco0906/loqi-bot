@@ -24,7 +24,10 @@ sys.path.insert(0, ".")
 import pytest
 
 import services.workspace_state as workspace_state
+from services.drafts import api as drafts_api
+from services.drafts import service as drafts_service
 from services.outbound.draft_store import draft_store as outbound_draft_store
+import services.outbound.service as outbound_service
 from services.outbound.outbound_models import DraftMessage, DraftStatus, Recipient
 from services.persistence.launch.models import Draft
 
@@ -90,7 +93,7 @@ class TestApprovalLifecycle:
         monkeypatch.setattr(
             workspace_state, "persist_draft_update_awaited", fake_persist)
 
-        result = await main_module.approve_draft("token", "d-ap", MagicMock())
+        result = await drafts_api.approve_draft("token", "d-ap", MagicMock())
 
         assert result["ok"] is True
         assert result["draft"]["status"] == "pending"
@@ -112,7 +115,7 @@ class TestApprovalLifecycle:
         )
 
         with pytest.raises(Exception) as exc_info:
-            await main_module.approve_draft("token", "d-sent", MagicMock())
+            await drafts_api.approve_draft("token", "d-sent", MagicMock())
         assert getattr(exc_info.value, "status_code", None) == 409
         assert "already sent" in str(exc_info.value.detail)
 
@@ -131,7 +134,7 @@ class TestApprovalLifecycle:
         )
 
         with pytest.raises(Exception) as exc_info:
-            await main_module.approve_draft("token", "d-sending", MagicMock())
+            await drafts_api.approve_draft("token", "d-sending", MagicMock())
         assert getattr(exc_info.value, "status_code", None) == 409
 
     async def test_C_pending_approval_returns_and_preserves_other_drafts(self, monkeypatch):
@@ -171,12 +174,12 @@ class TestApprovalLifecycle:
         monkeypatch.setattr(
             workspace_state, "persist_draft_update_awaited", fake_persist
         )
-        monkeypatch.setattr(main_module, "_sync_draft_to_outbound", lambda *args, **kwargs: None)
-        monkeypatch.setattr(main_module, "_call_outbound_approval", lambda *args, **kwargs: None)
-        monkeypatch.setattr(main_module, "_emit_draft_event", emitted)
-        monkeypatch.setattr(main_module, "publish", lambda *args, **kwargs: None)
+        monkeypatch.setattr(outbound_service, "sync_draft_to_outbound", lambda *args, **kwargs: None)
+        monkeypatch.setattr(outbound_service, "create_provider_draft_after_approval", lambda *args, **kwargs: None)
+        monkeypatch.setattr(drafts_service, "publish_draft_event", emitted)
+        monkeypatch.setattr(drafts_service, "publish", lambda *args, **kwargs: None)
 
-        result = await main_module.approve_draft("token", "d-pending", MagicMock())
+        result = await drafts_api.approve_draft("token", "d-pending", MagicMock())
 
         assert result["ok"] is True
         assert result["draft"]["status"] == "approved"
@@ -213,7 +216,7 @@ class TestDurableSentStatus:
 
         monkeypatch.setattr(workspace_state, "DraftRepository", FakeRepo)
         monkeypatch.setattr(workspace_state, "_async_workspace", AsyncMock(return_value="ws-1"))
-        monkeypatch.setattr("services.supabase.get_supabase_client", lambda: MagicMock())
+        monkeypatch.setattr(workspace_state, "get_supabase_client", lambda: MagicMock())
 
         ok = asyncio.run(workspace_state.persist_draft_update_awaited(
             "user-1", draft.id, {"status": "sent"}))
@@ -233,7 +236,7 @@ class TestSendDraftGuard:
     def _canonical_guard(monkeypatch, draft):
         async def resolve(*_args, **_kwargs):
             return "owner-1", "workspace-1", {"id": draft.id, "status": draft.status.value}, draft
-        monkeypatch.setattr(main_module, "_require_canonical_outbound_draft", resolve)
+        monkeypatch.setattr(outbound_service, "require_canonical_outbound_draft", resolve)
 
     async def test_D_send_draft_on_sent_returns_ok_false_without_executor(self, monkeypatch):
         draft = _sent_outbound_draft(DraftStatus.SENT)
@@ -270,14 +273,14 @@ class TestSendDraftGuard:
         assert calls == []
 
     async def test_D3_durable_sent_draft_guard_fires_before_sync(self, monkeypatch):
-        """A durable-row sent draft is caught before _sync_draft_to_outbound."""
+        """A durable-row sent draft is caught before projection sync."""
         synced: list = []
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(
             main_module, "_workspace_drafts",
             lambda uid, tok="", **_kwargs: [{"id": "d-durable-sent", "status": "sent"}],
         )
-        monkeypatch.setattr(main_module, "_sync_draft_to_outbound",
+        monkeypatch.setattr(outbound_service, "sync_draft_to_outbound",
                             lambda draft, tok: synced.append(draft))
         outbound = _sent_outbound_draft(DraftStatus.SENT)
         self._canonical_guard(monkeypatch, outbound)

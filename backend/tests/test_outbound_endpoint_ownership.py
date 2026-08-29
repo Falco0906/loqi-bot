@@ -9,10 +9,11 @@ from fastapi import HTTPException
 @pytest.mark.asyncio
 async def test_outbound_list_rejects_an_unowned_provider(monkeypatch):
     import main as main_module
+    import services.outbound.service as outbound_service
 
     monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda _request: "session-1")
     monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", lambda *_args: _value("owner-1"))
-    monkeypatch.setattr(main_module, "_provider_owned_by", lambda _provider, _owner: False)
+    monkeypatch.setattr(outbound_service, "provider_owned_by", lambda _provider, _owner: False)
 
     with pytest.raises(HTTPException) as error:
         await main_module.outbound_list_drafts("_", SimpleNamespace(), provider_id="foreign-provider")
@@ -23,6 +24,7 @@ async def test_outbound_list_rejects_an_unowned_provider(monkeypatch):
 @pytest.mark.asyncio
 async def test_outbound_list_filters_unowned_drafts(monkeypatch):
     import main as main_module
+    import services.outbound.service as outbound_service
 
     owned = SimpleNamespace(id="owned", model_dump=lambda: {"id": "owned"})
     foreign = SimpleNamespace(id="foreign", model_dump=lambda: {"id": "foreign"})
@@ -33,7 +35,7 @@ async def test_outbound_list_filters_unowned_drafts(monkeypatch):
         "list_all",
         lambda: SimpleNamespace(drafts=[owned, foreign], total=2),
     )
-    monkeypatch.setattr(main_module, "_outbound_draft_owned_by", lambda draft, _owner: draft is owned)
+    monkeypatch.setattr(outbound_service, "outbound_draft_owned_by", lambda draft, _owner: draft is owned)
 
     result = await main_module.outbound_list_drafts("_", SimpleNamespace())
 

@@ -3,8 +3,8 @@
 Production symptom: Review UI shows an approved draft; clicking Send Now
 returned 404 {"detail":"Draft not found"} → UI showed "Send request failed".
 
-Root cause: _sync_draft_to_outbound stamped hydrated drafts with the FIRST
-Gmail provider in the GLOBAL registry (_find_outbound_gmail_provider_id).
+Root cause: the legacy draft projection stamped hydrated drafts with the FIRST
+Gmail provider in the GLOBAL registry.
 With multiple connected users — or after an identity divergence — a draft
 was stamped with ANOTHER user's provider, which the send route's cross-user
 ownership check then rejected with exactly that 404.
@@ -27,6 +27,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 import main as main_module
+import services.workspace_state as workspace_state
 from services.outbound import outbound_registry
 from services.outbound.outbound_models import (
     DraftMessage,
@@ -34,7 +35,7 @@ from services.outbound.outbound_models import (
     ApprovalState,
     Recipient,
 )
-from services.outbound.draft_store import draft_store as outbound_draft_store
+import services.outbound.draft_store as outbound_draft_store_module
 from services.communication import provider_registry as comm_registry
 
 OWNER = "2b-owner-0001"
@@ -77,7 +78,7 @@ def make_outbound_draft(draft_id: str, provider_id: str) -> DraftMessage:
         status=DraftStatus.APPROVED,
         approval_state=ApprovalState.APPROVED,
     )
-    outbound_draft_store.create(d)
+    outbound_draft_store_module.draft_store.create(d)
     return d
 
 
@@ -96,6 +97,7 @@ def durable_draft(draft_id: str, status: str = "approved") -> dict:
 @pytest.fixture()
 def harness(monkeypatch):
     # Reset stores/registries
+    outbound_draft_store = outbound_draft_store_module.draft_store
     outbound_draft_store._drafts.clear() if hasattr(outbound_draft_store, "_drafts") else None
     for attr in ("_drafts", "_store"):
         if hasattr(outbound_draft_store, attr):
@@ -105,7 +107,7 @@ def harness(monkeypatch):
     main_module._gmail_connect_locks.clear()
 
     state = {
-        "durable": [],            # durable drafts returned by _workspace_drafts
+        "durable": [],            # durable drafts returned by workspace_state
         "workspace_ids_seen": [],
         "executed": [],           # outbound_executor.execute captures
         "executor_result": {"ok": True},
@@ -122,10 +124,18 @@ def harness(monkeypatch):
         return ""
     monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", fake_ws)
 
-    def fake_workspace_drafts(user_id, session_token="", workspace_id=""):
+    def fake_workspace_drafts(user_id, workspace_id=""):
         state["workspace_ids_seen"].append(workspace_id)
         return list(state["durable"])
-    monkeypatch.setattr(main_module, "_workspace_drafts", fake_workspace_drafts)
+    monkeypatch.setattr(workspace_state, "load_drafts_only", fake_workspace_drafts)
+
+    async def fake_persist_draft(owner_id, draft_id, updates, workspace_id=""):
+        for draft in state["durable"]:
+            if draft["id"] == draft_id:
+                draft.update(updates)
+                return True
+        return False
+    monkeypatch.setattr(workspace_state, "persist_draft_update_awaited", fake_persist_draft)
 
     monkeypatch.setattr(main_module, "_test_recipient_override_enabled", lambda: False)
 
@@ -156,7 +166,7 @@ def test_a_approved_durable_draft_sends(harness):
     body = r.json()
     assert r.status_code == 200 and body.get("ok") is True, body
     assert state["executed"] and state["executed"][0]["provider_id"] == own
-    synced = outbound_draft_store.get("draft-a")
+    synced = outbound_draft_store_module.draft_store.get("draft-a")
     assert synced.provider_id == own
 
 
@@ -165,7 +175,7 @@ def test_b_unknown_draft_is_404(harness):
     register_gmail("prov-own", OWNER)
     r = client.post("/api/web/session/X/drafts/does-not-exist/send")
     assert r.status_code == 404
-    assert r.json()["detail"] == "Draft not found in any store"
+    assert r.json()["detail"] == "Draft not found"
 
 
 def test_c_foreign_provider_draft_stays_404(harness):
@@ -206,7 +216,7 @@ def test_e_freshly_approved_durable_draft_sendable(harness):
     state["durable"] = [durable_draft("draft-e", status="approved")]
     r = client.post("/api/web/session/X/drafts/draft-e/send")
     assert r.status_code == 200 and r.json().get("ok") is True
-    assert outbound_draft_store.get("draft-e").status == DraftStatus.SENT
+    assert outbound_draft_store_module.draft_store.get("draft-e").status == DraftStatus.SENT
 
 
 def test_f_stale_frontend_draft_fails_cleanly(harness):
@@ -227,7 +237,7 @@ def test_g_send_failure_does_not_corrupt_state(harness):
     body = r.json()
     assert r.status_code == 200 and body.get("ok") is False
 
-    d = outbound_draft_store.get("draft-g")
+    d = outbound_draft_store_module.draft_store.get("draft-g")
     assert d is not None and d.status != DraftStatus.SENT, "failed send must not mark sent"
     # Durable copy untouched (still approved, not sent).
     assert state["durable"][0]["status"] == "approved"
@@ -248,5 +258,5 @@ def test_h_production_bug_second_user_does_not_poison_first(harness):
     assert body.get("ok") is False
     assert body.get("error") == "No Gmail outbound provider registered"
 
-    synced = outbound_draft_store.get("draft-h")
+    synced = outbound_draft_store_module.draft_store.get("draft-h")
     assert synced.provider_id != "prov-foreign-live"

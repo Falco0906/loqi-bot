@@ -6,8 +6,10 @@ import logging
 import time
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
 from services import workspace_context as workspace_access
+from services.campaigns import service
 from services.campaigns.service import load_campaigns
 from services.identity import dependencies as identity_dependencies
 from services.workspace_memory import record_campaign_open
@@ -26,6 +28,89 @@ async def _authorized_workspace(request: Request) -> tuple[str, str, str]:
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     return owner_id, session_token, workspace_id
+
+
+class SaveCampaignRequest(BaseModel):
+    name: str
+    objective: str = ""
+    search_query: str = ""
+    discovery_id: str = ""
+    lead_count: int = 0
+    leads: list[dict] | None = None
+    strategy: dict | None = None
+    status: str = "planning"
+
+
+class UpdateCampaignRequest(BaseModel):
+    name: str | None = None
+    objective: str | None = None
+    strategy: dict | None = None
+    status: str | None = None
+
+
+class AttachDiscoveryRequest(BaseModel):
+    discovery_id: str
+
+
+class AddCampaignLeadRequest(BaseModel):
+    lead: dict
+    discovery_id: str = ""
+
+
+@router.post("/api/web/session/{session_token}/campaigns")
+async def save_campaign(session_token: str, payload: SaveCampaignRequest, request: Request):
+    del session_token
+    owner_id, bearer_token, workspace_id = await _authorized_workspace(request)
+    return await service.create_campaign(
+        bearer_token, owner_id, workspace_id, payload.model_dump(),
+    )
+
+
+@router.put("/api/web/session/{session_token}/campaigns/{campaign_id}")
+async def update_campaign(
+    session_token: str, campaign_id: str, payload: UpdateCampaignRequest, request: Request,
+):
+    del session_token
+    owner_id, bearer_token, workspace_id = await _authorized_workspace(request)
+    return await service.update_campaign(
+        bearer_token, owner_id, workspace_id, campaign_id, payload.model_dump(),
+    )
+
+
+@router.post("/api/web/session/{session_token}/campaigns/{campaign_id}/leads")
+async def add_campaign_lead(
+    session_token: str, campaign_id: str, payload: AddCampaignLeadRequest, request: Request,
+):
+    del session_token
+    owner_id, bearer_token, workspace_id = await _authorized_workspace(request)
+    return await service.add_campaign_lead(
+        bearer_token, owner_id, workspace_id, campaign_id, payload.lead, payload.discovery_id,
+    )
+
+
+@router.delete("/api/web/session/{session_token}/campaigns/{campaign_id}")
+async def delete_campaign(session_token: str, campaign_id: str, request: Request):
+    del session_token
+    owner_id, bearer_token, workspace_id = await _authorized_workspace(request)
+    return await service.delete_campaign(bearer_token, owner_id, workspace_id, campaign_id)
+
+
+@router.post("/api/web/session/{session_token}/campaigns/{campaign_id}/duplicate")
+async def duplicate_campaign(session_token: str, campaign_id: str, request: Request):
+    del session_token
+    owner_id, bearer_token, workspace_id = await _authorized_workspace(request)
+    return await service.duplicate_campaign(bearer_token, owner_id, workspace_id, campaign_id)
+
+
+@router.post("/api/web/session/{session_token}/campaigns/{campaign_id}/attach-discovery")
+async def attach_discovery_to_campaign(
+    session_token: str, campaign_id: str, payload: AttachDiscoveryRequest, request: Request,
+):
+    del session_token
+    owner_id, bearer_token, workspace_id = await _authorized_workspace(request)
+    return await service.attach_discovery(
+        bearer_token, owner_id, workspace_id, campaign_id, payload.discovery_id,
+    )
 
 
 @router.get("/api/web/session/{session_token}/campaigns")

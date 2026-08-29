@@ -10,6 +10,7 @@ import pytest
 @pytest.mark.asyncio
 async def test_manual_campaign_returns_after_four_selected_leads_are_durable(monkeypatch):
     import main as main_module
+    from services.campaigns import api as campaign_api
 
     attached: list[str] = []
     persisted: dict = {}
@@ -49,11 +50,11 @@ async def test_manual_campaign_returns_after_four_selected_leads_are_durable(mon
     monkeypatch.setattr("services.workspace_state.append_event", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(main_module, "record_campaign_created", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(main_module, "publish", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(main_module, "_maybe_auto_strategy", blocked_strategy)
+    monkeypatch.setattr("services.campaigns.service.maybe_auto_strategy", blocked_strategy)
     monkeypatch.setattr(main_module, "_get_feedback", lambda: SimpleNamespace(on_campaign_created=lambda *_args: None))
 
     leads = [{"id": f"workspace-lead-{index}", "company": f"Cafe {index}"} for index in range(1, 5)]
-    payload = main_module.SaveCampaignRequest(
+    payload = campaign_api.SaveCampaignRequest(
         name="Hyderabad cafe owners",
         objective="Start outreach",
         discovery_id="discovery-1",
@@ -62,7 +63,7 @@ async def test_manual_campaign_returns_after_four_selected_leads_are_durable(mon
     )
     request = SimpleNamespace()
 
-    response = await main_module.save_campaign("_", payload, request)
+    response = await campaign_api.save_campaign("_", payload, request)
 
     assert response["ok"] is True
     assert response["campaign"]["lead_count"] == 4
@@ -80,6 +81,7 @@ async def test_manual_campaign_returns_after_four_selected_leads_are_durable(mon
 @pytest.mark.asyncio
 async def test_manual_campaign_without_leads_returns_when_compatibility_event_is_slow(monkeypatch):
     import main as main_module
+    from services.campaigns import api as campaign_api
 
     event_started = threading.Event()
     release_event = threading.Event()
@@ -106,9 +108,9 @@ async def test_manual_campaign_without_leads_returns_when_compatibility_event_is
     monkeypatch.setattr(main_module, "publish", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(main_module, "_get_feedback", lambda: SimpleNamespace(on_campaign_created=lambda *_args: None))
 
-    response = await main_module.save_campaign(
+    response = await campaign_api.save_campaign(
         "_",
-        main_module.SaveCampaignRequest(name="Empty campaign", objective="No leads yet"),
+        campaign_api.SaveCampaignRequest(name="Empty campaign", objective="No leads yet"),
         SimpleNamespace(),
     )
 

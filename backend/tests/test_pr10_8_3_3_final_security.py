@@ -31,6 +31,7 @@ from fastapi.testclient import TestClient
 
 import main as main_module
 import services.conversations.api as conversation_api
+import services.discovery.api as discovery_api
 
 SENTINEL = "PR10833_FINAL_SENTINEL_DO_NOT_LEAK"
 
@@ -91,7 +92,7 @@ class TestAuthenticationFinal:
         from tests.conftest import REAL_RESOLVE_WEB_SESSION
         main_module.identity_dependencies.resolve_web_session = REAL_RESOLVE_WEB_SESSION
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.list_jobs(_req_x_session(SENTINEL)))
+            asyncio.run(discovery_api.list_jobs(_req_x_session(SENTINEL)))
         assert exc.value.status_code == 401
 
     def test_bearer_accepted(self):
@@ -99,7 +100,7 @@ class TestAuthenticationFinal:
         main_module.identity_dependencies.resolve_web_session = REAL_RESOLVE_WEB_SESSION
         # A valid identity/web token resolves; a garbage token -> 401.
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.list_jobs(_req("garbage")))
+            asyncio.run(discovery_api.list_jobs(_req("garbage")))
         assert exc.value.status_code == 401
 
     def test_no_client_user_id_override(self):
@@ -109,7 +110,7 @@ class TestAuthenticationFinal:
         main_module.identity_dependencies.resolve_web_session = _resolve
         request = _req("token")
         request.query_params = {"user_id": "owner-b"}
-        result = asyncio.run(main_module.list_jobs(request))
+        result = asyncio.run(discovery_api.list_jobs(request))
         assert result == {"jobs": []}
 
 
@@ -154,7 +155,10 @@ class TestTenantIsolationFinal:
                 raise HTTPException(status_code=401, detail="Authentication required")
             return owners.get(token, "test-owner")
 
-        return _resolve, _owner
+        async def _workspace(request, user_id):
+            return f"workspace-{user_id}"
+
+        return _resolve, _owner, _workspace
 
     def _provider(self, pid, user_id):
         from services.communication.provider_models import (
@@ -166,27 +170,30 @@ class TestTenantIsolationFinal:
         )
 
     def test_cross_tenant_provider_sync_denied(self, monkeypatch):
-        resolve, owner = self._two_user_resolver()
+        resolve, owner, workspace = self._two_user_resolver()
         monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", resolve)
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner)
+        monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", workspace)
         self._provider("prov-b", "owner-b")
         with pytest.raises(HTTPException) as exc:
             asyncio.run(main_module.provider_sync("_", "prov-b", _req("token-a")))
         assert exc.value.status_code == 404
 
     def test_cross_tenant_provider_disconnect_denied(self, monkeypatch):
-        resolve, owner = self._two_user_resolver()
+        resolve, owner, workspace = self._two_user_resolver()
         monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", resolve)
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner)
+        monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", workspace)
         self._provider("prov-b", "owner-b")
         with pytest.raises(HTTPException) as exc:
             asyncio.run(main_module.provider_disconnect("_", "prov-b", _req("token-a")))
         assert exc.value.status_code == 404
 
     def test_unattributable_conversation_denied(self, monkeypatch):
-        resolve, owner = self._two_user_resolver()
+        resolve, owner, workspace = self._two_user_resolver()
         monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", resolve)
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner)
+        monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", workspace)
         from services.conversations.integration import create_conversation_from_send
         convo = create_conversation_from_send(
             provider_id="", provider_type="gmail",
@@ -201,9 +208,11 @@ class TestTenantIsolationFinal:
         assert exc.value.status_code in (403, 404)
 
     def test_cross_tenant_outbound_draft_side_effect_denied(self, monkeypatch):
-        resolve, owner = self._two_user_resolver()
+        resolve, owner, workspace = self._two_user_resolver()
         monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", resolve)
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner)
+        monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", workspace)
+        monkeypatch.setattr(main_module, "_workspace_drafts", lambda *args, **kwargs: [])
         self._provider("prov-b", "owner-b")
         from services.outbound.draft_store import draft_store as ods
         from services.outbound.outbound_models import DraftMessage, Recipient

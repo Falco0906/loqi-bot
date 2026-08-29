@@ -216,7 +216,8 @@ async def _generate_strategy_direct(main_module, token, campaign_id) -> dict:
 
     deadline = time.monotonic() + 90
     while time.monotonic() < deadline:
-        job = main_module.STRATEGY_JOBS.get(job_id)
+        from services.campaigns import service as campaign_service
+        job = campaign_service.STRATEGY_JOBS.get(job_id)
         if job and job.get("status") in ("queued", "running"):
             await asyncio.sleep(0.5)
             continue
@@ -224,7 +225,8 @@ async def _generate_strategy_direct(main_module, token, campaign_id) -> dict:
     else:
         pytest.fail("strategy job did not finish before timeout")
 
-    job = main_module.STRATEGY_JOBS.get(job_id)
+    from services.campaigns import service as campaign_service
+    job = campaign_service.STRATEGY_JOBS.get(job_id)
     assert job is not None and job["status"] == "completed", job
     return job["strategy"]
 
@@ -289,14 +291,15 @@ async def _await_batch_done(main_module, token, campaign_id, timeout=150):
 @pytest.fixture(autouse=True)
 def _clean_batch_stores():
     main_module.batch_jobs.clear()
-    main_module.STRATEGY_JOBS.clear()
+    from services.campaigns import service as campaign_service
+    campaign_service.STRATEGY_JOBS.clear()
     main_module._draft_batch_tasks.clear()
-    main_module._strategy_job_tasks.clear()
+    campaign_service.strategy_job_tasks.clear()
     yield
     main_module.batch_jobs.clear()
-    main_module.STRATEGY_JOBS.clear()
+    campaign_service.STRATEGY_JOBS.clear()
     main_module._draft_batch_tasks.clear()
-    main_module._strategy_job_tasks.clear()
+    campaign_service.strategy_job_tasks.clear()
 
 
 # ─────────────────────────────────────────────────────────────────────────

@@ -11,7 +11,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from dotenv import load_dotenv
@@ -34,6 +34,9 @@ from services.knowledge.api import router as knowledge_router
 from services.mission_control.api import router as mission_control_router
 from services.discovery.api import router as discovery_router
 from services.campaigns.api import router as campaigns_router
+from services.drafts.api import router as drafts_router
+import services.campaigns.service as campaign_service
+import services.outbound.service as outbound_service
 from services.campaigns.service import load_campaigns
 from services.conversations.api import router as conversations_router
 from services.conversations.conversation_store import conversation_owned_by
@@ -67,7 +70,6 @@ from services.telegram import send_message
 from services.operations.diagnostics import get_build_metadata
 from services.campaign_planner import analyze_campaigns
 from workflows import run_workflow
-from services.job_engine import job_manager
 from workflow_dispatcher import register_workflows
 from services.workspace_memory import record as record_memory, record_draft_review, record_search
 from services.workspace_timeline import (
@@ -103,7 +105,6 @@ from services.communication.provider_registry import (
     list_registered_types,
 )
 from services.outbound.outbound_registry import (
-    get_provider as get_outbound_provider,
     list_providers as outbound_list_providers,
     register_instance as outbound_register_instance,
     remove_instance as outbound_remove_instance,
@@ -115,6 +116,7 @@ from services.communication.communication_store import store as communication_st
 from services.communication.provider_events import get_events as get_provider_events, latest_sequence
 from services.communication.gmail_provider import GmailProvider
 from services.communication.reply_simulator import maybe_schedule as simulate_reply
+from services.events_bus import publish_draft_event
 from services.reply_intelligence import analyze_message
 from services.conversation_memory import memory_store, create_or_update_memory
 from services.followup_reasoner import recommend_followup
@@ -318,7 +320,7 @@ async def lifespan(app: FastAPI):
 
     async def _run_strategy_recovery() -> None:
         try:
-            recovered = await asyncio.to_thread(_reconcile_stale_strategy_jobs)
+            recovered = await asyncio.to_thread(campaign_service.reconcile_stale_strategy_jobs)
             if recovered:
                 log.info("Reconciled %d interrupted strategy generation(s) after restart", recovered)
         except Exception as e:
@@ -327,7 +329,9 @@ async def lifespan(app: FastAPI):
     background_tasks.append(asyncio.create_task(_run_strategy_recovery()))
 
     try:
-        recovered_jobs = await _reconcile_stale_search_jobs()
+        from services.discovery.service import reconcile_stale_search_jobs
+
+        recovered_jobs = await reconcile_stale_search_jobs()
         if recovered_jobs:
             log.info("Reconciled %d interrupted search job(s) after restart", recovered_jobs)
     except Exception as e:
@@ -489,6 +493,7 @@ app.include_router(strategic_intelligence_router)
 app.include_router(mission_control_router)
 app.include_router(discovery_router)
 app.include_router(campaigns_router)
+app.include_router(drafts_router)
 app.include_router(conversations_router)
 
 # ── Wire Organization Platform services ──
@@ -691,10 +696,18 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 engine = ConversationEngine()
 _start_time = time.time()
 
+# R5/R8 compatibility projection only. Credential values and connected-account
+# ownership are durable in Supabase; this process-local registry only exposes
+# descriptors to the legacy execution bridge. Do not add durable authority here.
 _credential_registry = CredentialRegistry()
+# R5/R8 compatibility projection only. The execution adapter implementation is
+# owned by services.execution; this startup registry is process-local wiring,
+# not a durable source of provider or workflow state.
 _execution_adapter_registry = ExecutionAdapterRegistry()
 
-# ── In-memory batch / draft / campaign stores ──
+# R5/R8 compatibility projections only. Canonical batch/draft/campaign state is
+# durable workspace/job persistence. These maps support legacy session routes
+# during migration and must not become a second durable authority.
 batch_jobs: dict[str, dict[str, Any]] = {}
 draft_store: dict[str, list[dict[str, Any]]] = {}
 campaign_store: dict[str, list[dict[str, Any]]] = {}
@@ -709,8 +722,9 @@ _draft_batch_tasks: dict[str, asyncio.Task] = {}
 # `strategy-jobs/{job_id}`. Runtime task handles are in-memory, while the
 # lifecycle authority is persisted in campaign settings so a restart resolves
 # interrupted work to an explicit terminal state.
-STRATEGY_JOBS: dict[str, dict[str, Any]] = {}
-_strategy_job_tasks: dict[str, asyncio.Task] = {}
+# R5/R8 compatibility projection only. Campaign strategy-job metadata is
+# persisted on the canonical campaign record; this map retains live task state
+# for legacy polling until that route family moves to the durable jobs boundary.
 
 
 def _create_batch_job(batch_id: str, campaign_id: str | None, total: int) -> dict[str, Any]:
@@ -901,222 +915,6 @@ def _campaign_generation_still_processing(client, campaign_id: str, generation: 
     if current.get("status") != "processing":
         return False
     return (current.get("batch_id") or "") == batch_id
-
-
-STALE_SEARCH_JOB_GRACE_SECONDS = 300
-
-
-async def _reconcile_stale_search_jobs() -> int:
-    """One-shot startup recovery for search jobs/discoveries interrupted by a restart.
-
-    After a restart the in-process ``BackgroundRunner`` holds no tasks, so any
-    non-terminal ``jobs`` row is orphaned. Two passes:
-
-    1. Orphaned runs (``queued``/``running``, not touched within the grace
-       window): if the workflow already persisted ``search_results`` the run is
-       complete — mark the job completed and finalize its discovery; otherwise
-       mark the job failed and, when the discovery is still ``searching``, the
-       discovery failed too (retryable).
-    2. Completed jobs whose discovery is still ``searching`` (the process died
-       inside the ``on_complete`` hook, after the job was marked completed):
-       re-run ``finalize_discovery`` (idempotent).
-
-    Returns the number of job rows reconciled.
-    """
-    from services.discovery.service import (
-        finalize_discovery,
-        mark_discovery_status,
-    )
-    from services.job_engine.models import JobStatus
-    from services.job_engine.storage import JobStorage
-    from services.supabase import get_supabase_client
-
-    client = get_supabase_client()
-    if client is None:
-        return 0
-
-    def _chunked(values: list[str], size: int = 100) -> list[list[str]]:
-        return [values[i : i + size] for i in range(0, len(values), size)]
-
-    storage = JobStorage()
-    grace_iso = (datetime.now(timezone.utc) - timedelta(seconds=STALE_SEARCH_JOB_GRACE_SECONDS)).isoformat()
-    recovered = 0
-
-    try:
-        rows = await asyncio.to_thread(
-            lambda: (
-                client.table("jobs")
-                .select("id, discovery_id")
-                .eq("type", "search")
-                .in_("status", ["queued", "running"])
-                .lt("updated_at", grace_iso)
-                .execute()
-            )
-        )
-        orphaned = getattr(rows, "data", None) or []
-    except Exception as error:
-        log.warning("[recovery] stale search job scan failed: %s", error)
-        orphaned = []
-
-    orphan_ids = [str(r.get("id")) for r in orphaned if r.get("id")]
-    jobs_with_results: set[str] = set()
-    for chunk in _chunked(orphan_ids):
-        try:
-            result_rows = await asyncio.to_thread(
-                lambda: (
-                    client.table("search_results")
-                    .select("job_id")
-                    .in_("job_id", chunk)
-                    .execute()
-                )
-            )
-            jobs_with_results.update(
-                str(r.get("job_id")) for r in (result_rows.data or []) if r.get("job_id")
-            )
-        except Exception as error:
-            log.warning("[recovery] search results batch lookup failed: %s", error)
-
-    orphan_disc_ids = [str(r.get("discovery_id")) for r in orphaned if r.get("discovery_id")]
-    orphan_disc_status: dict[str, str] = {}
-    for chunk in _chunked(orphan_disc_ids):
-        try:
-            disc_rows = await asyncio.to_thread(
-                lambda: (
-                    client.table("discoveries")
-                    .select("id, status")
-                    .in_("id", chunk)
-                    .execute()
-                )
-            )
-            orphan_disc_status.update(
-                {str(d.get("id")): str(d.get("status")) for d in (disc_rows.data or [])}
-            )
-        except Exception as error:
-            log.warning("[recovery] orphan discoveries batch lookup failed: %s", error)
-
-    for row in orphaned:
-        job_id = str(row.get("id") or "")
-        if not job_id:
-            continue
-        try:
-            has_results = job_id in jobs_with_results
-            if has_results:
-                job = await asyncio.to_thread(storage.get_job, job_id)
-                finalized = bool(job and await finalize_discovery(job))
-                if finalized:
-                    await asyncio.to_thread(
-                        storage.update_job,
-                        job_id,
-                        status=JobStatus.COMPLETED,
-                        stage="Complete",
-                        progress=100,
-                        result_ready=True,
-                        completed_at=datetime.now(timezone.utc),
-                    )
-                    log.info("[recovery] finalized orphaned search job %s", job_id)
-                else:
-                    await asyncio.to_thread(
-                        storage.update_job,
-                        job_id,
-                        status=JobStatus.FAILED,
-                        stage="Failed",
-                        error_message="Discovery results could not be persisted after restart",
-                        completed_at=datetime.now(timezone.utc),
-                    )
-                    log.warning("[recovery] orphaned search job %s failed finalization", job_id)
-            else:
-                reason = "Search run interrupted by restart"
-                await asyncio.to_thread(
-                    storage.update_job,
-                    job_id,
-                    status=JobStatus.FAILED,
-                    stage="Failed",
-                    error_message=reason,
-                    completed_at=datetime.now(timezone.utc),
-                )
-                if row.get("discovery_id"):
-                    if orphan_disc_status.get(str(row["discovery_id"])) == "searching":
-                        await asyncio.to_thread(
-                            mark_discovery_status,
-                            str(row["discovery_id"]),
-                            "failed",
-                            reason,
-                        )
-                log.info("[recovery] failed orphaned search job %s", job_id)
-            recovered += 1
-        except Exception as error:
-            log.warning("[recovery] stale search job %s reconcile failed: %s", job_id, error)
-
-    try:
-        rows = await asyncio.to_thread(
-            lambda: (
-                client.table("jobs")
-                .select("id, status, error_message, discovery_id")
-                .eq("type", "search")
-                .in_("status", ["completed", "failed"])
-                .not_.is_("discovery_id", "null")
-                .order("created_at", desc=True)
-                .limit(200)
-                .execute()
-            )
-        )
-        completed = getattr(rows, "data", None) or []
-    except Exception as error:
-        log.warning("[recovery] terminal search job scan failed: %s", error)
-        completed = []
-
-    discovery_ids = [str(r.get("discovery_id")) for r in completed if r.get("discovery_id")]
-    discovery_by_id: dict[str, dict] = {}
-    for chunk in _chunked(discovery_ids):
-        try:
-            disc_rows = await asyncio.to_thread(
-                lambda: (
-                    client.table("discoveries")
-                    .select("id, status")
-                    .in_("id", chunk)
-                    .execute()
-                )
-            )
-            for disc in disc_rows.data or []:
-                discovery_by_id[str(disc.get("id"))] = disc
-        except Exception as error:
-            log.warning("[recovery] discoveries batch lookup failed: %s", error)
-
-    for row in completed:
-        job_id = str(row.get("id") or "")
-        job_status = str(row.get("status") or "")
-        try:
-            discovery = discovery_by_id.get(str(row.get("discovery_id") or ""))
-            if not discovery or (discovery or {}).get("status") != "searching":
-                continue
-            if job_status == JobStatus.COMPLETED.value:
-                job = await asyncio.to_thread(storage.get_job, job_id)
-                if job and await finalize_discovery(job):
-                    log.info("[recovery] finalized completed search job %s", job_id)
-                    recovered += 1
-                elif job:
-                    await asyncio.to_thread(
-                        storage.update_job,
-                        job_id,
-                        status=JobStatus.FAILED,
-                        stage="Failed",
-                        error_message="Discovery results could not be persisted after restart",
-                        completed_at=datetime.now(timezone.utc),
-                    )
-                    log.warning("[recovery] completed search job %s failed finalization", job_id)
-                    recovered += 1
-            elif job_status == JobStatus.FAILED.value:
-                await asyncio.to_thread(
-                    mark_discovery_status,
-                    str(discovery["id"]),
-                    "failed",
-                    row.get("error_message") or "Search run failed",
-                )
-                log.info("[recovery] failed terminal search job %s", job_id)
-                recovered += 1
-        except Exception as error:
-            log.warning("[recovery] terminal search job %s reconcile failed: %s", job_id, error)
-    return recovered
 
 
 def _build_copilot_workspace_context(
@@ -1345,97 +1143,6 @@ def _parse_draft_body(message: str) -> str | None:
     return parts[1].strip() if len(parts) >= 3 else None
 
 
-def _find_outbound_gmail_provider_id() -> str:
-    """Find the first registered Gmail outbound provider instance ID.
-    Returns empty string if none found.
-    """
-    providers = outbound_list_providers()
-    for pid, inst in providers.items():
-        if hasattr(inst, 'provider_type') and inst.provider_type == "gmail":
-            return pid
-    return ""
-
-
-def _provider_owned_by(provider_id: str, owner_id: str) -> bool:
-    """True only when the provider instance is registered and belongs to the
-    durable workspace owner. Providers whose owning user cannot be resolved
-    are never treated as owned."""
-    if not owner_id:
-        return False
-    comm = get_provider(provider_id)
-    if not comm:
-        return False
-    user_id = getattr(comm, "_user_id", "") or ""
-    connected = getattr(comm, "_connected", False)
-    return str(user_id) == str(owner_id) and bool(connected)
-
-
-def _provider_record_owned_by(provider_id: str, owner_id: str) -> bool:
-    """True when the communication-store record for ``provider_id`` belongs to
-    ``owner_id``. Unlike ``_provider_owned_by`` this does NOT require the
-    provider to be currently connected, so a reauth-required/disconnected
-    provider is still correctly attributable to its owner (PR10.8.3)."""
-    if not owner_id:
-        return False
-    provider = communication_store.get_provider(provider_id)
-    if provider is None:
-        return False
-    return str(provider.user_id) == str(owner_id)
-
-
-def _outbound_draft_owned_by(draft: "object", owner_id: str) -> bool:
-    """True only when the outbound draft provably belongs to ``owner_id``.
-
-    Fail-closed (PR10.8.3.2): a draft is attributed through its provider
-    record. If the draft has no provider, or the provider is not in the
-    runtime store, ownership cannot be established and access is denied.
-    """
-    if not owner_id or draft is None:
-        return False
-    pid = getattr(draft, "provider_id", "") or ""
-    if not pid:
-        return False
-    provider = communication_store.get_provider(pid)
-    if provider is None:
-        return False
-    return str(provider.user_id) == str(owner_id)
-
-
-async def _require_canonical_outbound_draft(
-    request: Request,
-    session_token: str,
-    draft_id: str,
-    *,
-    provider_id: str = "",
-) -> tuple[str, str, dict[str, Any], Any]:
-    """Resolve an authenticated workspace-scoped canonical Draft.
-
-    ``outbound_draft_store`` is hydrated only after this boundary succeeds;
-    it is a provider projection/cache, never an ownership authority.
-    """
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    canonical = next(
-        (draft for draft in _workspace_drafts(owner_id, session_token, workspace_id=workspace_id)
-         if str(draft.get("id") or "") == str(draft_id)),
-        None,
-    )
-    if canonical is None:
-        raise HTTPException(status_code=404, detail="Draft not found")
-    canonical_provider = str(canonical.get("provider") or provider_id or "")
-    if provider_id and canonical_provider and provider_id != canonical_provider:
-        raise HTTPException(status_code=404, detail="Draft not found")
-    if canonical_provider and not _provider_record_owned_by(canonical_provider, owner_id):
-        raise HTTPException(status_code=404, detail="Draft not found")
-    _sync_draft_to_outbound(canonical, session_token, owner_id=owner_id)
-    outbound = outbound_draft_store.get(draft_id)
-    if outbound is None:
-        raise HTTPException(status_code=503, detail="Draft projection could not be loaded")
-    if canonical_provider and not _outbound_draft_owned_by(outbound, owner_id):
-        raise HTTPException(status_code=404, detail="Draft not found")
-    return owner_id, workspace_id, canonical, outbound
-
-
 def _conversation_in_workspace(conversation: "object", workspace_id: str) -> bool:
     """Fail closed unless a durable Inbox snapshot belongs to this workspace."""
     if not workspace_id:
@@ -1444,31 +1151,6 @@ def _conversation_in_workspace(conversation: "object", workspace_id: str) -> boo
     if not isinstance(metadata, dict):
         return False
     return str(metadata.get("workspace_id") or "") == str(workspace_id)
-
-
-def _resolve_owner_gmail_provider(owner_id: str) -> str:
-    """Resolve the workspace owner's current connected Gmail provider.
-
-    Scoped to the durable owner: candidates are Gmail outbound providers whose
-    communication instance is registered for ``owner_id`` and currently
-    connected. Deterministic tie-break by mailbox email.
-    """
-    candidates: list[tuple[str, str]] = []
-    for pid, inst in outbound_list_providers().items():
-        if not (hasattr(inst, 'provider_type') and inst.provider_type == "gmail"):
-            continue
-        comm = get_provider(pid)
-        if not comm:
-            continue
-        user_id = getattr(comm, "_user_id", "") or ""
-        connected = getattr(comm, "_connected", False)
-        email = getattr(comm, "_mailbox_email", "") or ""
-        if str(user_id) == str(owner_id) and bool(connected):
-            candidates.append((email, pid))
-    if not candidates:
-        return ""
-    candidates.sort(key=lambda item: item[0])
-    return candidates[0][1]
 
 
 def _register_outbound_gmail_instance(comm_provider_id: str) -> None:
@@ -1640,35 +1322,6 @@ def _restore_providers_on_startup() -> None:
     log.info("[startup] Provider restoration complete: %d restored, %d reauth-required", restored, reauth_restored)
 
 
-def _get_outbound_provider_for_draft(outbound_draft, owner_id: str = "") -> str:
-    """Get a working outbound provider ID for a draft.
-
-    When ``owner_id`` is provided the resolution is scoped to that workspace
-    owner: the draft's stored provider is only used if it still resolves to a
-    currently connected Gmail provider owned by the same user. Otherwise the
-    owner's current connected Gmail provider is resolved. On successful
-    fallback the draft's provider_id is updated in the outbound store so
-    subsequent sends reuse the resolved provider. Returns empty string when no
-    valid provider exists.
-    """
-    stored_ok = bool(
-        outbound_draft and outbound_draft.provider_id
-        and get_outbound_provider(outbound_draft.provider_id)
-    )
-    if stored_ok and (not owner_id or _provider_owned_by(outbound_draft.provider_id, owner_id)):
-        return outbound_draft.provider_id
-    if owner_id:
-        found = _resolve_owner_gmail_provider(owner_id)
-    else:
-        found = _find_outbound_gmail_provider_id()
-    if found and outbound_draft:
-        if outbound_draft.provider_id != found:
-            outbound_draft.provider_id = found
-            from services.outbound.draft_store import draft_store as outbound_draft_store
-            outbound_draft_store.update(outbound_draft)
-    return found
-
-
 def _resolve_provider_for_conversation(conversation: "object") -> str:
     """Resolve the connected Gmail provider used to send a conversation reply.
 
@@ -1698,133 +1351,10 @@ def _resolve_provider_for_conversation(conversation: "object") -> str:
         if draft_id:
             outbound_draft = outbound_draft_store.get(draft_id)
             if outbound_draft:
-                provider_id = _get_outbound_provider_for_draft(outbound_draft, owner_id="")
+                provider_id = outbound_service.resolve_provider_for_draft(outbound_draft, owner_id="")
                 if provider_id:
                     return provider_id
-    return _find_outbound_gmail_provider_id()
-
-
-def _sync_draft_to_outbound(
-    legacy_draft: dict,
-    session_token: str,
-    owner_id: str = "",
-) -> None:
-    """Sync a legacy campaign draft into the outbound DraftStore.
-
-    Uses workflow_id to store campaign_id for later lookup.
-    Stores lead metadata in the DraftMessage metadata field.
-
-    PR-2B: ``owner_id`` scopes provider stamping to the draft's owner. The
-    previous behaviour stamped the FIRST Gmail provider in the global
-    registry, so with two connected users (or after an identity divergence)
-    a hydrated draft could carry another user's provider — which the send
-    route's cross-user ownership check then rejected with a misleading 404
-    "Draft not found". When the owner is known but has no connected Gmail
-    provider we stamp an EMPTY provider id and let the send-time resolver
-    (_get_outbound_provider_for_draft) bind the current one.
-    """
-    from services.outbound.draft_store import draft_store as outbound_draft_store
-    from services.outbound.outbound_models import DraftMessage, DraftStatus, ApprovalState, Recipient
-    now = datetime.now(timezone.utc).isoformat()
-    lead = legacy_draft.get("lead", {})
-    lead_email = lead.get("email", "")
-    lead_name = lead.get("name") or f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip() or "Unknown"
-    legacy_status = legacy_draft.get("status", "pending")
-    status_map = {
-        "pending": DraftStatus.PENDING_APPROVAL,
-        "approved": DraftStatus.APPROVED,
-        "rejected": DraftStatus.REJECTED,
-        "draft": DraftStatus.DRAFT,
-        "sent": DraftStatus.SENT,
-    }
-    if owner_id:
-        real_provider_id = _resolve_owner_gmail_provider(owner_id)
-    else:
-        real_provider_id = _find_outbound_gmail_provider_id()
-    sender_email = ""
-    if real_provider_id:
-        comm_instance = get_provider(real_provider_id)
-        sender_email = getattr(comm_instance, "_mailbox_email", "") or ""
-    outbound_draft = DraftMessage(
-        id=legacy_draft.get("id", ""),
-        provider_id=real_provider_id,
-        workflow_id=legacy_draft.get("campaign_id", ""),
-        subject=legacy_draft.get("subject", ""),
-        body=legacy_draft.get("text", ""),
-        recipient=Recipient(email=lead_email, name=lead_name),
-        sender=Recipient(email=sender_email, name=""),
-        status=status_map.get(legacy_status, DraftStatus.PENDING_APPROVAL),
-        approval_state=ApprovalState.APPROVED if legacy_status == "approved" else ApprovalState.PENDING,
-        created_at=legacy_draft.get("created_at", now),
-        updated_at=now,
-        metadata={
-            "lead": lead,
-            "tone": legacy_draft.get("tone"),
-            "length": legacy_draft.get("length"),
-            "lead_intelligence": legacy_draft.get("lead_intelligence"),
-            "company_intelligence": legacy_draft.get("company_intelligence"),
-            "session_token": session_token,
-        },
-    )
-    existing = outbound_draft_store.get(outbound_draft.id)
-    if existing:
-        outbound_draft_store.update(outbound_draft)
-    else:
-        outbound_draft_store.create(outbound_draft)
-
-
-def _outbound_to_legacy_draft(od: "DraftMessage") -> dict:
-    """Convert an outbound DraftMessage back to legacy dict format for backward compat."""
-    from services.outbound.outbound_models import DraftStatus
-    lead = od.metadata.get("lead", {}) if od.metadata else {}
-    status_map = {
-        DraftStatus.DRAFT: "pending",
-        DraftStatus.PENDING_APPROVAL: "pending",
-        DraftStatus.APPROVED: "approved",
-        DraftStatus.AUTO_APPROVED: "approved",
-        DraftStatus.REJECTED: "rejected",
-        DraftStatus.SENDING: "sending",
-        DraftStatus.SENT: "sent",
-        DraftStatus.SCHEDULED: "scheduled",
-        DraftStatus.FAILED: "failed",
-        DraftStatus.CANCELLED: "cancelled",
-        DraftStatus.ARCHIVED: "archived",
-    }
-    return {
-        "id": od.id,
-        "campaign_id": od.workflow_id,
-        "lead": lead,
-        "subject": od.subject,
-        "text": od.body,
-        "status": status_map.get(od.status, "pending"),
-        "tone": od.metadata.get("tone") if od.metadata else None,
-        "length": od.metadata.get("length") if od.metadata else None,
-        "lead_intelligence": od.metadata.get("lead_intelligence") if od.metadata else None,
-        "company_intelligence": od.metadata.get("company_intelligence") if od.metadata else None,
-        "created_at": od.created_at,
-        "external_draft_id": od.external_draft_id,
-        "gmail_message_id": od.gmail_message_id,
-        "gmail_thread_id": od.gmail_thread_id,
-    }
-
-
-def _get_outbound_drafts_for_session(session_token: str) -> list[dict]:
-    """Get all legacy-format drafts for a session from the outbound DraftStore.
-    Merges with legacy draft_store for drafts not yet synced.
-    """
-    from services.outbound.draft_store import draft_store as outbound_draft_store
-    outbound_all = outbound_draft_store.list_all()
-    result = []
-    seen_ids = set()
-    for od in outbound_all.drafts:
-        if od.metadata and od.metadata.get("session_token") == session_token:
-            result.append(_outbound_to_legacy_draft(od))
-            seen_ids.add(od.id)
-    legacy_drafts = draft_store.get(session_token, [])
-    for ld in legacy_drafts:
-        if ld.get("id") not in seen_ids:
-            result.append(ld)
-    return result
+    return outbound_service.find_outbound_gmail_provider_id()
 
 
 _SYNONYM_STRATEGY_TABLE: list[tuple[list[str], str]] = [
@@ -2040,13 +1570,13 @@ async def _process_batch_drafts(
                 "body_preview": draft_entry["text"][:200],
             }, actor="system")
 
-            await _emit_draft_event(
+            await publish_draft_event(
                 owner_id, "draft.created",
                 draft_id=draft_entry["id"],
                 campaign_id=str(draft_entry["campaign_id"] or ""),
                 lead_name=name,
             )
-            _sync_draft_to_outbound(draft_entry, session_token, owner_id=owner_id)
+            outbound_service.sync_draft_to_outbound(draft_entry, session_token, owner_id=owner_id)
 
         except Exception as e:
             print(f"[batch] Draft failed for lead {i} ({name}): {e}")
@@ -2058,7 +1588,7 @@ async def _process_batch_drafts(
                 "campaign_id": job.get("campaign_id"),
             }, actor="system")
             job["completed"] = i + 1
-            await _emit_draft_event(
+            await publish_draft_event(
                 owner_id, "draft.generation_failed",
                 campaign_id=str(job.get("campaign_id") or ""),
                 lead_name=name,
@@ -2098,7 +1628,7 @@ async def _process_batch_drafts(
             "generation": generation,
         }, actor="system")
     final_status = "draft.generation_completed" if job["status"] != "failed" else "draft.generation_failed"
-    await _emit_draft_event(
+    await publish_draft_event(
         owner_id, final_status,
         campaign_id=str(campaign_id or ""),
         extra={"completed": job.get("completed", 0), "total": job.get("total", 0)},
@@ -2338,8 +1868,10 @@ async def _run_copilot_discovery(
     workspace_id: str,
 ) -> dict:
     """Discovery tool adapter; the existing search-run pipeline remains authoritative."""
+    from services.discovery.service import create_search_run
+
     discovery_query = _discovery_query_from_search_context(search_context)
-    return await _create_search_run(
+    return await create_search_run(
         user_id,
         discovery_query,
         session_token,
@@ -2452,7 +1984,7 @@ async def _run_copilot_campaign(
                 }
             attached_lead_ids.append(str(lead_id))
         append_event(user_id, "campaign.created", {"campaign": campaign})
-        await _maybe_auto_strategy(
+        await campaign_service.maybe_auto_strategy(
             session_token, user_id, campaign["id"], campaign["objective"], campaign,
             workspace_id=workspace_id,
         )
@@ -2502,7 +2034,7 @@ async def _run_copilot_campaign(
         strategy = target.get("strategy") if isinstance(target.get("strategy"), dict) else None
         if strategy and not force and str(strategy.get("objective") or strategy.get("campaign_objective") or "").strip() == objective:
             return {"ok": True, "status": "completed", "tool": tool_name, "result": {"campaign": target, "reused": True}}
-        job_id, status = await _enqueue_strategy_job(
+        job_id, status = await campaign_service.enqueue_strategy_job(
             session_token, user_id, campaign_id, objective, target,
             workspace_id=workspace_id,
         )
@@ -2580,7 +2112,7 @@ async def _run_copilot_outreach(
         if not verified or verified_text != updated_text or verified.get("status") != "pending":
             return {"ok": False, "status": "verification_failed", "tool": tool_name,
                     "reason": "Draft refinement could not be verified in this workspace."}
-        await _emit_draft_event(user_id, "draft.updated", draft_id=str(verified.get("id")), campaign_id=str(verified.get("campaign_id") or ""))
+        await publish_draft_event(user_id, "draft.updated", draft_id=str(verified.get("id")), campaign_id=str(verified.get("campaign_id") or ""))
         return {"ok": True, "status": "completed", "tool": tool_name, "result": {"draft": verified, "drafts": [verified]}}
 
     if tool_name == "outreach.draft.generate":
@@ -2603,9 +2135,9 @@ async def _run_copilot_outreach(
     from services.outbound.draft_store import draft_store as outbound_store
     outbound = outbound_store.get(target_id)
     if outbound is None:
-        _sync_draft_to_outbound(target, session_token, owner_id=user_id)
+        outbound_service.sync_draft_to_outbound(target, session_token, owner_id=user_id)
         outbound = outbound_store.get(target_id)
-    if outbound is None or not _outbound_draft_owned_by(outbound, user_id):
+    if outbound is None or not outbound_service.outbound_draft_owned_by(outbound, user_id):
         return {"ok": False, "status": "failed", "tool": tool_name, "reason": "The draft is not owned by this workspace."}
 
     if tool_name == "outreach.draft.approve":
@@ -2622,10 +2154,10 @@ async def _run_copilot_outreach(
         # The outbound store is a projection. Canonical approval above is the
         # success boundary; a projection problem must not rewrite durable state.
         outbound_store.approve(target_id)
-        await _emit_draft_event(user_id, "draft.approved", draft_id=target_id, campaign_id=str(verified.get("campaign_id") or ""))
+        await publish_draft_event(user_id, "draft.approved", draft_id=target_id, campaign_id=str(verified.get("campaign_id") or ""))
         return {"ok": True, "status": "completed", "tool": tool_name, "result": {"draft": verified}}
 
-    provider_id = _get_outbound_provider_for_draft(outbound, user_id)
+    provider_id = outbound_service.resolve_provider_for_draft(outbound, user_id)
     if not provider_id:
         return {"ok": False, "status": "failed", "tool": tool_name, "reason": "No authorized Gmail provider is available."}
     if tool_name == "outreach.draft.schedule":
@@ -2634,7 +2166,7 @@ async def _run_copilot_outreach(
         result = outbound_scheduler.schedule(target_id, provider_id, send_at) if send_at else {"ok": False, "error": "A send time is required."}
         if result.get("ok"):
             await persist_draft_update_awaited(user_id, target_id, {"status": "scheduled"}, workspace_id=workspace_id)
-            await _emit_draft_event(user_id, "draft.scheduled", draft_id=target_id, campaign_id=str(target.get("campaign_id") or ""))
+            await publish_draft_event(user_id, "draft.scheduled", draft_id=target_id, campaign_id=str(target.get("campaign_id") or ""))
     else:
         result = await asyncio.to_thread(
             outbound_executor.execute,
@@ -2650,12 +2182,12 @@ async def _run_copilot_outreach(
         if result.get("ok"):
             outbound_store.mark_sent(target_id)
             await persist_draft_update_awaited(user_id, target_id, {"status": "sent"}, workspace_id=workspace_id)
-            await _emit_draft_event(user_id, "draft.sent", draft_id=target_id, campaign_id=str(target.get("campaign_id") or ""))
+            await publish_draft_event(user_id, "draft.sent", draft_id=target_id, campaign_id=str(target.get("campaign_id") or ""))
     if not result.get("ok"):
         return {"ok": False, "status": "failed", "tool": tool_name, "reason": result.get("error", "Outreach operation failed.")}
     refreshed = outbound_store.get(target_id) or outbound
     return {"ok": True, "status": "completed", "tool": tool_name,
-            "result": {"draft": _outbound_to_legacy_draft(refreshed), "operation": result}}
+            "result": {"draft": outbound_service.outbound_to_legacy_draft(refreshed), "operation": result}}
 
 
 async def _run_copilot_inbox(
@@ -4351,60 +3883,6 @@ class BatchDraftRequest(BaseModel):
     campaign_id: str | None = None
 
 
-class RefineDraftRequest(BaseModel):
-    edit_request: str
-    previous_message: str
-    lead: dict
-    campaign_id: str | None = None
-    campaign_name: str | None = None
-    company: str | None = None
-    contact: str | None = None
-    role: str | None = None
-    industry: str | None = None
-    messaging_angle: str | None = None
-    business_summary: str | None = None
-
-
-class UpdateDraftRequest(BaseModel):
-    text: str
-
-
-class SaveCampaignRequest(BaseModel):
-    name: str
-    objective: str = ""
-    search_query: str = ""
-    discovery_id: str = ""
-    lead_count: int = 0
-    leads: list[dict] | None = None
-    strategy: dict | None = None
-    status: str = "planning"
-
-
-class UpdateCampaignRequest(BaseModel):
-    name: str | None = None
-    objective: str | None = None
-    strategy: dict | None = None
-    status: str | None = None
-
-
-# Campaign status is the LIFECYCLE only (planning → active/paused → completed).
-# Workflow steps (strategy, leads, drafts, review, sending) are DERIVED from
-# persisted state and exposed as current_step — never stored in status.
-VALID_CAMPAIGN_STATUSES = {
-    "planning", "active", "paused", "completed",
-    "archived", "cancelled", "failed", "deleted",
-}
-
-
-class AttachDiscoveryRequest(BaseModel):
-    discovery_id: str
-
-
-class AddCampaignLeadRequest(BaseModel):
-    lead: dict
-    discovery_id: str = ""
-
-
 class LeadDecisionRequest(BaseModel):
     lead: dict
     approved: bool
@@ -4443,7 +3921,7 @@ async def batch_status(session_token: str, batch_id: str, request: Request = Non
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token) if request is not None else ""
     campaign_id = job.get("campaign_id") or ""
     if campaign_id:
-        campaigns = _workspace_campaigns(owner_id, session_token) if owner_id else []
+        campaigns = load_campaigns(owner_id) if owner_id else []
         if not any(c.get("id") == campaign_id for c in campaigns):
             raise HTTPException(status_code=404, detail="Batch not found")
     return {"ok": True, **job}
@@ -4453,415 +3931,6 @@ async def batch_status(session_token: str, batch_id: str, request: Request = Non
 async def analyze_campaigns_endpoint(session_token: str, payload: BatchDraftRequest):
     result = analyze_campaigns(payload.leads)
     return result
-
-@app.get("/api/web/session/{session_token}/drafts")
-async def list_drafts(session_token: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    import time as _t
-    _t0 = _t.perf_counter()
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    drafts = await asyncio.to_thread(_workspace_drafts, owner_id, session_token, workspace_id=ws_id)
-    log.info("[perf] route=/drafts owner=%s ms=%.0f drafts=%d",
-             owner_id[:8], (_t.perf_counter() - _t0) * 1000, len(drafts))
-    return {"ok": True, "drafts": drafts}
-
-
-@app.put("/api/web/session/{session_token}/drafts/{draft_id}")
-async def update_draft(session_token: str, draft_id: str, payload: UpdateDraftRequest, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    drafts = _workspace_drafts(owner_id, session_token)
-    for d in drafts:
-        if d.get("id") == draft_id:
-            from services.workspace_state import persist_draft_update
-            if not persist_draft_update(owner_id, draft_id, {"text": payload.text, "status": "pending"}):
-                raise HTTPException(status_code=503, detail="Draft could not be persisted")
-            d["text"] = payload.text
-            d["status"] = "pending"
-            publish(session_token, WMEventType.DRAFT_UPDATED, {
-                "draft_id": draft_id,
-                "campaign_id": d.get("campaign_id", ""),
-                "lead_name": d.get("lead", {}).get("name", ""),
-            }, actor="user")
-            return {"ok": True, "draft": d}
-    raise HTTPException(status_code=404, detail="Draft not found")
-
-
-@app.post("/api/web/session/{session_token}/drafts/{draft_id}/refine")
-async def refine_draft(session_token: str, draft_id: str, payload: RefineDraftRequest, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    drafts = _workspace_drafts(owner_id, session_token)
-    target = next((d for d in drafts if d.get("id") == draft_id), None)
-    if not target:
-        raise HTTPException(status_code=404, detail="Draft not found")
-
-    context = {}
-    for field in ("campaign_id", "campaign_name", "company", "contact", "role", "industry", "messaging_angle", "business_summary"):
-        val = getattr(payload, field, None)
-        if val:
-            context[field] = val
-
-    loop = asyncio.get_event_loop()
-    try:
-        if payload.edit_request and payload.previous_message:
-            strategy = _classify_rewrite_strategy(payload.edit_request)
-            rewrite_result = await loop.run_in_executor(
-                None,
-                execute_rewrite,
-                payload.previous_message,
-                strategy,
-                context or None,
-                payload.edit_request if strategy == "custom" else None,
-            )
-            previous_text = target["text"]
-            target["text"] = rewrite_result.text
-            target["status"] = "pending"
-            from services.workspace_state import persist_draft_update
-            if not persist_draft_update(owner_id, draft_id, {"text": target["text"], "status": "pending"}):
-                raise RuntimeError("Draft rewrite could not be persisted")
-
-            version = push_rewrite_history(
-                session_token, draft_id,
-                previous_text=previous_text,
-                reason=payload.edit_request,
-                strategy=strategy,
-                change_summary=rewrite_result.change_summary,
-            )
-
-            comparison = await loop.run_in_executor(
-                None,
-                compare_versions,
-                previous_text,
-                rewrite_result.text,
-                rewrite_result.change_summary,
-            )
-
-            try:
-                intelligence = await loop.run_in_executor(
-                    None,
-                    analyze_draft_intelligence,
-                    rewrite_result.text,
-                    context or None,
-                )
-            except Exception:
-                intelligence = None
-
-            publish(session_token, WMEventType.DRAFT_UPDATED, {
-                "draft_id": draft_id,
-                "campaign_id": target.get("campaign_id", ""),
-                "strategy": strategy,
-                "change_summary": rewrite_result.change_summary or [],
-            }, actor="user")
-
-            return {
-                "ok": True,
-                "draft": target,
-                "rewritten_text": rewrite_result.text,
-                "change_summary": rewrite_result.change_summary,
-                "draft_intelligence": intelligence.to_dict() if intelligence else None,
-                "version": version,
-                "confidence": rewrite_result.confidence,
-                "comparison": comparison.to_dict(),
-            }
-
-        workflow_input = {
-            "type": "draft_message",
-            "lead": payload.lead,
-            "edit_request": payload.edit_request,
-            "previous_message": payload.previous_message,
-        }
-        if context:
-            workflow_input["context"] = context
-
-        workflow_result = await loop.run_in_executor(
-            None,
-            run_workflow,
-            workflow_input,
-        )
-        new_body = _parse_draft_body(workflow_result.get("message", ""))
-        rewritten_text = new_body or target["text"]
-        if new_body:
-            previous_text = target["text"]
-            target["text"] = new_body
-            target["status"] = "pending"
-            from services.workspace_state import persist_draft_update
-            if not persist_draft_update(owner_id, draft_id, {"text": target["text"], "status": "pending"}):
-                raise RuntimeError("Draft rewrite could not be persisted")
-
-            push_rewrite_history(
-                session_token, draft_id,
-                previous_text=previous_text,
-                reason=payload.edit_request or "AI rewrite",
-                strategy="custom",
-                change_summary=["✓ Draft rewritten"],
-            )
-
-        publish(session_token, WMEventType.DRAFT_UPDATED, {
-            "draft_id": draft_id,
-            "campaign_id": target.get("campaign_id", ""),
-            "method": "workflow_rewrite",
-        }, actor="user")
-        return {"ok": True, "draft": target, "rewritten_text": rewritten_text}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-class AnalyzeDraftRequest(BaseModel):
-    draft_text: str
-    lead: dict
-    campaign_id: str | None = None
-    campaign_name: str | None = None
-    company: str | None = None
-    contact: str | None = None
-    role: str | None = None
-    industry: str | None = None
-    messaging_angle: str | None = None
-    business_summary: str | None = None
-
-
-@app.post("/api/web/session/{session_token}/drafts/analyze")
-async def analyze_draft_endpoint(session_token: str, payload: AnalyzeDraftRequest):
-    loop = asyncio.get_event_loop()
-    try:
-        context = {}
-        for field in ("campaign_id", "campaign_name", "company", "contact", "role", "industry", "messaging_angle", "business_summary"):
-            val = getattr(payload, field, None)
-            if val:
-                context[field] = val
-
-        workflow_result = await loop.run_in_executor(
-            None,
-            run_workflow,
-            {"type": "draft_analysis", "draft_text": payload.draft_text, "context": context},
-        )
-
-        intelligence = None
-        try:
-            intelligence = await loop.run_in_executor(
-                None,
-                analyze_draft_intelligence,
-                payload.draft_text,
-                context or None,
-            )
-        except Exception:
-            pass
-
-        return {
-            "ok": workflow_result.get("ok", False),
-            "analysis": workflow_result.get("analysis"),
-            "draft_intelligence": intelligence.to_dict() if intelligence else None,
-            "error": workflow_result.get("error"),
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-class AskDraftQuestionRequest(BaseModel):
-    question: str
-    draft_text: str
-    lead: dict
-    campaign_id: str | None = None
-    campaign_name: str | None = None
-    company: str | None = None
-    contact: str | None = None
-    role: str | None = None
-    industry: str | None = None
-    messaging_angle: str | None = None
-    business_summary: str | None = None
-
-
-@app.post("/api/web/session/{session_token}/drafts/ask")
-async def ask_draft_question_endpoint(session_token: str, payload: AskDraftQuestionRequest):
-    loop = asyncio.get_event_loop()
-    try:
-        context = {}
-        for field in ("campaign_id", "campaign_name", "company", "contact", "role", "industry", "messaging_angle", "business_summary"):
-            val = getattr(payload, field, None)
-            if val:
-                context[field] = val
-        workflow_result = await loop.run_in_executor(
-            None,
-            run_workflow,
-            {"type": "draft_question", "question": payload.question, "draft_text": payload.draft_text, "context": context},
-        )
-        return {"ok": workflow_result.get("ok", False), "answer": workflow_result.get("answer"), "error": workflow_result.get("error")}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-def _call_outbound_approval(draft_id: str, legacy_draft: dict) -> None:
-    """Adapter: after legacy approval, also execute through outbound engine.
-    Creates Gmail draft via outbound pipeline if provider is configured.
-    Errors are logged but don't block the legacy flow.
-    """
-    try:
-        from services.outbound.outbound_registry import create_draft as reg_create_draft
-        from services.outbound.draft_store import draft_store as outbound_draft_store
-        from services.outbound.outbound_models import DraftStatus
-        outbound_draft = outbound_draft_store.get(draft_id)
-        if not outbound_draft:
-            log.warning("[outbound_adapter] Draft %s not found in outbound store", draft_id)
-            return
-        if outbound_draft.status in (DraftStatus.APPROVED, DraftStatus.AUTO_APPROVED, DraftStatus.SENT):
-            return
-        recipient_email = (outbound_draft.recipient.email if outbound_draft.recipient else "") or ""
-        if not str(recipient_email).strip():
-            log.info("[outbound_adapter] Draft %s has no recipient email — skipping Gmail draft creation", draft_id)
-            return
-        outbound_draft_store.approve(draft_id)
-        real_provider_id = _get_outbound_provider_for_draft(outbound_draft)
-        if not real_provider_id:
-            log.warning("[outbound_adapter] No Gmail outbound provider registered — cannot create Gmail draft for %s", draft_id)
-            return
-        log.info("[outbound_adapter] Calling create_draft for %s via provider %s", draft_id, real_provider_id)
-        provider_result = reg_create_draft(real_provider_id, outbound_draft)
-        if provider_result and provider_result.external_draft_id:
-            updated = outbound_draft_store.get(draft_id)
-            if updated:
-                updated.external_draft_id = provider_result.external_draft_id
-                if provider_result.thread_id:
-                    updated.thread_id = provider_result.thread_id
-                updated.provider_id = real_provider_id
-                outbound_draft_store.update(updated)
-                log.info("[outbound_adapter] Gmail draft created — external_id=%s", provider_result.external_draft_id)
-    except Exception as e:
-        log.warning("[outbound_adapter] approve_draft failed for %s: %s", draft_id, e)
-
-
-
-async def _emit_draft_event(user_id: str, event_type: str, *, draft_id: str = "",
-                            campaign_id: str = "", lead_name: str = "",
-                            extra: dict | None = None) -> None:
-    """PR-3E: draft lifecycle event via Redis pub/sub. Best-effort, scoped to
-    the server-resolved owner; payloads carry identifiers only."""
-    try:
-        from services.events_bus import event_bus
-        data: dict = {}
-        if campaign_id:
-            data["campaign_id"] = campaign_id
-        if lead_name:
-            data["lead"] = lead_name[:80]
-        if extra:
-            data.update({k: v for k, v in extra.items() if not any(b in k.lower() for b in ("token", "secret", "body", "subject"))})
-        await event_bus.publish_user_event(
-            user_id, event_type,
-            data, status=event_type.split(".", 1)[-1],
-        )
-    except Exception:
-        pass
-
-
-@app.post("/api/web/session/{session_token}/drafts/{draft_id}/approve")
-async def approve_draft(session_token: str, draft_id: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    from services.workspace_state import load_workspace_state
-    state = await asyncio.to_thread(
-        load_workspace_state, owner_id, include_details=False, workspace_id=workspace_id,
-    )
-    durable_drafts = state["drafts"]
-    durable_target = next((d for d in durable_drafts if d.get("id") == draft_id), None)
-    if durable_target:
-        if durable_target.get("status") in ("sent", "sending"):
-            raise HTTPException(status_code=409, detail="Draft already sent")
-        new_status = "approved" if durable_target.get("status") != "approved" else "pending"
-        from services.workspace_state import persist_draft_update_awaited
-        if not await persist_draft_update_awaited(
-            owner_id, draft_id, {"status": new_status}, workspace_id=workspace_id,
-        ):
-            raise HTTPException(status_code=503, detail="Draft approval could not be persisted")
-        durable_target["status"] = new_status
-        campaign_id = durable_target.get("campaign_id")
-        if new_status == "approved":
-            _sync_draft_to_outbound(durable_target, session_token, owner_id=owner_id)
-            _call_outbound_approval(draft_id, durable_target)
-            await _emit_draft_event(
-                owner_id, "draft.approved",
-                draft_id=draft_id,
-                campaign_id=str(campaign_id or ""),
-                lead_name=(durable_target.get("lead") or {}).get("name", ""),
-            )
-        current_step = None
-        pending_in_campaign = 0
-        if campaign_id:
-            from services.workspace_snapshot import enrich_campaigns
-            enriched = next(
-                (c for c in enrich_campaigns(state["campaigns"], durable_drafts)
-                 if c.get("id") == campaign_id),
-                None,
-            )
-            if enriched:
-                current_step = enriched.get("current_step")
-                pending_in_campaign = int(enriched.get("pending_drafts", 0) or 0)
-        publish(session_token, WMEventType.DRAFT_APPROVED if new_status == "approved" else WMEventType.DRAFT_UPDATED, {
-            "draft_id": draft_id, "campaign_id": campaign_id, "status": new_status,
-        }, actor="user")
-        return {"ok": True, "draft": durable_target, "current_step": current_step,
-                "pending_drafts": pending_in_campaign}
-
-    raise HTTPException(status_code=404, detail="Draft not found in the durable workspace")
-
-
-@app.post("/api/web/session/{session_token}/drafts/{draft_id}/undo")
-async def undo_draft(session_token: str, draft_id: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    drafts = _workspace_drafts(owner_id, session_token)
-    target = next((d for d in drafts if d.get("id") == draft_id), None)
-    if not target:
-        raise HTTPException(status_code=404, detail="Draft not found")
-
-    entry = undo_rewrite_history(session_token, draft_id)
-    if entry is None:
-        raise HTTPException(status_code=400, detail="No history to undo")
-
-    target["text"] = entry.previous_text
-    target["status"] = "pending"
-    from services.workspace_state import persist_draft_update
-    if not persist_draft_update(owner_id, draft_id, {"text": target["text"], "status": "pending"}):
-        raise HTTPException(status_code=503, detail="Draft undo could not be persisted")
-    return {
-        "ok": True,
-        "draft": target,
-        "undo": entry.to_dict(),
-    }
-
-
-@app.get("/api/web/session/{session_token}/drafts/{draft_id}/history")
-async def draft_rewrite_history(session_token: str, draft_id: str, request: Request = None):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token) if request is not None else ""
-    draft = outbound_draft_store.get(draft_id) if hasattr(outbound_draft_store, "get") else None
-    if not _outbound_draft_owned_by(draft, owner_id):
-        raise HTTPException(status_code=404, detail="Draft not found")
-    return {
-        "ok": True,
-        "history": get_rewrite_history(session_token, draft_id),
-        "current_version": get_draft_version(session_token, draft_id),
-    }
-
-
-class CompareDraftVersionsRequest(BaseModel):
-    old_text: str
-    new_text: str
-    change_summary: list[str] | None = None
-
-
-@app.post("/api/web/session/{session_token}/drafts/compare")
-async def compare_draft_versions(session_token: str, payload: CompareDraftVersionsRequest):
-    try:
-        comparison = compare_versions(
-            payload.old_text,
-            payload.new_text,
-            payload.change_summary,
-        )
-        return {"ok": True, "comparison": comparison.to_dict()}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 # ── Communication Intelligence Endpoints ──
 
@@ -5158,7 +4227,7 @@ async def provider_connect(session_token: str, payload: ProviderConnectRequest, 
 async def provider_disconnect(session_token: str, provider_id: str, request: Request):
     session_token = identity_dependencies.web_session_token(request)
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    if not _provider_record_owned_by(provider_id, owner_id):
+    if not outbound_service.provider_record_owned_by(provider_id, owner_id):
         raise HTTPException(status_code=404, detail="Provider not found or already disconnected")
     success = registry_disconnect(provider_id)
     if not success:
@@ -5292,7 +4361,7 @@ async def provider_list(session_token: str, request: Request):
 async def provider_health(session_token: str, provider_id: str, request: Request):
     session_token = identity_dependencies.web_session_token(request)
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    if not _provider_record_owned_by(provider_id, owner_id):
+    if not outbound_service.provider_record_owned_by(provider_id, owner_id):
         raise HTTPException(status_code=404, detail="Provider not found")
     instance = get_provider(provider_id)
     if not instance:
@@ -5319,7 +4388,7 @@ async def provider_health(session_token: str, provider_id: str, request: Request
 async def provider_sync(session_token: str, provider_id: str, request: Request, cursor: str = ""):
     session_token = identity_dependencies.web_session_token(request)
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    if not _provider_record_owned_by(provider_id, owner_id):
+    if not outbound_service.provider_record_owned_by(provider_id, owner_id):
         raise HTTPException(status_code=404, detail="Provider not found")
     from services.communication.inbox_sync_engine import inbox_sync_engine
     result = await inbox_sync_engine.sync_provider_now(provider_id, cursor=cursor)
@@ -5340,7 +4409,7 @@ async def provider_sync(session_token: str, provider_id: str, request: Request, 
 async def provider_status(session_token: str, provider_id: str, request: Request):
     session_token = identity_dependencies.web_session_token(request)
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    if not _provider_record_owned_by(provider_id, owner_id):
+    if not outbound_service.provider_record_owned_by(provider_id, owner_id):
         raise HTTPException(status_code=404, detail="Provider not found")
     provider = communication_store.get_provider(provider_id)
     if not provider:
@@ -5364,7 +4433,7 @@ async def provider_status(session_token: str, provider_id: str, request: Request
 async def provider_threads(session_token: str, provider_id: str, request: Request = None):
     """List all tracked thread mappings for a provider."""
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token) if request is not None else ""
-    if not _provider_record_owned_by(provider_id, owner_id):
+    if not outbound_service.provider_record_owned_by(provider_id, owner_id):
         raise HTTPException(status_code=404, detail="Provider not found")
     store = communication_store
     all_threads = store.get_all_threads()
@@ -5381,7 +4450,7 @@ async def provider_threads(session_token: str, provider_id: str, request: Reques
 async def provider_messages(session_token: str, provider_id: str, request: Request = None):
     """Get message count, mailbox info, and recent activity for a provider."""
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token) if request is not None else ""
-    if not _provider_record_owned_by(provider_id, owner_id):
+    if not outbound_service.provider_record_owned_by(provider_id, owner_id):
         raise HTTPException(status_code=404, detail="Provider not found")
     count = communication_store.message_count()
     recent = communication_store.get_recent_messages(limit=10)
@@ -5525,7 +4594,7 @@ class OutboundDeleteDraftRequest(BaseModel):
 async def outbound_create_draft(session_token: str, payload: OutboundCreateDraftRequest, request: Request):
     session_token = identity_dependencies.web_session_token(request)
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    if not _provider_owned_by(payload.provider_id, owner_id):
+    if not outbound_service.provider_owned_by(payload.provider_id, owner_id):
         raise HTTPException(status_code=404, detail="Provider not found")
     draft = OutboundDraftMessage(
         provider_id=payload.provider_id,
@@ -5584,7 +4653,7 @@ async def outbound_create_draft(session_token: str, payload: OutboundCreateDraft
 @app.patch("/api/web/session/{session_token}/outbound/drafts/{draft_id}")
 async def outbound_update_draft(session_token: str, draft_id: str, payload: OutboundUpdateDraftRequest, request: Request):
     session_token = identity_dependencies.web_session_token(request)
-    owner_id, workspace_id, _canonical, existing = await _require_canonical_outbound_draft(
+    owner_id, workspace_id, _canonical, existing = await outbound_service.require_canonical_outbound_draft(
         request, session_token, draft_id, provider_id=payload.provider_id,
     )
     update_data = {}
@@ -5625,7 +4694,7 @@ async def outbound_delete_draft(session_token: str, draft_id: str, provider_id: 
     session_token = identity_dependencies.web_session_token(request)
     if request is None:
         raise HTTPException(status_code=401, detail="Authentication required")
-    owner_id, workspace_id, _canonical, draft = await _require_canonical_outbound_draft(
+    owner_id, workspace_id, _canonical, draft = await outbound_service.require_canonical_outbound_draft(
         request, session_token, draft_id, provider_id=provider_id,
     )
     if draft and draft.external_draft_id and provider_id:
@@ -5666,7 +4735,7 @@ async def send_draft(session_token: str, draft_id: str, request: Request, payloa
     if test_recipient and not _test_recipient_override_enabled():
         raise HTTPException(status_code=403, detail="Test recipient override is disabled")
 
-    owner_id, ws_id, canonical_draft, outbound_draft = await _require_canonical_outbound_draft(
+    owner_id, ws_id, canonical_draft, outbound_draft = await outbound_service.require_canonical_outbound_draft(
         request, session_token, draft_id,
     )
     if canonical_draft.get("status") == "sent":
@@ -5685,7 +4754,7 @@ async def send_draft(session_token: str, draft_id: str, request: Request, payloa
     recipient_email = (outbound_draft.recipient.email if outbound_draft.recipient else "") or ""
     if not str(recipient_email).strip():
         return {"ok": False, "error": "This lead has no email address"}
-    real_provider_id = _get_outbound_provider_for_draft(outbound_draft, owner_id)
+    real_provider_id = outbound_service.resolve_provider_for_draft(outbound_draft, owner_id)
     if not real_provider_id:
         return {"ok": False, "error": "No Gmail outbound provider registered"}
 
@@ -5725,7 +4794,7 @@ async def send_draft(session_token: str, draft_id: str, request: Request, payloa
         ):
             raise HTTPException(status_code=503, detail="Email was sent but the canonical Draft could not be updated")
         outbound_draft_store.mark_sent(draft_id)
-        await _emit_draft_event(
+        await publish_draft_event(
             owner_id, "draft.sent", draft_id=draft_id,
             campaign_id=outbound_draft.workflow_id or "",
             lead_name=outbound_draft.recipient.name if outbound_draft.recipient else "",
@@ -5796,13 +4865,13 @@ async def schedule_draft(session_token: str, draft_id: str, payload: ScheduleDra
     from services.outbound.draft_store import draft_store as outbound_draft_store
     from services.outbound.outbound_scheduler import outbound_scheduler
     from services.outbound.outbound_models import DraftStatus
-    owner_id, ws_id, canonical_draft, outbound_draft = await _require_canonical_outbound_draft(
+    owner_id, ws_id, canonical_draft, outbound_draft = await outbound_service.require_canonical_outbound_draft(
         request, session_token, draft_id,
     )
     recipient_email = (outbound_draft.recipient.email if outbound_draft.recipient else "") or ""
     if not str(recipient_email).strip():
         return {"ok": False, "error": "This lead has no email address"}
-    real_provider_id = _get_outbound_provider_for_draft(outbound_draft, owner_id)
+    real_provider_id = outbound_service.resolve_provider_for_draft(outbound_draft, owner_id)
     if not real_provider_id:
         return {"ok": False, "error": "No Gmail outbound provider registered"}
     log.info("[schedule_draft] Scheduling draft %s at %s via provider %s", draft_id, payload.send_at, real_provider_id)
@@ -5815,7 +4884,7 @@ async def schedule_draft(session_token: str, draft_id: str, payload: ScheduleDra
             raise HTTPException(status_code=503, detail="Draft was scheduled but canonical persistence failed")
         outbound_draft.status = DraftStatus.SCHEDULED
         outbound_draft_store.update(outbound_draft)
-        await _emit_draft_event(owner_id, "draft.scheduled", draft_id=draft_id)
+        await publish_draft_event(owner_id, "draft.scheduled", draft_id=draft_id)
         publish(session_token, WMEventType.DRAFT_SCHEDULED, {
             "draft_id": draft_id,
             "send_at": payload.send_at,
@@ -5830,7 +4899,7 @@ async def cancel_schedule_draft(session_token: str, draft_id: str, request: Requ
     session_token = identity_dependencies.web_session_token(request)
     from services.outbound.draft_store import draft_store as outbound_draft_store
     from services.outbound.outbound_scheduler import outbound_scheduler
-    owner_id, ws_id, _canonical, outbound_draft = await _require_canonical_outbound_draft(
+    owner_id, ws_id, _canonical, outbound_draft = await outbound_service.require_canonical_outbound_draft(
         request, session_token, draft_id,
     )
     result = outbound_scheduler.cancel_schedule(draft_id, outbound_draft.provider_id)
@@ -5842,7 +4911,7 @@ async def cancel_schedule_draft(session_token: str, draft_id: str, request: Requ
             raise HTTPException(status_code=503, detail="Schedule was cancelled but canonical Draft persistence failed")
         outbound_draft.status = DraftStatus.PENDING_APPROVAL
         outbound_draft_store.update(outbound_draft)
-        await _emit_draft_event(owner_id, "draft.updated", draft_id=draft_id)
+        await publish_draft_event(owner_id, "draft.updated", draft_id=draft_id)
         publish(session_token, WMEventType.DRAFT_UPDATED, {
             "draft_id": draft_id,
             "status": "pending",
@@ -5873,7 +4942,7 @@ async def outbound_cancel_schedule(session_token: str, schedule_id: str, provide
     session_token = identity_dependencies.web_session_token(request)
     from services.outbound.outbound_scheduler import outbound_scheduler
     from services.outbound.draft_store import draft_store as outbound_draft_store
-    owner_id, ws_id, _canonical, draft = await _require_canonical_outbound_draft(
+    owner_id, ws_id, _canonical, draft = await outbound_service.require_canonical_outbound_draft(
         request, session_token, schedule_id, provider_id,
     )
     result = outbound_scheduler.cancel_schedule(schedule_id, draft.provider_id)
@@ -5890,20 +4959,20 @@ async def outbound_cancel_schedule(session_token: str, schedule_id: str, provide
 async def outbound_list_drafts(session_token: str, request: Request, provider_id: str = ""):
     session_token = identity_dependencies.web_session_token(request)
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    if provider_id and not _provider_owned_by(provider_id, owner_id):
+    if provider_id and not outbound_service.provider_owned_by(provider_id, owner_id):
         raise HTTPException(status_code=404, detail="Provider not found")
     if provider_id:
         result = outbound_draft_store.list_by_provider(provider_id)
     else:
         result = outbound_draft_store.list_all()
-    drafts = [d for d in result.drafts if _outbound_draft_owned_by(d, owner_id)]
+    drafts = [d for d in result.drafts if outbound_service.outbound_draft_owned_by(d, owner_id)]
     return {"ok": True, "drafts": [d.model_dump() for d in drafts], "total": len(drafts)}
 
 
 @app.get("/api/web/session/{session_token}/outbound/drafts/{draft_id}")
 async def outbound_get_draft(session_token: str, draft_id: str, request: Request):
     session_token = identity_dependencies.web_session_token(request)
-    _owner_id, _ws_id, canonical, _draft = await _require_canonical_outbound_draft(
+    _owner_id, _ws_id, canonical, _draft = await outbound_service.require_canonical_outbound_draft(
         request, session_token, draft_id,
     )
     return {"ok": True, "draft": canonical}
@@ -5914,7 +4983,7 @@ async def outbound_approve_draft(session_token: str, draft_id: str, auto: bool =
     if request is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     session_token = identity_dependencies.web_session_token(request)
-    owner_id, ws_id, _canonical, draft = await _require_canonical_outbound_draft(request, session_token, draft_id)
+    owner_id, ws_id, _canonical, draft = await outbound_service.require_canonical_outbound_draft(request, session_token, draft_id)
     result = outbound_draft_store.approve(draft_id, auto=auto)
     if not result:
         from fastapi import HTTPException
@@ -5964,7 +5033,7 @@ async def outbound_reject_draft(session_token: str, draft_id: str, request: Requ
     if request is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     session_token = identity_dependencies.web_session_token(request)
-    owner_id, ws_id, _canonical, draft = await _require_canonical_outbound_draft(request, session_token, draft_id)
+    owner_id, ws_id, _canonical, draft = await outbound_service.require_canonical_outbound_draft(request, session_token, draft_id)
     result = outbound_draft_store.reject(draft_id)
     if not result:
         from fastapi import HTTPException
@@ -6002,7 +5071,7 @@ async def outbound_approve_all(session_token: str, payload: ApproveAllRequest, r
     for canonical in pending:
         draft_id = str(canonical.get("id") or "")
         try:
-            _owner, _workspace, _canonical, draft = await _require_canonical_outbound_draft(
+            _owner, _workspace, _canonical, draft = await outbound_service.require_canonical_outbound_draft(
                 request, session_token, draft_id,
             )
             outbound_draft_store.approve(draft.id, auto=payload.auto)
@@ -6043,11 +5112,11 @@ async def outbound_history(session_token: str, request: Request, provider_id: st
     session_token = identity_dependencies.web_session_token(request)
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     ws = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    if provider_id and not _provider_record_owned_by(provider_id, owner_id):
+    if provider_id and not outbound_service.provider_record_owned_by(provider_id, owner_id):
         raise HTTPException(status_code=404, detail="Provider not found")
     history = [
         item for item in outbound_persistence.get_history(provider_id=provider_id)
-        if _provider_record_owned_by(str(getattr(item, "provider_id", "") or ""), owner_id)
+        if outbound_service.provider_record_owned_by(str(getattr(item, "provider_id", "") or ""), owner_id)
     ]
     from services.persistence.launch.communication_persistence import list_outbound_history
     durable = await asyncio.to_thread(list_outbound_history, ws, provider_id, 100)
@@ -6083,11 +5152,11 @@ async def outbound_history(session_token: str, request: Request, provider_id: st
 async def outbound_events_endpoint(session_token: str, request: Request, provider_id: str = "", after: int = 0):
     session_token = identity_dependencies.web_session_token(request)
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    if provider_id and not _provider_owned_by(provider_id, owner_id):
+    if provider_id and not outbound_service.provider_owned_by(provider_id, owner_id):
         raise HTTPException(status_code=404, detail="Provider not found")
     events = [
         event for event in get_outbound_events(provider_id=provider_id, after_sequence=after)
-        if _provider_owned_by(event.provider_id, owner_id)
+        if outbound_service.provider_owned_by(event.provider_id, owner_id)
     ]
     return {
         "ok": True,
@@ -6112,7 +5181,7 @@ async def outbound_draft_versions(session_token: str, draft_id: str, request: Re
     session_token = identity_dependencies.web_session_token(request)
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     draft = outbound_draft_store.get(draft_id)
-    if not _outbound_draft_owned_by(draft, owner_id):
+    if not outbound_service.outbound_draft_owned_by(draft, owner_id):
         raise HTTPException(status_code=404, detail="Draft not found")
     versions = outbound_draft_store.get_versions(draft_id)
     return {"ok": True, "versions": [v.model_dump() for v in versions]}
@@ -6259,420 +5328,9 @@ def _copilot_tool_failure_reason(tool_name: str) -> str:
     return f"{tool_name} could not be completed. Please try again."
 
 
-def _workspace_campaigns(user_id: str, session_token: str = "", workspace_id: str = "",
-                         include_details: bool = True) -> list[dict[str, Any]]:
-    from services.workspace_state import load_workspace_state
-    return load_workspace_state(user_id, workspace_id=workspace_id,
-                                include_details=include_details)["campaigns"]
-
-
 def _workspace_drafts(user_id: str, session_token: str = "", workspace_id: str = "") -> list[dict[str, Any]]:
     from services.workspace_state import load_drafts_only
     return load_drafts_only(user_id, workspace_id=workspace_id)
-
-
-@app.post("/api/web/session/{session_token}/campaigns")
-async def save_campaign(session_token: str, payload: SaveCampaignRequest, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    request_id = uuid.uuid4().hex[:12]
-    started_at = time.perf_counter()
-
-    def _campaign_timing(stage: str) -> None:
-        log.info(
-            "[campaign.create] request_id=%s stage=%s elapsed_ms=%.1f lead_count=%d",
-            request_id,
-            stage,
-            (time.perf_counter() - started_at) * 1000,
-            len(payload.leads or []),
-        )
-
-    _campaign_timing("received")
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    _campaign_timing("workspace_owner_resolved")
-    ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    _campaign_timing("workspace_resolved")
-    if payload.discovery_id:
-        from services.discovery.service import get_discovery
-        discovery = await asyncio.to_thread(get_discovery, payload.discovery_id, ws_id)
-        _campaign_timing("discovery_handoff_validated")
-        if discovery is None:
-            raise HTTPException(status_code=404, detail="Discovery not found")
-    now = datetime.now(timezone.utc).isoformat()
-    leads = payload.leads or []
-    campaign = {
-        "id": str(uuid.uuid4()),
-        "name": payload.name,
-        "objective": payload.objective,
-        "search_query": payload.search_query,
-        "discovery_id": payload.discovery_id,
-        "lead_count": payload.lead_count or len(leads),
-        "leads": leads,
-        "status": payload.status,
-        "strategy": payload.strategy,
-        "created_at": now,
-        "updated_at": now,
-    }
-    from services.workspace_state import (
-        append_event, delete_campaign_row_awaited, load_campaign_state,
-        persist_campaign_lead_awaited, persist_campaign_row,
-    )
-    if not await persist_campaign_row(owner_id, campaign, workspace_id=ws_id):
-        _campaign_timing("campaign_persist_failed")
-        raise HTTPException(status_code=503, detail="Campaign could not be persisted")
-    _campaign_timing("campaign_persisted")
-    # Lead normalization/linking is independent per selected lead.  Keep the
-    # canonical repository helper and the all-or-nothing compensation below,
-    # but do not make the request pay the Supabase round-trip cost four times
-    # serially (the previous path could exceed the frontend's request window).
-    async def _persist_selected_lead(index: int, lead: dict[str, Any]) -> bool:
-        persisted = await persist_campaign_lead_awaited(
-            owner_id, campaign["id"], lead, workspace_id=ws_id,
-        )
-        _campaign_timing(
-            f"lead_link_{'persisted' if persisted else 'failed'}:{index}"
-        )
-        return persisted
-
-    lead_results = await asyncio.gather(*(
-        _persist_selected_lead(index, lead)
-        for index, lead in enumerate(leads, start=1)
-    ))
-    failed_leads = sum(1 for persisted in lead_results if not persisted)
-    if failed_leads:
-        compensated = await delete_campaign_row_awaited(
-            owner_id, campaign["id"], workspace_id=ws_id,
-        )
-        if not compensated:
-            log.error("[campaign.create] compensation_failed request_id=%s campaign=%s", request_id, campaign["id"])
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Campaign lead attachment failed; creation was rolled back"
-                if compensated else
-                "Campaign lead attachment failed and rollback could not be confirmed"
-            ),
-        )
-    canonical_campaign = await asyncio.to_thread(
-        load_campaign_state, owner_id, campaign["id"], workspace_id=ws_id,
-    )
-    if canonical_campaign is None or int(canonical_campaign.get("lead_count") or 0) != len(leads):
-        await delete_campaign_row_awaited(owner_id, campaign["id"], workspace_id=ws_id)
-        raise HTTPException(status_code=503, detail="Campaign links could not be verified; creation was rolled back")
-    campaign = canonical_campaign
-    # The canonical campaign row and lead links above are the success
-    # boundary. The compatibility workflow-event projection performs a
-    # synchronous Supabase insert, so keep it on the existing path without
-    # making the manual creation request wait for that secondary log write.
-    event_task = asyncio.create_task(asyncio.to_thread(
-        append_event, owner_id, "campaign.created", {"campaign": campaign},
-    ))
-
-    def _report_campaign_event_failure(task: asyncio.Task) -> None:
-        try:
-            task.result()
-        except asyncio.CancelledError:
-            return
-        except Exception:
-            log.exception("[campaign] compatibility event append failed campaign=%s", campaign["id"])
-
-    event_task.add_done_callback(_report_campaign_event_failure)
-    record_campaign_created(session_token, payload.name)
-    publish(session_token, WMEventType.CAMPAIGN_CREATED, {
-        "id": campaign["id"],
-        "name": campaign["name"],
-        "status": campaign["status"],
-        "lead_count": campaign["lead_count"],
-        "search_query": campaign["search_query"],
-    }, actor="user")
-    _get_feedback().on_campaign_created(session_token, campaign["id"])
-    # Campaign creation is complete once the campaign row and selected lead
-    # links are durable. Strategy generation is already a background job; do
-    # not make the manual creation request wait for its metadata write.
-    strategy_task = asyncio.create_task(_maybe_auto_strategy(
-        session_token,
-        owner_id,
-        campaign["id"],
-        str(payload.objective or "").strip(),
-        campaign,
-        workspace_id=ws_id,
-    ))
-
-    def _report_strategy_start_failure(task: asyncio.Task) -> None:
-        try:
-            task.result()
-        except asyncio.CancelledError:
-            return
-        except Exception:
-            log.exception("[campaign_strategy] auto-start failed campaign=%s", campaign["id"])
-
-    strategy_task.add_done_callback(_report_strategy_start_failure)
-    _campaign_timing("response_ready")
-    return {"ok": True, "campaign": campaign}
-
-
-@app.put("/api/web/session/{session_token}/campaigns/{campaign_id}")
-async def update_campaign(session_token: str, campaign_id: str, payload: UpdateCampaignRequest, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    campaigns = load_campaigns(owner_id, workspace_id=ws_id)
-    target = next((c for c in campaigns if c.get("id") == campaign_id), None)
-    if not target:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    updates: dict[str, Any] = {}
-    if payload.name is not None:
-        target["name"] = payload.name
-        updates["name"] = payload.name
-    if payload.objective is not None:
-        target["objective"] = payload.objective
-        updates["objective"] = payload.objective
-    if payload.strategy is not None:
-        target["strategy"] = payload.strategy
-        updates["strategy"] = payload.strategy
-    if payload.status is not None:
-        if payload.status not in VALID_CAMPAIGN_STATUSES:
-            raise HTTPException(status_code=400, detail=f"Invalid campaign status: {payload.status}")
-        old_status = target.get("status", "")
-        target["status"] = payload.status
-        updates["status"] = payload.status
-        publish(session_token, WMEventType.CAMPAIGN_STATUS_CHANGED, {
-            "campaign_id": campaign_id,
-            "status": payload.status,
-            "previous_status": old_status,
-        }, actor="user")
-        if payload.status == "completed" and old_status != "completed":
-            durable_drafts = _workspace_drafts(owner_id, session_token, workspace_id=ws_id)
-            approved = [d for d in durable_drafts
-                        if d.get("campaign_id") == campaign_id and d.get("status") == "approved"]
-            if not approved:
-                raise HTTPException(
-                    status_code=400,
-                    detail="No approved drafts — approve at least one draft before launching",
-                )
-            record_campaign_launched(session_token, target.get("name", ""))
-            _get_feedback().on_campaign_launched(session_token, campaign_id)
-            launch_result = await _dispatch_campaign_sends(session_token, target, owner_id, workspace_id=ws_id)
-            target["launch_result"] = {k: launch_result.get(k) for k in
-                                       ("total", "sent", "failed", "error") if k in launch_result}
-            if not launch_result.get("ok") and launch_result.get("error"):
-                raise HTTPException(status_code=400, detail=launch_result["error"])
-    elif payload.name is not None:
-        publish(session_token, WMEventType.CAMPAIGN_UPDATED, {
-            "campaign_id": campaign_id,
-            "name": payload.name,
-        }, actor="user")
-    target["updated_at"] = datetime.now(timezone.utc).isoformat()
-    from services.workspace_state import persist_campaign_update_awaited
-    if updates and not await persist_campaign_update_awaited(owner_id, campaign_id, updates, workspace_id=ws_id):
-        raise HTTPException(status_code=503, detail="Campaign update could not be persisted")
-    return {"ok": True, "campaign": target}
-
-
-async def _build_strategy_context(target: dict[str, Any]) -> dict[str, Any]:
-    """Assemble the strategy-generation context from a campaign's persisted state.
-
-    Pure extraction of the pre-3.1 synchronous endpoint body: leads profile,
-    discovery plan + real market research when the campaign was built from a
-    completed discovery. Grinds gracefully to the objective-only path for
-    campaigns that predate discovery.
-    """
-    context: dict[str, Any] = {}
-    lead_dicts = [l for l in (target.get("leads") or []) if isinstance(l, dict)]
-    if lead_dicts:
-        context["leads"] = [
-            {
-                "name": lead.get("name") or f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip(),
-                "title": lead.get("title", ""),
-                "company": lead.get("company", ""),
-                "domain": lead.get("domain", ""),
-            }
-            for lead in lead_dicts
-        ][:8]
-
-        def _top_counts(items: list[str], limit: int) -> dict[str, int]:
-            counts: dict[str, int] = {}
-            for value in items:
-                value = str(value or "").strip()
-                if not value:
-                    continue
-                counts[value] = counts.get(value, 0) + 1
-            return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:limit])
-
-        companies: list[str] = []
-        for lead in lead_dicts:
-            company = str(lead.get("company") or "").strip()
-            if company and company.lower() not in {c.lower() for c in companies}:
-                companies.append(company)
-        industries: list[str] = []
-        locations: list[str] = []
-        sizes: list[str] = []
-        for lead in lead_dicts:
-            industries.append(str(lead.get("industry") or ""))
-            location = str(lead.get("city") or "").strip() or str(lead.get("country") or "").strip()
-            if location:
-                locations.append(location)
-            employees = lead.get("employee_count")
-            if isinstance(employees, (int, float)) and employees > 0:
-                if employees < 50:
-                    sizes.append("1-50 employees")
-                elif employees < 200:
-                    sizes.append("51-200 employees")
-                elif employees < 1000:
-                    sizes.append("201-1000 employees")
-                else:
-                    sizes.append("1,000+ employees")
-        context["audience_profile"] = {
-            "lead_count": len(lead_dicts),
-            "companies": companies[:12],
-            "industry_distribution": _top_counts(industries, 6),
-            "location_distribution": _top_counts(locations, 6),
-            "size_distribution": _top_counts(sizes, 4),
-        }
-
-    # Attach the Discovery Plan + real market research when the campaign was
-    # built from a completed discovery. Grinds gracefully to the old
-    # objective-only path for campaigns that predate discovery.
-    discovery_id = str(target.get("discovery_id") or "").strip()
-    if discovery_id:
-        try:
-            from services.discovery.service import get_discovery
-            discovery = await asyncio.to_thread(get_discovery, discovery_id)
-        except Exception as e:
-            log.warning("[campaign_strategy] discovery lookup failed: %s", e)
-            discovery = None
-        if discovery:
-            metadata = discovery.get("metadata") or {}
-            plan = metadata.get("plan") if isinstance(metadata, dict) else None
-            if isinstance(plan, dict) and plan.get("offering"):
-                context["discovery_plan"] = plan
-
-            discovered: list[dict] = []
-            for dc in discovery.get("discovery_companies") or []:
-                if not isinstance(dc, dict):
-                    continue
-                company = dc.get("company")
-                if not isinstance(company, dict):
-                    continue
-                discovered.append({
-                    "name": company.get("name") or "",
-                    "industry": company.get("industry") or "",
-                    "city": company.get("city") or "",
-                    "country": company.get("country") or "",
-                    "employees": company.get("employee_count") or 0,
-                    "description": company.get("description") or "",
-                })
-            if discovered:
-                res_industries = [c["industry"] for c in discovered if c["industry"]]
-                res_locations = [
-                    c["city"] or c["country"]
-                    for c in discovered if c.get("city") or c.get("country")
-                ]
-                res_sizes: list[str] = []
-                for c in discovered:
-                    employees = c.get("employees")
-                    if isinstance(employees, (int, float)) and employees > 0:
-                        if employees < 50:
-                            res_sizes.append("1-50 employees")
-                        elif employees < 200:
-                            res_sizes.append("51-200 employees")
-                        elif employees < 1000:
-                            res_sizes.append("201-1000 employees")
-                        else:
-                            res_sizes.append("1,000+ employees")
-                context["market_research"] = {
-                    "companies": discovered[:10],
-                    "industry_distribution": _top_counts(res_industries, 6),
-                    "location_distribution": _top_counts(res_locations, 6),
-                    "size_distribution": _top_counts(res_sizes, 4),
-                }
-                log.info(
-                    "[campaign_strategy] injected plan + research from discovery "
-                    "%s (%d companies)", discovery_id, len(discovered)
-                )
-    return context
-
-
-async def _run_strategy_job(
-    session_token: str,
-    job: dict[str, Any],
-    target: dict[str, Any],
-    objective: str,
-) -> None:
-    """Generate + persist a campaign strategy off the request path.
-
-    The OpenAI call is CPU/IO-blocking (30s timeout inside
-    ``_send_openai_request``), so it runs via ``asyncio.to_thread`` — never
-    blocks the event loop the way the pre-3.1 synchronous endpoint did.
-    """
-    job_id = str(job.get("id") or "")
-    job["status"] = "running"
-    # PR-3F: durable lifecycle — RUNNING record (reconciled lazily if the
-    # process dies mid-generation).
-    try:
-        await _persist_strategy_job_meta(job["owner_id"], job["campaign_id"], {
-            "id": job_id, "status": "running",
-            "started_at": job.get("started_at"),
-            "finished_at": None, "error": None,
-        }, workspace_id=str(job.get("workspace_id") or ""))
-    except Exception:
-        pass
-    try:
-        context = await _build_strategy_context(target)
-        from services.knowledge.context_adapter import retrieve_knowledge_context
-        knowledge_query = " ".join(
-            str(value).strip()
-            for value in (objective, target.get("search_query"), target.get("name"))
-            if str(value or "").strip()
-        )
-        retrieved_knowledge = await retrieve_knowledge_context(
-            job["owner_id"],
-            query=knowledge_query,
-            categories=["company", "icp", "messaging", "sales_offer"],
-            limit=8,
-        )
-        context["knowledge_context"] = retrieved_knowledge.to_dict()
-        from services.ai import OpenAIError, generate_campaign_strategy as _generate_strategy
-        try:
-            strategy = await asyncio.to_thread(_generate_strategy, objective, context)
-        except OpenAIError as error:
-            log.warning("[campaign_strategy] OpenAI generation failed, using fallback: %s", error)
-            from services.ai import _fallback_playbook
-            strategy = _fallback_playbook(objective, context)
-        strategy["objective"] = objective
-        strategy["generated_at"] = datetime.now(timezone.utc).isoformat()
-        from services.workspace_state import persist_campaign_update_awaited
-        ok = await persist_campaign_update_awaited(
-            job["owner_id"], job["campaign_id"], {"strategy": strategy},
-            workspace_id=str(job.get("workspace_id") or ""),
-        )
-        if not ok:
-            raise RuntimeError("Strategy could not be persisted")
-        job["strategy"] = strategy
-        job["status"] = "completed"
-        job["finished_at"] = datetime.now(timezone.utc).isoformat()
-        await _persist_strategy_job_meta(job["owner_id"], job["campaign_id"], {
-            "id": job_id, "status": "completed",
-            "started_at": job.get("started_at"), "finished_at": job["finished_at"],
-            "error": None,
-        }, workspace_id=str(job.get("workspace_id") or ""))
-        publish(session_token, WMEventType.CAMPAIGN_UPDATED, {
-            "campaign_id": job["campaign_id"],
-            "objective": objective,
-            "strategy": strategy,
-        }, actor="loqi")
-    except Exception as e:
-        log.error("[campaign_strategy] job failed: %s", e)
-        job["error"] = str(e)
-        job["status"] = "failed"
-        job["finished_at"] = datetime.now(timezone.utc).isoformat()
-        try:
-            await _persist_strategy_job_meta(job["owner_id"], job["campaign_id"], {
-                "id": job_id, "status": "failed",
-                "started_at": job.get("started_at"), "finished_at": job["finished_at"],
-                "error": str(e)[:200],
-            }, workspace_id=str(job.get("workspace_id") or ""))
-        except Exception:
-            pass
 
 
 @app.post("/api/web/session/{session_token}/campaigns/{campaign_id}/generate-strategy", status_code=202)
@@ -6723,181 +5381,9 @@ async def generate_campaign_strategy(session_token: str, campaign_id: str, paylo
                 "strategy": current_strategy,
             }
 
-    job_id, status = await _enqueue_strategy_job(session_token, owner_id, campaign_id, objective, target, workspace_id=workspace_id)
+    job_id, status = await campaign_service.enqueue_strategy_job(session_token, owner_id, campaign_id, objective, target, workspace_id=workspace_id)
     return {"ok": True, "job_id": job_id, "status": status}
 
-
-
-async def _persist_strategy_job_meta(owner_id: str, campaign_id: str, meta: dict, *, workspace_id: str) -> bool:
-    """PR-3F: persist strategy-job lifecycle into campaign settings so job
-    state survives process restarts (Supabase = source of truth)."""
-    from services.workspace_state import persist_campaign_update_awaited
-    return await persist_campaign_update_awaited(owner_id, campaign_id, {"strategy_job": meta}, workspace_id=workspace_id)
-
-
-async def _load_strategy_job_meta(owner_id: str, campaign_id: str, *, workspace_id: str) -> dict | None:
-    from services.workspace_state import load_campaign_state
-    try:
-        state = await asyncio.to_thread(
-            load_campaign_state, owner_id, campaign_id, workspace_id=workspace_id,
-        )
-        if isinstance(state, dict) and isinstance(state.get("strategy_job"), dict):
-            return state["strategy_job"]
-        return None
-    except Exception:
-        pass
-    return None
-
-
-def _reconcile_strategy_meta(meta: dict | None) -> tuple[str | None, str | None]:
-    """Lazy restart reconciliation. Returns (status, strategy|None).
-
-    In-memory job missing + durable meta says queued/running ⇒ the process
-    died mid-generation; AI work cannot be resumed safely → mark FAILED with
-    an actionable message instead of leaving it stuck forever."""
-    if not meta:
-        return None, None
-    status = str(meta.get("status") or "")
-    if status in ("queued", "running"):
-        return "failed", "Generation was interrupted by a server restart — please run it again."
-    if status == "completed":
-        return "completed", None
-    return "failed", str(meta.get("error") or "unknown error")
-
-
-def _reconcile_stale_strategy_jobs() -> int:
-    """Mark interrupted persisted strategy runs terminal after a restart.
-
-    Strategy generation cannot safely resume an interrupted model invocation.
-    Its durable campaign metadata is therefore the recovery authority: queued
-    or running records become an explicit failed terminal state, never an
-    indefinitely-polling processing state.
-    """
-    from services.supabase import get_supabase_client
-
-    client = get_supabase_client()
-    if client is None:
-        return 0
-    try:
-        result = client.table("campaigns").select("id, settings").execute()
-    except Exception as error:
-        log.warning("[recovery] stale strategy scan failed: %s", error)
-        return 0
-    recovered = 0
-    now = datetime.now(timezone.utc).isoformat()
-    for row in getattr(result, "data", None) or []:
-        settings = row.get("settings") or {}
-        if isinstance(settings, str):
-            try:
-                settings = json.loads(settings)
-            except (TypeError, ValueError):
-                settings = {}
-        if not isinstance(settings, dict):
-            continue
-        meta = settings.get("strategy_job") or {}
-        if not isinstance(meta, dict) or meta.get("status") not in {"queued", "running"}:
-            continue
-        settings = dict(settings)
-        settings["strategy_job"] = {
-            **meta,
-            "status": "failed",
-            "finished_at": now,
-            "error": "Strategy generation was interrupted by a server restart — please run it again.",
-        }
-        try:
-            client.table("campaigns").update({"settings": settings, "updated_at": now}).eq("id", row["id"]).execute()
-            recovered += 1
-        except Exception as error:
-            log.warning("[recovery] stale strategy reconcile failed campaign=%s error=%s", row.get("id"), error)
-    return recovered
-
-
-
-async def _enqueue_strategy_job(
-    session_token: str,
-    owner_id: str,
-    campaign_id: str,
-    objective: str,
-    target: dict[str, Any],
-    *,
-    workspace_id: str,
-) -> tuple[str, str]:
-    """Enqueue a strategy generation job, reusing any in-flight job.
-
-    Returns ``(job_id, status)``. Never starts a second job for the same
-    campaign while one is queued/running (single in-memory generation at a
-    time per campaign — the attached caller polls the same job).
-    """
-    for existing in STRATEGY_JOBS.values():
-        if (
-            existing.get("campaign_id") == campaign_id
-            and existing.get("workspace_id") == workspace_id
-            and existing.get("status") in ("queued", "running")
-        ):
-            return existing["id"], existing["status"]
-
-    # PR-3F idempotency/reconciliation: a stale durable record from a dead
-    # process must not block (or double-run) generation. It is reconciled to
-    # failed here; the user's explicit retry proceeds.
-
-    job_id = str(uuid.uuid4())
-    job: dict[str, Any] = {
-        "id": job_id,
-        "campaign_id": campaign_id,
-        "owner_id": owner_id,
-        "workspace_id": workspace_id,
-        "status": "queued",
-        "strategy": None,
-        "error": None,
-        "started_at": datetime.now(timezone.utc).isoformat(),
-        "finished_at": None,
-    }
-    STRATEGY_JOBS[job_id] = job
-    # PR-3F: durable lifecycle record (survives restarts).
-    persisted = await _persist_strategy_job_meta(owner_id, campaign_id, {
-        "id": job_id, "status": "queued",
-        "started_at": job["started_at"], "finished_at": None, "error": None,
-    }, workspace_id=workspace_id)
-    if persisted is False:
-        STRATEGY_JOBS.pop(job_id, None)
-        raise HTTPException(status_code=503, detail="Strategy generation could not be persisted")
-    task = asyncio.create_task(
-        _run_strategy_job(session_token, job, target, objective)
-    )
-    _strategy_job_tasks[job_id] = task
-    task.add_done_callback(lambda _done: _strategy_job_tasks.pop(job_id, None))
-    return job_id, "queued"
-
-
-async def _maybe_auto_strategy(
-    session_token: str,
-    owner_id: str,
-    campaign_id: str,
-    objective: str,
-    target: dict[str, Any],
-    *,
-    workspace_id: str,
-) -> str | None:
-    """Carry discovery research into the campaign as its strategy — once.
-
-    Auto-generates the strategy when a campaign was built from a discovery
-    (``discovery_id`` set) and has prospects but no strategy yet. No-op when
-    a strategy already exists or a job is in flight, so AI work is never
-    duplicated and regeneration stays user-driven.
-
-    Returns the enqueued job id, or None when nothing was started.
-    """
-    if not objective or not campaign_id:
-        return None
-    if not str(target.get("discovery_id") or "").strip():
-        return None
-    if isinstance(target.get("strategy"), dict) and target.get("strategy"):
-        return None
-    if not (target.get("leads") or []):
-        return None
-    job_id, _status = await _enqueue_strategy_job(session_token, owner_id, campaign_id, objective, target, workspace_id=workspace_id)
-    log.info("[campaign_strategy] auto-generated from discovery for campaign %s (job %s)", campaign_id, job_id)
-    return job_id
 
 
 @app.get("/api/web/session/{session_token}/campaigns/{campaign_id}/strategy-jobs/{job_id}")
@@ -6911,11 +5397,11 @@ async def strategy_job_status(session_token: str, campaign_id: str, job_id: str,
     session_token = identity_dependencies.web_session_token(request)
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    job = STRATEGY_JOBS.get(job_id)
+    job = campaign_service.STRATEGY_JOBS.get(job_id)
     if not job or job.get("campaign_id") != campaign_id or job.get("workspace_id") != workspace_id:
-        meta = await _load_strategy_job_meta(owner_id, campaign_id, workspace_id=workspace_id)
+        meta = await campaign_service.load_strategy_job_meta(owner_id, campaign_id, workspace_id=workspace_id)
         if meta and str(meta.get("id")) == job_id:
-            status, error = _reconcile_strategy_meta(meta)
+            status, error = campaign_service.reconcile_strategy_meta(meta)
             if status is None:
                 raise HTTPException(status_code=404, detail="Strategy job not found")
             if status == "failed" and str(meta.get("status") or "") in {"queued", "running"}:
@@ -6923,7 +5409,7 @@ async def strategy_job_status(session_token: str, campaign_id: str, job_id: str,
                 # terminal recovery result as well as returning it so future
                 # page loads do not rediscover a phantom processing job.
                 try:
-                    await _persist_strategy_job_meta(owner_id, campaign_id, {
+                    await campaign_service.persist_strategy_job_meta(owner_id, campaign_id, {
                         **meta,
                         "status": "failed",
                         "finished_at": datetime.now(timezone.utc).isoformat(),
@@ -6944,400 +5430,6 @@ async def strategy_job_status(session_token: str, campaign_id: str, job_id: str,
         "strategy": job.get("strategy"),
         "error": job.get("error"),
     }
-
-
-@app.post("/api/web/session/{session_token}/campaigns/{campaign_id}/leads")
-async def add_campaign_lead(session_token: str, campaign_id: str, payload: AddCampaignLeadRequest, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    campaigns = load_campaigns(owner_id, workspace_id=ws_id)
-    target = next((c for c in campaigns if c.get("id") == campaign_id), None)
-    if not target:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    lead = dict(payload.lead)
-    candidate_email = str(lead.get("email") or "").strip().lower()
-    lead_id = str(lead.get("id") or lead.get("linkedin_url") or candidate_email or uuid.uuid4())
-    lead["id"] = lead_id
-    leads = target.setdefault("leads", [])
-    for existing in leads:
-        if not isinstance(existing, dict):
-            continue
-        if existing.get("id") and str(existing["id"]) == lead_id:
-            return {"ok": True, "campaign": target, "added": False}
-        if candidate_email and str(existing.get("email") or "").strip().lower() == candidate_email:
-            return {"ok": True, "campaign": target, "added": False}
-    leads.append(lead)
-    target["lead_count"] = len(leads)
-    target["updated_at"] = datetime.now(timezone.utc).isoformat()
-    from services.workspace_state import persist_campaign_lead_awaited, persist_campaign_update_awaited
-    if not await persist_campaign_lead_awaited(owner_id, campaign_id, lead, workspace_id=ws_id):
-        raise HTTPException(status_code=503, detail="Lead could not be persisted to the campaign")
-    if payload.discovery_id and str(target.get("discovery_id") or "") != payload.discovery_id:
-        target["discovery_id"] = payload.discovery_id
-        await persist_campaign_update_awaited(owner_id, campaign_id, {"discovery_id": payload.discovery_id}, workspace_id=ws_id)
-    if payload.discovery_id:
-        await _maybe_auto_strategy(
-            session_token,
-            owner_id,
-            campaign_id,
-            str(target.get("objective") or "").strip(),
-            target,
-            workspace_id=ws_id,
-        )
-    publish(session_token, WMEventType.LEAD_DISCOVERED, {
-        "id": lead_id,
-        "name": lead.get("name", lead.get("full_name", "")),
-        "company": lead.get("company", ""),
-        "title": lead.get("title", lead.get("job_title", "")),
-        "campaign_id": campaign_id,
-    }, actor="user")
-    publish(session_token, WMEventType.CAMPAIGN_UPDATED, {
-        "campaign_id": campaign_id,
-        "lead_count": target["lead_count"],
-    }, actor="user")
-    publish(session_token, WMEventType.LEAD_SELECTED, {
-        "lead_id": lead_id,
-        "campaign_id": campaign_id,
-        "lead_name": lead.get("name", lead.get("full_name", "")),
-    }, actor="user")
-    return {"ok": True, "campaign": target, "added": True}
-
-
-@app.post("/api/web/session/{session_token}/leads/decision")
-async def decide_workspace_lead(session_token: str, payload: LeadDecisionRequest, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    """Persist Discovery approval/rejection in the authenticated workspace."""
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    lead = dict(payload.lead)
-    lead_id = str(lead.get("id") or lead.get("linkedin_url") or lead.get("email") or "")
-    if not lead_id:
-        raise HTTPException(status_code=400, detail="Lead identity is required")
-    lead["id"] = lead_id
-    from services.workspace_state import persist_lead_decision
-    if not persist_lead_decision(owner_id, lead, payload.approved):
-        raise HTTPException(status_code=503, detail="Lead decision could not be persisted")
-    publish(session_token, WMEventType.LEAD_SELECTED if payload.approved else WMEventType.LEAD_DISCOVERED, {
-        "lead_id": lead_id,
-        "name": lead.get("name", lead.get("company", "")),
-        "approved": payload.approved,
-    }, actor="user")
-    return {"ok": True, "lead": lead, "approved": payload.approved}
-
-
-async def _dispatch_campaign_sends(session_token: str, campaign: dict, owner_id: str, *, workspace_id: str) -> dict:
-    campaign_id = campaign.get("id", "")
-    from services.outbound.draft_store import draft_store as outbound_draft_store
-
-    # Durable workspace drafts are the source of truth: UI approvals persist
-    # to workspace state, never the in-memory outbound store. Dispatch starts
-    # from the durable approved set and syncs each approved draft to the
-    # outbound store before sending.
-    durable = _workspace_drafts(owner_id, session_token, workspace_id=workspace_id)
-    approved_durable = [
-        d for d in durable
-        if d.get("campaign_id") == campaign_id and d.get("status") == "approved"
-    ]
-    if approved_durable:
-        for d in approved_durable:
-            _sync_draft_to_outbound(d, session_token, owner_id=owner_id)
-
-    approved_ids = {d["id"] for d in approved_durable}
-    all_outbound = outbound_draft_store.list_by_workflow(campaign_id)
-    approved = [
-        d for d in all_outbound.drafts
-        if d.id in approved_ids and d.status.value in ("approved", "auto_approved")
-    ]
-
-    if not approved:
-        log.info("[campaign_launch] No approved drafts found for campaign %s", campaign_id)
-        return {"ok": False,
-                "error": "No approved drafts to send — approve drafts before launching",
-                "total": 0, "sent": 0, "failed": 0, "results": []}
-
-    real_provider_id = _find_outbound_gmail_provider_id()
-    if not real_provider_id:
-        log.warning("[campaign_launch] No Gmail outbound provider registered")
-        total = len(approved)
-        campaign["total_sends"] = total
-        campaign["sent_count"] = 0
-        campaign["failed_count"] = total
-        await _update_campaign_launch_progress(owner_id, session_token, campaign_id, 0, total, total)
-        return {"ok": False, "error": "No Gmail outbound provider registered",
-                "total": total, "sent": 0, "failed": total, "results": []}
-
-    log.info("[campaign_launch] Dispatching %d approved drafts via provider %s", len(approved), real_provider_id)
-    results = []
-    sent_count = 0
-    failed_count = 0
-    for draft in approved:
-        try:
-            recipient_email = (draft.recipient.email if draft.recipient else "") or ""
-            if not str(recipient_email).strip():
-                failed_count += 1
-                results.append({"draft_id": draft.id, "ok": False, "error": "This lead has no email address"})
-                publish(session_token, WMEventType.DRAFT_FAILED, {
-                    "draft_id": draft.id,
-                    "campaign_id": campaign_id,
-                    "error": "This lead has no email address",
-                }, actor="system")
-                await _update_campaign_launch_progress(
-                    owner_id, session_token, campaign_id, sent_count, failed_count, len(approved))
-                continue
-            r = await asyncio.to_thread(
-                outbound_executor.execute,
-                "send_reply",
-                {
-                    "provider_id": real_provider_id,
-                    "draft_id": draft.id,
-                    "conversation_id": draft.conversation_id,
-                    "thread_id": draft.thread_id,
-                    "workflow_id": draft.workflow_id,
-                    "subject": draft.subject,
-                    "body": draft.body,
-                    "recipient": {"email": draft.recipient.email, "name": draft.recipient.name},
-                    "sender": {"email": draft.sender.email, "name": draft.sender.name},
-                },
-            )
-            if r.get("ok"):
-                from services.workspace_state import persist_draft_update_awaited
-                if not await persist_draft_update_awaited(
-                    owner_id, draft.id, {"status": "sent"}, workspace_id=workspace_id,
-                ):
-                    raise RuntimeError("Email was sent but canonical Draft persistence failed")
-                sent_count += 1
-                outbound_draft_store.mark_sent(draft.id)
-                send_data = r.get("send_result", {})
-                publish(session_token, WMEventType.DRAFT_SENT, {
-                    "draft_id": draft.id,
-                    "thread_id": send_data.get("thread_id", ""),
-                    "external_message_id": send_data.get("external_message_id", ""),
-                    "provider_id": real_provider_id,
-                    "campaign_id": campaign_id,
-                    "recipient_email": draft.recipient.email,
-                }, actor="system")
-                try:
-                    from services.conversations.integration import create_conversation_from_send
-                    conversation = create_conversation_from_send(
-                        provider_id=real_provider_id,
-                        provider_type="gmail",
-                        external_thread_id=send_data.get("thread_id", ""),
-                        external_message_id=send_data.get("external_message_id", ""),
-                        subject=draft.subject,
-                        from_email=draft.sender.email,
-                        from_name=draft.sender.name,
-                        to_email=draft.recipient.email,
-                        to_name=draft.recipient.name,
-                        body=draft.body,
-                        campaign_id=campaign_id,
-                        workflow_id=draft.workflow_id or campaign_id,
-                        owner_id=owner_id,
-                        workspace_id=workspace_id,
-                    )
-                    simulate_reply({
-                        "conversation_id": conversation.conversation_id,
-                        "external_thread_id": send_data.get("thread_id", ""),
-                        "subject": draft.subject,
-                        "from_email": draft.sender.email,
-                        "from_name": draft.sender.name,
-                        "to_email": draft.recipient.email,
-                        "to_name": draft.recipient.name,
-                        "body": draft.body,
-                        "campaign_id": campaign_id,
-                        "workflow_id": draft.workflow_id or campaign_id,
-                        "lead": draft.metadata.get("lead", {}) if draft.metadata else {},
-                        "objective": campaign.get("objective", "") if campaign else "",
-                    })
-                except Exception as conv_err:
-                    log.error(
-                        "persistence_write_failed category=conversation operation=create_from_send "
-                        "draft_id=%s campaign_id=%s provider_id=%s error_type=%s",
-                        draft.id[:12], campaign_id[:12], real_provider_id[:12], type(conv_err).__name__,
-                    )
-            else:
-                failed_count += 1
-                publish(session_token, WMEventType.DRAFT_FAILED, {
-                    "draft_id": draft.id,
-                    "campaign_id": campaign_id,
-                    "error": r.get("error", "Send failed"),
-                }, actor="system")
-            results.append({"draft_id": draft.id, "ok": r.get("ok", False), "error": r.get("error")})
-        except Exception as e:
-            failed_count += 1
-            results.append({"draft_id": draft.id, "ok": False, "error": str(e)})
-            publish(session_token, WMEventType.DRAFT_FAILED, {
-                "draft_id": draft.id,
-                "campaign_id": campaign_id,
-                "error": str(e),
-            }, actor="system")
-        await _update_campaign_launch_progress(
-            owner_id, session_token, campaign_id, sent_count, failed_count, len(approved))
-    total = len(approved)
-    campaign["total_sends"] = total
-    campaign["sent_count"] = sent_count
-    campaign["failed_count"] = failed_count
-    log.info("[campaign_launch] Complete: %d/%d sent, %d failed", sent_count, total, failed_count)
-    return {"ok": True, "total": total, "sent": sent_count, "failed": failed_count, "results": results}
-
-
-async def _update_campaign_launch_progress(owner_id: str, session_token: str, campaign_id: str,
-                                           sent_count: int, failed_count: int, total_count: int) -> None:
-    """Persist launch progress onto the durable campaign row for polling.
-
-    The in-memory campaign store is never populated by the web flow, so
-    progress must live on the campaign's settings for /launch-progress to read.
-    """
-    from services.workspace_state import persist_campaign_update_awaited
-    if total_count <= 0:
-        status = "idle"
-    elif failed_count == 0:
-        status = "launched" if sent_count >= total_count else "sending"
-    elif sent_count == 0:
-        status = "failed"
-    else:
-        status = "partial"
-    await persist_campaign_update_awaited(owner_id, campaign_id, {"launch": {
-        "total": total_count,
-        "sent": sent_count,
-        "failed": failed_count,
-        "status": status,
-    }})
-
-
-@app.delete("/api/web/session/{session_token}/campaigns/{campaign_id}")
-async def delete_campaign(session_token: str, campaign_id: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    """Soft-delete a campaign: status='deleted' + deleted_at.
-
-    The row is kept for audit/restore but hidden from all normal reads.
-    """
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    # A delete only needs to authorize one canonical campaign. Loading the
-    # complete workspace graph here (campaigns, links, leads, companies and
-    # strategies) made this otherwise small mutation hit the client timeout.
-    from services.persistence.launch import CampaignRepository
-    entity = await CampaignRepository().get_for_workspace(campaign_id, ws_id)
-    if entity is None:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    updated_at = datetime.now(timezone.utc).isoformat()
-    target = {
-        "id": entity.id,
-        "name": entity.name,
-        "objective": entity.objective,
-        "status": "deleted",
-        "lead_count": 0,
-        "created_at": entity.created_at.isoformat() if entity.created_at else "",
-        "updated_at": updated_at,
-    }
-    from services.workspace_state import persist_campaign_update_awaited
-    if not await persist_campaign_update_awaited(owner_id, campaign_id, {"status": "deleted"}, workspace_id=ws_id):
-        raise HTTPException(status_code=503, detail="Campaign delete could not be persisted")
-    publish(session_token, WMEventType.CAMPAIGN_DELETED, {
-        "campaign_id": campaign_id,
-        "name": target.get("name", ""),
-    }, actor="user")
-    return {"ok": True, "campaign": target}
-
-
-@app.post("/api/web/session/{session_token}/campaigns/{campaign_id}/duplicate")
-async def duplicate_campaign(session_token: str, campaign_id: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    """Deep-copy a campaign: campaign row + current strategy + lead links.
-
-    Drafts, inbox threads, sent mail, analytics and runtime state are never
-    duplicated. The copy starts fresh in planning so the pipeline can rerun.
-    """
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    ws_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    from services.workspace_state import duplicate_campaign as _duplicate_campaign
-    copy = await _duplicate_campaign(owner_id, campaign_id, workspace_id=ws_id)
-    if copy is None:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    publish(session_token, WMEventType.CAMPAIGN_DUPLICATED, {
-        "campaign_id": campaign_id,
-        "copy_id": copy.get("id"),
-        "name": copy.get("name"),
-    }, actor="user")
-    return {"ok": True, "campaign": copy}
-
-
-@app.post("/api/web/session/{session_token}/campaigns/{campaign_id}/attach-discovery")
-async def attach_discovery_to_campaign(session_token: str, campaign_id: str, payload: AttachDiscoveryRequest, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    """Attach every lead surfaced by an existing Discovery to the campaign."""
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    campaigns = load_campaigns(owner_id, workspace_id=workspace_id)
-    target = next((c for c in campaigns if c.get("id") == campaign_id), None)
-    if not target:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    from services.discovery.service import get_discovery
-    discovery = await asyncio.to_thread(get_discovery, payload.discovery_id, workspace_id)
-    if not discovery:
-        raise HTTPException(status_code=404, detail="Discovery not found")
-
-    from services.workspace_state import (
-        persist_campaign_lead_id_awaited, persist_campaign_update_awaited,
-        remove_campaign_lead_links_awaited,
-    )
-    attached_ids: list[str] = []
-    requested = 0
-    for link in discovery.get("discovery_leads") or []:
-        ws_lead = link.get("workspace_lead") if isinstance(link, dict) else None
-        if not isinstance(ws_lead, dict) or not ws_lead.get("id"):
-            continue
-        requested += 1
-        lead = {
-            "id": ws_lead.get("id"),
-            "email": ws_lead.get("email"),
-            "first_name": ws_lead.get("first_name", ""),
-            "last_name": ws_lead.get("last_name", ""),
-            "title": ws_lead.get("title", ""),
-            "company": (ws_lead.get("company") or {}).get("name", "")
-            if isinstance(ws_lead.get("company"), dict) else "",
-            "source": "discovery",
-        }
-        canonical_id = await persist_campaign_lead_id_awaited(
-            owner_id, campaign_id, lead, workspace_id=workspace_id,
-        )
-        if not canonical_id:
-            compensated = await remove_campaign_lead_links_awaited(
-                owner_id, campaign_id, attached_ids, workspace_id=workspace_id,
-            )
-            raise HTTPException(
-                status_code=503,
-                detail=("Campaign attachment failed and was rolled back" if compensated
-                        else "Campaign attachment failed and rollback could not be confirmed"),
-            )
-        attached_ids.append(str(canonical_id))
-    if requested != len(attached_ids):
-        raise HTTPException(status_code=503, detail="Campaign attachment could not be verified")
-    if attached_ids:
-        target["updated_at"] = datetime.now(timezone.utc).isoformat()
-        if str(target.get("discovery_id") or "") != payload.discovery_id:
-            target["discovery_id"] = payload.discovery_id
-            await persist_campaign_update_awaited(owner_id, campaign_id, {"discovery_id": payload.discovery_id}, workspace_id=workspace_id)
-        await _maybe_auto_strategy(
-            session_token,
-            owner_id,
-            campaign_id,
-            str(target.get("objective") or "").strip(),
-            target,
-            workspace_id=workspace_id,
-        )
-        publish(session_token, WMEventType.CAMPAIGN_UPDATED, {
-            "campaign_id": campaign_id,
-            "lead_count": (target.get("lead_count") or 0) + len(attached_ids),
-            "source_discovery_id": payload.discovery_id,
-        }, actor="user")
-    from services.workspace_state import load_campaign_state
-    campaign = await asyncio.to_thread(
-        load_campaign_state, owner_id, campaign_id, workspace_id=workspace_id,
-    )
-    if campaign is None:
-        raise HTTPException(status_code=503, detail="Campaign could not be reloaded after attachment")
-    return {"ok": True, "campaign": campaign, "added": len(attached_ids)}
 
 
 @app.get("/api/web/session/{session_token}/campaigns/{campaign_id}/drafts")
@@ -7494,11 +5586,16 @@ async def _launch_initial_research(
     # Persist the launch marker before scheduling to make completion retries
     # idempotent. If scheduling fails, reset it so a retry can start work.
     await _onboarding_svc.save_wizard_data(user_id, {"initial_research_launched": True})
-    result = await job_manager.create_search_job(
-        user_id=user_id,
-        query=query,
-        on_update=publish_job_update,
-    )
+    from services.discovery.service import DiscoveryJobLifecycleError, create_search_run
+
+    try:
+        result = await create_search_run(
+            user_id,
+            query,
+            on_update=publish_job_update,
+        )
+    except DiscoveryJobLifecycleError:
+        result = None
     if not result:
         await _onboarding_svc.save_wizard_data(user_id, {"initial_research_launched": False})
         if session_token:
@@ -7625,28 +5722,6 @@ async def preview_lead_endpoint(session_token: str, payload: PreviewLeadRequest,
     return {"ok": True, "lead_intelligence": result.get("lead_intelligence")}
 
 
-def get_web_session_internal(session_token: str) -> dict | None:
-    from services.conversation_store import get_web_session
-
-    return get_web_session(session_token)
-
-
-def ensure_workflow_session_internal(user_id: str, session_token: str) -> str:
-    from services.conversation_store import ensure_workflow_session
-
-    return ensure_workflow_session(
-        user_id=user_id,
-        channel="web",
-        session_key=session_token,
-    )
-
-
-def log_conversation_internal(user_id: str, role: str, text: str) -> None:
-    from services.supabase import log_conversation
-
-    log_conversation(user_id, role, text)
-
-
 @app.get("/api/web/session/{session_token}/gmail")
 async def get_web_gmail_status(session_token: str, request: Request = None):
     session_token = identity_dependencies.web_session_token(request)
@@ -7730,230 +5805,6 @@ async def google_callback(code: str, state: str):
         raise
     except Exception as error:
         raise HTTPException(status_code=500, detail=str(error)) from error
-
-
-# ── Job Engine API ──
-
-class StartSearchRequest(BaseModel):
-    query: str
-
-
-async def _create_search_run(
-    user_id: str,
-    query: str,
-    session_token: str = "",
-    *,
-    display_title: str | None = None,
-    workspace_id: str = "",
-) -> dict:
-    """Create a first-class discovery entity AND the search job that fills it.
-
-    The discovery row is created FIRST; the transient job is then enqueued
-    with ``discovery_id`` baked in (the relationship lives on the job side:
-    ``jobs.discovery_id``, Discovery → many Jobs). There is no window where
-    the two can drift apart. ``on_complete`` finalizes the discovery in the
-    runner's event loop; failed/cancelled jobs move the discovery to the same
-    state. If the discovery row cannot be created, no job is enqueued: a
-    worker without a canonical Discovery would be unobservable and could not
-    be safely attached to Campaigns or recovered after a restart.
-    """
-    from services.discovery.service import (
-        create_discovery,
-        finalize_discovery,
-        get_discovery_by_job_id,
-        get_discovery_id_for_job,
-        mark_discovery_status,
-        update_discovery_progress,
-    )
-
-    async def _emit_job_event(payload: dict) -> None:
-        # PR-3A/3D: real-time fan-out via Redis pub/sub (best-effort).
-        # PR-3D: carries discovery_id so clients invalidate narrowly.
-        try:
-            from services.events_bus import event_bus
-            event_type = "job.completed" if payload.get("status") in ("completed", "failed", "cancelled") else "job.progress"
-            data: dict = {"stage": payload.get("stage", "")}
-            if discovery_id:
-                data["discovery_id"] = discovery_id
-            if payload.get("error"):
-                data["error"] = str(payload.get("error"))[:200]
-            await event_bus.publish_user_event(
-                user_id,
-                event_type,
-                data,
-                job_id=payload.get("job_id", ""),
-                status=str(payload.get("status") or ""),
-                progress=int(payload.get("progress") or 0),
-            )
-        except Exception:
-            pass
-
-    def on_update(payload: dict) -> None:
-        status = payload.get("status")
-        job_id = payload.get("job_id", "")
-        import asyncio as _asyncio
-        try:
-            loop = asyncio.get_running_loop()
-            if loop.is_running():
-                loop.create_task(_emit_job_event(payload))
-            else:
-                _asyncio.run(_emit_job_event(payload))
-        except RuntimeError:
-            pass
-        if status in ("failed", "cancelled"):
-            discovery = get_discovery_by_job_id(job_id)
-            if discovery:
-                mark_discovery_status(
-                    str(discovery["id"]),
-                    status,
-                    payload.get("error", ""),
-                )
-            return
-        stage = payload.get("stage")
-        if status == "running" and stage:
-            discovery_id = get_discovery_id_for_job(job_id)
-            if discovery_id:
-                update_discovery_progress(
-                    discovery_id,
-                    str(stage),
-                    int(payload.get("progress") or 0),
-                )
-
-    async def on_complete(job):
-        return await finalize_discovery(job)
-
-    # A request-selected workspace has already passed membership validation at
-    # the route boundary.  Never replace it with the owner's legacy/default
-    # workspace: doing so creates a Discovery that the subsequent selected
-    # workspace list/get calls cannot see.
-    if not workspace_id:
-        from services.workspace_state import ensure_workspace
-        workspace_id = await asyncio.to_thread(ensure_workspace, user_id) or ""
-    log.info("[kickoff] _create_search_run: user=%s query=%r workspace_id=%s",
-             user_id, query, workspace_id or "(none)")
-
-    discovery_id = ""
-    if workspace_id:
-        discovery = await asyncio.to_thread(
-            create_discovery, workspace_id, user_id, query, display_title
-        )
-        if discovery:
-            discovery_id = str(discovery.get("id") or "")
-    if not discovery_id:
-        # /api/discoveries owns a first-class durable Discovery. Starting a
-        # worker without that record creates an unobservable, unattachable run.
-        raise HTTPException(status_code=503, detail="Discovery could not be persisted")
-    log.info("[kickoff] _create_search_run: discovery_id=%s", discovery_id)
-
-    result = await job_manager.create_search_job(
-        user_id=user_id,
-        query=query,
-        discovery_id=discovery_id,
-        on_update=on_update,
-        on_complete=on_complete,
-    )
-    log.info("[kickoff] _create_search_run: create_search_job returned=%s", bool(result))
-    if not result:
-        if discovery_id:
-            await asyncio.to_thread(
-                mark_discovery_status, discovery_id, "failed", "Failed to create job"
-            )
-        raise HTTPException(status_code=500, detail="Failed to create job")
-
-    if session_token:
-        try:
-            publish(session_token, WMEventType.LEAD_DISCOVERED, {
-                "job_id": result.get("job_id", ""),
-                "discovery_id": discovery_id,
-                "query": query,
-                "status": "searching",
-            }, actor="user")
-        except Exception as e:
-            log.warning("[kickoff] publish(LEAD_DISCOVERED) failed (non-fatal): %s", e)
-
-    result["discovery_id"] = discovery_id
-    return result
-
-
-@app.post("/api/jobs/search")
-async def start_search(payload: StartSearchRequest, request: Request):
-    user_id, session_token = await identity_dependencies.resolve_web_session(request)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Valid session required")
-    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, user_id)
-    return await _create_search_run(
-        user_id, payload.query, session_token, workspace_id=workspace_id,
-    )
-
-
-# ── Discovery API (first-class entities) ──
-
-class CreateDiscoveryRequest(BaseModel):
-    query: str
-
-
-@app.post("/api/discoveries")
-async def create_discovery_endpoint(payload: CreateDiscoveryRequest, request: Request):
-    """Create a new research run as a first-class discovery entity.
-
-    A new query ALWAYS creates a new discovery — it never overwrites an
-    existing one. Returns the discovery + job ids so clients can navigate
-    straight to the new entity.
-    """
-    user_id, session_token = await identity_dependencies.resolve_web_session(request)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Valid session required")
-    log.info("[kickoff] POST /api/discoveries: user=%s query=%r", user_id, payload.query)
-    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, user_id)
-    result = await _create_search_run(
-        user_id, payload.query, session_token, workspace_id=workspace_id,
-    )
-    log.info("[kickoff] POST /api/discoveries: ok discovery_id=%s job_id=%s",
-             result.get("discovery_id", ""), result.get("job_id", ""))
-    return {"ok": True, **result}
-
-
-@app.get("/api/jobs/{job_id}")
-async def get_job(job_id: str, request: Request):
-    user_id, _ = await identity_dependencies.resolve_web_session(request)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Valid session required")
-    job = await asyncio.to_thread(job_manager.get_job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    # PR10.8.3.2: jobs are tenant-scoped — a user may only read their own job.
-    if str(job.get("user_id") or "") != str(user_id):
-        raise HTTPException(status_code=404, detail="Job not found")
-    return job
-
-
-@app.get("/api/jobs/{job_id}/results")
-async def get_job_results(job_id: str, request: Request):
-    user_id, _ = await identity_dependencies.resolve_web_session(request)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Valid session required")
-    job = await asyncio.to_thread(job_manager.get_job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    if str(job.get("user_id") or "") != str(user_id):
-        raise HTTPException(status_code=404, detail="Job not found")
-    result = await asyncio.to_thread(job_manager.get_job_results, job_id)
-    if not result:
-        raise HTTPException(status_code=404, detail="Job not found")
-    if not result.get("ok"):
-        raise HTTPException(status_code=400, detail=result.get("error", "Job not ready"))
-    return result
-
-
-@app.get("/api/jobs")
-async def list_jobs(request: Request):
-    # PR10.8.3.2: the user is derived ONLY from the credential — never from a
-    # client-supplied user_id query parameter (parameter-substitution IDOR).
-    user_id, _ = await identity_dependencies.resolve_web_session(request)
-    if not user_id:
-        return {"jobs": []}
-    jobs = await asyncio.to_thread(job_manager.list_recent_jobs, user_id)
-    return {"jobs": jobs}
 
 
 @app.post("/api/web/session/{session_token}/plan")

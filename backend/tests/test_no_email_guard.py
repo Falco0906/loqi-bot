@@ -7,9 +7,9 @@ boundaries:
   - send_draft: returns "This lead has no email address" without resolving a
     provider or invoking the executor.
   - schedule_draft: same guard.
-  - _dispatch_campaign_sends (Launch): skips no-email drafts, reports them as
+  - campaign launch dispatch: skips no-email drafts, reports them as
     failed with the explicit error, and never calls the executor for them.
-  - _call_outbound_approval: does not create a Gmail draft for no-email drafts.
+  - provider-draft creation after approval does not create a Gmail draft for no-email drafts.
 
 No Supabase or Gmail runs: stores/providers are faked like the other suites.
 """
@@ -25,6 +25,7 @@ from types import SimpleNamespace  # noqa: E402
 import pytest  # noqa: E402
 
 import main as main_module  # noqa: E402
+import services.outbound.service as outbound_service  # noqa: E402
 import services.workspace_state as workspace_state  # noqa: E402
 from services.outbound import outbound_registry  # noqa: E402
 from services.outbound.outbound_models import (  # noqa: E402
@@ -109,62 +110,93 @@ class FakeRequest:
 
 
 class TestSendAndScheduleEndpointGuard:
-    @pytest.fixture(scope="module")
-    def owner(self):
-        return "7de769b4-d450-4033-95ab-2718129f905a"
+    @pytest.fixture
+    def canonical_drafts(self, monkeypatch):
+        """Exercise send/schedule through their canonical-Draft boundary.
 
-    @pytest.fixture(scope="module")
-    def mint_token(self):
-        def _mint():
-            import asyncio
-            from services.identity import api as identity_api
-            svc = identity_api._get_service()
-            session, _ = asyncio.run(
-                svc._session_svc.create_session(
-                    user_id="7de769b4-d450-4033-95ab-2718129f905a", organization_id=""
-                )
-            )
-            return session.id
-        return _mint
+        The outbound DraftStore is a projection, so the endpoint must not be
+        tested by seeding it alone. This fixture supplies the authoritative
+        workspace draft read and avoids an unrelated Supabase dependency.
+        """
+        drafts: dict[str, dict] = {}
+
+        async def fake_owner(request, session_token):
+            return OWNER
+
+        async def fake_workspace(request, owner_id):
+            return "workspace-test"
+
+        def fake_workspace_drafts(owner_id, session_token="", workspace_id=""):
+            assert owner_id == OWNER
+            assert workspace_id == "workspace-test"
+            return list(drafts.values())
+
+        monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda request: SESSION)
+        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", fake_owner)
+        monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", fake_workspace)
+        monkeypatch.setattr(main_module, "_workspace_drafts", fake_workspace_drafts)
+        monkeypatch.setattr(workspace_state, "load_drafts_only", lambda owner_id, workspace_id="": fake_workspace_drafts(owner_id, workspace_id=workspace_id))
+        return drafts
+
+    @staticmethod
+    def _canonical_draft(draft: DraftMessage) -> dict:
+        return {
+            "id": draft.id,
+            "campaign_id": draft.workflow_id,
+            "status": "approved",
+            "subject": draft.subject,
+            "text": draft.body,
+            "lead": {
+                "email": draft.recipient.email,
+                "name": draft.recipient.name,
+            },
+        }
 
     @pytest.fixture(autouse=True)
     def _restore_executor(self):
         original = main_module.outbound_executor
+        service_original = outbound_service.outbound_executor
         yield
         main_module.outbound_executor = original
+        outbound_service.outbound_executor = service_original
 
-    def test_send_draft_without_recipient_email_is_blocked(self, mint_token):
+    def test_send_draft_without_recipient_email_is_blocked(self, canonical_drafts):
         draft = make_outbound_draft("draft-no-email-send", email="")
+        canonical_drafts[draft.id] = self._canonical_draft(draft)
 
         class ExplodingExecutor:
             def execute(self, action, params):
                 raise AssertionError("executor must never run for a no-email draft")
 
         main_module.outbound_executor = ExplodingExecutor()
+        outbound_service.outbound_executor = main_module.outbound_executor
         import asyncio
-        body = asyncio.run(main_module.send_draft("ANY", draft.id, FakeRequest(mint_token())))
+        body = asyncio.run(main_module.send_draft("ANY", draft.id, FakeRequest(SESSION)))
         assert body.get("ok") is False
         assert body.get("error") == NO_EMAIL_ERROR
         assert outbound_draft_store_module.draft_store.get(draft.id).status == DraftStatus.APPROVED
 
-    def test_send_draft_with_email_passes_guard(self, mint_token):
+    def test_send_draft_with_email_passes_guard(self, canonical_drafts):
         draft = make_outbound_draft("draft-with-email-send", email="lead@example.com")
+        canonical_drafts[draft.id] = self._canonical_draft(draft)
 
         class ExplodingExecutor:
             def execute(self, action, params):
                 raise AssertionError("executor must never run without a provider")
 
         main_module.outbound_executor = ExplodingExecutor()
+        outbound_service.outbound_executor = main_module.outbound_executor
         import asyncio
-        body = asyncio.run(main_module.send_draft("ANY", draft.id, FakeRequest(mint_token())))
+        body = asyncio.run(main_module.send_draft("ANY", draft.id, FakeRequest(SESSION)))
         assert body.get("ok") is False
         assert body.get("error") == "No Gmail outbound provider registered"
 
-    def test_schedule_draft_without_recipient_email_is_blocked(self, mint_token):
+    def test_schedule_draft_without_recipient_email_is_blocked(self, canonical_drafts):
         draft = make_outbound_draft("draft-no-email-schedule", email="")
+        canonical_drafts[draft.id] = self._canonical_draft(draft)
         import asyncio
         payload = main_module.ScheduleDraftRequest(send_at="2026-08-11T12:00:00Z")
-        body = asyncio.run(main_module.schedule_draft("ANY", draft.id, payload, FakeRequest(mint_token())))
+        body = asyncio.run(main_module.schedule_draft("ANY", draft.id, payload, FakeRequest(SESSION)))
         assert body.get("ok") is False
         assert body.get("error") == NO_EMAIL_ERROR
 
@@ -181,7 +213,7 @@ class TestOutboundApprovalAdapterGuard:
             calls.append((args, kwargs))
 
         monkeypatch.setattr(outbound_registry, "create_draft", fake_create_draft)
-        main_module._call_outbound_approval(draft.id, {})
+        outbound_service.create_provider_draft_after_approval(draft.id)
         assert calls == []
 
     def test_with_email_still_creates_gmail_draft(self, monkeypatch):
@@ -197,7 +229,7 @@ class TestOutboundApprovalAdapterGuard:
             return SimpleNamespace(external_draft_id="ext-1", thread_id="th-1")
 
         monkeypatch.setattr(outbound_registry, "create_draft", fake_create_draft)
-        main_module._call_outbound_approval(draft.id, {})
+        outbound_service.create_provider_draft_after_approval(draft.id)
         assert captured == {"provider_id": provider, "draft_id": draft.id}
 
 
@@ -252,14 +284,16 @@ class TestLaunchDispatchGuard:
         def fake_campaigns(owner_id: str, workspace_id: str = "") -> list[dict]:
             return list(state["campaigns"])
 
-        def fake_drafts(owner_id: str, session_token: str = "") -> list[dict]:
+        def fake_drafts(owner_id: str, session_token: str = "", workspace_id: str = "") -> list[dict]:
             return list(state["drafts"])
 
         async def fake_persist_campaign(owner_id: str, campaign_id: str, updates: dict) -> bool:
             state["campaign_updates"].append((campaign_id, dict(updates)))
             return True
 
-        async def fake_persist_draft(owner_id: str, draft_id: str, updates: dict) -> bool:
+        async def fake_persist_draft(
+            owner_id: str, draft_id: str, updates: dict, workspace_id: str = "",
+        ) -> bool:
             state["draft_updates"].append((draft_id, dict(updates)))
             for d in state["drafts"]:
                 if d["id"] == draft_id:
@@ -273,13 +307,14 @@ class TestLaunchDispatchGuard:
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", fake_owner)
         monkeypatch.setattr(main_module, "load_campaigns", fake_campaigns)
         monkeypatch.setattr(main_module, "_workspace_drafts", fake_drafts)
+        monkeypatch.setattr(workspace_state, "load_drafts_only", lambda owner_id, workspace_id="": fake_drafts(owner_id, workspace_id=workspace_id))
         monkeypatch.setattr(workspace_state, "persist_campaign_update_awaited", fake_persist_campaign)
         monkeypatch.setattr(workspace_state, "persist_draft_update_awaited", fake_persist_draft)
-        monkeypatch.setattr(main_module, "_find_outbound_gmail_provider_id", lambda: "prov-1")
+        monkeypatch.setattr(outbound_service, "find_outbound_gmail_provider_id", lambda: "prov-1")
         monkeypatch.setattr(main_module, "publish", lambda *a, **k: None)
         monkeypatch.setattr(main_module, "record_campaign_launched", lambda *a, **k: None)
         monkeypatch.setattr(main_module, "_get_feedback", lambda: _FakeFeedback())
-        monkeypatch.setattr(main_module.outbound_executor, "execute", fake_execute)
+        monkeypatch.setattr(outbound_service.outbound_executor, "execute", fake_execute)
 
         yield {"state": state, "calls": calls}
         outbound_draft_store_module.draft_store = original_store
@@ -289,7 +324,9 @@ class TestLaunchDispatchGuard:
             _durable_draft("d-with-email", email="ada@acme.com"),
             _durable_draft("d-no-email", email=""),
         ]
-        result = await main_module._dispatch_campaign_sends("tok-1", _campaign(), "owner-1")
+        result = await outbound_service.dispatch_campaign_sends(
+            "tok-1", _campaign(), "owner-1", workspace_id="workspace-test",
+        )
 
         assert result["total"] == 2
         assert result["sent"] == 1
@@ -304,7 +341,9 @@ class TestLaunchDispatchGuard:
 
     async def test_launch_only_no_email_drafts_fails_everything(self, env):
         env["state"]["drafts"] = [_durable_draft("d-no-email", email="")]
-        result = await main_module._dispatch_campaign_sends("tok-1", _campaign(), "owner-1")
+        result = await outbound_service.dispatch_campaign_sends(
+            "tok-1", _campaign(), "owner-1", workspace_id="workspace-test",
+        )
 
         assert result["total"] == 1
         assert result["sent"] == 0

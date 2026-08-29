@@ -58,7 +58,7 @@ async def test_campaign_create_returns_authoritative_campaign_and_attached_ids(m
             for index in range(1, 6)
         }.get(lead["email"])
 
-    monkeypatch.setattr(main_module, "_maybe_auto_strategy", _noop_async)
+    monkeypatch.setattr("services.campaigns.service.maybe_auto_strategy", _noop_async)
     monkeypatch.setattr(
         "services.discovery.service.get_discovery",
         lambda *_args, **_kwargs: {
@@ -214,7 +214,7 @@ async def test_endpoint_rank_then_campaign_stays_read_only_in_mvp(monkeypatch):
     monkeypatch.setattr("services.workspace_state.persist_campaign_lead_id_awaited", persist_attachment)
     monkeypatch.setattr("services.workspace_state.load_campaign_state", lambda *_args, **_kwargs: {**persisted, "lead_count": len(attached)})
     monkeypatch.setattr("services.workspace_state.append_event", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(main_module, "_maybe_auto_strategy", _noop_async)
+    monkeypatch.setattr("services.campaigns.service.maybe_auto_strategy", _noop_async)
 
     request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
     rank_payload = main_module.SendWebMessageRequest(

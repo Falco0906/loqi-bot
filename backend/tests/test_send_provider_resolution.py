@@ -30,6 +30,8 @@ from services.outbound.outbound_models import (
 from services.outbound import outbound_registry
 from services.communication import provider_registry as comm_registry
 from services.outbound.draft_store import draft_store as outbound_draft_store
+import services.outbound.service as outbound_service
+import services.outbound.draft_store as outbound_draft_store_module
 from services.communication.provider_registry import disconnect_provider as registry_disconnect
 
 OWNER = "owner-0000-0000-0000-000000000001"
@@ -97,21 +99,21 @@ class TestProviderResolution:
     def test_A_valid_current_provider_is_used(self):
         stored = register_provider("prov-valid", OWNER, email="a@x.com")
         draft = make_draft("draft-a", stored)
-        resolved = main_module._get_outbound_provider_for_draft(draft, OWNER)
+        resolved = outbound_service.resolve_provider_for_draft(draft, OWNER)
         assert resolved == stored
         assert draft.provider_id == stored
 
     def test_E_stored_provider_unchanged_when_valid(self):
         stored = register_provider("prov-valid", OWNER, email="a@x.com")
         draft = make_draft("draft-e", stored)
-        main_module._get_outbound_provider_for_draft(draft, OWNER)
+        outbound_service.resolve_provider_for_draft(draft, OWNER)
         assert draft.provider_id == stored
         assert outbound_draft_store.get("draft-e").provider_id == stored
 
     def test_B_stale_provider_falls_back_to_owners_current(self):
         current = register_provider("prov-current", OWNER, email="a@x.com")
         draft = make_draft("draft-b", "prov-stale-gone")
-        resolved = main_module._get_outbound_provider_for_draft(draft, OWNER)
+        resolved = outbound_service.resolve_provider_for_draft(draft, OWNER)
         assert resolved == current
         assert draft.provider_id == current
         assert outbound_draft_store.get("draft-b").provider_id == current
@@ -120,7 +122,7 @@ class TestProviderResolution:
         other_prov = register_provider("prov-other", OTHER, email="other@x.com")
         own_prov = register_provider("prov-own", OWNER, email="a@x.com")
         draft = make_draft("draft-c", other_prov)
-        resolved = main_module._get_outbound_provider_for_draft(draft, OWNER)
+        resolved = outbound_service.resolve_provider_for_draft(draft, OWNER)
         assert resolved == own_prov
         assert resolved != other_prov
         assert draft.provider_id == own_prov
@@ -130,14 +132,14 @@ class TestProviderResolution:
         registry_disconnect(stale)  # removes comm instance; outbound instance survives
         current = register_provider("prov-current", OWNER, email="b@x.com")
         draft = make_draft("draft-c2", stale)
-        resolved = main_module._get_outbound_provider_for_draft(draft, OWNER)
+        resolved = outbound_service.resolve_provider_for_draft(draft, OWNER)
         assert resolved == current
         assert draft.provider_id == current
 
     def test_D_no_current_provider_is_clean_failure(self):
         register_provider("prov-other", OTHER, email="other@x.com")
         draft = make_draft("draft-d", "prov-stale-gone")
-        resolved = main_module._get_outbound_provider_for_draft(draft, OWNER)
+        resolved = outbound_service.resolve_provider_for_draft(draft, OWNER)
         assert resolved == ""
 
     def test_F_restart_hydration_fix(self):
@@ -151,10 +153,10 @@ class TestProviderResolution:
             "subject": "Subject",
             "text": "Body",
         }
-        main_module._sync_draft_to_outbound(durable_like, SESSION)
-        synced = outbound_draft_store.get("draft-f")
+        outbound_service.sync_draft_to_outbound(durable_like, SESSION)
+        synced = outbound_draft_store_module.draft_store.get("draft-f")
         assert synced.provider_id == other_prov  # sync pins first registered gmail provider
-        resolved = main_module._get_outbound_provider_for_draft(synced, OWNER)
+        resolved = outbound_service.resolve_provider_for_draft(synced, OWNER)
         assert resolved == own_prov
         assert resolved != other_prov
         assert synced.provider_id == own_prov
@@ -164,7 +166,7 @@ class TestProviderResolution:
         draft = make_draft("draft-g", old)
         registry_disconnect(old)
         new = register_provider("prov-new", OWNER, email="b@x.com")
-        resolved = main_module._get_outbound_provider_for_draft(draft, OWNER)
+        resolved = outbound_service.resolve_provider_for_draft(draft, OWNER)
         assert resolved == new
         assert draft.provider_id == new
         assert outbound_draft_store.get("draft-g").provider_id == new

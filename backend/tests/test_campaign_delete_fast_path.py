@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import main as main_module
+from services.campaigns import api as campaign_api
 from services.persistence.launch import CampaignRepository
 import services.workspace_state as workspace_state
 
@@ -45,13 +46,13 @@ async def test_delete_campaign_uses_scoped_lookup_not_workspace_graph(monkeypatc
 
     monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner)
     monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", workspace)
-    monkeypatch.setattr(main_module, "load_campaigns", unexpected_workspace_load)
+    monkeypatch.setattr(campaign_api.service, "load_campaigns", unexpected_workspace_load)
     monkeypatch.setattr(CampaignRepository, "get_for_workspace", get_for_workspace)
     monkeypatch.setattr(workspace_state, "persist_campaign_update_awaited", persist)
-    monkeypatch.setattr(main_module, "publish", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(campaign_api.service, "publish", lambda *_args, **_kwargs: None)
 
     request = MagicMock(headers={"authorization": "Bearer test-session"})
-    result = await main_module.delete_campaign("_", "campaign-1", request)
+    result = await campaign_api.delete_campaign("_", "campaign-1", request)
 
     assert result["ok"] is True
     assert result["campaign"]["id"] == "campaign-1"

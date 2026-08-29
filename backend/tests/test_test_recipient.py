@@ -17,6 +17,7 @@ from services.outbound.draft_store import draft_store as outbound_draft_store
 from services.outbound.outbound_models import DraftMessage, Recipient
 
 import main as main_module  # noqa: E402
+import services.outbound.service as outbound_service  # noqa: E402
 from tests.conftest import _AuthTestClient  # noqa: E402
 
 
@@ -39,10 +40,28 @@ async def async_fake_owner(request, session_token: str) -> str:
 
 
 @pytest.fixture(autouse=True)
-def _clean_store():
+def _clean_store(monkeypatch):
+    from services.communication.communication_store import store as communication_store
+
     outbound_draft_store._drafts.clear()
+    communication_store._providers.clear()
+    communication_store._user_providers.clear()
+
+    async def fake_canonical_draft(_request, _session_token, draft_id, *, provider_id=""):
+        draft = outbound_draft_store.get(draft_id)
+        assert draft is not None
+        return "owner-1", "workspace-test", {"id": draft.id, "status": "approved"}, draft
+
+    async def fake_persist(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr(outbound_service, "require_canonical_outbound_draft", fake_canonical_draft)
+    monkeypatch.setattr("services.workspace_state.persist_draft_update_awaited", fake_persist)
+    monkeypatch.setattr(main_module, "outbound_executor", outbound_service.outbound_executor)
     yield
     outbound_draft_store._drafts.clear()
+    communication_store._providers.clear()
+    communication_store._user_providers.clear()
 
 
 class TestTestRecipientOverride:
@@ -82,7 +101,7 @@ class TestTestRecipientOverride:
             }
 
         monkeypatch.setattr(main_module, "outbound_executor", MagicMock(execute=fake_execute))
-        monkeypatch.setattr(main_module, "_get_outbound_provider_for_draft", lambda draft, owner_id="": "prov-1")
+        monkeypatch.setattr(outbound_service, "resolve_provider_for_draft", lambda draft, owner_id="": "prov-1")
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", async_fake_owner)
         monkeypatch.setattr("services.conversations.integration.create_conversation_from_send", lambda **kwargs: MagicMock())
         monkeypatch.setattr(main_module, "simulate_reply", lambda **kwargs: None)
@@ -124,7 +143,7 @@ class TestTestRecipientOverride:
             }
 
         monkeypatch.setattr(main_module, "outbound_executor", MagicMock(execute=fake_execute))
-        monkeypatch.setattr(main_module, "_get_outbound_provider_for_draft", lambda draft, owner_id="": "prov-1")
+        monkeypatch.setattr(outbound_service, "resolve_provider_for_draft", lambda draft, owner_id="": "prov-1")
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", async_fake_owner)
         monkeypatch.setattr("services.conversations.integration.create_conversation_from_send", lambda **kwargs: MagicMock())
         monkeypatch.setattr(main_module, "simulate_reply", lambda **kwargs: None)
@@ -242,7 +261,7 @@ class TestSendDraftRoute:
 
     def _patch_route_deps(self, monkeypatch):
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", async_fake_owner)
-        monkeypatch.setattr(main_module, "_get_outbound_provider_for_draft", lambda draft, owner_id="": "prov-1")
+        monkeypatch.setattr(outbound_service, "resolve_provider_for_draft", lambda draft, owner_id="": "prov-1")
         monkeypatch.setattr("services.conversations.integration.create_conversation_from_send", lambda **kwargs: MagicMock())
         monkeypatch.setattr(main_module, "simulate_reply", lambda **kwargs: None)
         monkeypatch.setattr(main_module, "publish", lambda *args, **kwargs: None)

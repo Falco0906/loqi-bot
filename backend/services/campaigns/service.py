@@ -13,11 +13,6 @@ from services.world_model import EventType as WMEventType, publish
 
 log = logging.getLogger("loqi")
 
-# Temporary legacy polling projection. Lifecycle metadata remains durable on
-# the campaign record; R5-B decides its durable replacement.
-STRATEGY_JOBS: dict[str, dict[str, Any]] = {}
-strategy_job_tasks: dict[str, asyncio.Task] = {}
-
 VALID_CAMPAIGN_STATUSES = {
     "planning", "active", "paused", "completed",
     "archived", "cancelled", "failed", "deleted",
@@ -433,6 +428,14 @@ def reconcile_strategy_meta(meta: dict | None) -> tuple[str | None, str | None]:
     return ("completed", None) if status == "completed" else ("failed", str(meta.get("error") or "unknown error"))
 
 
+def register_strategy_workflow() -> None:
+    """Register the strategy worker before enqueue or restart recovery."""
+    from services.job_engine.registry import WorkflowRegistration, get_registry
+    registry = get_registry()
+    if not registry.has("strategy"):
+        registry.register(WorkflowRegistration(type="strategy", description="Campaign strategy generation", runner_fn=run_strategy_job))
+
+
 async def build_strategy_context(target: dict[str, Any]) -> dict[str, Any]:
     context: dict[str, Any] = {}
     leads = [lead for lead in target.get("leads") or [] if isinstance(lead, dict)]
@@ -486,15 +489,17 @@ async def build_strategy_context(target: dict[str, Any]) -> dict[str, Any]:
     return context
 
 
-async def run_strategy_job(session_token: str, job: dict[str, Any], target: dict[str, Any], objective: str) -> None:
-    job_id, workspace_id = str(job.get("id") or ""), str(job.get("workspace_id") or "")
-    job["status"] = "running"
+async def run_strategy_job(job, _on_progress) -> dict[str, Any]:
+    """Registered durable ``strategy`` workflow; payload is the recovery input."""
+    payload = dict(job.payload or {})
+    target, objective = dict(payload.get("target") or {}), str(payload.get("objective") or "")
+    job_id, workspace_id = job.id, job.workspace_id
     try:
-        await persist_strategy_job_meta(job["owner_id"], job["campaign_id"], {"id": job_id, "status": "running", "started_at": job.get("started_at"), "finished_at": None, "error": None}, workspace_id=workspace_id)
+        await persist_strategy_job_meta(job.user_id, job.campaign_id, {"id": job_id, "status": "running", "started_at": job.created_at.isoformat(), "finished_at": None, "error": None}, workspace_id=workspace_id)
         context = await build_strategy_context(target)
         from services.knowledge.context_adapter import retrieve_knowledge_context
         query = " ".join(str(item).strip() for item in (objective, target.get("search_query"), target.get("name")) if str(item or "").strip())
-        context["knowledge_context"] = (await retrieve_knowledge_context(job["owner_id"], query=query, categories=["company", "icp", "messaging", "sales_offer"], limit=8)).to_dict()
+        context["knowledge_context"] = (await retrieve_knowledge_context(job.user_id, query=query, categories=["company", "icp", "messaging", "sales_offer"], limit=8)).to_dict()
         from services.ai import OpenAIError, generate_campaign_strategy
         try:
             strategy = await asyncio.to_thread(generate_campaign_strategy, objective, context)
@@ -503,34 +508,33 @@ async def run_strategy_job(session_token: str, job: dict[str, Any], target: dict
             strategy = _fallback_playbook(objective, context)
         strategy.update({"objective": objective, "generated_at": datetime.now(timezone.utc).isoformat()})
         from services.workspace_state import persist_campaign_update_awaited
-        if not await persist_campaign_update_awaited(job["owner_id"], job["campaign_id"], {"strategy": strategy}, workspace_id=workspace_id):
+        if not await persist_campaign_update_awaited(job.user_id, job.campaign_id, {"strategy": strategy}, workspace_id=workspace_id):
             raise RuntimeError("Strategy could not be persisted")
-        job.update({"strategy": strategy, "status": "completed", "finished_at": datetime.now(timezone.utc).isoformat()})
-        await persist_strategy_job_meta(job["owner_id"], job["campaign_id"], {"id": job_id, "status": "completed", "started_at": job.get("started_at"), "finished_at": job["finished_at"], "error": None}, workspace_id=workspace_id)
-        publish(session_token, WMEventType.CAMPAIGN_UPDATED, {"campaign_id": job["campaign_id"], "objective": objective, "strategy": strategy}, actor="loqi")
+        await persist_strategy_job_meta(job.user_id, job.campaign_id, {"id": job_id, "status": "completed", "started_at": job.created_at.isoformat(), "finished_at": datetime.now(timezone.utc).isoformat(), "error": None}, workspace_id=workspace_id)
+        return {"ok": True, "result": {"strategy": strategy}}
     except Exception as error:
-        job.update({"error": str(error), "status": "failed", "finished_at": datetime.now(timezone.utc).isoformat()})
         try:
-            await persist_strategy_job_meta(job["owner_id"], job["campaign_id"], {"id": job_id, "status": "failed", "started_at": job.get("started_at"), "finished_at": job["finished_at"], "error": str(error)[:200]}, workspace_id=workspace_id)
+            await persist_strategy_job_meta(job.user_id, job.campaign_id, {"id": job_id, "status": "failed", "started_at": job.created_at.isoformat(), "finished_at": datetime.now(timezone.utc).isoformat(), "error": str(error)[:200]}, workspace_id=workspace_id)
         except Exception:
             pass
+        return {"ok": False, "error": str(error)}
 
 
 async def enqueue_strategy_job(session_token: str, owner_id: str, campaign_id: str, objective: str, target: dict[str, Any], *, workspace_id: str = "") -> tuple[str, str]:
-    for current in STRATEGY_JOBS.values():
-        if current.get("campaign_id") == campaign_id and current.get("workspace_id") == workspace_id and current.get("status") in {"queued", "running"}:
-            return current["id"], current["status"]
-    job_id = str(uuid.uuid4())
-    job = {"id": job_id, "campaign_id": campaign_id, "owner_id": owner_id, "workspace_id": workspace_id, "status": "queued", "strategy": None, "error": None, "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": None}
-    STRATEGY_JOBS[job_id] = job
-    if (await persist_strategy_job_meta(owner_id, campaign_id, {"id": job_id, "status": "queued", "started_at": job["started_at"], "finished_at": None, "error": None}, workspace_id=workspace_id)) is False:
-        STRATEGY_JOBS.pop(job_id, None)
-        from fastapi import HTTPException
+    from fastapi import HTTPException
+    from services.job_engine import Job, job_manager
+    register_strategy_workflow()
+    active = await asyncio.to_thread(job_manager._storage.list_active_jobs_by_type, "strategy")
+    for current in active:
+        if current.campaign_id == campaign_id and current.workspace_id == workspace_id:
+            return current.id, current.status.value
+    job = Job(user_id=owner_id, type="strategy", workspace_id=workspace_id, campaign_id=campaign_id, payload={"objective": objective, "target": target})
+    if (await persist_strategy_job_meta(owner_id, campaign_id, {"id": job.id, "status": "queued", "started_at": job.created_at.isoformat(), "finished_at": None, "error": None}, workspace_id=workspace_id)) is False:
         raise HTTPException(status_code=503, detail="Strategy generation could not be persisted")
-    task = asyncio.create_task(run_strategy_job(session_token, job, target, objective))
-    strategy_job_tasks[job_id] = task
-    task.add_done_callback(lambda _: strategy_job_tasks.pop(job_id, None))
-    return job_id, "queued"
+    created = await job_manager.create_job(job)
+    if not created:
+        raise HTTPException(status_code=503, detail="Strategy generation could not be scheduled")
+    return job.id, "queued"
 
 
 async def maybe_auto_strategy(session_token: str, owner_id: str, campaign_id: str, objective: str, target: dict[str, Any], *, workspace_id: str) -> str | None:
@@ -541,24 +545,11 @@ async def maybe_auto_strategy(session_token: str, owner_id: str, campaign_id: st
     return job_id
 
 
-def reconcile_stale_strategy_jobs() -> int:
-    from services.supabase import get_supabase_client
-    client = get_supabase_client()
-    if client is None:
-        return 0
-    try: rows = client.table("campaigns").select("id, settings").execute().data or []
-    except Exception as error:
-        log.warning("[recovery] stale strategy scan failed: %s", error)
-        return 0
-    recovered, now = 0, datetime.now(timezone.utc).isoformat()
-    for row in rows:
-        settings = row.get("settings") or {}
-        if isinstance(settings, str):
-            try: settings = json.loads(settings)
-            except (TypeError, ValueError): settings = {}
-        meta = settings.get("strategy_job") if isinstance(settings, dict) else None
-        if not isinstance(meta, dict) or meta.get("status") not in {"queued", "running"}: continue
-        try:
-            client.table("campaigns").update({"settings": {**settings, "strategy_job": {**meta, "status": "failed", "finished_at": now, "error": "Strategy generation was interrupted by a server restart — please run it again."}}, "updated_at": now}).eq("id", row["id"]).execute(); recovered += 1
-        except Exception as error: log.warning("[recovery] stale strategy reconcile failed campaign=%s error=%s", row.get("id"), error)
-    return recovered
+async def reconcile_stale_strategy_jobs() -> int:
+    """Resume durable queued/running strategy jobs after process restart."""
+    from services.job_engine import job_manager
+    register_strategy_workflow()
+    jobs = await asyncio.to_thread(job_manager._storage.list_active_jobs_by_type, "strategy")
+    for job in jobs:
+        job_manager.resume_job(job)
+    return len(jobs)

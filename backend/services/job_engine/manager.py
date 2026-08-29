@@ -15,6 +15,25 @@ class JobManager:
         self._storage = JobStorage()
         self._runner = BackgroundRunner(self._storage)
 
+    async def create_job(self, job: Job, *, on_update=None, on_complete=None) -> Optional[dict]:
+        """Persist a typed job before its registered workflow can run."""
+        import asyncio
+        if job.type == "search" and not job.discovery_id:
+            return None
+        if get_registry().get(job.type) is None:
+            return None
+        created = await asyncio.to_thread(self._storage.create_job, job)
+        if not created:
+            return None
+        self._runner.start_job(job, on_update=on_update, on_complete=on_complete)
+        return {"job_id": job.id, "status": job.status.value}
+
+    def resume_job(self, job: Job) -> bool:
+        if get_registry().get(job.type) is None:
+            return False
+        self._runner.start_job(job)
+        return True
+
     async def create_search_job(self, user_id: str, query: str, on_update=None, on_complete=None, discovery_id: str = "") -> Optional[dict]:
         import asyncio
         from services.job_engine.registry import STAGES_SEARCH

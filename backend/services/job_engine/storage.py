@@ -179,6 +179,19 @@ class JobStorage:
         client = get_supabase_client()
         if not client:
             return []
+
+    def list_active_jobs_by_type(self, job_type: str) -> list[Job]:
+        client = get_supabase_client()
+        if not client:
+            return []
+        try:
+            result = client.table("jobs").select("*").eq("type", job_type).in_(
+                "status", ["queued", "running"]
+            ).order("created_at", desc=False).execute()
+            return [Job.from_dict(row) for row in (getattr(result, "data", None) or [])]
+        except Exception as error:
+            _log(f"list_active_jobs_by_type error: {error}")
+            return []
         try:
             result = (
                 client.table("jobs")

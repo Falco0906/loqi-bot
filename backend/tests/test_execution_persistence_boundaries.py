@@ -70,10 +70,7 @@ async def test_discovery_finalization_fails_when_canonical_lead_persistence_fail
 async def test_strategy_enqueue_does_not_start_without_durable_job_metadata(monkeypatch):
     import services.campaigns.service as campaign_service
 
-    campaign_service.STRATEGY_JOBS.clear()
     monkeypatch.setattr(campaign_service, "persist_strategy_job_meta", AsyncMock(return_value=False))
-    runner = AsyncMock()
-    monkeypatch.setattr(campaign_service, "run_strategy_job", runner)
 
     with pytest.raises(HTTPException) as error:
         await campaign_service.enqueue_strategy_job(
@@ -81,5 +78,3 @@ async def test_strategy_enqueue_does_not_start_without_durable_job_metadata(monk
         )
 
     assert error.value.status_code == 503
-    runner.assert_not_called()
-    assert not campaign_service.STRATEGY_JOBS

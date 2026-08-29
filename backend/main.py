@@ -319,7 +319,7 @@ async def lifespan(app: FastAPI):
 
     async def _run_strategy_recovery() -> None:
         try:
-            recovered = await asyncio.to_thread(campaign_service.reconcile_stale_strategy_jobs)
+            recovered = await campaign_service.reconcile_stale_strategy_jobs()
             if recovered:
                 log.info("Reconciled %d interrupted strategy generation(s) after restart", recovered)
         except Exception as e:
@@ -5396,38 +5396,15 @@ async def strategy_job_status(session_token: str, campaign_id: str, job_id: str,
     session_token = identity_dependencies.web_session_token(request)
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    job = campaign_service.STRATEGY_JOBS.get(job_id)
-    if not job or job.get("campaign_id") != campaign_id or job.get("workspace_id") != workspace_id:
-        meta = await campaign_service.load_strategy_job_meta(owner_id, campaign_id, workspace_id=workspace_id)
-        if meta and str(meta.get("id")) == job_id:
-            status, error = campaign_service.reconcile_strategy_meta(meta)
-            if status is None:
-                raise HTTPException(status_code=404, detail="Strategy job not found")
-            if status == "failed" and str(meta.get("status") or "") in {"queued", "running"}:
-                # A poll may be the first request after a restart. Persist the
-                # terminal recovery result as well as returning it so future
-                # page loads do not rediscover a phantom processing job.
-                try:
-                    await campaign_service.persist_strategy_job_meta(owner_id, campaign_id, {
-                        **meta,
-                        "status": "failed",
-                        "finished_at": datetime.now(timezone.utc).isoformat(),
-                        "error": error,
-                    }, workspace_id=workspace_id)
-                except Exception:
-                    pass
-            return {
-                "job_id": job_id,
-                "status": status,
-                "strategy": None,
-                "error": error,
-            }
+    from services.job_engine import job_manager
+    job = await asyncio.to_thread(job_manager.get_job, job_id)
+    if not job or job.get("type") != "strategy" or job.get("campaign_id") != campaign_id or job.get("workspace_id") != workspace_id or job.get("user_id") != owner_id:
         raise HTTPException(status_code=404, detail="Strategy job not found")
     return {
         "job_id": job_id,
         "status": job.get("status"),
-        "strategy": job.get("strategy"),
-        "error": job.get("error"),
+        "strategy": (job.get("result") or {}).get("strategy"),
+        "error": job.get("error_message"),
     }
 
 

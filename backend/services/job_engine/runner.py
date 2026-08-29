@@ -128,6 +128,7 @@ class BackgroundRunner:
                     stage="Complete",
                     progress=100,
                     result_ready=True,
+                    result=dict(result.get("result") or {}),
                     completed_at=datetime.now(timezone.utc),
                 )
                 await notify_off_loop("completed", "Complete", 100)

@@ -25,6 +25,10 @@ class JobStorage:
                 "progress": job.progress,
                 "query": job.query,
                 "discovery_id": job.discovery_id if job.discovery_id else None,
+                "workspace_id": job.workspace_id or None,
+                "campaign_id": job.campaign_id or None,
+                "payload": job.payload or {},
+                "result": job.result or {},
                 "error_message": job.error_message,
                 "result_ready": job.result_ready,
                 "created_at": job.created_at.isoformat(),
@@ -59,6 +63,7 @@ class JobStorage:
         progress: Optional[int] = None,
         error_message: Optional[str] = None,
         result_ready: Optional[bool] = None,
+        result: Optional[dict] = None,
         completed_at: Optional[datetime] = None,
     ) -> bool:
         client = get_supabase_client()
@@ -78,6 +83,8 @@ class JobStorage:
                 updates["error_message"] = error_message
             if result_ready is not None:
                 updates["result_ready"] = result_ready
+            if result is not None:
+                updates["result"] = result
             if completed_at is not None:
                 updates["completed_at"] = completed_at.isoformat()
             client.table("jobs").update(updates).eq("id", job_id).execute()

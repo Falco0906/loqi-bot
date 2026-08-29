@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from uuid import uuid4
-from typing import Optional
+from typing import Any, Optional
 
 
 class JobStatus(str, Enum):
@@ -32,6 +32,10 @@ class Job:
     progress: int = 0
     query: str = ""
     discovery_id: str = ""
+    workspace_id: str = ""
+    campaign_id: str = ""
+    payload: dict[str, Any] = field(default_factory=dict)
+    result: dict[str, Any] = field(default_factory=dict)
     error_message: Optional[str] = None
     result_ready: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -48,6 +52,10 @@ class Job:
             "progress": self.progress,
             "query": self.query,
             "discovery_id": self.discovery_id,
+            "workspace_id": self.workspace_id,
+            "campaign_id": self.campaign_id,
+            "payload": self.payload,
+            "result": self.result,
             "error_message": self.error_message,
             "result_ready": self.result_ready,
             "created_at": self.created_at.isoformat() if self.created_at else None,
@@ -67,6 +75,10 @@ class Job:
             progress=data.get("progress", 0),
             query=data.get("query", ""),
             discovery_id=data.get("discovery_id", ""),
+            workspace_id=data.get("workspace_id", ""),
+            campaign_id=data.get("campaign_id", ""),
+            payload=dict(data.get("payload") or {}),
+            result=dict(data.get("result") or {}),
             error_message=data.get("error_message"),
             result_ready=data.get("result_ready", False),
             created_at=_parse_dt(data.get("created_at")),

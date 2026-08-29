@@ -4,6 +4,7 @@ from typing import Optional
 
 from services.job_engine.models import Job, JobStatus
 from services.job_engine.storage import JobStorage
+from services.job_engine.registry import get_registry
 
 
 def _log(msg: str) -> None:
@@ -15,9 +16,14 @@ class BackgroundRunner:
         self._storage = storage
         self._tasks: dict[str, asyncio.Task] = {}
 
-    def start_job(self, job: Job, runner_fn, on_update=None, on_complete=None) -> None:
-        if not job.discovery_id:
+    def start_job(self, job: Job, runner_fn=None, on_update=None, on_complete=None) -> None:
+        if job.type == "search" and not job.discovery_id:
             _log(f"start_job rejected for job={job.id}: canonical discovery_id is required")
+            return
+        registration = get_registry().get(job.type)
+        runner_fn = runner_fn or (registration.runner_fn if registration else None)
+        if runner_fn is None:
+            _log(f"start_job rejected for job={job.id}: no workflow registered for type={job.type}")
             return
         try:
             loop = asyncio.get_running_loop()
@@ -36,7 +42,7 @@ class BackgroundRunner:
         _log(f"[kickoff] start_job task created for job={job.id}")
 
     async def _run_wrapper(self, job: Job, runner_fn, on_update=None, on_complete=None) -> None:
-        if not job.discovery_id:
+        if job.type == "search" and not job.discovery_id:
             error = "Canonical discovery_id is required"
             _log(f"_run_wrapper rejected job={job.id}: {error}")
             await asyncio.to_thread(

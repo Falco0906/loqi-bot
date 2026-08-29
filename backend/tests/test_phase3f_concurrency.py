@@ -155,12 +155,12 @@ def durable(monkeypatch):
             rows[campaign_id] = meta
         return True
 
-    async def load(owner_id, campaign_id):
+    async def load(owner_id, campaign_id, **_kwargs):
         return rows.get(campaign_id)
 
-    import main as m
-    monkeypatch.setattr(m, "_persist_strategy_job_meta", persist)
-    monkeypatch.setattr(m, "_load_strategy_job_meta", load)
+    import services.campaigns.service as m
+    monkeypatch.setattr(m, "persist_strategy_job_meta", persist)
+    monkeypatch.setattr(m, "load_strategy_job_meta", load)
 
     class Ctx:
         pass
@@ -170,13 +170,13 @@ def durable(monkeypatch):
 
 
 def test_enqueue_persists_queued_meta(durable, monkeypatch):
-    import main as m
+    import services.campaigns.service as m
 
     async def noop(*a, **k): return None
-    monkeypatch.setattr(m, "_run_strategy_job", noop)
+    monkeypatch.setattr(m, "run_strategy_job", noop)
 
     async def run():
-        job_id, status = await m._enqueue_strategy_job("sess", OWNER_A, "cmp-q", "obj", {})
+        job_id, status = await m.enqueue_strategy_job("sess", OWNER_A, "cmp-q", "obj", {})
         assert status == "queued"
         assert job_id in {r.get("id") for r in durable.rows.values()} or durable.rows.get("cmp-q"), (
             f"no durable meta persisted; rows={list(durable.rows.values())}"
@@ -188,10 +188,17 @@ def test_enqueue_persists_queued_meta(durable, monkeypatch):
 
 def test_status_endpoint_reconciles_stale_running(durable, monkeypatch):
     import main as m
+    import services.campaigns.service as campaign_service
 
     async def owner(request=None, session_token=None):
         return OWNER_A
     monkeypatch.setattr(m.identity_dependencies, "authenticated_user_id", owner)
+    async def workspace(*_args, **_kwargs):
+        return "workspace-a"
+    monkeypatch.setattr(m.workspace_access, "resolve_legacy_workspace_id", workspace)
+    async def load_meta(owner_id, campaign_id, **_kwargs):
+        return durable.rows.get(campaign_id)
+    monkeypatch.setattr(campaign_service, "load_strategy_job_meta", load_meta)
 
     # Process died mid-generation: no in-memory job; durable says RUNNING.
     durable.rows["cmp-stale"] = {
@@ -216,6 +223,9 @@ def test_completed_durable_record_reports_completed(durable, monkeypatch):
     async def owner(request=None, session_token=None):
         return OWNER_A
     monkeypatch.setattr(m.identity_dependencies, "authenticated_user_id", owner)
+    async def workspace(*_args, **_kwargs):
+        return "workspace-a"
+    monkeypatch.setattr(m.workspace_access, "resolve_legacy_workspace_id", workspace)
     durable.rows["cmp-ok"] = {
         "id": "job-done", "status": "completed",
         "started_at": "", "finished_at": "", "error": None,
@@ -236,6 +246,9 @@ def test_tenant_isolation_strategy_status(durable, monkeypatch):
     async def owner_b(request=None, session_token=None):
         return OWNER_B
     monkeypatch.setattr(m.identity_dependencies, "authenticated_user_id", owner_b)
+    async def workspace(*_args, **_kwargs):
+        return "workspace-b"
+    monkeypatch.setattr(m.workspace_access, "resolve_legacy_workspace_id", workspace)
 
     request = type("R", (), {"headers": {}})()
 
@@ -251,7 +264,7 @@ def test_tenant_isolation_strategy_status(durable, monkeypatch):
 
 
 def test_duplicate_execution_prevented_while_in_flight(durable, monkeypatch):
-    import main as m
+    import services.campaigns.service as m
 
     started = asyncio.Event()
     release = asyncio.Event()
@@ -265,12 +278,12 @@ def test_duplicate_execution_prevented_while_in_flight(durable, monkeypatch):
 
     async def noop(*a, **k):
         return None
-    monkeypatch.setattr(m, "_run_strategy_job", stub_run)
-    monkeypatch.setattr(m, "_persist_strategy_job_meta", noop)
+    monkeypatch.setattr(m, "run_strategy_job", stub_run)
+    monkeypatch.setattr(m, "persist_strategy_job_meta", noop)
 
     async def run():
-        id1, s1 = await m._enqueue_strategy_job("sess", OWNER_A, "cmp-dup", "obj", {})
-        id2, s2 = await m._enqueue_strategy_job("sess", OWNER_A, "cmp-dup", "obj", {})
+        id1, s1 = await m.enqueue_strategy_job("sess", OWNER_A, "cmp-dup", "obj", {})
+        id2, s2 = await m.enqueue_strategy_job("sess", OWNER_A, "cmp-dup", "obj", {})
         assert id1 == id2 and s1 == s2, "in-flight generation must be reused"
         release.set()
         await asyncio.sleep(0.05)

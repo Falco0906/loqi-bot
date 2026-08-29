@@ -55,6 +55,8 @@ def sync_draft_to_outbound(legacy_draft: dict, session_token: str, owner_id: str
     """Project a durable campaign draft into the outbound DraftStore."""
     from services.outbound.outbound_models import ApprovalState, DraftMessage, DraftStatus, Recipient
 
+    from services.outbound.outbound_persistence import hydrate_draft_projection
+
     now = datetime.now(timezone.utc).isoformat()
     lead = legacy_draft.get("lead", {})
     lead_email = lead.get("email", "")
@@ -68,7 +70,16 @@ def sync_draft_to_outbound(legacy_draft: dict, session_token: str, owner_id: str
     }
     provider_id = resolve_owner_gmail_provider(owner_id) if owner_id else find_outbound_gmail_provider_id()
     provider = get_communication_provider(provider_id) if provider_id else None
-    outbound_draft = DraftMessage(
+    projection = (legacy_draft.get("metadata") or {}).get("outbound_projection")
+    if projection:
+        outbound_draft = hydrate_draft_projection(
+            legacy_draft,
+            provider_id=provider_id,
+            sender_email=getattr(provider, "_mailbox_email", "") or "",
+        )
+        outbound_draft.metadata.update({"lead": lead, "session_token": session_token})
+    else:
+        outbound_draft = DraftMessage(
         id=legacy_draft.get("id", ""),
         provider_id=provider_id,
         workflow_id=legacy_draft.get("campaign_id", ""),
@@ -88,7 +99,7 @@ def sync_draft_to_outbound(legacy_draft: dict, session_token: str, owner_id: str
             "company_intelligence": legacy_draft.get("company_intelligence"),
             "session_token": session_token,
         },
-    )
+        )
     if outbound_draft_store_module.draft_store.get(outbound_draft.id):
         outbound_draft_store_module.draft_store.update(outbound_draft)
     else:
@@ -175,6 +186,17 @@ def outbound_to_legacy_draft(outbound_draft: object) -> dict[str, Any]:
         DraftStatus.CANCELLED: "cancelled",
         DraftStatus.ARCHIVED: "archived",
     }
+
+
+async def persist_outbound_projection(
+    owner_id: str, workspace_id: str, outbound_draft: object, *, change_summary: str = "",
+) -> bool:
+    """Commit provider-only draft state to the authorized canonical Draft."""
+    from services.outbound.outbound_persistence import persist_draft_projection
+
+    return await persist_draft_projection(
+        owner_id, workspace_id, outbound_draft, change_summary=change_summary,
+    )
     return {
         "id": outbound_draft.id,
         "campaign_id": outbound_draft.workflow_id,

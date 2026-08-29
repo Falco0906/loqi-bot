@@ -1177,7 +1177,7 @@ async def _write_draft_row(user_id: str, draft: dict[str, Any], workspace_id: st
     if existing is not None:
         return existing.workspace_id == workspace
     lead_snapshot = draft.get("lead") if isinstance(draft.get("lead"), dict) else {}
-    meta: dict[str, Any] = {}
+    meta: dict[str, Any] = dict(draft.get("metadata") or {})
     for key in ("batch_id", "lead_intelligence", "company_intelligence", "strategy", "generation_metadata", "evidence_trace"):
         if draft.get(key) is not None:
             meta[key] = draft[key]
@@ -1187,6 +1187,7 @@ async def _write_draft_row(user_id: str, draft: dict[str, Any], workspace_id: st
         workspace_id=workspace,
         campaign_id=str(draft.get("campaign_id") or "") or None,
         lead_id=str(draft.get("lead_id") or "") or None,
+        provider=str(draft.get("provider") or ""),
         subject=str(draft.get("subject") or ""),
         body=text,
         preview=str(draft.get("body_preview") or "") or text[:200],
@@ -1254,6 +1255,8 @@ async def _update_draft_row(user_id: str, draft_id: str, updates: dict[str, Any]
         entity.sent_at = datetime.now(timezone.utc)
     if updates.get("reply_state"):
         entity.reply_state = str(updates["reply_state"])
+    if isinstance(updates.get("metadata"), dict):
+        entity.metadata = dict(updates["metadata"])
     entity.updated_at = datetime.now(timezone.utc)
     await repo.save(entity)
     return True
@@ -1586,6 +1589,8 @@ def _draft_as_dict(draft: Any) -> dict[str, Any]:
         "lead_intelligence": draft.generation_metadata.get("lead_intelligence"),
         "company_intelligence": draft.generation_metadata.get("company_intelligence"),
         "evidence_trace": draft.generation_metadata.get("evidence_trace"),
+        "metadata": dict(draft.metadata or {}),
+        "provider": draft.provider,
     }
 
 

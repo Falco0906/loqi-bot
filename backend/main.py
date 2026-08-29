@@ -4873,6 +4873,8 @@ async def schedule_draft(session_token: str, draft_id: str, payload: ScheduleDra
             raise HTTPException(status_code=503, detail="Draft was scheduled but canonical persistence failed")
         outbound_draft.status = DraftStatus.SCHEDULED
         outbound_draft_store.update(outbound_draft)
+        if not await outbound_service.persist_outbound_projection(owner_id, ws_id, outbound_draft, change_summary="scheduled"):
+            raise HTTPException(status_code=503, detail="Draft schedule projection persistence failed")
         await publish_draft_event(owner_id, "draft.scheduled", draft_id=draft_id)
         publish(session_token, WMEventType.DRAFT_SCHEDULED, {
             "draft_id": draft_id,
@@ -4900,6 +4902,8 @@ async def cancel_schedule_draft(session_token: str, draft_id: str, request: Requ
             raise HTTPException(status_code=503, detail="Schedule was cancelled but canonical Draft persistence failed")
         outbound_draft.status = DraftStatus.PENDING_APPROVAL
         outbound_draft_store.update(outbound_draft)
+        if not await outbound_service.persist_outbound_projection(owner_id, ws_id, outbound_draft, change_summary="schedule cancelled"):
+            raise HTTPException(status_code=503, detail="Draft schedule projection persistence failed")
         await publish_draft_event(owner_id, "draft.updated", draft_id=draft_id)
         publish(session_token, WMEventType.DRAFT_UPDATED, {
             "draft_id": draft_id,
@@ -4941,6 +4945,8 @@ async def outbound_cancel_schedule(session_token: str, schedule_id: str, provide
             raise HTTPException(status_code=503, detail="Schedule was cancelled but canonical Draft persistence failed")
         draft.status = DraftStatus.PENDING_APPROVAL
         outbound_draft_store.update(draft)
+        if not await outbound_service.persist_outbound_projection(owner_id, ws_id, draft, change_summary="schedule cancelled"):
+            raise HTTPException(status_code=503, detail="Draft schedule projection persistence failed")
     return result
 
 
@@ -4999,6 +5005,8 @@ async def outbound_approve_draft(session_token: str, draft_id: str, auto: bool =
             owner_id, draft_id, {"status": "approved"}, workspace_id=ws_id,
         ):
             raise HTTPException(status_code=503, detail="Provider draft was created but canonical Draft persistence failed")
+        if not await outbound_service.persist_outbound_projection(owner_id, ws_id, updated or result, change_summary="provider draft created"):
+            raise HTTPException(status_code=503, detail="Provider draft projection persistence failed")
         publish(session_token, WMEventType.DRAFT_APPROVED, {
             "draft_id": draft_id,
             "provider_id": result.provider_id,
@@ -5080,6 +5088,8 @@ async def outbound_approve_all(session_token: str, payload: ApproveAllRequest, r
                     owner_id, draft.id, {"status": "approved"}, workspace_id=ws_id,
                 ):
                     raise RuntimeError("canonical Draft persistence failed")
+                if not await outbound_service.persist_outbound_projection(owner_id, ws_id, updated or draft, change_summary="provider draft created"):
+                    raise RuntimeError("Provider draft projection persistence failed")
                 results.append({"draft_id": draft.id, "ok": True})
         except Exception as e:
             if draft_id:

@@ -87,7 +87,6 @@ from services.learning.feedback_interpreter import FeedbackInterpreter as _Feedb
 from services.draft_intelligence import analyze_draft as analyze_draft_intelligence
 from services.strategic_intelligence_api import router as strategic_intelligence_router
 from services.rewrite_engine import execute_rewrite
-from services.rewrite_history import push as push_rewrite_history, undo as undo_rewrite_history, get_history as get_rewrite_history, get_current_version as get_draft_version
 from services.draft_comparison import compare_versions
 from services.workflow_planner import plan_workflow
 from services.workflow_models import PlanningInput
@@ -1050,10 +1049,6 @@ def _build_copilot_workspace_context(
                     intel = d.get("draft_intelligence")
                     if intel:
                         result["current_draft"]["draft_intelligence"] = intel
-                    hist = get_rewrite_history(session_token, d.get("id", ""))
-                    if hist:
-                        result["current_draft"]["rewrite_history"] = hist[:3]
-
                     draft_text = d.get("text", "")
                     try:
                         from services.draft_intelligence import analyze_draft as _analyze

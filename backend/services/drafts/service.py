@@ -11,12 +11,6 @@ from services.draft_intelligence import analyze_draft as analyze_draft_intellige
 from services.events_bus import publish_draft_event
 from services.outbound import service as outbound_service
 from services.rewrite_engine import execute_rewrite
-from services.rewrite_history import (
-    get_current_version,
-    get_history,
-    push,
-    undo,
-)
 from services.world_model import EventType as WMEventType, publish
 from workflows import run_workflow
 
@@ -45,6 +39,10 @@ _CONTEXT_FIELDS = (
     "campaign_id", "campaign_name", "company", "contact", "role", "industry",
     "messaging_angle", "business_summary",
 )
+
+# Product decision for R5-B: draft text is durable, but rewrite undo/version
+# history is intentionally unavailable after this migration. We do not retain a
+# process-local copy that would silently disappear on restart or session change.
 
 
 def load_drafts(owner_id: str, *, workspace_id: str = "") -> list[dict[str, Any]]:
@@ -118,11 +116,6 @@ async def refine_draft(
             target.update({"text": rewrite_result.text, "status": "pending"})
             if not persist_draft_update(owner_id, draft_id, {"text": target["text"], "status": "pending"}):
                 raise RuntimeError("Draft rewrite could not be persisted")
-            version = push(
-                session_token, draft_id, previous_text=previous_text,
-                reason=payload["edit_request"], strategy=strategy,
-                change_summary=rewrite_result.change_summary,
-            )
             comparison = await asyncio.to_thread(
                 compare_versions, previous_text, rewrite_result.text, rewrite_result.change_summary,
             )
@@ -140,7 +133,7 @@ async def refine_draft(
                 "ok": True, "draft": target, "rewritten_text": rewrite_result.text,
                 "change_summary": rewrite_result.change_summary,
                 "draft_intelligence": intelligence.to_dict() if intelligence else None,
-                "version": version, "confidence": rewrite_result.confidence,
+                "version": 1, "confidence": rewrite_result.confidence,
                 "comparison": comparison.to_dict(),
             }
         workflow_input = {
@@ -158,11 +151,6 @@ async def refine_draft(
             target.update({"text": new_body, "status": "pending"})
             if not persist_draft_update(owner_id, draft_id, {"text": target["text"], "status": "pending"}):
                 raise RuntimeError("Draft rewrite could not be persisted")
-            push(
-                session_token, draft_id, previous_text=previous_text,
-                reason=payload.get("edit_request") or "AI rewrite", strategy="custom",
-                change_summary=["✓ Draft rewritten"],
-            )
         publish(session_token, WMEventType.DRAFT_UPDATED, {
             "draft_id": draft_id, "campaign_id": target.get("campaign_id", ""),
             "method": "workflow_rewrite",
@@ -264,13 +252,7 @@ async def undo_draft(session_token: str, owner_id: str, draft_id: str) -> dict[s
     target = next((draft for draft in load_drafts(owner_id) if draft.get("id") == draft_id), None)
     if not target:
         raise HTTPException(status_code=404, detail="Draft not found")
-    entry = undo(session_token, draft_id)
-    if entry is None:
-        raise HTTPException(status_code=400, detail="No history to undo")
-    target.update({"text": entry.previous_text, "status": "pending"})
-    if not persist_draft_update(owner_id, draft_id, {"text": target["text"], "status": "pending"}):
-        raise HTTPException(status_code=503, detail="Draft undo could not be persisted")
-    return {"ok": True, "draft": target, "undo": entry.to_dict()}
+    raise HTTPException(status_code=400, detail="No history to undo")
 
 
 async def draft_history(session_token: str, owner_id: str, draft_id: str) -> dict[str, Any]:
@@ -279,8 +261,7 @@ async def draft_history(session_token: str, owner_id: str, draft_id: str) -> dic
     draft = draft_store.get(draft_id) if hasattr(draft_store, "get") else None
     if not outbound_service.outbound_draft_owned_by(draft, owner_id):
         raise HTTPException(status_code=404, detail="Draft not found")
-    return {"ok": True, "history": get_history(session_token, draft_id),
-            "current_version": get_current_version(session_token, draft_id)}
+    return {"ok": True, "history": [], "current_version": 1}
 
 
 async def compare_draft_versions(payload: dict[str, Any]) -> dict[str, Any]:

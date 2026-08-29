@@ -360,7 +360,7 @@ class TestDraftHistoryAndBatchIdor:
         assert exc.value.status_code == 404
 
     def test_victim_batch_status_denied(self):
-        from main import batch_jobs
+        from services.drafts.service import batch_jobs
         victim_campaign = "campaign-b"
         batch_id = f"batch-{uuid.uuid4().hex[:8]}"
         batch_jobs[batch_id] = {"campaign_id": victim_campaign, "status": "processing"}

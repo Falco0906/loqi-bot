@@ -16,12 +16,13 @@ import pytest
 
 import services.workspace_state as workspace_state
 import main as main_module
-from main import (
+import services.drafts.service as draft_service
+from main import _reconcile_stale_generating_campaigns
+from services.drafts.service import (
     _create_batch_job,
     _draft_batch_tasks,
     _launch_batch_task,
     _reconcile_campaign_generation,
-    _reconcile_stale_generating_campaigns,
     batch_jobs,
 )
 
@@ -108,7 +109,7 @@ class TestBatchTaskRetention:
             started.set()
             await asyncio.Event().wait()
 
-        monkeypatch.setattr(main_module, "_process_batch_drafts", stub_process)
+        monkeypatch.setattr(draft_service, "_process_batch_drafts", stub_process)
         _launch_batch_task("token", "batch-x", [], "owner-1")
 
         assert "batch-x" in _draft_batch_tasks
@@ -125,7 +126,7 @@ class TestBatchTaskRetention:
         async def stub_process(session_token, batch_id, leads, owner_id):
             return None
 
-        monkeypatch.setattr(main_module, "_process_batch_drafts", stub_process)
+        monkeypatch.setattr(draft_service, "_process_batch_drafts", stub_process)
         _launch_batch_task("token", "batch-y", [], "owner-1")
         task = _draft_batch_tasks["batch-y"]
         await asyncio.wait_for(task, timeout=5)
@@ -148,7 +149,7 @@ class TestBatchTaskRetention:
 class TestReconcileCampaignGeneration:
     def test_no_drafts_marks_generation_failed(self, monkeypatch, fake_persist):
         campaign = _campaign()
-        monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": [])
+        monkeypatch.setattr(workspace_state, "load_drafts_only", lambda uid: [])
 
         result = _reconcile_campaign_generation("owner-1", campaign)
 
@@ -161,7 +162,7 @@ class TestReconcileCampaignGeneration:
     def test_with_drafts_marks_generation_completed(self, monkeypatch, fake_persist):
         campaign = _campaign()
         drafts = [_draft(campaign["id"], batch_id="batch-1")]
-        monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": drafts)
+        monkeypatch.setattr(workspace_state, "load_drafts_only", lambda uid: drafts)
 
         result = _reconcile_campaign_generation("owner-1", campaign)
 
@@ -173,7 +174,7 @@ class TestReconcileCampaignGeneration:
     def test_drafts_from_other_batches_do_not_count(self, monkeypatch, fake_persist):
         campaign = _campaign()
         drafts = [_draft(campaign["id"], batch_id="other-batch")]
-        monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": drafts)
+        monkeypatch.setattr(workspace_state, "load_drafts_only", lambda uid: drafts)
 
         result = _reconcile_campaign_generation("owner-1", campaign)
 
@@ -182,7 +183,7 @@ class TestReconcileCampaignGeneration:
     def test_legacy_campaign_without_generation_metadata_is_left_alone(self, monkeypatch, fake_persist):
         campaign = _campaign(generation=None)
         drafts = [_draft(campaign["id"], batch_id=None)]
-        monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": drafts)
+        monkeypatch.setattr(workspace_state, "load_drafts_only", lambda uid: drafts)
 
         result = _reconcile_campaign_generation("owner-1", campaign)
 
@@ -223,7 +224,7 @@ class TestGenerationStatus:
         monkeypatch.setattr(
             main_module, "load_campaigns", lambda uid, **_kwargs: [campaign])
         monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
-        monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": [])
+        monkeypatch.setattr(workspace_state, "load_drafts_only", lambda uid: [])
 
         result = await main_module.campaign_generation_status("token", campaign["id"], MagicMock())
 
@@ -248,7 +249,7 @@ class TestGenerationStatus:
         monkeypatch.setattr(
             main_module, "load_campaigns", lambda uid, **_kwargs: [campaign])
         monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
-        monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": [])
+        monkeypatch.setattr(workspace_state, "load_drafts_only", lambda uid: [])
 
         result = await main_module.campaign_generation_status("token", campaign["id"], MagicMock())
 
@@ -292,7 +293,7 @@ class TestGenerateDraftsGuard:
             main_module, "load_campaigns", lambda uid, **_kwargs: [campaign])
         monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
         launched: list = []
-        monkeypatch.setattr(main_module, "_launch_batch_task",
+        monkeypatch.setattr(draft_service, "_launch_batch_task",
                             lambda *args, **kwargs: launched.append(args))
 
         result = await main_module.generate_campaign_drafts(
@@ -311,9 +312,9 @@ class TestGenerateDraftsGuard:
         monkeypatch.setattr(
             main_module, "load_campaigns", lambda uid, **_kwargs: [campaign])
         monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
-        monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": [])
+        monkeypatch.setattr(workspace_state, "load_drafts_only", lambda uid: [])
         launched: list = []
-        monkeypatch.setattr(main_module, "_launch_batch_task",
+        monkeypatch.setattr(draft_service, "_launch_batch_task",
                             lambda *args, **kwargs: launched.append(args))
 
         result = await main_module.generate_campaign_drafts(
@@ -336,7 +337,7 @@ class TestGenerateDraftsGuard:
         monkeypatch.setattr(
             main_module, "load_campaigns", lambda uid, **_kwargs: [campaign])
         monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
-        monkeypatch.setattr(main_module, "_launch_batch_task",
+        monkeypatch.setattr(draft_service, "_launch_batch_task",
                             lambda *args, **kwargs: None)
 
         with pytest.raises(Exception) as exc:
@@ -373,7 +374,7 @@ class TestStartupRecovery:
         ).execute.return_value = MagicMock(data=[{"id": "ws-1", "owner_user_id": "owner-1"}])
         monkeypatch.setattr(
             "services.supabase.get_supabase_client", lambda: client)
-        monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": [])
+        monkeypatch.setattr(workspace_state, "load_drafts_only", lambda uid: [])
 
         recovered = await asyncio.to_thread(_reconcile_stale_generating_campaigns)
 

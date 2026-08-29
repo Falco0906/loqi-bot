@@ -20,11 +20,7 @@ import pytest
 
 import main as main_module
 import services.ai as ai_module
-from main import (
-    _create_batch_job,
-    _run_draft_with_retry,
-    batch_jobs,
-)
+from services.drafts.service import _create_batch_job, _run_draft_with_retry, batch_jobs
 
 from tests.test_draft_generation_recovery import _fake_owner
 
@@ -300,10 +296,17 @@ class TestDraftBatchIdempotency:
             "finished_at": _now(),
         }
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
+        async def resolve_workspace(*_args, **_kwargs):
+            return "workspace-1"
+        monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", resolve_workspace)
         monkeypatch.setattr(main_module, "load_campaigns",
                             lambda uid, **_kwargs: [campaign])
+        monkeypatch.setattr(
+            "services.workspace_state.load_campaign_state",
+            lambda *args, **_kwargs: campaign,
+        )
         launched: list = []
-        monkeypatch.setattr(main_module, "_launch_batch_task",
+        monkeypatch.setattr("services.drafts.service._launch_batch_task",
                             lambda *args, **kwargs: launched.append(args))
 
         result = await main_module.generate_campaign_drafts(
@@ -328,11 +331,18 @@ class TestDraftBatchIdempotency:
             "started_at": _now(),
         }
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
+        async def resolve_workspace(*_args, **_kwargs):
+            return "workspace-1"
+        monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", resolve_workspace)
         monkeypatch.setattr(main_module, "load_campaigns",
                             lambda uid, **_kwargs: [campaign])
-        monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": [])
+        monkeypatch.setattr(
+            "services.workspace_state.load_campaign_state",
+            lambda *args, **_kwargs: campaign,
+        )
+        monkeypatch.setattr("services.workspace_state.load_drafts_only", lambda uid: [])
         launched: list = []
-        monkeypatch.setattr(main_module, "_launch_batch_task",
+        monkeypatch.setattr("services.drafts.service._launch_batch_task",
                             lambda *args, **kwargs: launched.append(args))
 
         result = await main_module.generate_campaign_drafts(

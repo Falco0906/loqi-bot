@@ -72,6 +72,14 @@ def _isolate_conversation_persistence(monkeypatch, tmp_path):
     from services.conversations.conversation_store import conversation_store
 
     monkeypatch.setattr(persistence, "STATE_FILE", str(tmp_path / ".conversations.json"))
+    # Some security tests deliberately set APP_ENV=production. Their isolated
+    # temp snapshot must remain available; this test-only override does not
+    # change production's fail-closed persistence behavior.
+    monkeypatch.setenv("LOQI_ALLOW_LOCAL_CONVERSATION_SNAPSHOTS", "true")
+    # Unit and route tests must not probe the configured Supabase project just
+    # to reset their local conversation fixture. Tests for the durable adapter
+    # explicitly replace this seam with their own fake client.
+    monkeypatch.setattr(persistence, "_client", lambda: None)
     conversation_store.reload()
     yield
     conversation_store.reload()

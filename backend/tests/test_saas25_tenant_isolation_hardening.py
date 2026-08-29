@@ -136,7 +136,6 @@ class TestWorkspaceContextProviderScoping:
 
         # Stub the heavy workspace helpers to empty, and the provider store to
         # two tenants' providers.
-        monkeypatch.setattr(main_module, "campaign_store", _StubDict())
         monkeypatch.setattr(main_module, "build_snapshot",
                             lambda *a, **k: {"campaigns": [], "campaign_count": 0,
                                              "campaigns_ready": 0, "campaigns_draft_review": 0,
@@ -162,7 +161,6 @@ class TestWorkspaceContextProviderScoping:
 
     def test_conversation_intelligence_gated_by_ownership(self, monkeypatch):
         import main as main_module
-        monkeypatch.setattr(main_module, "campaign_store", _StubDict())
         monkeypatch.setattr(main_module, "build_snapshot",
                             lambda *a, **k: {"campaigns": [], "campaign_count": 0,
                                              "campaigns_ready": 0, "campaigns_draft_review": 0,
@@ -211,11 +209,6 @@ class TestWorkspaceContextProviderScoping:
             "token", conversation_id="conv-9", user_id="user-A", workspace_id="workspace-a",
         )
         assert "conversation_intelligence" not in ctx
-
-
-class _StubDict:
-    def get(self, *a, **k):
-        return []
 
 
 class _StubStore:

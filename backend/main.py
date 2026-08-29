@@ -704,11 +704,10 @@ _credential_registry = CredentialRegistry()
 # not a durable source of provider or workflow state.
 _execution_adapter_registry = ExecutionAdapterRegistry()
 
-# R5/R8 compatibility projections only. Canonical batch/draft/campaign state is
-# durable workspace/job persistence. These maps support legacy session routes
-# during migration and must not become a second durable authority.
+# R5/R8 compatibility projection only. Canonical batch state is durable job
+# persistence. This map supports legacy session routes during migration and
+# must not become a second durable authority.
 batch_jobs: dict[str, dict[str, Any]] = {}
-campaign_store: dict[str, list[dict[str, Any]]] = {}
 
 # Retained references to running draft-batch tasks. The event loop only keeps
 # weak references to tasks, so a fire-and-forget `asyncio.create_task` can be

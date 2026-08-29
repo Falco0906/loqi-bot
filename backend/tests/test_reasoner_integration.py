@@ -134,6 +134,26 @@ def session_with_data(client):
     }
 
 
+def _use_copilot_workspace(monkeypatch, campaigns: list[dict], drafts: list[dict]) -> None:
+    """Bind Copilot integration tests to the canonical workspace projection."""
+    from types import SimpleNamespace
+    import services.workspace_state as workspace_state
+
+    async def selected_workspace(_request, _owner_id):
+        return SimpleNamespace(workspace_id="workspace-reasoner")
+
+    def load_workspace_state(_owner_id, include_details=False, workspace_id="", canonical_only=False):
+        assert workspace_id == "workspace-reasoner"
+        assert canonical_only is True
+        return {"campaigns": campaigns, "drafts": drafts}
+
+    monkeypatch.setattr(
+        "main.workspace_access.resolve_selected_workspace_context",
+        selected_workspace,
+    )
+    monkeypatch.setattr(workspace_state, "load_workspace_state", load_workspace_state)
+
+
 class TestWorkspaceSnapshot:
     def test_build_snapshot_has_campaigns(self, session_with_data):
         s = session_with_data
@@ -300,13 +320,10 @@ class TestMissionControlIntegration:
 
 
 class TestCopilotIntegration:
-    def test_copilot_responds_with_campaign_context(self, client, session_with_data):
+    def test_copilot_responds_with_campaign_context(self, client, session_with_data, monkeypatch):
         s = session_with_data
         token = s["token"]
-
-        from main import campaign_store, draft_store
-        campaign_store[token] = s["campaigns"]
-        draft_store[token] = s["drafts"]
+        _use_copilot_workspace(monkeypatch, s["campaigns"], s["drafts"])
 
         resp = client.post(
             f"/api/web/session/{token}/messages",
@@ -329,13 +346,10 @@ class TestCopilotIntegration:
             f"Copilot response should reference workspace context, got: {text[:200]}"
         )
 
-    def test_copilot_does_not_ask_for_context(self, client, session_with_data):
+    def test_copilot_does_not_ask_for_context(self, client, session_with_data, monkeypatch):
         s = session_with_data
         token = s["token"]
-
-        from main import campaign_store, draft_store
-        campaign_store[token] = s["campaigns"]
-        draft_store[token] = s["drafts"]
+        _use_copilot_workspace(monkeypatch, s["campaigns"], s["drafts"])
 
         resp = client.post(
             f"/api/web/session/{token}/messages",

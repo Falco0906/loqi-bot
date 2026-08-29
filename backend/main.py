@@ -708,7 +708,6 @@ _execution_adapter_registry = ExecutionAdapterRegistry()
 # durable workspace/job persistence. These maps support legacy session routes
 # during migration and must not become a second durable authority.
 batch_jobs: dict[str, dict[str, Any]] = {}
-draft_store: dict[str, list[dict[str, Any]]] = {}
 campaign_store: dict[str, list[dict[str, Any]]] = {}
 
 # Retained references to running draft-batch tasks. The event loop only keeps
@@ -921,33 +920,29 @@ def _build_copilot_workspace_context(
     current_page: str | None = None,
     page_context: dict | None = None,
     conversation_id: str | None = None,
-    user_id: str | None = None,
-    workspace_id: str | None = None,
+    user_id: str = "",
+    workspace_id: str = "",
 ) -> dict:
     # Copilot is a read/analyze surface. Its workspace context must come from
     # the canonical workspace projection so a reload, another tab, or a
     # previous session cannot leave the assistant reasoning over stale
     # session-local campaign/draft state.
+    if not user_id or not workspace_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
     campaigns = []
     drafts = []
-    if user_id and workspace_id:
-        try:
-            from services.workspace_state import load_workspace_state
-            state = load_workspace_state(
-                user_id,
-                include_details=False,
-                workspace_id=workspace_id,
-                canonical_only=True,
-            )
-            campaigns = state.get("campaigns") or []
-            drafts = state.get("drafts") or []
-        except Exception as error:
-            log.warning("Copilot canonical workspace context unavailable: %s", error)
-    elif not user_id:
-        # Kept only for unauthenticated legacy callers. Authenticated Copilot
-        # requests always supply a membership-authorized workspace id above.
-        campaigns = campaign_store.get(session_token, [])
-        drafts = draft_store.get(session_token, [])
+    try:
+        from services.workspace_state import load_workspace_state
+        state = load_workspace_state(
+            user_id,
+            include_details=False,
+            workspace_id=workspace_id,
+            canonical_only=True,
+        )
+        campaigns = state.get("campaigns") or []
+        drafts = state.get("drafts") or []
+    except Exception as error:
+        log.warning("Copilot canonical workspace context unavailable: %s", error)
     # Scope the prompt-facing operational set to the active resource. The
     # canonical loaders remain authoritative; this only prevents unrelated
     # campaigns/drafts from becoming retrieval context for the turn.
@@ -5619,8 +5614,16 @@ set_onboarding_completion_handler(_launch_initial_research)
 @app.get("/api/web/session/{session_token}/export-csv")
 async def export_csv(session_token: str, request: Request = None):
     session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    selected_workspace = await workspace_access.resolve_selected_workspace_context(request, owner_id)
+    from services.workspace_state import load_drafts_only
+    drafts = await asyncio.to_thread(
+        load_drafts_only,
+        owner_id,
+        workspace_id=selected_workspace.workspace_id,
+    )
     leads: list[dict] = []
-    for d in draft_store.get(session_token, []):
+    for d in drafts:
         lead = d.get("lead")
         if lead:
             leads.append(lead)
@@ -5805,14 +5808,17 @@ async def google_callback(code: str, state: str):
 @app.post("/api/web/session/{session_token}/plan")
 async def plan_workflow_endpoint(session_token: str, payload: PlanningInput, request: Request = None):
     session_token = identity_dependencies.web_session_token(request)
-    campaigns = campaign_store.get(session_token, [])
-    drafts = draft_store.get(session_token, [])
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    selected_workspace = await workspace_access.resolve_selected_workspace_context(request, owner_id)
+    workspace_id = selected_workspace.workspace_id
+    from services.workspace_state import load_drafts_only
+    campaigns, drafts = await asyncio.gather(
+        asyncio.to_thread(load_campaigns, owner_id, workspace_id=workspace_id),
+        asyncio.to_thread(load_drafts_only, owner_id, workspace_id=workspace_id),
+    )
     total_leads = sum(c.get("lead_count", 0) or 0 for c in campaigns)
-    # PR-2B: only the owning user id is consumed here — cached identity.
-    _summary = await identity_dependencies.cached_web_session_identity(session_token)
-    _db_user_id = _summary.get("user_id") if _summary else None
     snapshot = await asyncio.to_thread(
-        build_snapshot, session_token, campaigns, drafts, total_leads, user_id=_db_user_id,
+        build_snapshot, session_token, campaigns, drafts, total_leads, user_id=owner_id,
     )
     result = plan_workflow(
         objective=payload.objective,

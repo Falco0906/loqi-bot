@@ -147,6 +147,7 @@ def _clean_runtime_state(monkeypatch):
         return _load_drafts(owner_id, workspace_id)
 
     monkeypatch.setattr(outbound_service.workspace_access, "resolve_legacy_workspace_id", _workspace)
+    monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", _workspace)
     monkeypatch.setattr(outbound_service.workspace_state, "load_drafts_only", _load_drafts)
     monkeypatch.setattr(main_module, "_workspace_drafts", _legacy_workspace_drafts)
     yield
@@ -360,17 +361,20 @@ class TestDraftHistoryAndBatchIdor:
         assert exc.value.status_code == 404
 
     def test_victim_batch_status_denied(self):
-        from services.drafts.service import batch_jobs
-        victim_campaign = "campaign-b"
         batch_id = f"batch-{uuid.uuid4().hex[:8]}"
-        batch_jobs[batch_id] = {"campaign_id": victim_campaign, "status": "processing"}
-        main_module.load_campaigns = lambda owner_id, **_kwargs: (
-            [{"id": "campaign-a"}] if owner_id == OWNER_A else []
-        )
+
+        async def inaccessible(owner_id, workspace_id, requested_batch_id):
+            assert owner_id == OWNER_A
+            assert workspace_id == f"workspace-{OWNER_A}"
+            assert requested_batch_id == batch_id
+            return None
+
+        original = main_module.draft_service.draft_batch_status
+        main_module.draft_service.draft_batch_status = inaccessible
         with pytest.raises(HTTPException) as exc:
             asyncio.run(main_module.batch_status("_", batch_id, _req(TOKEN_A)))
+        main_module.draft_service.draft_batch_status = original
         assert exc.value.status_code == 404
-        batch_jobs.pop(batch_id, None)
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -28,18 +28,26 @@ class JobManager:
         self._runner.start_job(job, on_update=on_update, on_complete=on_complete)
         return {"job_id": job.id, "status": job.status.value}
 
-    async def create_batch_job(self, job: Job, items: list[BatchItem]) -> Optional[dict]:
-        """Persist a batch job and every resumable item before starting work."""
+    async def create_batch_job(
+        self, job: Job, items: list[BatchItem], *, start: bool = True,
+    ) -> Optional[dict]:
+        """Persist a batch job and every resumable item before optionally starting work."""
         import asyncio
         if get_registry().get(job.type) is None:
             return None
 
         def persist() -> bool:
-            return bool(self._storage.create_job(job)) and self._storage.create_batch_items(items)
+            if not self._storage.create_job(job):
+                return False
+            if self._storage.create_batch_items(items):
+                return True
+            self._storage.delete_job(job.id)
+            return False
 
         if not await asyncio.to_thread(persist):
             return None
-        self._runner.start_job(job)
+        if start:
+            self._runner.start_job(job)
         return {"job_id": job.id, "status": job.status.value}
 
     def resume_job(self, job: Job) -> bool:

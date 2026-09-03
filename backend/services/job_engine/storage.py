@@ -55,6 +55,18 @@ class JobStorage:
             _log(f"get_job error: {e}")
             return None
 
+    def delete_job(self, job_id: str) -> bool:
+        """Remove a job whose dependent batch-item creation did not persist."""
+        client = get_supabase_client()
+        if not client:
+            return False
+        try:
+            client.table("jobs").delete().eq("id", job_id).execute()
+            return True
+        except Exception as error:
+            _log(f"delete_job error: {error}")
+            return False
+
     def update_job(
         self,
         job_id: str,
@@ -235,6 +247,20 @@ class JobStorage:
             _log(f"list_batch_resume_items error: {error}")
             return []
 
+    def list_batch_items(self, job_id: str, workspace_id: str) -> list[BatchItem]:
+        """Return every persisted item for one workspace-scoped batch job."""
+        client = get_supabase_client()
+        if not client:
+            return []
+        try:
+            result = client.table("job_batch_items").select("*").eq(
+                "job_id", job_id
+            ).eq("workspace_id", workspace_id).order("position").execute()
+            return [self._batch_item(row) for row in (getattr(result, "data", None) or [])]
+        except Exception as error:
+            _log(f"list_batch_items error: {error}")
+            return []
+
     def mark_batch_item_completed(self, job_id: str, idempotency_key: str, draft_id: str) -> bool:
         """Complete once. A repeated completion preserves the first draft reference."""
         client = get_supabase_client()
@@ -257,19 +283,40 @@ class JobStorage:
             return False
 
     def mark_batch_item_generating(self, item_id: str) -> bool:
-        """Claim an item once and increment its persisted attempt count."""
+        """Atomically claim a pending item and increment its persisted attempts."""
         client = get_supabase_client()
         if not client:
             return False
         try:
             row = client.table("job_batch_items").select("attempt_count,status").eq("id", item_id).limit(1).execute()
             items = getattr(row, "data", None) or []
-            if not items or items[0].get("status") == BatchItemStatus.COMPLETED.value:
+            if not items or items[0].get("status") != BatchItemStatus.PENDING.value:
                 return False
-            client.table("job_batch_items").update({"status": "generating", "attempt_count": int(items[0].get("attempt_count") or 0) + 1, "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", item_id).execute()
-            return True
+            result = client.table("job_batch_items").update({
+                "status": "generating",
+                "attempt_count": int(items[0].get("attempt_count") or 0) + 1,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", item_id).eq("status", BatchItemStatus.PENDING.value).execute()
+            return bool(getattr(result, "data", None))
         except Exception as error:
             _log(f"mark_batch_item_generating error: {error}")
+            return False
+
+    def reset_batch_items_for_resume(self, job_id: str, workspace_id: str) -> bool:
+        """Make interrupted item claims eligible for one durable restart retry."""
+        client = get_supabase_client()
+        if not client:
+            return False
+        try:
+            client.table("job_batch_items").update({
+                "status": BatchItemStatus.PENDING.value,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("job_id", job_id).eq("workspace_id", workspace_id).in_(
+                "status", [BatchItemStatus.GENERATING.value, BatchItemStatus.FAILED.value]
+            ).execute()
+            return True
+        except Exception as error:
+            _log(f"reset_batch_items_for_resume error: {error}")
             return False
 
     def mark_batch_item_failed(self, item_id: str, error: str) -> bool:

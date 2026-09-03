@@ -1,393 +1,143 @@
-"""Tests for production-stability fixes in the campaign draft pipeline.
-
-Covers batch task retention, durable generation progress, and recovery of
-interrupted draft batches after a restart. Persistence is faked at the
-workspace_state boundary so no Supabase or authentication code runs.
-"""
+"""Durable draft-batch status and restart recovery contracts."""
 
 from __future__ import annotations
 
 import asyncio
-import uuid
-from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from types import SimpleNamespace
 
-import pytest
-
-import services.workspace_state as workspace_state
-import main as main_module
-import services.drafts.service as draft_service
-from main import _reconcile_stale_generating_campaigns
-from services.drafts.service import (
-    _create_batch_job,
-    _draft_batch_tasks,
-    _launch_batch_task,
-    _reconcile_campaign_generation,
-    batch_jobs,
-)
+import main
+import services.drafts.service as drafts
+from services.job_engine.models import BatchItem, BatchItemStatus, Job, JobStatus
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+def _job(status: JobStatus = JobStatus.RUNNING) -> Job:
+    return Job(
+        id="batch-1", user_id="owner-1", type="draft_batch", status=status,
+        workspace_id="workspace-1", campaign_id="campaign-1",
+        payload={"session_token": "token", "total": 2},
+    )
 
 
-def _campaign(**overrides) -> dict:
-    campaign = {
-        "id": str(uuid.uuid4()),
-        "name": "Test Campaign",
-        "status": "generating",
-        "lead_count": 1,
-        "leads": [{"id": "lead-1", "company": "Acme"}],
-        "generation": {
-            "batch_id": "batch-1",
-            "total": 1,
-            "completed": 0,
-            "status": "processing",
-            "started_at": _now(),
-        },
+def _item(position: int, status: BatchItemStatus, draft_id: str = "") -> BatchItem:
+    return BatchItem(
+        id=f"item-{position}", job_id="batch-1", workspace_id="workspace-1",
+        campaign_id="campaign-1", position=position,
+        lead_snapshot={"id": f"lead-{position}", "name": f"Lead {position}"},
+        idempotency_key=f"{position}:lead-{position}", status=status, draft_id=draft_id,
+    )
+
+
+async def test_durable_batch_status_preserves_progress_shape(monkeypatch):
+    job = _job()
+    items = [_item(0, BatchItemStatus.COMPLETED, "draft-0"), _item(1, BatchItemStatus.GENERATING)]
+
+    class Storage:
+        def get_job(self, job_id):
+            return job if job_id == "batch-1" else None
+
+        def list_batch_items(self, *_args):
+            return items
+
+    monkeypatch.setattr("services.job_engine.job_manager._storage", Storage())
+    status = await drafts.draft_batch_status("owner-1", "workspace-1", "batch-1")
+
+    assert status == {
+        "status": "processing", "total": 2, "completed": 1,
+        "current_index": 1, "current_name": "Lead 1", "drafts": [],
+        "error": None, "campaign_id": "campaign-1", "batch_id": "batch-1",
+        "started_at": job.created_at.isoformat(),
     }
-    campaign.update(overrides)
-    return campaign
 
 
-def _draft(campaign_id: str, batch_id: str | None = None, **overrides) -> dict:
-    draft = {
-        "id": str(uuid.uuid4()),
-        "campaign_id": campaign_id,
-        "batch_id": batch_id,
-        "lead": {"id": "lead-1", "company": "Acme"},
-        "subject": "Subject",
-        "text": "Body",
-        "status": "pending",
-        "created_at": _now(),
+async def test_batch_status_adapter_preserves_response_shape(monkeypatch):
+    async def user_id(*_args): return "owner-1"
+    async def workspace(*_args): return "workspace-1"
+    async def status(*_args):
+        return {
+            "status": "processing", "total": 2, "completed": 1,
+            "current_index": 1, "current_name": "Lead 1", "drafts": [],
+            "error": None, "campaign_id": "campaign-1", "batch_id": "batch-1",
+            "started_at": "now",
+        }
+
+    monkeypatch.setattr(main.identity_dependencies, "web_session_token", lambda _request: "token")
+    monkeypatch.setattr(main.identity_dependencies, "authenticated_user_id", user_id)
+    monkeypatch.setattr(main.workspace_access, "resolve_legacy_workspace_id", workspace)
+    monkeypatch.setattr(main.draft_service, "draft_batch_status", status)
+    response = await main.batch_status("_", "batch-1", SimpleNamespace(headers={}))
+
+    assert response["ok"] is True
+    assert {"batch_id", "total", "completed", "current_index", "current_name", "status"} <= response.keys()
+
+
+async def test_restart_resumes_only_incomplete_items_without_duplicate_drafts(monkeypatch):
+    completed = _item(0, BatchItemStatus.COMPLETED, "draft-0")
+    interrupted = _item(1, BatchItemStatus.GENERATING)
+    all_items = [completed, interrupted]
+    workflow_leads: list[str] = []
+
+    class Storage:
+        def list_active_jobs_by_type(self, job_type):
+            return [_job(JobStatus.RUNNING)] if job_type == "draft_batch" else []
+
+        def list_batch_resume_items(self, *_args): return [interrupted]
+        def list_batch_items(self, *_args): return all_items
+        def reset_batch_items_for_resume(self, *_args):
+            interrupted.status = BatchItemStatus.PENDING
+            return True
+        def mark_batch_item_generating(self, item_id): return item_id == interrupted.id
+
+        def mark_batch_item_completed(self, _job_id, key, draft_id):
+            assert key == interrupted.idempotency_key
+            interrupted.status = BatchItemStatus.COMPLETED
+            interrupted.draft_id = draft_id
+            return True
+
+        def mark_batch_item_failed(self, *_args):
+            raise AssertionError("the resumed item should succeed")
+
+    resumed: list[str] = []
+    monkeypatch.setattr("services.job_engine.job_manager._storage", Storage())
+    monkeypatch.setattr("services.job_engine.job_manager.resume_job", lambda job: resumed.append(job.id) or True)
+    monkeypatch.setattr(drafts, "register_draft_batch_workflow", lambda: None)
+    assert await drafts.reconcile_stale_draft_batch_jobs() == 1
+    assert resumed == ["batch-1"]
+
+    async def run_workflow(_loop, payload):
+        workflow_leads.append(payload["lead"]["id"])
+        return {"message": "Draft ready: ---\nHello\n---", "subject": "Hi"}
+
+    monkeypatch.setattr(drafts, "_run_draft_with_retry", run_workflow)
+    monkeypatch.setattr("services.workspace_state.load_campaign_state", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr("services.workspace_state.persist_draft_awaited", lambda *_args, **_kwargs: asyncio.sleep(0, result=True))
+    monkeypatch.setattr(drafts, "publish", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(drafts, "publish_draft_event", lambda *_args, **_kwargs: asyncio.sleep(0))
+    monkeypatch.setattr(drafts.outbound_service, "sync_draft_to_outbound", lambda *_args, **_kwargs: None)
+
+    job = _job()
+    job.campaign_id = ""
+    result = await drafts.run_draft_batch_job(job, lambda *_args: None)
+
+    assert result["ok"] is True
+    assert workflow_leads == ["lead-1"]
+    assert completed.draft_id == "draft-0"
+    assert interrupted.status == BatchItemStatus.COMPLETED
+
+
+async def test_generation_status_uses_active_durable_batch(monkeypatch):
+    async def user_id(*_args): return "owner-1"
+    async def workspace(*_args): return "workspace-1"
+    async def active(*_args): return {"batch_id": "batch-1", "total": 2, "status": "running"}
+    async def status(*_args): return {"batch_id": "batch-1", "total": 2, "completed": 1}
+
+    monkeypatch.setattr(main.identity_dependencies, "web_session_token", lambda _request: "token")
+    monkeypatch.setattr(main.identity_dependencies, "authenticated_user_id", user_id)
+    monkeypatch.setattr(main.workspace_access, "resolve_legacy_workspace_id", workspace)
+    monkeypatch.setattr(main.draft_service, "active_draft_batch", active)
+    monkeypatch.setattr(main.draft_service, "draft_batch_status", status)
+    response = await main.campaign_generation_status("_", "campaign-1", SimpleNamespace(headers={}))
+
+    assert response == {
+        "ok": True, "active": True, "status": "processing", "total": 2,
+        "completed": 1, "batch_id": "batch-1",
     }
-    draft.update(overrides)
-    return draft
-
-
-@pytest.fixture(autouse=True)
-def _clean_stores(monkeypatch):
-    batch_jobs.clear()
-    _draft_batch_tasks.clear()
-    async def workspace(*_args, **_kwargs):
-        return "workspace-1"
-    monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", workspace)
-    yield
-    batch_jobs.clear()
-    _draft_batch_tasks.clear()
-
-
-@pytest.fixture
-def fake_persist(monkeypatch):
-    """Persist campaign updates in-memory; assertable from the test."""
-    updates: list[tuple[str, str, dict]] = []
-
-    def fake(user_id: str, campaign_id: str, payload: dict, **_kwargs) -> bool:
-        updates.append((user_id, campaign_id, payload))
-        return True
-
-    async def fake_awaited(user_id: str, campaign_id: str, payload: dict, **_kwargs) -> bool:
-        updates.append((user_id, campaign_id, payload))
-        return True
-
-    monkeypatch.setattr(workspace_state, "persist_campaign_update", fake)
-    monkeypatch.setattr(
-        workspace_state, "persist_campaign_update_awaited", fake_awaited)
-    return updates
-
-
-# ─────────────────────────────────────────────────────────────────────────
-# Batch task retention
-# ─────────────────────────────────────────────────────────────────────────
-
-
-class TestBatchTaskRetention:
-    async def test_task_is_retained_until_done(self, monkeypatch):
-        started = asyncio.Event()
-
-        async def stub_process(session_token, batch_id, leads, owner_id):
-            started.set()
-            await asyncio.Event().wait()
-
-        monkeypatch.setattr(draft_service, "_process_batch_drafts", stub_process)
-        _launch_batch_task("token", "batch-x", [], "owner-1")
-
-        assert "batch-x" in _draft_batch_tasks
-        assert not _draft_batch_tasks["batch-x"].done()
-        await started.wait()
-        assert not _draft_batch_tasks["batch-x"].done()
-
-        _draft_batch_tasks["batch-x"].cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await _draft_batch_tasks["batch-x"]
-        assert "batch-x" not in _draft_batch_tasks
-
-    async def test_completed_task_removes_itself(self, monkeypatch):
-        async def stub_process(session_token, batch_id, leads, owner_id):
-            return None
-
-        monkeypatch.setattr(draft_service, "_process_batch_drafts", stub_process)
-        _launch_batch_task("token", "batch-y", [], "owner-1")
-        task = _draft_batch_tasks["batch-y"]
-        await asyncio.wait_for(task, timeout=5)
-        assert "batch-y" not in _draft_batch_tasks
-
-    def test_create_batch_job_sets_durable_fields(self):
-        job = _create_batch_job("b1", "c1", 3)
-        assert job["status"] == "processing"
-        assert job["campaign_id"] == "c1"
-        assert job["batch_id"] == "b1"
-        assert job["started_at"]
-        assert batch_jobs["b1"] is job
-
-
-# ─────────────────────────────────────────────────────────────────────────
-# Reconciliation of interrupted batches
-# ─────────────────────────────────────────────────────────────────────────
-
-
-class TestReconcileCampaignGeneration:
-    def test_no_drafts_marks_generation_failed(self, monkeypatch, fake_persist):
-        campaign = _campaign()
-        monkeypatch.setattr(workspace_state, "load_drafts_only", lambda uid: [])
-
-        result = _reconcile_campaign_generation("owner-1", campaign)
-
-        assert result["generation"]["status"] == "failed"
-        assert fake_persist[0][1] == campaign["id"]
-        updates = fake_persist[0][2]
-        assert updates["generation"]["status"] == "failed"
-        assert updates["generation"]["batch_id"] == "batch-1"
-
-    def test_with_drafts_marks_generation_completed(self, monkeypatch, fake_persist):
-        campaign = _campaign()
-        drafts = [_draft(campaign["id"], batch_id="batch-1")]
-        monkeypatch.setattr(workspace_state, "load_drafts_only", lambda uid: drafts)
-
-        result = _reconcile_campaign_generation("owner-1", campaign)
-
-        assert result["generation"]["status"] == "completed"
-        updates = fake_persist[0][2]
-        assert updates["generation"]["status"] == "completed"
-        assert updates["generation"]["completed"] == 1
-
-    def test_drafts_from_other_batches_do_not_count(self, monkeypatch, fake_persist):
-        campaign = _campaign()
-        drafts = [_draft(campaign["id"], batch_id="other-batch")]
-        monkeypatch.setattr(workspace_state, "load_drafts_only", lambda uid: drafts)
-
-        result = _reconcile_campaign_generation("owner-1", campaign)
-
-        assert result["generation"]["status"] == "failed"
-
-    def test_legacy_campaign_without_generation_metadata_is_left_alone(self, monkeypatch, fake_persist):
-        campaign = _campaign(generation=None)
-        drafts = [_draft(campaign["id"], batch_id=None)]
-        monkeypatch.setattr(workspace_state, "load_drafts_only", lambda uid: drafts)
-
-        result = _reconcile_campaign_generation("owner-1", campaign)
-
-        assert result.get("generation") is None
-        assert fake_persist == []
-
-    def test_non_generating_campaign_is_left_alone(self, fake_persist):
-        campaign = _campaign(status="active", generation=None)
-        result = _reconcile_campaign_generation("owner-1", campaign)
-        assert result["status"] == "active"
-        assert fake_persist == []
-
-
-# ─────────────────────────────────────────────────────────────────────────
-# generation-status endpoint behavior
-# ─────────────────────────────────────────────────────────────────────────
-
-
-class TestGenerationStatus:
-    async def test_active_job_reports_live_progress(self):
-        job = _create_batch_job("b1", "c1", 5)
-        job["completed"] = 2
-        job["current_index"] = 1
-
-        result = await main_module.campaign_generation_status("token", "c1", MagicMock())
-
-        assert result["ok"] is True
-        assert result["active"] is True
-        assert result["status"] == "processing"
-        assert result["total"] == 5
-        assert result["completed"] == 2
-        assert result["batch_id"] == "b1"
-
-    async def test_no_active_job_uses_durable_state(self, monkeypatch, fake_persist):
-        campaign = _campaign()
-        monkeypatch.setattr(
-            main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
-        monkeypatch.setattr(
-            main_module, "load_campaigns", lambda uid, **_kwargs: [campaign])
-        monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
-        monkeypatch.setattr(workspace_state, "load_drafts_only", lambda uid: [])
-
-        result = await main_module.campaign_generation_status("token", campaign["id"], MagicMock())
-
-        assert result["ok"] is True
-        assert result["active"] is False
-        assert result["status"] == "failed"
-        assert fake_persist[0][2]["generation"]["status"] == "failed"
-
-    async def test_completed_campaign_reports_durable_counts(self, monkeypatch):
-        campaign = _campaign(
-            status="active",
-            generation={
-                "batch_id": "b1",
-                "total": 3,
-                "completed": 3,
-                "status": "completed",
-                "started_at": _now(),
-            },
-        )
-        monkeypatch.setattr(
-            main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
-        monkeypatch.setattr(
-            main_module, "load_campaigns", lambda uid, **_kwargs: [campaign])
-        monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
-        monkeypatch.setattr(workspace_state, "load_drafts_only", lambda uid: [])
-
-        result = await main_module.campaign_generation_status("token", campaign["id"], MagicMock())
-
-        assert result["active"] is False
-        assert result["status"] == "completed"
-        assert result["total"] == 3
-        assert result["completed"] == 3
-        assert result["batch_id"] == "b1"
-
-    async def test_missing_campaign_returns_inactive(self, monkeypatch):
-        monkeypatch.setattr(
-            main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
-        monkeypatch.setattr(
-            main_module, "load_campaigns", lambda uid, **_kwargs: [])
-
-        result = await main_module.campaign_generation_status("token", "nope", MagicMock())
-
-        assert result["ok"] is True
-        assert result["active"] is False
-
-
-def _fake_owner(owner_id: str):
-    async def fake_owner(request, session_token: str) -> str:
-        return owner_id
-
-    return fake_owner
-
-
-# ─────────────────────────────────────────────────────────────────────────
-# generate-drafts endpoint guard
-# ─────────────────────────────────────────────────────────────────────────
-
-
-class TestGenerateDraftsGuard:
-    async def test_returns_existing_batch_when_already_processing(self, monkeypatch):
-        campaign = _campaign()
-        _create_batch_job("b1", campaign["id"], 4)
-        monkeypatch.setattr(
-            main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
-        monkeypatch.setattr(
-            main_module, "load_campaigns", lambda uid, **_kwargs: [campaign])
-        monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
-        launched: list = []
-        monkeypatch.setattr(draft_service, "_launch_batch_task",
-                            lambda *args, **kwargs: launched.append(args))
-
-        result = await main_module.generate_campaign_drafts(
-            "token", campaign["id"], MagicMock())
-
-        assert result["ok"] is True
-        assert result["batch_id"] == "b1"
-        assert launched == []
-
-    async def test_stale_generating_campaign_is_reconciled_then_restarted(
-        self, monkeypatch, fake_persist,
-    ):
-        campaign = _campaign()
-        monkeypatch.setattr(
-            main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
-        monkeypatch.setattr(
-            main_module, "load_campaigns", lambda uid, **_kwargs: [campaign])
-        monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
-        monkeypatch.setattr(workspace_state, "load_drafts_only", lambda uid: [])
-        launched: list = []
-        monkeypatch.setattr(draft_service, "_launch_batch_task",
-                            lambda *args, **kwargs: launched.append(args))
-
-        result = await main_module.generate_campaign_drafts(
-            "token", campaign["id"], MagicMock())
-
-        assert result["ok"] is True
-        assert len(launched) == 1
-        assert launched[0][1] == result["batch_id"]
-        assert batch_jobs[result["batch_id"]]["status"] == "processing"
-        processing = [
-            u for _, _, u in fake_persist
-            if (u.get("generation") or {}).get("status") == "processing"
-        ]
-        assert processing, "expected a persisted processing generation transition"
-
-    async def test_missing_leads_rejected(self, monkeypatch):
-        campaign = _campaign(status="active", leads=[], generation=None)
-        monkeypatch.setattr(
-            main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
-        monkeypatch.setattr(
-            main_module, "load_campaigns", lambda uid, **_kwargs: [campaign])
-        monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *args, **kwargs: campaign)
-        monkeypatch.setattr(draft_service, "_launch_batch_task",
-                            lambda *args, **kwargs: None)
-
-        with pytest.raises(Exception) as exc:
-            await main_module.generate_campaign_drafts(
-                "token", campaign["id"], MagicMock())
-        assert "No leads found" in str(exc.value)
-
-
-# ─────────────────────────────────────────────────────────────────────────
-# Startup recovery sweep
-# ─────────────────────────────────────────────────────────────────────────
-
-
-class TestStartupRecovery:
-    async def test_sweep_reconciles_generating_campaigns(self, monkeypatch, fake_persist):
-        campaign = _campaign()
-        client = MagicMock()
-        client.table("campaigns").select(
-            "id, workspace_id, settings"
-        ).filter(
-            "settings->generation->>status", "eq", "processing"
-        ).execute.return_value = MagicMock(data=[{
-            "id": campaign["id"],
-            "workspace_id": "ws-1",
-            "settings": {"generation": {"status": "processing", "batch_id": "batch-1"}},
-        }])
-        client.table("campaigns").select("settings").eq(
-            "id", campaign["id"]
-        ).limit(1).execute.return_value = MagicMock(data=[{
-            "settings": {"generation": {"status": "processing", "batch_id": "batch-1"}},
-        }])
-        client.table("workspaces").select("id, owner_user_id").in_(
-            "id", ["ws-1"]
-        ).execute.return_value = MagicMock(data=[{"id": "ws-1", "owner_user_id": "owner-1"}])
-        monkeypatch.setattr(
-            "services.supabase.get_supabase_client", lambda: client)
-        monkeypatch.setattr(workspace_state, "load_drafts_only", lambda uid: [])
-
-        recovered = await asyncio.to_thread(_reconcile_stale_generating_campaigns)
-
-        assert recovered == 1
-        assert fake_persist[0][2]["generation"]["status"] == "failed"
-
-    async def test_sweep_is_noop_without_sessions(self, monkeypatch):
-        client = MagicMock()
-        client.table("workflow_sessions").select("user_id").eq(
-            "channel", "workspace"
-        ).execute.return_value = MagicMock(data=[])
-        monkeypatch.setattr(
-            "services.supabase.get_supabase_client", lambda: client)
-
-        recovered = await asyncio.to_thread(_reconcile_stale_generating_campaigns)
-        assert recovered == 0

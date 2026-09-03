@@ -44,3 +44,18 @@ def test_batch_item_completion_is_idempotent_and_resume_skips_completed(monkeypa
     assert not storage.mark_batch_item_completed("job", "lead-1", "draft-other")
     remaining = storage.list_batch_resume_items("job", "ws")
     assert [item.idempotency_key for item in remaining] == ["lead-2"]
+
+
+def test_batch_item_can_only_be_claimed_once(monkeypatch):
+    import services.job_engine.storage as storage_module
+
+    client = MemoryClient()
+    monkeypatch.setattr(storage_module, "get_supabase_client", lambda: client)
+    storage = JobStorage()
+    item = BatchItem(
+        job_id="job", workspace_id="ws", campaign_id="campaign", position=0,
+        lead_snapshot={"id": "lead-1"}, idempotency_key="lead-1",
+    )
+    assert storage.create_batch_items([item])
+    assert storage.mark_batch_item_generating(item.id) is True
+    assert storage.mark_batch_item_generating(item.id) is False

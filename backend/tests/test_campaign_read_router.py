@@ -54,7 +54,11 @@ async def test_campaign_read_routes_keep_registered_paths_and_response_shapes(mo
         "/api/web/session/{session_token}/campaigns/{campaign_id}/launch-progress",
         "/api/web/session/{session_token}/campaigns/{campaign_id}/timeline",
     ]
-    assert [route.path for route in campaign_api.router.routes] == expected_paths
+    read_paths = [
+        route.path for route in campaign_api.router.routes
+        if "GET" in getattr(route, "methods", set())
+    ]
+    assert read_paths == expected_paths
     assert any(
         getattr(route, "original_router", None) is campaign_api.router
         for route in main.app.routes

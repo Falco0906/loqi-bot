@@ -20,12 +20,6 @@ from workflows import run_workflow
 
 log = logging.getLogger("loqi")
 
-# Temporary compatibility state for legacy batch routes. R5-B-6b will move
-# batch execution and recovery to the durable job engine.
-batch_jobs: dict[str, dict[str, Any]] = {}
-_draft_batch_tasks: dict[str, asyncio.Task] = {}
-
-
 _SYNONYM_STRATEGY_TABLE = [
     (["shorter", "concise", "brief", "trim", "cut down"], "shorten"),
     (["longer", "expand", "more detail", "elaborate", "add more", "extend"], "lengthen"),
@@ -165,6 +159,8 @@ async def enqueue_draft_batch(
     workspace_id: str,
     leads: list[dict[str, Any]],
     campaign_id: str = "",
+    *,
+    start: bool = True,
 ) -> dict[str, Any]:
     """Durably create one draft batch and its item snapshots before queueing it."""
     from services.job_engine import Job, job_manager
@@ -189,16 +185,72 @@ async def enqueue_draft_batch(
         )
         for position, lead in enumerate(leads)
     ]
-    created = await job_manager.create_batch_job(job, items)
+    created = await job_manager.create_batch_job(job, items, start=start)
     if not created:
         raise HTTPException(status_code=503, detail="Draft generation could not be scheduled")
     return {"batch_id": job.id, "total": len(items), "status": "queued"}
 
 
+async def schedule_campaign_draft_batch(
+    session_token: str,
+    owner_id: str,
+    workspace_id: str,
+    campaign_id: str,
+    leads: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Persist campaign generation metadata before starting its durable batch."""
+    from services.job_engine import job_manager
+    from services.workspace_state import persist_campaign_update_awaited
+
+    batch = await enqueue_draft_batch(
+        session_token, owner_id, workspace_id, leads, campaign_id, start=False,
+    )
+    started_at = datetime.now(timezone.utc).isoformat()
+    persisted = await persist_campaign_update_awaited(
+        owner_id,
+        campaign_id,
+        {
+            "generation": {
+                "batch_id": batch["batch_id"],
+                "total": batch["total"],
+                "completed": 0,
+                "status": "processing",
+                "started_at": started_at,
+            },
+        },
+        workspace_id=workspace_id,
+    )
+    if not persisted:
+        await asyncio.to_thread(job_manager._storage.delete_job, batch["batch_id"])
+        raise HTTPException(status_code=503, detail="Draft generation could not be started")
+    job = await asyncio.to_thread(job_manager._storage.get_job, batch["batch_id"])
+    if not job or not job_manager.resume_job(job):
+        await asyncio.to_thread(job_manager._storage.delete_job, batch["batch_id"])
+        raise HTTPException(status_code=503, detail="Draft generation could not be scheduled")
+    return batch
+
+
+async def active_draft_batch(owner_id: str, workspace_id: str, campaign_id: str) -> dict[str, Any] | None:
+    """Return the caller's active durable batch for one campaign, if any."""
+    from services.job_engine import job_manager
+
+    jobs = await asyncio.to_thread(job_manager._storage.list_active_jobs_by_type, "draft_batch")
+    for job in jobs:
+        if job.user_id == owner_id and job.workspace_id == workspace_id and job.campaign_id == campaign_id:
+            return {"batch_id": job.id, "total": int((job.payload or {}).get("total") or 0), "status": job.status.value}
+    return None
+
+
 async def run_draft_batch_job(job, on_progress) -> dict[str, Any]:
     """Generate drafts from durable batch items, resuming incomplete items only."""
     from services.job_engine import job_manager
-    from services.workspace_state import load_campaign_state, persist_draft_awaited
+    from services.knowledge.context_adapter import retrieve_knowledge_context
+    from services.workspace_state import (
+        load_campaign_state,
+        load_workspace_state,
+        persist_campaign_update,
+        persist_draft_awaited,
+    )
 
     storage = job_manager._storage
     items = await asyncio.to_thread(storage.list_batch_resume_items, job.id, job.workspace_id)
@@ -207,100 +259,22 @@ async def run_draft_batch_job(job, on_progress) -> dict[str, Any]:
         load_campaign_state, job.user_id, job.campaign_id, workspace_id=job.workspace_id,
     ) if job.campaign_id else {}
     strategy = dict((campaign or {}).get("strategy") or {})
-    completed = 0
+    all_items = await asyncio.to_thread(storage.list_batch_items, job.id, job.workspace_id)
+    total = len(all_items)
+    completed = sum(1 for item in all_items if item.status.value in {"completed", "failed"})
     loop = asyncio.get_running_loop()
-
-    for item in items:
-        if not await asyncio.to_thread(storage.mark_batch_item_generating, item.id):
-            continue
-        lead = item.lead_snapshot
-        name = str(lead.get("name") or lead.get("company") or "Unknown")
-        progress = int((item.position / max(len(items), 1)) * 100)
-        on_progress(job.id, f"Generating draft for {name}", progress)
-        try:
-            result = await _run_draft_with_retry(loop, {"type": "draft_message", "campaign_strategy": strategy, "lead": lead})
-            draft = {
-                "id": str(uuid.uuid4()), "campaign_id": job.campaign_id,
-                "batch_id": job.id, "lead": lead, "subject": result.get("subject", ""),
-                "text": _parse_draft_body(result.get("message", "")) or result.get("message", ""),
-                "status": "pending", "created_at": datetime.now(timezone.utc).isoformat(),
-            }
-            if not await persist_draft_awaited(job.user_id, draft):
-                raise RuntimeError("Draft could not be persisted")
-            if not await asyncio.to_thread(storage.mark_batch_item_completed, job.id, item.idempotency_key, draft["id"]):
-                raise RuntimeError("Draft completion could not be persisted")
-            completed += 1
-            publish(session_token, WMEventType.DRAFT_GENERATED, {"id": draft["id"], "campaign_id": job.campaign_id, "lead_name": name, "subject": draft["subject"], "body_preview": draft["text"][:200]}, actor="system")
-        except Exception as error:
-            await asyncio.to_thread(storage.mark_batch_item_failed, item.id, str(error))
-    return {"ok": True, "result": {"total": len(items), "completed": completed}}
-
-
-def _create_batch_job(batch_id: str, campaign_id: str | None, total: int) -> dict[str, Any]:
-    job: dict[str, Any] = {
-        "status": "processing",
-        "total": total,
-        "completed": 0,
-        "current_index": -1,
-        "current_name": None,
-        "drafts": [],
-        "error": None,
-        "campaign_id": campaign_id,
-        "batch_id": batch_id,
-        "started_at": datetime.now(timezone.utc).isoformat(),
-    }
-    batch_jobs[batch_id] = job
-    return job
-
-
-def _launch_batch_task(
-    session_token: str,
-    batch_id: str,
-    leads: list[dict[str, Any]],
-    owner_id: str,
-) -> None:
-    """Start a draft batch and retain the task so it survives GC mid-run."""
-    task = asyncio.create_task(
-        _process_batch_drafts(session_token, batch_id, leads, owner_id)
-    )
-    _draft_batch_tasks[batch_id] = task
-    task.add_done_callback(lambda _done: _draft_batch_tasks.pop(batch_id, None))
-
-
-async def _process_batch_drafts(
-    session_token: str,
-    batch_id: str,
-    leads: list[dict],
-    owner_id: str,
-) -> None:
-    job = batch_jobs[batch_id]
-    loop = asyncio.get_event_loop()
-
-    campaign_strategy: dict = {}
-    if job.get("campaign_id"):
-        from services.workspace_state import load_campaign_state
-        try:
-            campaign = await asyncio.to_thread(
-                load_campaign_state, owner_id, job.get("campaign_id"),
-            )
-            if campaign and isinstance(campaign.get("strategy"), dict):
-                campaign_strategy = campaign["strategy"]
-        except Exception as e:
-            print(f"[batch] Could not load campaign strategy: {e}")
-
-    draft_message_input = {
+    draft_message_input: dict[str, Any] = {
         "type": "draft_message",
-        "campaign_strategy": campaign_strategy,
+        "campaign_strategy": strategy,
     }
-    from services.knowledge.context_adapter import retrieve_knowledge_context
     strategy_query = " ".join(
-        str(campaign_strategy.get(key) or "").strip()
+        str(strategy.get(key) or "").strip()
         for key in ("icp", "messaging_angle", "value_proposition", "positioning")
-        if str(campaign_strategy.get(key) or "").strip()
+        if str(strategy.get(key) or "").strip()
     )
     try:
         retrieved_knowledge = await retrieve_knowledge_context(
-            owner_id,
+            job.user_id,
             query=strategy_query,
             categories=["company", "icp", "messaging", "sales_offer"],
             limit=8,
@@ -310,169 +284,158 @@ async def _process_batch_drafts(
     except Exception as error:
         log.warning("[batch] Knowledge retrieval skipped: %s", error)
 
-    for i, lead in enumerate(leads):
-        job["current_index"] = i
+    for item in items:
+        if not await asyncio.to_thread(storage.mark_batch_item_generating, item.id):
+            continue
+        lead = item.lead_snapshot
         name = (
             lead.get("name")
             or f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip()
+            or lead.get("company")
             or "Unknown"
         )
-        job["current_name"] = name
-
+        progress = int((item.position / max(total, 1)) * 100)
+        on_progress(job.id, f"Generating draft for {name}", progress)
         try:
-            workflow_result = await _run_draft_with_retry(
-                loop, {**draft_message_input, "lead": lead}
-            )
-
-            draft_body = _parse_draft_body(workflow_result.get("message", ""))
-
-            draft_entry: dict[str, Any] = {
-                "id": str(uuid.uuid4()),
-                "campaign_id": job.get("campaign_id"),
-                "batch_id": job.get("batch_id"),
-                "lead": lead,
-                "subject": workflow_result.get("subject", ""),
-                "text": draft_body or workflow_result.get("message", ""),
-                "status": "pending",
-                "tone": workflow_result.get("tone"),
-                "length": workflow_result.get("length"),
-                "lead_intelligence": workflow_result.get("lead_intelligence"),
-                "company_intelligence": workflow_result.get("company_intelligence"),
+            result = await _run_draft_with_retry(loop, {**draft_message_input, "lead": lead})
+            draft = {
+                "id": str(uuid.uuid4()), "campaign_id": job.campaign_id,
+                "batch_id": job.id, "lead": lead, "subject": result.get("subject", ""),
+                "text": _parse_draft_body(result.get("message", "")) or result.get("message", ""),
+                "status": "pending", "tone": result.get("tone"),
+                "length": result.get("length"),
+                "lead_intelligence": result.get("lead_intelligence"),
+                "company_intelligence": result.get("company_intelligence"),
                 "evidence_trace": await _evidence_trace(
-                    campaign_strategy,
-                    workflow_result.get("company_intelligence"),
-                    workflow_result.get("lead_intelligence"),
+                    strategy,
+                    result.get("company_intelligence"),
+                    result.get("lead_intelligence"),
                     draft_message_input.get("knowledge_context"),
                 ),
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
-
-            from services.workspace_state import persist_draft_awaited
-            if not await persist_draft_awaited(owner_id, draft_entry):
+            if not await persist_draft_awaited(job.user_id, draft, workspace_id=job.workspace_id):
                 raise RuntimeError("Draft could not be persisted")
-
-            job["drafts"].append(draft_entry)
-            job["completed"] = i + 1
-
+            if not await asyncio.to_thread(storage.mark_batch_item_completed, job.id, item.idempotency_key, draft["id"]):
+                raise RuntimeError("Draft completion could not be persisted")
+            completed += 1
             publish(session_token, WMEventType.DRAFT_GENERATED, {
-                "id": draft_entry["id"],
-                "campaign_id": draft_entry["campaign_id"],
-                "lead_id": lead.get("id", ""),
-                "lead_name": name,
-                "subject": draft_entry["subject"],
-                "body_preview": draft_entry["text"][:200],
+                "id": draft["id"], "campaign_id": job.campaign_id,
+                "lead_id": lead.get("id", ""), "lead_name": name,
+                "subject": draft["subject"], "body_preview": draft["text"][:200],
             }, actor="system")
-
             await publish_draft_event(
-                owner_id, "draft.created",
-                draft_id=draft_entry["id"],
-                campaign_id=str(draft_entry["campaign_id"] or ""),
-                lead_name=name,
+                job.user_id, "draft.created", draft_id=draft["id"],
+                campaign_id=str(job.campaign_id or ""), lead_name=name,
             )
-            outbound_service.sync_draft_to_outbound(draft_entry, session_token, owner_id=owner_id)
-
-        except Exception as e:
-            print(f"[batch] Draft failed for lead {i} ({name}): {e}")
+            outbound_service.sync_draft_to_outbound(draft, session_token, owner_id=job.user_id)
+        except Exception as error:
+            await asyncio.to_thread(storage.mark_batch_item_failed, item.id, str(error))
+            completed += 1
             publish(session_token, WMEventType.DRAFT_FAILED, {
-                "lead_index": i,
-                "lead_index": i,
-                "lead_name": name,
-                "error": str(e),
-                "campaign_id": job.get("campaign_id"),
+                "lead_index": item.position, "lead_name": name, "error": str(error),
+                "campaign_id": job.campaign_id,
             }, actor="system")
-            job["completed"] = i + 1
             await publish_draft_event(
-                owner_id, "draft.generation_failed",
-                campaign_id=str(job.get("campaign_id") or ""),
-                lead_name=name,
-                extra={"lead_index": i},
+                job.user_id, "draft.generation_failed", campaign_id=str(job.campaign_id or ""),
+                lead_name=name, extra={"lead_index": item.position},
             )
 
-    job["status"] = "completed"
-
-    campaign_id = job.get("campaign_id")
-    campaign_name = None
-    if campaign_id:
-        from services.workspace_state import persist_campaign_update
-        finished_at = datetime.now(timezone.utc).isoformat()
-        generation: dict[str, Any] = {
-            "batch_id": job.get("batch_id"),
-            "total": job.get("total", 0),
-            "completed": job.get("completed", 0),
-            "status": "completed" if job.get("drafts") else "failed",
-            "error": job.get("error"),
-            "started_at": job.get("started_at"),
-            "finished_at": finished_at,
+    persisted_items = await asyncio.to_thread(storage.list_batch_items, job.id, job.workspace_id)
+    generated = [item for item in persisted_items if item.status.value == "completed"]
+    if job.campaign_id:
+        now = datetime.now(timezone.utc).isoformat()
+        generation = {
+            "batch_id": job.id,
+            "total": total,
+            "completed": completed,
+            "status": "completed" if generated else "failed",
+            "error": None if generated else "No drafts were generated",
+            "started_at": job.created_at.isoformat() if job.created_at else None,
+            "finished_at": now,
         }
-        if not job.get("drafts"):
-            persist_campaign_update(owner_id, campaign_id, {"generation": generation})
-            job["status"] = "failed"
-            job["error"] = "No drafts were generated"
-            return
-        if not persist_campaign_update(owner_id, campaign_id, {"generation": generation}):
-            job["status"] = "failed"
-            job["error"] = "Campaign generation metadata could not be persisted"
-            return
-        from services.workspace_state import load_workspace_state
-        campaigns = await asyncio.to_thread(load_workspace_state, owner_id, include_details=False)
-        campaign_name = next((c.get("name") for c in campaigns["campaigns"] if c.get("id") == campaign_id), "")
+        persisted = await asyncio.to_thread(
+            persist_campaign_update,
+            job.user_id,
+            job.campaign_id,
+            {"generation": generation},
+            workspace_id=job.workspace_id,
+        )
+        if not persisted:
+            return {"ok": False, "error": "Campaign generation metadata could not be persisted"}
+        campaigns = await asyncio.to_thread(
+            load_workspace_state, job.user_id, include_details=False, workspace_id=job.workspace_id,
+        )
+        campaign_name = next(
+            (campaign.get("name") for campaign in campaigns["campaigns"] if campaign.get("id") == job.campaign_id),
+            "",
+        )
         publish(session_token, WMEventType.CAMPAIGN_UPDATED, {
-            "campaign_id": campaign_id,
-            "generation": generation,
+            "campaign_id": job.campaign_id, "generation": generation,
         }, actor="system")
-    final_status = "draft.generation_completed" if job["status"] != "failed" else "draft.generation_failed"
-    await publish_draft_event(
-        owner_id, final_status,
-        campaign_id=str(campaign_id or ""),
-        extra={"completed": job.get("completed", 0), "total": job.get("total", 0)},
+        await publish_draft_event(
+            job.user_id,
+            "draft.generation_completed" if generated else "draft.generation_failed",
+            campaign_id=job.campaign_id,
+            extra={"completed": completed, "total": total},
+        )
+        if campaign_name:
+            record_drafts_generated(session_token, campaign_name, completed)
+    return {"ok": bool(generated), "result": {"total": total, "completed": completed}, "error": "No drafts were generated" if not generated else ""}
+
+
+def _legacy_batch_status(job, items) -> dict[str, Any]:
+    """Translate durable job/item state into the frozen batch-status shape."""
+    terminal_items = [item for item in items if item.status.value in {"completed", "failed"}]
+    active_item = next(
+        (item for item in items if item.status.value == "generating"),
+        next((item for item in items if item.status.value == "pending"), None),
     )
-    if campaign_name:
-        record_drafts_generated(session_token, campaign_name, job.get("completed", 0))
+    lead = active_item.lead_snapshot if active_item else {}
+    current_name = (
+        lead.get("name")
+        or f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip()
+        or lead.get("company")
+        or None
+    )
+    status = "processing" if job.status.value in {"queued", "running"} else job.status.value
+    return {
+        "status": status,
+        "total": int((job.payload or {}).get("total") or len(items)),
+        "completed": len(terminal_items),
+        "current_index": active_item.position if active_item else -1,
+        "current_name": current_name,
+        "drafts": [],
+        "error": job.error_message,
+        "campaign_id": job.campaign_id or None,
+        "batch_id": job.id,
+        "started_at": job.created_at.isoformat() if job.created_at else None,
+    }
 
 
-def _reconcile_campaign_generation(owner_id: str, campaign: dict[str, Any]) -> dict[str, Any]:
-    """Resolve a campaign whose draft batch was interrupted.
+async def draft_batch_status(owner_id: str, workspace_id: str, batch_id: str) -> dict[str, Any] | None:
+    """Return the legacy batch-status shape from the authorized durable job."""
+    from services.job_engine import job_manager
 
-    Callers must verify no live batch task exists for this campaign. Marks the
-    durable ``generation`` metadata completed when drafts were persisted,
-    otherwise failed so generation can be retried. Uses only the durable
-    workflow event stream; never touches authentication.
-    """
-    generation = campaign.get("generation")
-    generation = generation if isinstance(generation, dict) else {}
-    if generation.get("status") != "processing":
-        return campaign
+    job = await asyncio.to_thread(job_manager._storage.get_job, batch_id)
+    if not job or job.type != "draft_batch" or job.user_id != owner_id or job.workspace_id != workspace_id:
+        return None
+    items = await asyncio.to_thread(job_manager._storage.list_batch_items, job.id, workspace_id)
+    return _legacy_batch_status(job, items)
 
-    batch_id = generation.get("batch_id")
-    from services.workspace_state import load_drafts_only, persist_campaign_update
-    drafts = load_drafts_only(owner_id)
-    batch_drafts = [
-        d for d in drafts
-        if d.get("campaign_id") == campaign.get("id")
-        and (not batch_id or d.get("batch_id") == batch_id)
-    ]
 
-    now = datetime.now(timezone.utc).isoformat()
-    if batch_drafts:
-        resolved: dict[str, Any] = {
-            **generation,
-            "status": "completed",
-            "total": generation.get("total", len(batch_drafts)),
-            "completed": len(batch_drafts),
-            "finished_at": now,
-        }
-    else:
-        resolved = {
-            **generation,
-            "status": "failed",
-            "error": "Draft generation was interrupted before any draft was persisted",
-            "finished_at": now,
-        }
+async def reconcile_stale_draft_batch_jobs() -> int:
+    """Resume durable queued/running draft batches after process restart."""
+    from services.job_engine import job_manager
 
-    if persist_campaign_update(owner_id, campaign.get("id", ""), {"generation": resolved}):
-        campaign["generation"] = resolved
-        campaign["updated_at"] = now
-    return campaign
+    register_draft_batch_workflow()
+    jobs = await asyncio.to_thread(job_manager._storage.list_active_jobs_by_type, "draft_batch")
+    for job in jobs:
+        await asyncio.to_thread(
+            job_manager._storage.reset_batch_items_for_resume, job.id, job.workspace_id,
+        )
+        job_manager.resume_job(job)
+    return len(jobs)
 
 
 # Product decision for R5-B: draft text is durable, but rewrite undo/version

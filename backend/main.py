@@ -302,15 +302,14 @@ async def lifespan(app: FastAPI):
                      reply_simulator.pending_count())
     except Exception as e:
         log.warning("Reply simulator startup failed: %s", e)
-    # Draft-generation recovery is scheduled as a background task so startup
-    # is never blocked: the sweep runs off the event loop in a worker thread
-    # while the server accepts requests. Reconciliation stays idempotent —
-    # each stale campaign is re-checked against the DB right before resolving.
+    # Draft-batch recovery is scheduled as a background task so startup is
+    # never blocked. The durable job engine resumes each incomplete item using
+    # its idempotency key, rather than reconciling from process-local state.
     async def _run_generation_recovery() -> None:
         try:
-            recovered = await asyncio.to_thread(_reconcile_stale_generating_campaigns)
+            recovered = await draft_service.reconcile_stale_draft_batch_jobs()
             if recovered:
-                log.info("Reconciled %d interrupted draft generation(s) after restart", recovered)
+                log.info("Resumed %d interrupted draft generation(s) after restart", recovered)
         except Exception as e:
             log.warning("Draft generation recovery sweep failed: %s", e)
 
@@ -710,120 +709,6 @@ _execution_adapter_registry = ExecutionAdapterRegistry()
 # R5/R8 compatibility projection only. Campaign strategy-job metadata is
 # persisted on the canonical campaign record; this map retains live task state
 # for legacy polling until that route family moves to the durable jobs boundary.
-
-
-def _reconcile_stale_generating_campaigns() -> int:
-    """One-shot startup recovery for draft batches interrupted by a restart.
-
-    After a restart no batch tasks exist, so any campaign still in 'generating'
-    reflects an interrupted batch. Reconcile every one from the durable
-    workflow event stream. Returns the number of campaigns reconciled.
-
-    Discovery is targeted: only campaigns whose ``settings.generation.status``
-    is 'processing' are loaded (no workspace-wide scan). Reconciliation
-    semantics are unchanged — Draft service reconciliation resolves
-    completed/failed exactly as before. A status/batch re-check right before
-    reconciling keeps duplicate or late executions idempotent: a campaign
-    resolved by an earlier pass (or a batch started concurrently) is skipped.
-    """
-    from services.supabase import get_supabase_client
-
-    client = get_supabase_client()
-    if client is None:
-        return 0
-    try:
-        rows = (
-            client.table("campaigns")
-            .select("id, workspace_id, settings")
-            .filter("settings->generation->>status", "eq", "processing")
-            .execute()
-        )
-    except Exception as error:
-        log.warning("[recovery] stale campaign scan failed: %s", error)
-        return 0
-    campaign_rows = getattr(rows, "data", None) or []
-
-    workspace_ids = {r.get("workspace_id") for r in campaign_rows if r.get("workspace_id")}
-    if not workspace_ids:
-        return 0
-    try:
-        workspaces = (
-            client.table("workspaces")
-            .select("id, owner_user_id")
-            .in_("id", list(workspace_ids))
-            .execute()
-        )
-        workspace_owner = {
-            row.get("id"): row.get("owner_user_id")
-            for row in getattr(workspaces, "data", None) or []
-            if row.get("id") and row.get("owner_user_id")
-        }
-    except Exception as error:
-        log.warning("[recovery] workspace session lookup failed: %s", error)
-        return 0
-
-    recovered = 0
-    for row in campaign_rows:
-        workspace_id = row.get("workspace_id")
-        owner_id = workspace_owner.get(workspace_id)
-        if not owner_id:
-            log.warning("[recovery] no owner for workspace %s, skipping", workspace_id)
-            continue
-        try:
-            settings = row.get("settings") or {}
-            if isinstance(settings, str):
-                try:
-                    settings = json.loads(settings)
-                except (TypeError, ValueError):
-                    settings = {}
-            generation = (settings.get("generation") or {}) if isinstance(settings, dict) else {}
-            generation = generation if isinstance(generation, dict) else {}
-            if generation.get("status") != "processing":
-                continue
-            if not _campaign_generation_still_processing(client, row.get("id"), generation):
-                continue
-            campaign = {"id": row.get("id"), "generation": generation}
-            draft_service._reconcile_campaign_generation(owner_id, campaign)
-            recovered += 1
-        except Exception as error:
-            log.warning("[recovery] reconcile failed for workspace %s: %s", workspace_id, error)
-    return recovered
-
-
-def _campaign_generation_still_processing(client, campaign_id: str, generation: dict) -> bool:
-    """Re-read the campaign's generation right before reconciling.
-
-    Guards against clobbering a batch that started concurrently with the
-    recovery pass (the sweep now runs after the server accepts requests):
-    only a campaign still 'processing' with the same batch_id is reconciled.
-    Makes duplicate background executions idempotent.
-    """
-    batch_id = generation.get("batch_id") or ""
-    try:
-        rows = (
-            client.table("campaigns")
-            .select("settings")
-            .eq("id", campaign_id)
-            .limit(1)
-            .execute()
-        )
-    except Exception as error:
-        log.warning("[recovery] stale re-check failed for %s: %s", campaign_id, error)
-        return False
-    row = (getattr(rows, "data", None) or [None])[0]
-    if not row:
-        return False
-    current = row.get("settings") or {}
-    if isinstance(current, str):
-        try:
-            current = json.loads(current)
-        except (TypeError, ValueError):
-            current = {}
-    current = (current.get("generation") or {}) if isinstance(current, dict) else {}
-    current = current if isinstance(current, dict) else {}
-    if current.get("status") != "processing":
-        return False
-    return (current.get("batch_id") or "") == batch_id
 
 
 def _build_copilot_workspace_context(
@@ -1694,19 +1579,18 @@ async def _run_copilot_campaign(
         leads = target.get("leads") or []
         if not leads:
             return {"ok": False, "status": "failed", "tool": tool_name, "reason": "No leads found in the campaign."}
-        active_job = next((job for job in draft_service.batch_jobs.values() if job.get("campaign_id") == campaign_id and job.get("status") == "processing"), None)
+        active_job = await draft_service.active_draft_batch(user_id, workspace_id, campaign_id)
         if active_job:
-            batch_id = str(active_job.get("batch_id") or "")
-            total = int(active_job.get("total") or len(leads))
+            batch_id = str(active_job["batch_id"])
+            total = int(active_job["total"] or len(leads))
         else:
-            batch_id = str(uuid.uuid4())
-            total = len(leads)
-            draft_service._create_batch_job(batch_id, campaign_id, total)
-            started_at = datetime.now(timezone.utc).isoformat()
-            if not await persist_campaign_update_awaited(user_id, campaign_id, {"generation": {"batch_id": batch_id, "total": total, "completed": 0, "status": "processing", "started_at": started_at}}, workspace_id=workspace_id):
-                draft_service.batch_jobs.pop(batch_id, None)
+            try:
+                batch = await draft_service.schedule_campaign_draft_batch(
+                    session_token, user_id, workspace_id, leads, campaign_id,
+                )
+            except HTTPException:
                 return {"ok": False, "status": "failed", "tool": tool_name, "reason": "Draft generation could not be started."}
-            draft_service._launch_batch_task(session_token, batch_id, leads, user_id)
+            batch_id, total = batch["batch_id"], batch["total"]
         return {"ok": True, "status": "accepted", "tool": tool_name, "operation": {"kind": tool_name, "campaign_id": campaign_id, "batch_id": batch_id, "status": "processing", "total": total}, "result": {"campaign": target}}
 
     return {"ok": False, "status": "unsupported", "tool": tool_name}
@@ -3569,15 +3453,12 @@ async def batch_draft(session_token: str, payload: BatchDraftRequest, request: R
 
 @app.get("/api/web/session/{session_token}/batch-status/{batch_id}")
 async def batch_status(session_token: str, batch_id: str, request: Request = None):
-    job = draft_service.batch_jobs.get(batch_id)
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
+    job = await draft_service.draft_batch_status(owner_id, workspace_id, batch_id)
     if not job:
         raise HTTPException(status_code=404, detail="Batch not found")
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token) if request is not None else ""
-    campaign_id = job.get("campaign_id") or ""
-    if campaign_id:
-        campaigns = load_campaigns(owner_id) if owner_id else []
-        if not any(c.get("id") == campaign_id for c in campaigns):
-            raise HTTPException(status_code=404, detail="Batch not found")
     return {"ok": True, **job}
 
 
@@ -5093,18 +4974,11 @@ async def generate_campaign_drafts(session_token: str, campaign_id: str, request
     if not target:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
-    active_job = next(
-        (j for j in draft_service.batch_jobs.values()
-         if j.get("campaign_id") == campaign_id and j.get("status") == "processing"),
-        None,
-    )
+    active_job = await draft_service.active_draft_batch(owner_id, workspace_id, campaign_id)
     if active_job:
-        return {"ok": True, "batch_id": active_job.get("batch_id"), "total": active_job.get("total", 0)}
+        return {"ok": True, "batch_id": active_job["batch_id"], "total": active_job["total"]}
     generation = target.get("generation")
     generation = generation if isinstance(generation, dict) else {}
-    if generation.get("status") == "processing":
-        target = draft_service._reconcile_campaign_generation(owner_id, target)
-        generation = target.get("generation") or {}
     if generation.get("status") == "completed" and generation.get("batch_id"):
         return {"ok": True, "batch_id": generation.get("batch_id"), "total": generation.get("total", 0)}
 
@@ -5121,61 +4995,46 @@ async def generate_campaign_drafts(session_token: str, campaign_id: str, request
     if not leads:
         raise HTTPException(status_code=400, detail="No leads found in campaign")
 
-    batch_id = str(uuid.uuid4())
-    total = len(leads)
-    draft_service._create_batch_job(batch_id, campaign_id, total)
+    batch = await draft_service.schedule_campaign_draft_batch(
+        session_token, owner_id, workspace_id, leads, campaign_id,
+    )
+    batch_id, total = batch["batch_id"], batch["total"]
     target["updated_at"] = datetime.now(timezone.utc).isoformat()
-    from services.workspace_state import persist_campaign_update_awaited
-    if not await persist_campaign_update_awaited(owner_id, campaign_id, {
-        "generation": {
-            "batch_id": batch_id,
-            "total": total,
-            "completed": 0,
-            "status": "processing",
-            "started_at": target["updated_at"],
-        },
-    }):
-        draft_service.batch_jobs.pop(batch_id, None)
-        raise HTTPException(status_code=503, detail="Draft generation could not be started")
     publish(session_token, WMEventType.CAMPAIGN_UPDATED, {
         "campaign_id": campaign_id,
         "generation": {"batch_id": batch_id, "total": total, "status": "processing"},
         "lead_count": total,
     }, actor="user")
-    draft_service._launch_batch_task(session_token, batch_id, leads, owner_id)
     return {"ok": True, "batch_id": batch_id, "total": total}
 
 
 @app.get("/api/web/session/{session_token}/campaigns/{campaign_id}/generation-status")
 async def campaign_generation_status(session_token: str, campaign_id: str, request: Request):
     session_token = identity_dependencies.web_session_token(request)
-    active_jobs = [
-        job for job in draft_service.batch_jobs.values()
-        if job.get("campaign_id") == campaign_id and job.get("status") == "processing"
-    ]
-    if active_jobs:
-        latest = max(active_jobs, key=lambda j: j.get("current_index", -1))
-        return {
-            "ok": True,
-            "active": True,
-            "status": "processing",
-            "total": latest.get("total", 0),
-            "completed": latest.get("completed", 0),
-            "batch_id": latest.get("batch_id"),
-        }
-
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
+    active_job = await draft_service.active_draft_batch(owner_id, workspace_id, campaign_id)
+    if active_job:
+        status = await draft_service.draft_batch_status(owner_id, workspace_id, active_job["batch_id"])
+        if status:
+            return {
+                "ok": True,
+                "active": True,
+                "status": "processing",
+                "total": status["total"],
+                "completed": status["completed"],
+                "batch_id": status["batch_id"],
+            }
+
     campaigns = load_campaigns(owner_id, workspace_id=workspace_id)
     target = next((c for c in campaigns if c.get("id") == campaign_id), None)
     if not target:
-        return {"ok": True, "active": False, "status": "unknown", "jobs": []}
+        return {
+            "ok": True, "active": False, "status": "unknown", "jobs": [],
+        }
 
     generation = target.get("generation")
     generation = generation if isinstance(generation, dict) else {}
-    if generation.get("status") == "processing":
-        target = draft_service._reconcile_campaign_generation(owner_id, target)
-        generation = target.get("generation") or {}
 
     return {
         "ok": True,

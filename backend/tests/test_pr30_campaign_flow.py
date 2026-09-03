@@ -267,9 +267,9 @@ async def _await_batch_done(main_module, token, campaign_id, timeout=150):
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        from services.drafts.service import batch_jobs
-        job = batch_jobs.get(batch_id)
-        if job and job.get("status") == "processing":
+        from services.job_engine import job_manager
+        job = await asyncio.to_thread(job_manager.get_job, batch_id)
+        if job and job.get("status") in ("queued", "running"):
             await asyncio.sleep(1)
             continue
         break
@@ -287,19 +287,6 @@ async def _await_batch_done(main_module, token, campaign_id, timeout=150):
     finally:
         main_module.identity_dependencies.authenticated_user_id = original
     return batch_id, status
-
-
-@pytest.fixture(autouse=True)
-def _clean_batch_stores():
-    from services.drafts.service import batch_jobs
-    batch_jobs.clear()
-    from services.drafts.service import _draft_batch_tasks
-    _draft_batch_tasks.clear()
-    yield
-    from services.drafts.service import batch_jobs
-    batch_jobs.clear()
-    from services.drafts.service import _draft_batch_tasks
-    _draft_batch_tasks.clear()
 
 
 # ─────────────────────────────────────────────────────────────────────────

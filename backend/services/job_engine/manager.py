@@ -1,6 +1,6 @@
 from typing import Optional
 
-from services.job_engine.models import Job, JobStatus
+from services.job_engine.models import BatchItem, Job, JobStatus
 from services.job_engine.storage import JobStorage
 from services.job_engine.runner import BackgroundRunner
 from services.job_engine.registry import get_registry
@@ -26,6 +26,20 @@ class JobManager:
         if not created:
             return None
         self._runner.start_job(job, on_update=on_update, on_complete=on_complete)
+        return {"job_id": job.id, "status": job.status.value}
+
+    async def create_batch_job(self, job: Job, items: list[BatchItem]) -> Optional[dict]:
+        """Persist a batch job and every resumable item before starting work."""
+        import asyncio
+        if get_registry().get(job.type) is None:
+            return None
+
+        def persist() -> bool:
+            return bool(self._storage.create_job(job)) and self._storage.create_batch_items(items)
+
+        if not await asyncio.to_thread(persist):
+            return None
+        self._runner.start_job(job)
         return {"job_id": job.id, "status": job.status.value}
 
     def resume_job(self, job: Job) -> bool:

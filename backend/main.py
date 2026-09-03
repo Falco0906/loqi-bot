@@ -3555,12 +3555,16 @@ async def batch_draft(session_token: str, payload: BatchDraftRequest, request: R
     session_token = identity_dependencies.web_session_token(request)
     if not payload.leads:
         raise HTTPException(status_code=400, detail="No leads provided")
-    batch_id = str(uuid.uuid4())
-    total = len(payload.leads)
-    draft_service._create_batch_job(batch_id, payload.campaign_id, total)
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    draft_service._launch_batch_task(session_token, batch_id, payload.leads, owner_id)
-    return {"ok": True, "batch_id": batch_id, "total": total}
+    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
+    batch = await draft_service.enqueue_draft_batch(
+        session_token,
+        owner_id,
+        workspace_id,
+        payload.leads,
+        payload.campaign_id or "",
+    )
+    return {"ok": True, "batch_id": batch["batch_id"], "total": batch["total"]}
 
 
 @app.get("/api/web/session/{session_token}/batch-status/{batch_id}")

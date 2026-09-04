@@ -1294,52 +1294,6 @@ class SendWebMessageRequest(BaseModel):
     copilot: CopilotContextModel | None = None
 
 
-async def _run_copilot_knowledge(
-    tool_name: str,
-    user_id: str,
-    workspace_id: str,
-    session_token: str,
-    decision: dict[str, Any],
-) -> dict[str, Any]:
-    """Read-only Copilot adapter over the canonical Knowledge service."""
-    from services.knowledge.context_adapter import retrieve_knowledge_context
-    from services.knowledge.service import KnowledgeService, item_to_dict
-
-    page = decision.get("page_context") or {}
-    query = str(decision.get("knowledge_query") or decision.get("user_message") or "").strip()
-    context_parts = []
-    for key in ("company_name", "company", "lead_name", "lead_company", "campaign_name"):
-        value = page.get(key)
-        if value and str(value).strip() not in query:
-            context_parts.append(str(value).strip())
-    if context_parts:
-        query = " ".join([query, *context_parts]).strip()
-    categories = decision.get("knowledge_categories") or []
-    if not isinstance(categories, list):
-        categories = []
-
-    if tool_name == "knowledge.read" and decision.get("knowledge_item_id"):
-        item = await KnowledgeService().get_item(workspace_id, decision["knowledge_item_id"])
-        if item is None:
-            return {"ok": False, "status": "failed", "tool": tool_name, "reason": "Knowledge item not found in this workspace."}
-        return {"ok": True, "status": "completed", "tool": tool_name,
-                "result": {"items": [item_to_dict(item)], "sources": [], "query": query}}
-
-    context = await retrieve_knowledge_context(
-        user_id,
-        query=query,
-        categories=categories,
-        limit=8,
-        workspace_id=workspace_id,
-    )
-    result = context.to_dict()
-    result["context"] = {"page": page, "workspace_id": workspace_id}
-    if not result.get("items") and not result.get("sources"):
-        return {"ok": True, "status": "empty", "tool": tool_name, "result": result,
-                "reason": "No matching Knowledge was found in this workspace."}
-    return {"ok": True, "status": "completed", "tool": tool_name, "result": result}
-
-
 async def _run_copilot_analytics(
     tool_name: str,
     user_id: str,
@@ -2295,7 +2249,7 @@ async def post_web_session_message(
                     campaign_runner=copilot_runners.run_campaign,
                     outreach_runner=copilot_runners.run_outreach,
                     inbox_runner=lambda *args: copilot_runners.run_inbox(*args, request=request),
-                    knowledge_runner=_run_copilot_knowledge,
+                    knowledge_runner=copilot_runners.run_knowledge,
                     analytics_runner=_run_copilot_analytics,
                 )
 

@@ -267,7 +267,7 @@ class TestCopilotOperationBoundary:
             )
 
         monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", fake_retrieve)
-        result = await main_module._run_copilot_knowledge(
+        result = await main_module.copilot_runners.run_knowledge(
             "knowledge.search", "owner-1", "workspace-1", "session-1",
             {"user_message": "what is our ICP?", "knowledge_categories": ["icp"], "page_context": {}},
         )
@@ -283,7 +283,7 @@ class TestCopilotOperationBoundary:
             return KnowledgePromptContext(query="unknown", items=[], sources=[])
 
         monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", fake_retrieve)
-        result = await main_module._run_copilot_knowledge(
+        result = await main_module.copilot_runners.run_knowledge(
             "knowledge.search", "owner-1", "workspace-1", "session-1",
             {"user_message": "what do we know about unknown?", "page_context": {}},
         )

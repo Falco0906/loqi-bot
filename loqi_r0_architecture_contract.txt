@@ -182,9 +182,12 @@ KEEP AS SOURCE DURING MIGRATION (then co-locate/rename only when safe)
 MERGE (same product responsibility, retain one canonical implementation)
 * conversation_store.py web/workflow session functions → workflows/service or
   inbox compatibility facade; do not leave a second conversation authority.
-* workflows.py, workflow_dispatcher.py, workflow_executor.py, workflow_*.py,
-  execution/**, planner/** → one workflows.runtime plus jobs.service boundary.
-  Existing planner/reasoning code survives only if it is actually called.
+* workflows.py, workflow_executor.py, workflow_*.py, execution/**, planner/**
+  → one workflows.runtime plus jobs.service boundary. Existing
+  planner/reasoning code survives only if it is actually called.
+* workflow_dispatcher.py is the registered Discovery ``search`` Job Engine
+  runner, not legacy workflow runtime. Keep it under Discovery/Job Engine
+  ownership; do not merge it into ``services.workflows`` based on its name.
 * campaign_store, draft_store, batch_jobs, STRATEGY_JOBS in main.py → canonical
   campaign/draft/jobs persistence. These are temporary compatibility
   projections, never final authorities.

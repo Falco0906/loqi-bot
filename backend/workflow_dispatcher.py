@@ -1,3 +1,11 @@
+"""Discovery search workflow registration for the durable Job Engine.
+
+This module is not part of the legacy web-workflow state machine under
+``services.workflows``. Despite its historical name, it owns the registered
+``search`` job-engine runner and belongs with Discovery/Job Engine ownership.
+Do not merge it into the legacy workflow runtime during cleanup.
+"""
+
 import asyncio
 from typing import Callable, Optional
 

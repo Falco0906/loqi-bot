@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-import time
 from typing import Awaitable, Callable, TypeVar
 
 logger = logging.getLogger(__name__)
@@ -65,10 +64,6 @@ def classify_retryable(error: BaseException) -> bool:
     # Unknown exception type (e.g. PostgREST APIError with no HTTP status) —
     # be conservative: do not retry.
     return False
-
-
-def _sleep_with_jitter(seconds: float) -> None:
-    time.sleep(seconds + random.uniform(0, seconds * 0.2))
 
 
 async def _asleep_with_jitter(seconds: float) -> None:
@@ -121,25 +116,21 @@ def retry_sync(
     max_delay: float = DEFAULT_MAX_DELAY,
     category: str = "",
 ) -> T:
-    """Synchronous wrapper of :func:`retry_async` for blocking call sites."""
-    last_error: BaseException | None = None
-    for attempt in range(attempts):
-        try:
-            return factory()
-        except Exception as error:  # noqa: BLE001
-            last_error = error
-            if not classify_retryable(error) or attempt + 1 >= attempts:
-                if classify_retryable(error):
-                    logger.warning(
-                        "persistence_retry_exhausted category=%s attempts=%d error_type=%s",
-                        category, attempts, type(error).__name__,
-                    )
-                raise
-            delay = min(max_delay, base_delay * (2 ** attempt))
-            logger.warning(
-                "persistence_retry category=%s attempt=%d delay=%.2f error_type=%s",
-                category, attempt + 1, delay, type(error).__name__,
-            )
-            _sleep_with_jitter(delay)
-    assert last_error is not None
-    raise last_error
+    """Synchronous compatibility wrapper with non-blocking retry backoff.
+
+    The factory itself runs in a worker thread.  Callers should use
+    :func:`retry_async` from async code; this adapter exists for synchronous
+    integration boundaries only.
+    """
+    async def _factory() -> T:
+        return await asyncio.to_thread(factory)
+
+    return asyncio.run(
+        retry_async(
+            _factory,
+            attempts=attempts,
+            base_delay=base_delay,
+            max_delay=max_delay,
+            category=category,
+        )
+    )

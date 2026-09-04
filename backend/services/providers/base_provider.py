@@ -121,8 +121,8 @@ class BaseProvider(ABC):
 
 # ─── PR-4: provider execution hardening ──────────────────────────────────
 
+import asyncio  # noqa: E402
 import random  # noqa: E402
-import time as _time  # noqa: E402
 
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
@@ -158,7 +158,7 @@ def classify_provider_error(error: str = "", status: int | None = None) -> str:
     return "retryable"  # default safe: transient-looking
 
 
-def search_leads_with_retry(
+async def search_leads_with_retry_async(
     provider,
     *,
     icp: dict,
@@ -185,8 +185,12 @@ def search_leads_with_retry(
     while attempt <= max_retries:
         attempt += 1
         try:
-            deadline = _time.monotonic() + timeout_seconds
-            result = provider.search_leads(icp=icp, search_expansion=search_expansion, limit=limit)
+            result = await asyncio.to_thread(
+                provider.search_leads,
+                icp=icp,
+                search_expansion=search_expansion,
+                limit=limit,
+            )
             if result.get("ok"):
                 return result
             error = str(result.get("error") or "provider search failed")
@@ -205,14 +209,14 @@ def search_leads_with_retry(
                     retry_after = None
             if attempt <= max_retries:
                 backoff = min(8.0, (2 ** attempt) * 0.5 + random.uniform(0, 0.25))
-                _time.sleep(max(backoff, float(retry_after or 0)))
+                await asyncio.sleep(max(backoff, float(retry_after or 0)))
                 continue
             raise TimeoutError(last_error)
         except (_requests.Timeout,) as e:
             last_error = f"provider timeout after {timeout_seconds}s"
             if attempt > max_retries:
                 raise ProviderTimeoutError(last_error)
-            _time.sleep(min(8.0, (2 ** attempt) * 0.5 + random.uniform(0, 0.25)))
+            await asyncio.sleep(min(8.0, (2 ** attempt) * 0.5 + random.uniform(0, 0.25)))
         except _requests.RequestException as e:
             msg = str(e)
             cls = classify_provider_error(msg)
@@ -221,12 +225,38 @@ def search_leads_with_retry(
                 raise ProviderPermanentError(msg[:200])
             if attempt > max_retries:
                 raise ProviderTimeoutError(msg[:200])
-            _time.sleep(min(8.0, (2 ** attempt) * 0.5))
+            await asyncio.sleep(min(8.0, (2 ** attempt) * 0.5))
         except (ProviderTimeoutError, ProviderPermanentError):
             raise
         except Exception as e:
             last_error = str(e)[:200]
             if attempt > max_retries:
                 raise ProviderTimeoutError(last_error)
-            _time.sleep(1.0)
+            await asyncio.sleep(1.0)
     raise ProviderTimeoutError(last_error or "provider retries exhausted")
+
+
+def search_leads_with_retry(
+    provider,
+    *,
+    icp: dict,
+    search_expansion: dict,
+    limit: int = 30,
+    max_retries: int = MAX_PROVIDER_RETRIES,
+    timeout_seconds: float = PROVIDER_TIMEOUT_SECONDS,
+) -> dict:
+    """Synchronous compatibility entry point for worker-thread callers.
+
+    The provider interface remains synchronous, but individual calls execute
+    in a worker thread and retry waits yield via ``asyncio.sleep``.
+    """
+    return asyncio.run(
+        search_leads_with_retry_async(
+            provider,
+            icp=icp,
+            search_expansion=search_expansion,
+            limit=limit,
+            max_retries=max_retries,
+            timeout_seconds=timeout_seconds,
+        )
+    )

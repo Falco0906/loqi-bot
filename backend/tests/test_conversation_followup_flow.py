@@ -72,8 +72,15 @@ class FakeOutboundExecutor:
         self.external_id = external_id
         self.calls = []
 
-    def execute(self, action_type, params):
-        self.calls.append((action_type, params))
+    def send_request(self, request, *, original_recipient_email=""):
+        params = {
+            "provider_id": request.provider_id,
+            "thread_id": request.thread_id,
+            "subject": request.subject,
+            "body": request.body,
+            "recipient": {"email": request.recipient.email},
+        }
+        self.calls.append(("send_reply", params))
         if not self.ok:
             return {"ok": False, "error": self.error}
         return {
@@ -81,7 +88,7 @@ class FakeOutboundExecutor:
             "send_result": {
                 "id": self.external_id,
                 "external_message_id": self.external_id,
-                "thread_id": params.get("thread_id", ""),
+                "thread_id": request.thread_id,
                 "status": "sent",
                 "error": "",
             },

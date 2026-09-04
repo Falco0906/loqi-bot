@@ -44,6 +44,12 @@ class _FakeJobStorage:
         self.results = {}
         self.order = []
 
+    def list_active_jobs_by_type(self, job_type):
+        return [
+            job for job in self.jobs.values()
+            if job.type == job_type and job.status.value in {"queued", "running"}
+        ]
+
     def create_job(self, job):
         self.jobs[job.id] = job
         self.order.append(job.id)

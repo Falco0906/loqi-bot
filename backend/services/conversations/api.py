@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 
 from services.conversations.conversation_store import conversation_owned_by, conversation_store
+from services.conversations import service as conversation_service
 from services.identity import dependencies as identity_dependencies
 
 
@@ -85,3 +86,32 @@ async def get_conversation_messages_route(
             for message in conversation_store.get_messages_for_conversation(conversation_id)
         ],
     }
+
+
+async def _owned_conversation_or_404(conversation_id: str, request: Request | None):
+    owner_id = await _authenticated_owner(request)
+    conversation = conversation_service.owned_conversation(conversation_id, owner_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return owner_id
+
+
+@router.get("/api/web/session/{session_token}/conversations/{conversation_id}/reasoning")
+async def get_conversation_reasoning_route(session_token: str, conversation_id: str, request: Request = None):
+    del session_token
+    await _owned_conversation_or_404(conversation_id, request)
+    return conversation_service.conversation_reasoning(conversation_id)
+
+
+@router.post("/api/web/session/{session_token}/conversations/{conversation_id}/plan")
+async def get_conversation_plan_route(session_token: str, conversation_id: str, request: Request = None):
+    del session_token
+    await _owned_conversation_or_404(conversation_id, request)
+    return conversation_service.conversation_plan(conversation_id)
+
+
+@router.post("/api/web/session/{session_token}/conversations/{conversation_id}/generate-reply")
+async def generate_reply_route(session_token: str, conversation_id: str, body: dict = None, request: Request = None):
+    del session_token
+    owner_id = await _owned_conversation_or_404(conversation_id, request)
+    return await conversation_service.generate_reply(conversation_id, owner_id, body or {})

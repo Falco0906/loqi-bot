@@ -39,6 +39,7 @@ from services.reasoning.reasoning_models import (
 )
 
 import main as main_module  # noqa: E402
+from services.conversations.api import generate_reply_route  # noqa: E402
 def _auth_request(token="session"):
     request = SimpleNamespace()
     request.headers = SimpleNamespace(get=lambda k, d="": f"Bearer {token}" if k == "authorization" else d)
@@ -269,8 +270,8 @@ class TestReplyGenerationContext:
         monkeypatch.setattr("services.reply_generation.generation_pipeline.GenerationPipeline", FakePipeline)
         monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", fake_retrieve)
 
-        reply = await main_module.generate_reply_route("_", convo.conversation_id, {}, _auth_request())
-        follow_up = await main_module.generate_reply_route(
+        reply = await generate_reply_route("_", convo.conversation_id, {}, _auth_request())
+        follow_up = await generate_reply_route(
             "_", convo.conversation_id, {"follow_up": True}, _auth_request(),
         )
 

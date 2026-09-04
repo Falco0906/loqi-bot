@@ -60,6 +60,9 @@ async def test_conversation_read_router_preserves_routes_and_top_level_shapes(mo
         "/api/web/session/{session_token}/conversations/{conversation_id}",
         "/api/web/session/{session_token}/conversations/{conversation_id}/timeline",
         "/api/web/session/{session_token}/conversations/{conversation_id}/messages",
+        "/api/web/session/{session_token}/conversations/{conversation_id}/reasoning",
+        "/api/web/session/{session_token}/conversations/{conversation_id}/plan",
+        "/api/web/session/{session_token}/conversations/{conversation_id}/generate-reply",
     ]
     assert [route.path for route in conversation_api.router.routes] == expected_paths
     assert any(

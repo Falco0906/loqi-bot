@@ -204,7 +204,7 @@ class TestRoundTrip:
         _simulate_restart()
 
         result = asyncio.run(
-            main_module.get_conversation_reasoning_route("_", convo.conversation_id, _auth_request())
+            conversation_api.get_conversation_reasoning_route("_", convo.conversation_id, _auth_request())
         )
         assert result["ok"] is True
         reasoning = result["reasoning"]

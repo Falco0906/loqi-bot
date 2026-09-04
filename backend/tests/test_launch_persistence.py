@@ -336,7 +336,7 @@ class TestWorkspaceStateCanonicalFlip:
             }],
             "drafts": [],
         })
-        with patch("services.conversation_store.get_supabase_client",
+        with patch("services.conversations.compatibility.get_supabase_client",
                    return_value=client), \
              patch("services.workspace_state.get_supabase_client",
                    return_value=client):
@@ -394,7 +394,7 @@ class TestWorkspaceStateCanonicalFlip:
             "strategies": [],
             "drafts": [],
         })
-        with patch("services.conversation_store.get_supabase_client",
+        with patch("services.conversations.compatibility.get_supabase_client",
                    return_value=client), \
              patch("services.workspace_state.get_supabase_client",
                    return_value=client):
@@ -433,7 +433,7 @@ class TestWorkspaceStateCanonicalFlip:
                     "lead": {"id": "l1", "email": "l@x.com"}}},
             ],
         })
-        with patch("services.conversation_store.get_supabase_client",
+        with patch("services.conversations.compatibility.get_supabase_client",
                    return_value=client), \
              patch("services.workspace_state.get_supabase_client",
                    return_value=client):
@@ -608,7 +608,7 @@ class TestGlobalLeadDedup:
         cm._client = client
         set_connection_manager(cm)
 
-        with patch("services.conversation_store.get_supabase_client",
+        with patch("services.conversations.compatibility.get_supabase_client",
                    return_value=client), \
              patch("services.workspace_state.get_supabase_client",
                    return_value=client):
@@ -649,7 +649,7 @@ class TestGlobalLeadDedup:
         cm._client = client
         set_connection_manager(cm)
 
-        with patch("services.conversation_store.get_supabase_client",
+        with patch("services.conversations.compatibility.get_supabase_client",
                    return_value=client), \
              patch("services.workspace_state.get_supabase_client",
                    return_value=client):

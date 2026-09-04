@@ -74,7 +74,7 @@ async def cached_web_session_identity(token: str) -> dict | None:
     if cached is not None:
         return cached
     try:
-        from services.conversation_store import get_web_session
+        from services.conversations.compatibility import get_web_session
         from services.supabase import has_connected_account
 
         def _read_identity() -> dict | None:

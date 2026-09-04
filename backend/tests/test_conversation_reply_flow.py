@@ -35,10 +35,11 @@ from services.outbound import outbound_registry
 from services.conversations.conversation_models import ConversationStatus, ReplyCategory
 from services.conversations.conversation_store import conversation_store
 from services.conversations.integration import create_conversation_from_send, handle_reply
+from services.conversations import api as conversation_api
+from services.conversations import service as conversation_service
 from services.conversations.state_machine import transition as state_transition
 from services.conversations.timeline import TimelineEventType
 
-import main as main_module  # noqa: E402
 def _auth_request(token="session-flow"):
     request = MagicMock()
     request.headers.get = lambda k, d="": f"Bearer {token}" if k == "authorization" else d
@@ -135,11 +136,10 @@ def _make_conversation() -> tuple:
 
 def _send_reply(conversation_id: str, body: str) -> dict:
     return asyncio.run(
-        main_module.send_conversation_reply_route(
-            SESSION,
+        conversation_service.send_reply(
             conversation_id,
-            main_module.SendConversationReplyRequest(body=body),
-            _auth_request(),
+            "test-owner",
+            conversation_api.SendConversationReplyRequest(body=body),
         )
     )
 
@@ -164,7 +164,7 @@ class TestSendReplyEndpoint:
         }
 
         fake = FakeOutboundExecutor(external_id=f"sent_{uuid.uuid4().hex[:12]}")
-        monkeypatch.setattr(main_module, "outbound_executor", fake)
+        monkeypatch.setattr(conversation_service, "outbound_executor", fake)
 
         result = _send_reply(convo.conversation_id, "Great — let's find a time for a quick call.")
 
@@ -198,7 +198,7 @@ class TestSendReplyEndpoint:
             body="Interested in a call.",
         )
         fake = FakeOutboundExecutor()
-        monkeypatch.setattr(main_module, "outbound_executor", fake)
+        monkeypatch.setattr(conversation_service, "outbound_executor", fake)
 
         assert _send_reply(convo.conversation_id, "Sounds good!")["ok"] is True
 

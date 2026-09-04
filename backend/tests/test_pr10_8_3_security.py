@@ -24,6 +24,7 @@ os.chdir(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ".")
 
 import pytest
+from services.conversations import service as conversation_service
 
 SENTINEL = "PR1083_SENTINEL_SECRET_DO_NOT_LEAK"
 SENTINEL_SESSION = "PR1083_SENTINEL_SESSION_TOKEN"
@@ -302,8 +303,8 @@ class TestConversationSendOwnership:
         payload.thread_id = ""
         request = MagicMock()
         with pytest.raises(Exception) as exc:
-            asyncio.run(main_module.send_conversation_reply_route(
-                "tok", convo.conversation_id, payload, request,
+            asyncio.run(conversation_service.send_reply(
+                convo.conversation_id, "owner-a", payload,
             ))
         # Safe not-found (no existence leak): foreign conversation is 404.
         assert exc.value.status_code == 404
@@ -318,8 +319,8 @@ class TestConversationSendOwnership:
         payload.thread_id = ""
         request = MagicMock()
         with pytest.raises(Exception) as exc:
-            asyncio.run(main_module.send_conversation_followup_route(
-                "tok", convo.conversation_id, payload, request,
+            asyncio.run(conversation_service.send_follow_up(
+                convo.conversation_id, "owner-a", payload,
             ))
         # Safe not-found (no existence leak): foreign conversation is 404.
         assert exc.value.status_code == 404

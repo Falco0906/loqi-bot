@@ -1,3 +1,9 @@
+"""Legacy web/Telegram workflow-session compatibility facade.
+
+This module preserves channel-session, workflow-message, and workflow-event
+contracts. Durable Inbox conversations themselves belong to
+``conversation_store.py`` in this package.
+"""
 import secrets
 from datetime import datetime, timezone
 

@@ -66,6 +66,45 @@ def find_outbound_gmail_provider_id() -> str:
     return ""
 
 
+def resolve_provider_for_conversation(conversation: object) -> str:
+    """Resolve the connected provider for a durable Inbox conversation.
+
+    Outbound owns provider selection; Conversations supplies the authorized
+    durable conversation.  This keeps reply/follow-up sends off main.py while
+    preserving the historical thread, draft, then connected-Gmail priority.
+    """
+    if conversation is not None:
+        from datetime import datetime, timezone
+
+        from services.conversations.conversation_store import conversation_store
+
+        threads = conversation_store.get_threads_for_conversation(conversation.conversation_id)
+        if threads:
+            threads.sort(key=lambda thread: thread.created_at or datetime.min.replace(tzinfo=timezone.utc))
+            provider_id = threads[-1].provider_id
+            if provider_id and get_outbound_provider(provider_id):
+                return provider_id
+
+        metadata = getattr(conversation, "metadata", {}) or {}
+        draft_id = getattr(conversation, "draft_id", "") or metadata.get("draft_id", "")
+        owner_id = str(getattr(conversation, "owner_id", "") or "")
+        workspace_id = str(metadata.get("workspace_id") or "")
+        if draft_id and owner_id and workspace_id:
+            canonical = next(
+                (
+                    draft for draft in workspace_state.load_drafts_only(owner_id, workspace_id=workspace_id)
+                    if str(draft.get("id") or "") == str(draft_id)
+                ),
+                None,
+            )
+            if canonical:
+                outbound_draft = hydrate_outbound_draft(canonical, "", owner_id=owner_id)
+                provider_id = resolve_provider_for_draft(outbound_draft, owner_id=owner_id)
+                if provider_id:
+                    return provider_id
+    return find_outbound_gmail_provider_id()
+
+
 def resolve_owner_gmail_provider(owner_id: str) -> str:
     """Resolve the connected Gmail provider belonging to ``owner_id``."""
     candidates: list[tuple[str, str]] = []

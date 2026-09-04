@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
 from services.conversations.conversation_store import conversation_owned_by, conversation_store
 from services.conversations import service as conversation_service
@@ -9,6 +10,16 @@ from services.identity import dependencies as identity_dependencies
 
 
 router = APIRouter(tags=["Conversations"])
+
+
+class SendConversationReplyRequest(BaseModel):
+    body: str
+    thread_id: str = ""
+    reply_to_message_id: str = ""
+    from_email: str = ""
+    to_email: str = ""
+    test_recipient: str = ""
+    test_recipient_name: str = ""
 
 
 async def _authenticated_owner(request: Request | None) -> str:
@@ -115,3 +126,35 @@ async def generate_reply_route(session_token: str, conversation_id: str, body: d
     del session_token
     owner_id = await _owned_conversation_or_404(conversation_id, request)
     return await conversation_service.generate_reply(conversation_id, owner_id, body or {})
+
+
+@router.post("/api/web/session/{session_token}/conversations/{conversation_id}/reply")
+async def send_conversation_reply_route(
+    session_token: str,
+    conversation_id: str,
+    body: SendConversationReplyRequest | None = None,
+    request: Request = None,
+):
+    del session_token
+    if request is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    owner_id = await _authenticated_owner(request)
+    return await conversation_service.send_reply(
+        conversation_id, owner_id, body or SendConversationReplyRequest(body=""),
+    )
+
+
+@router.post("/api/web/session/{session_token}/conversations/{conversation_id}/follow-up")
+async def send_conversation_followup_route(
+    session_token: str,
+    conversation_id: str,
+    body: SendConversationReplyRequest | None = None,
+    request: Request = None,
+):
+    del session_token
+    if request is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    owner_id = await _authenticated_owner(request)
+    return await conversation_service.send_follow_up(
+        conversation_id, owner_id, body or SendConversationReplyRequest(body=""),
+    )

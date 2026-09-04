@@ -18,7 +18,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from services.conversation_store import ensure_workflow_session
+from services.conversations.compatibility import ensure_workflow_session
 from services.supabase import get_supabase_client
 
 logger = logging.getLogger(__name__)

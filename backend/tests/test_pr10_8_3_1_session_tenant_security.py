@@ -30,6 +30,7 @@ import pytest
 
 from fastapi import HTTPException
 import services.conversations.api as conversation_api
+import services.conversations.service as conversation_service
 
 SENTINEL = "PR10831_SESSION_SENTINEL_DO_NOT_LEAK"
 
@@ -321,8 +322,8 @@ class TestFailClosedConversationOwnership:
         payload.test_recipient = ""
         payload.thread_id = ""
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.send_conversation_reply_route(
-                "_", convo.conversation_id, payload, _request_with_header(),
+            asyncio.run(conversation_service.send_reply(
+                convo.conversation_id, "test-owner", payload,
             ))
         # Safe not-found (no existence leak): foreign conversation is 404.
         assert exc.value.status_code == 404

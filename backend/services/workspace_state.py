@@ -18,7 +18,7 @@ from typing import Any
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from services.conversation_store import ensure_workflow_session
+from services.conversations.compatibility import ensure_workflow_session
 from services.persistence.launch import (
     Campaign,
     CampaignLead,

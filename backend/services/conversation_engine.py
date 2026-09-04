@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 import random
 
-from services.conversation_store import (
+from services.conversations.compatibility import (
     create_lightweight_web_session,
     ensure_workflow_session,
     get_channel_user,

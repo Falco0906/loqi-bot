@@ -34,10 +34,11 @@ from services.outbound import outbound_registry
 from services.conversations.conversation_models import ConversationStatus
 from services.conversations.conversation_store import conversation_store
 from services.conversations.integration import create_conversation_from_send, handle_reply
+from services.conversations import api as conversation_api
+from services.conversations import service as conversation_service
 from services.conversations.state_machine import transition as state_transition
 from services.conversations.timeline import TimelineEventType
 
-import main as main_module  # noqa: E402
 def _auth_request(token="session-flow"):
     request = MagicMock()
     request.headers.get = lambda k, d="": f"Bearer {token}" if k == "authorization" else d
@@ -142,22 +143,20 @@ def _to_follow_up_state(conversation_id: str, ready: bool = True) -> None:
 
 def _send_follow_up(conversation_id: str, body: str) -> dict:
     return asyncio.run(
-        main_module.send_conversation_followup_route(
-            SESSION,
+        conversation_service.send_follow_up(
             conversation_id,
-            main_module.SendConversationReplyRequest(body=body),
-            _auth_request(),
+            "test-owner",
+            conversation_api.SendConversationReplyRequest(body=body),
         )
     )
 
 
 def _send_reply(conversation_id: str, body: str) -> dict:
     return asyncio.run(
-        main_module.send_conversation_reply_route(
-            SESSION,
+        conversation_service.send_reply(
             conversation_id,
-            main_module.SendConversationReplyRequest(body=body),
-            _auth_request(),
+            "test-owner",
+            conversation_api.SendConversationReplyRequest(body=body),
         )
     )
 
@@ -169,7 +168,7 @@ class TestFollowUpSend:
         _to_follow_up_state(convo.conversation_id, ready=True)
 
         fake = FakeOutboundExecutor(external_id=f"fu_{uuid.uuid4().hex[:12]}")
-        monkeypatch.setattr(main_module, "outbound_executor", fake)
+        monkeypatch.setattr(conversation_service, "outbound_executor", fake)
 
         result = _send_follow_up(convo.conversation_id, "Just checking in — any thoughts?")
 
@@ -197,7 +196,7 @@ class TestFollowUpSend:
         _to_follow_up_state(convo.conversation_id, ready=False)
 
         fake = FakeOutboundExecutor()
-        monkeypatch.setattr(main_module, "outbound_executor", fake)
+        monkeypatch.setattr(conversation_service, "outbound_executor", fake)
 
         result = _send_follow_up(convo.conversation_id, "Bumping this up.")
 
@@ -212,7 +211,7 @@ class TestFollowUpSend:
         _to_follow_up_state(convo.conversation_id, ready=True)
 
         fake = FakeOutboundExecutor()
-        monkeypatch.setattr(main_module, "outbound_executor", fake)
+        monkeypatch.setattr(conversation_service, "outbound_executor", fake)
 
         with pytest.raises(Exception) as exc_info:
             _send_reply(convo.conversation_id, "Trying to reply instead of follow up.")
@@ -225,7 +224,7 @@ class TestFollowUpSend:
         _to_follow_up_state(convo.conversation_id, ready=True)
 
         fake = FakeOutboundExecutor()
-        monkeypatch.setattr(main_module, "outbound_executor", fake)
+        monkeypatch.setattr(conversation_service, "outbound_executor", fake)
 
         assert _send_follow_up(convo.conversation_id, "First follow-up.")["ok"] is True
 
@@ -250,7 +249,7 @@ class TestReplyGuardIntact:
             body="Interested in a call.",
         )
         fake = FakeOutboundExecutor()
-        monkeypatch.setattr(main_module, "outbound_executor", fake)
+        monkeypatch.setattr(conversation_service, "outbound_executor", fake)
 
         assert _send_reply(convo.conversation_id, "Sounds good!")["ok"] is True
 
@@ -264,7 +263,7 @@ class TestReplyGuardIntact:
         convo, _ = _make_conversation()
         _to_follow_up_state(convo.conversation_id, ready=True)
         fake = FakeOutboundExecutor()
-        monkeypatch.setattr(main_module, "outbound_executor", fake)
+        monkeypatch.setattr(conversation_service, "outbound_executor", fake)
 
         _send_follow_up(convo.conversation_id, "Checking in.")
 
@@ -279,7 +278,7 @@ class TestFollowUpIngest:
         convo, _ = _make_conversation()
         _to_follow_up_state(convo.conversation_id, ready=True)
         fake = FakeOutboundExecutor()
-        monkeypatch.setattr(main_module, "outbound_executor", fake)
+        monkeypatch.setattr(conversation_service, "outbound_executor", fake)
         _send_follow_up(convo.conversation_id, "Checking in.")
 
         handle_reply(

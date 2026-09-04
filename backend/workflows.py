@@ -68,7 +68,7 @@ from services.lead_provider import format_leads_message
 from services.ai import generate_outreach_email, rewrite_message, analyze_draft, answer_draft_question, OpenAIError
 from services.lead_provider import get_leads, search_with_expansion
 from services.supabase import get_user, get_google_credentials, is_token_expired, store_leads, update_google_access_token
-from services.conversation_store import record_workflow_event
+from services.conversations.compatibility import record_workflow_event
 from services.enrichment.enrichment_factory import get_enricher
 from services.intelligence.lead_intelligence import generate_lead_intelligence
 from services.adapters.google.gmail import GmailAdapter

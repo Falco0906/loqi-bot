@@ -15,7 +15,7 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
-import services.conversation_store as store
+import services.conversations.compatibility as store
 import services.conversation_engine as engine_module
 import main as main_module
 

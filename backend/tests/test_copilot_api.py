@@ -191,6 +191,7 @@ class TestCopilotOperationBoundary:
     async def test_inbox_read_rejects_owned_conversation_from_another_workspace(self, monkeypatch):
         from services.conversations.conversation_models import Conversation
         from services.conversations.conversation_store import conversation_store
+        from services.conversations import service as conversation_service
 
         foreign = Conversation(
             conversation_id="conversation-b",
@@ -324,6 +325,7 @@ class TestCopilotOperationBoundary:
     async def test_inbox_send_requires_confirmation_before_existing_send_route(self, monkeypatch):
         from services.conversations.conversation_models import Conversation
         from services.conversations.conversation_store import conversation_store
+        from services.conversations import service as conversation_service
 
         convo = Conversation(
             conversation_id="conversation-1",
@@ -337,7 +339,7 @@ class TestCopilotOperationBoundary:
             nonlocal called
             called = True
 
-        monkeypatch.setattr(main_module, "send_conversation_reply_route", must_not_send)
+        monkeypatch.setattr(conversation_service, "send_reply", must_not_send)
         result = await main_module._run_copilot_inbox(
             "inbox.reply.send", "owner-1", "workspace-1", "session-1",
             {"conversation_id": "conversation-1", "reply_body": "Thanks"},

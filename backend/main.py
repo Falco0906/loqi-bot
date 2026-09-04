@@ -38,6 +38,7 @@ from services.drafts.api import router as drafts_router
 import services.drafts.service as draft_service
 import services.campaigns.service as campaign_service
 import services.outbound.service as outbound_service
+import services.conversations.service as conversation_service
 from services.campaigns.service import load_campaigns
 from services.conversations.api import router as conversations_router
 from services.conversations.conversation_store import conversation_in_workspace, conversation_owned_by
@@ -1096,52 +1097,6 @@ def _restore_providers_on_startup() -> None:
     log.info("[startup] Provider restoration complete: %d restored, %d reauth-required", restored, reauth_restored)
 
 
-def _resolve_provider_for_conversation(conversation: "object") -> str:
-    """Resolve the connected Gmail provider used to send a conversation reply.
-
-    Priority:
-      1. Provider recorded on the conversation's thread (original send),
-         if still registered in the outbound registry;
-      2. The outbound provider recorded on the draft that created the thread
-         (via conversation metadata draft_id);
-      3. Any currently connected outbound Gmail provider.
-
-    Returns empty string when no valid provider exists.
-    """
-    from services.outbound.outbound_registry import get_provider
-
-    if conversation is not None:
-        from services.conversations.conversation_store import conversation_store
-        from datetime import datetime, timezone
-
-        threads = conversation_store.get_threads_for_conversation(conversation.conversation_id)
-        if threads:
-            threads.sort(key=lambda t: t.created_at or datetime.min.replace(tzinfo=timezone.utc))
-            thread_provider_id = threads[-1].provider_id
-            if thread_provider_id and get_provider(thread_provider_id):
-                return thread_provider_id
-        draft_id = getattr(conversation, "draft_id", "") or conversation.metadata.get("draft_id", "")
-        if draft_id:
-            owner_id = str(getattr(conversation, "owner_id", "") or "")
-            workspace_id = str((getattr(conversation, "metadata", {}) or {}).get("workspace_id") or "")
-            if owner_id and workspace_id:
-                from services.workspace_state import load_drafts_only
-
-                canonical = next(
-                    (
-                        draft for draft in load_drafts_only(owner_id, workspace_id=workspace_id)
-                        if str(draft.get("id") or "") == str(draft_id)
-                    ),
-                    None,
-                )
-                if canonical:
-                    outbound_draft = outbound_service.hydrate_outbound_draft(canonical, "", owner_id=owner_id)
-                    provider_id = outbound_service.resolve_provider_for_draft(outbound_draft, owner_id=owner_id)
-                    if provider_id:
-                        return provider_id
-    return outbound_service.find_outbound_gmail_provider_id()
-
-
 _SYNONYM_STRATEGY_TABLE: list[tuple[list[str], str]] = [
     (["short", "concise", "punchy", "tighten", "trim", "cut", "fluff", "reduce"], "shorten"),
     (["longer", "expand", "more detail", "elaborate", "add more", "extend"], "lengthen"),
@@ -1865,9 +1820,8 @@ async def _run_copilot_inbox(
         if request is None:
             return {"ok": False, "status": "failed", "tool": tool_name, "reason": "Authenticated Inbox send context is unavailable."}
         try:
-            sent = await send_conversation_reply_route(
-                session_token, conversation_id,
-                SendConversationReplyRequest(body=decision["reply_body"]), request,
+            sent = await conversation_service.send_reply(
+                conversation_id, user_id, {"body": decision["reply_body"]},
             )
         except HTTPException as error:
             return {"ok": False, "status": "failed", "tool": tool_name, "reason": str(error.detail)}
@@ -5144,7 +5098,7 @@ async def export_csv(session_token: str, request: Request = None):
 @app.post("/api/web/session/{session_token}/select-lead")
 async def select_lead_endpoint(session_token: str, payload: SelectLeadRequest, request: Request = None):
     session_token = identity_dependencies.web_session_token(request)
-    from services.conversation_store import ensure_workflow_session, get_web_session
+    from services.conversations.compatibility import ensure_workflow_session, get_web_session
     from services.supabase import log_conversation
 
     user = get_web_session(session_token)
@@ -5185,7 +5139,7 @@ class PreviewLeadRequest(BaseModel):
 @app.post("/api/web/session/{session_token}/preview-lead")
 async def preview_lead_endpoint(session_token: str, payload: PreviewLeadRequest, request: Request = None):
     session_token = identity_dependencies.web_session_token(request)
-    from services.conversation_store import get_web_session
+    from services.conversations.compatibility import get_web_session
 
     user = get_web_session(session_token)
     if user is None:
@@ -5503,329 +5457,6 @@ async def cancel_workflow_endpoint(session_token: str, workflow_id: str, request
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-
-class SendConversationReplyRequest(BaseModel):
-    body: str
-    thread_id: str = ""
-    reply_to_message_id: str = ""
-    from_email: str = ""
-    to_email: str = ""
-    test_recipient: str = ""
-    test_recipient_name: str = ""
-
-
-@app.post("/api/web/session/{session_token}/conversations/{conversation_id}/reply")
-async def send_conversation_reply_route(
-    session_token: str,
-    conversation_id: str,
-    body: SendConversationReplyRequest = None,
-    request: Request = None,
-):
-    session_token = identity_dependencies.web_session_token(request)
-    """Send an outbound reply from a conversation via the connected Gmail provider.
-
-    Resolves the provider from the conversation's thread/draft first, then the
-    owner's connected provider (same rules as outbound sends). Replies are
-    sent on the original Gmail thread (threadId in payload). A conversation can
-    only be replied to once per inbound turn: if the conversation is already in
-    an awaiting-response state (SENT / DELIVERED / OPENED / FOLLOW_UP_PENDING /
-    FOLLOW_UP_READY / FOLLOW_UP_SENT), the request is rejected as a duplicate.
-    On success the reply is recorded in the conversation (message + EMAIL_SENT
-    timeline event + status transition to SENT).
-    """
-    from services.conversations.conversation_models import ConversationMessage, ConversationStatus
-    from services.conversations.conversation_store import conversation_store
-    from services.conversations.state_machine import transition as state_transition
-    from services.conversations.timeline import TimelineEventType, build_timeline_event
-    from services.outbound.outbound_models import SendRequest
-
-    payload = body or SendConversationReplyRequest(body="")
-    reply_body = (payload.body or "").strip()
-    if not reply_body:
-        raise HTTPException(status_code=400, detail="Reply body is required")
-
-    test_recipient = (payload.test_recipient or "").strip()
-    if test_recipient and not _test_recipient_override_enabled():
-        raise HTTPException(status_code=403, detail="Test recipient override is disabled")
-
-    convo = conversation_store.get_conversation(conversation_id)
-    if not convo:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    # PR10.8.3.1: fail-closed ownership — the authenticated owner must be
-    # resolvable and the conversation must belong to that owner.
-    if request is None:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    if not conversation_owned_by(convo, owner_id):
-        # Safe not-found: foreign-but-existing conversation is indistinguishable
-        # from nonexistent (no existence leak).
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    # Duplicate-send guard: after a reply the conversation must return to an
-    # awaiting-response state before another reply is allowed.
-    if convo.status in {
-        ConversationStatus.SENT,
-        ConversationStatus.DELIVERED,
-        ConversationStatus.OPENED,
-        ConversationStatus.FOLLOW_UP_PENDING,
-        ConversationStatus.FOLLOW_UP_READY,
-        ConversationStatus.FOLLOW_UP_SENT,
-    }:
-        raise HTTPException(
-            status_code=409,
-            detail="Conversation is already awaiting a response — reply already sent",
-        )
-
-    threads = conversation_store.get_threads_for_conversation(conversation_id)
-    thread = threads[-1] if threads else None
-    external_thread_id = payload.thread_id or getattr(thread, "external_thread_id", "") or ""
-
-    provider_id = _resolve_provider_for_conversation(convo)
-    if not provider_id:
-        raise HTTPException(status_code=503, detail="No connected Gmail provider available to send the reply")
-
-    # Recipient/sender resolution from conversation participants.
-    contact = next((p for p in convo.participants if p.role == "contact"), None)
-    sender = next((p for p in convo.participants if p.role == "sender"), None)
-    contact_email = payload.to_email or (contact.email if contact else "") or ""
-    contact_name = (contact.name if contact else "") or ""
-    if not contact_email:
-        inbound = [m for m in conversation_store.get_messages_for_conversation(conversation_id)
-                   if m.direction == "inbound"]
-        latest_inbound = inbound[-1] if inbound else None
-        if latest_inbound:
-            contact_email = latest_inbound.from_email
-            contact_name = latest_inbound.from_name
-    if not contact_email:
-        raise HTTPException(status_code=400, detail="No recipient email available for this conversation")
-    sender_email = payload.from_email or (sender.email if sender else "") or ""
-
-    reply_to_msg = None
-    if external_thread_id:
-        for m in conversation_store.get_messages_for_conversation(conversation_id):
-            if m.external_message_id and m.thread_id == (thread.thread_id if thread else ""):
-                reply_to_msg = m
-                break
-    reply_to_message_id = payload.reply_to_message_id or (
-        getattr(reply_to_msg, "external_message_id", "") if reply_to_msg else ""
-    )
-
-    # Test-only recipient override (LOQI_ENABLE_TEST_RECIPIENT_OVERRIDE=true):
-    # changes ONLY the outbound envelope recipient. The conversation's contact
-    # identity, thread, provider and persisted message stay the real lead.
-    envelope_email = contact_email
-    envelope_name = contact_name
-    if test_recipient:
-        envelope_email = test_recipient
-        envelope_name = (payload.test_recipient_name or "Test Recipient").strip()
-        log.info("[TEST RECIPIENT] original_recipient=%s effective_recipient=%s", contact_email, test_recipient)
-
-    result = await asyncio.to_thread(
-        outbound_executor.send_request,
-        SendRequest(
-            provider_id=provider_id,
-            body=reply_body,
-            conversation_id=conversation_id,
-            subject="Re: " + ((thread.subject if thread else convo.subject) or ""),
-            thread_id=external_thread_id,
-            reply_to_message_id=reply_to_message_id,
-            recipient=Recipient(email=envelope_email, name=envelope_name),
-            sender=Recipient(email=sender_email, name=""),
-        ),
-        original_recipient_email=contact_email,
-    )
-    if not result or not result.get("ok"):
-        raise HTTPException(status_code=502, detail=(result or {}).get("error") or "Failed to send reply")
-
-    send_result = (result.get("send_result") or {})
-    external_message_id = str(send_result.get("external_message_id") or send_result.get("id") or "")
-
-    sent_message = ConversationMessage(
-        conversation_id=conversation_id,
-        thread_id=thread.thread_id if thread else "",
-        provider_id=provider_id,
-        external_message_id=external_message_id,
-        direction="outbound",
-        from_email=sender_email,
-        from_name="You",
-        to_email=contact_email,
-        to_name=contact_name,
-        subject="Re: " + ((thread.subject if thread else convo.subject) or ""),
-        body=reply_body,
-    )
-    conversation_store.add_message(sent_message)
-    conversation_store.add_timeline_event(build_timeline_event(
-        conversation_id=conversation_id,
-        event_type=TimelineEventType.EMAIL_SENT,
-        title="Reply sent",
-        description=f"To: {contact_name or contact_email} | Provider: {provider_id[:8]}…",
-        metadata={
-            "conversation_id": conversation_id,
-            "direction": "outbound",
-            "external_thread_id": external_thread_id,
-            "reply_to_message_id": reply_to_message_id,
-            "provider_id": provider_id,
-        },
-    ))
-    try:
-        convo.status = state_transition(convo.status, ConversationStatus.SENT)
-        conversation_store.update_conversation(convo)
-    except ValueError:
-        raise HTTPException(status_code=409, detail="Conversation status no longer allows a reply send")
-
-    return {
-        "ok": True,
-        "conversation_id": conversation_id,
-        "status": convo.status.value,
-        "message_id": sent_message.message_id,
-        "external_message_id": external_message_id,
-    }
-
-
-@app.post("/api/web/session/{session_token}/conversations/{conversation_id}/follow-up")
-async def send_conversation_followup_route(
-    session_token: str,
-    conversation_id: str,
-    body: SendConversationReplyRequest = None,
-    request: Request = None,
-):
-    session_token = identity_dependencies.web_session_token(request)
-    """Send a follow-up email on the conversation's existing thread.
-
-    Distinct from /reply: a follow-up continues the original outbound
-    outreach when there is NO inbound reply to respond to. The conversation
-    must be in a follow-up-waiting state (FOLLOW_UP_PENDING / FOLLOW_UP_READY);
-    any other state — including FOLLOW_UP_SENT — is rejected as a duplicate
-    follow-up, and reply-mode conversations cannot send follow-ups.
-
-    Sends through the same outbound executor path as replies (SEND_REPLY on
-    the original thread), records the outbound message + FOLLOW_UP_SENT
-    timeline event, and transitions the conversation to FOLLOW_UP_SENT
-    (awaiting a response).
-    """
-    from services.conversations.conversation_models import ConversationMessage, ConversationStatus
-    from services.conversations.conversation_store import conversation_store
-    from services.conversations.state_machine import transition as state_transition
-    from services.conversations.timeline import TimelineEventType, build_timeline_event
-    from services.outbound.outbound_models import SendRequest
-
-    payload = body or SendConversationReplyRequest(body="")
-    follow_up_body = (payload.body or "").strip()
-    if not follow_up_body:
-        raise HTTPException(status_code=400, detail="Follow-up body is required")
-
-    test_recipient = (payload.test_recipient or "").strip()
-    if test_recipient and not _test_recipient_override_enabled():
-        raise HTTPException(status_code=403, detail="Test recipient override is disabled")
-
-    convo = conversation_store.get_conversation(conversation_id)
-    if not convo:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    # PR10.8.3.1: fail-closed ownership — the authenticated owner must be
-    # resolvable and the conversation must belong to that owner.
-    if request is None:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    if not conversation_owned_by(convo, owner_id):
-        # Safe not-found: foreign-but-existing conversation is indistinguishable
-        # from nonexistent (no existence leak).
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    # Duplicate follow-up guard: only a conversation currently waiting for a
-    # follow-up may send one. FOLLOW_UP_SENT (already sent) is rejected.
-    if convo.status not in {
-        ConversationStatus.FOLLOW_UP_PENDING,
-        ConversationStatus.FOLLOW_UP_READY,
-    }:
-        raise HTTPException(
-            status_code=409,
-            detail="Conversation is not waiting for a follow-up — follow-up already sent or not due",
-        )
-
-    threads = conversation_store.get_threads_for_conversation(conversation_id)
-    thread = threads[-1] if threads else None
-    external_thread_id = payload.thread_id or getattr(thread, "external_thread_id", "") or ""
-
-    provider_id = _resolve_provider_for_conversation(convo)
-    if not provider_id:
-        raise HTTPException(status_code=503, detail="No connected Gmail provider available to send the follow-up")
-
-    contact = next((p for p in convo.participants if p.role == "contact"), None)
-    sender = next((p for p in convo.participants if p.role == "sender"), None)
-    contact_email = payload.to_email or (contact.email if contact else "") or ""
-    contact_name = (contact.name if contact else "") or ""
-    if not contact_email:
-        raise HTTPException(status_code=400, detail="No recipient email available for this conversation")
-    sender_email = payload.from_email or (sender.email if sender else "") or ""
-
-    envelope_email = contact_email
-    envelope_name = contact_name
-    if test_recipient:
-        envelope_email = test_recipient
-        envelope_name = (payload.test_recipient_name or "Test Recipient").strip()
-        log.info("[TEST RECIPIENT] original_recipient=%s effective_recipient=%s", contact_email, test_recipient)
-
-    result = await asyncio.to_thread(
-        outbound_executor.send_request,
-        SendRequest(
-            provider_id=provider_id,
-            body=follow_up_body,
-            conversation_id=conversation_id,
-            subject="Re: " + ((thread.subject if thread else convo.subject) or ""),
-            thread_id=external_thread_id,
-            recipient=Recipient(email=envelope_email, name=envelope_name),
-            sender=Recipient(email=sender_email, name=""),
-        ),
-        original_recipient_email=contact_email,
-    )
-    if not result or not result.get("ok"):
-        raise HTTPException(status_code=502, detail=(result or {}).get("error") or "Failed to send follow-up")
-
-    send_result = (result.get("send_result") or {})
-    external_message_id = str(send_result.get("external_message_id") or send_result.get("id") or "")
-
-    sent_message = ConversationMessage(
-        conversation_id=conversation_id,
-        thread_id=thread.thread_id if thread else "",
-        provider_id=provider_id,
-        external_message_id=external_message_id,
-        direction="outbound",
-        from_email=sender_email,
-        from_name="You",
-        to_email=contact_email,
-        to_name=contact_name,
-        subject="Re: " + ((thread.subject if thread else convo.subject) or ""),
-        body=follow_up_body,
-    )
-    conversation_store.add_message(sent_message)
-    conversation_store.add_timeline_event(build_timeline_event(
-        conversation_id=conversation_id,
-        event_type=TimelineEventType.FOLLOW_UP_SENT,
-        title="Follow-up sent",
-        description=f"To: {contact_name or contact_email} | Provider: {provider_id[:8]}…",
-        metadata={
-            "conversation_id": conversation_id,
-            "direction": "outbound",
-            "external_thread_id": external_thread_id,
-            "provider_id": provider_id,
-        },
-    ))
-    try:
-        convo.status = state_transition(convo.status, ConversationStatus.FOLLOW_UP_SENT)
-        conversation_store.update_conversation(convo)
-    except ValueError:
-        raise HTTPException(status_code=409, detail="Conversation status no longer allows a follow-up send")
-
-    return {
-        "ok": True,
-        "conversation_id": conversation_id,
-        "status": convo.status.value,
-        "message_id": sent_message.message_id,
-        "external_message_id": external_message_id,
-    }
 
 
 if __name__ == "__main__":

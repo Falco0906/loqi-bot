@@ -341,7 +341,7 @@ class TestFailClosedConversationOwnership:
 
     def test_fail_closed_helper_semantics(self):
         from services.communication.communication_store import store
-        from services.conversations.conversation_store import conversation_owned_by
+        from services.conversations.conversation_store import conversation_in_workspace, conversation_owned_by
         # No owner, no provider -> False.
         convo = _make_convo(owner_id="")
         assert conversation_owned_by(convo, "test-owner") is False
@@ -353,3 +353,7 @@ class TestFailClosedConversationOwnership:
         convo3 = _make_convo(owner_id="", provider_id="prov-a")
         assert conversation_owned_by(convo3, "owner-x") is True
         assert conversation_owned_by(convo3, "test-owner") is False
+        convo3.metadata["workspace_id"] = "workspace-a"
+        assert conversation_in_workspace(convo3, "workspace-a") is True
+        assert conversation_in_workspace(convo3, "workspace-b") is False
+        assert conversation_in_workspace(convo3, "") is False

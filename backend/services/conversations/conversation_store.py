@@ -48,6 +48,16 @@ def conversation_owned_by(conversation: object, owner_id: str) -> bool:
     return provider is not None and str(provider.user_id) == str(owner_id)
 
 
+def conversation_in_workspace(conversation: object, workspace_id: str) -> bool:
+    """Return whether a durable Inbox conversation belongs to one workspace."""
+    if not workspace_id:
+        return False
+    metadata = getattr(conversation, "metadata", {}) or {}
+    if not isinstance(metadata, dict):
+        return False
+    return str(metadata.get("workspace_id") or "") == str(workspace_id)
+
+
 class ConversationStore:
     def __init__(self):
         self._conversations: dict[str, Conversation] = {}

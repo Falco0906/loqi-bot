@@ -40,7 +40,7 @@ import services.campaigns.service as campaign_service
 import services.outbound.service as outbound_service
 from services.campaigns.service import load_campaigns
 from services.conversations.api import router as conversations_router
-from services.conversations.conversation_store import conversation_owned_by
+from services.conversations.conversation_store import conversation_in_workspace, conversation_owned_by
 from services.capabilities.config import CapabilityConfig
 from services.capabilities.services import CapabilityService
 from services.capabilities.repositories import (
@@ -899,7 +899,7 @@ def _build_copilot_workspace_context(
         if (
             convo is not None
             and conversation_owned_by(convo, user_id)
-            and _conversation_in_workspace(convo, str(workspace_id or ""))
+            and conversation_in_workspace(convo, str(workspace_id or ""))
         ):
             mem = memory_store.get(conversation_id)
             if mem:
@@ -928,16 +928,6 @@ def _build_copilot_workspace_context(
                 }
 
     return result
-
-
-def _conversation_in_workspace(conversation: "object", workspace_id: str) -> bool:
-    """Fail closed unless a durable Inbox snapshot belongs to this workspace."""
-    if not workspace_id:
-        return False
-    metadata = getattr(conversation, "metadata", {}) or {}
-    if not isinstance(metadata, dict):
-        return False
-    return str(metadata.get("workspace_id") or "") == str(workspace_id)
 
 
 def _register_outbound_gmail_instance(comm_provider_id: str) -> None:
@@ -1775,7 +1765,7 @@ async def _run_copilot_inbox(
         for candidate in conversation_store.list_conversations(limit=50):
             if (
                 not conversation_owned_by(candidate, user_id)
-                or not _conversation_in_workspace(candidate, workspace_id)
+                or not conversation_in_workspace(candidate, workspace_id)
             ):
                 continue
             summary = candidate.summary.to_dict() if candidate.summary else {}
@@ -1806,7 +1796,7 @@ async def _run_copilot_inbox(
     if (
         not convo
         or not conversation_owned_by(convo, user_id)
-        or not _conversation_in_workspace(convo, workspace_id)
+        or not conversation_in_workspace(convo, workspace_id)
     ):
         return {"ok": False, "status": "unavailable", "tool": tool_name,
                 "reason": "No owned Inbox conversation is selected in this workspace."}
@@ -1894,7 +1884,7 @@ async def _run_copilot_inbox(
         if (
             not refreshed
             or not conversation_owned_by(refreshed, user_id)
-            or not _conversation_in_workspace(refreshed, workspace_id)
+            or not conversation_in_workspace(refreshed, workspace_id)
             or str(getattr(refreshed.status, "value", "")) != "sent"
             or not sent_message_id
             or not message_persisted

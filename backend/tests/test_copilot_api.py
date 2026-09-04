@@ -361,7 +361,7 @@ class TestCopilotOperationBoundary:
             "services.workspace_state.load_drafts_only",
             lambda _user, _workspace: [{"id": "draft-1", "campaign_id": "campaign-1", "subject": "Hello", "text": "Hi there", "status": "pending"}],
         )
-        result = await main_module._run_copilot_outreach(
+        result = await main_module.copilot_runners.run_outreach(
             "outreach.drafts.read", "owner-1", "workspace-1", "session-1",
             {"page_context": {"campaign_id": "campaign-1"}},
         )
@@ -375,7 +375,7 @@ class TestCopilotOperationBoundary:
             lambda _user, _workspace: [{"id": "draft-1", "subject": "Hello", "text": "Hi", "status": "pending"}],
         )
         for tool in ("outreach.draft.send", "outreach.draft.schedule"):
-            result = await main_module._run_copilot_outreach(
+            result = await main_module.copilot_runners.run_outreach(
                 tool, "owner-1", "workspace-1", "session-1", {"draft_id": "draft-1"},
             )
             assert result["ok"] is False
@@ -398,7 +398,7 @@ class TestCopilotOperationBoundary:
         async def fake_outreach_runner(*_args, **_kwargs):
             return {"ok": True, "status": "completed", "tool": "outreach.drafts.read", "result": {"drafts": [{"id": "draft-1", "subject": "Hello"}]}}
 
-        monkeypatch.setattr(main_module, "_run_copilot_outreach", fake_outreach_runner)
+        monkeypatch.setattr(main_module.copilot_runners, "run_outreach", fake_outreach_runner)
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
         payload = main_module.SendWebMessageRequest(
             text="show my drafts",

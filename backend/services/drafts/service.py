@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from services.ai import OpenAIError, analyze_draft as analyze_draft_with_ai, answer_draft_question
 from services.draft_comparison import compare_versions
 from services.draft_intelligence import analyze_draft as analyze_draft_intelligence
 from services.events_bus import publish_draft_event
@@ -562,13 +563,15 @@ async def refine_draft(
 async def analyze_draft(payload: dict[str, Any]) -> dict[str, Any]:
     context = _context(payload)
     try:
-        workflow_result = await asyncio.to_thread(
-            run_workflow,
-            {"type": "draft_analysis", "draft_text": payload["draft_text"], "context": context},
-        )
+        draft_text = payload["draft_text"]
+        try:
+            analysis = await asyncio.to_thread(analyze_draft_with_ai, draft_text, context)
+            workflow_result = {"ok": True, "analysis": analysis, "error": None}
+        except OpenAIError as error:
+            workflow_result = {"ok": False, "analysis": None, "error": str(error)}
         try:
             intelligence = await asyncio.to_thread(
-                analyze_draft_intelligence, payload["draft_text"], context or None,
+                analyze_draft_intelligence, draft_text, context or None,
             )
         except Exception:
             intelligence = None
@@ -584,11 +587,13 @@ async def analyze_draft(payload: dict[str, Any]) -> dict[str, Any]:
 async def ask_draft_question(payload: dict[str, Any]) -> dict[str, Any]:
     context = _context(payload)
     try:
-        workflow_result = await asyncio.to_thread(
-            run_workflow,
-            {"type": "draft_question", "question": payload["question"],
-             "draft_text": payload["draft_text"], "context": context},
-        )
+        try:
+            answer = await asyncio.to_thread(
+                answer_draft_question, payload["question"], payload["draft_text"], context,
+            )
+            workflow_result = {"ok": True, "answer": answer, "error": None}
+        except OpenAIError as error:
+            workflow_result = {"ok": False, "answer": str(error), "error": None}
         return {
             "ok": workflow_result.get("ok", False), "answer": workflow_result.get("answer"),
             "error": workflow_result.get("error"),

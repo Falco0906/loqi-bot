@@ -258,7 +258,10 @@ async def create_provider_draft_after_approval(
     try:
         outbound_draft = hydrate_outbound_draft(canonical_draft, session_token, owner_id=owner_id)
         draft_id = outbound_draft.id
-        if outbound_draft.status == DraftStatus.SENT:
+        # Canonical approval is persisted before this adapter runs.  Status
+        # alone therefore cannot distinguish the first approval from a
+        # later re-approval of a draft already created at the provider.
+        if outbound_draft.status == DraftStatus.SENT or outbound_draft.external_draft_id:
             return
         recipient_email = (outbound_draft.recipient.email if outbound_draft.recipient else "") or ""
         if not str(recipient_email).strip():

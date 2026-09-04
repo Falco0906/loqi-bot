@@ -239,6 +239,39 @@ class TestOutboundApprovalAdapterGuard:
         )
         assert captured == {"provider_id": provider, "draft_id": draft.id}
 
+    async def test_reapproval_with_durable_provider_draft_does_not_create_duplicate(self, monkeypatch):
+        provider = register_provider("prov-reapprove", OWNER, email="a@x.com")
+        calls = []
+
+        def fake_create_draft(provider_id, outbound_draft):
+            calls.append((provider_id, outbound_draft.id))
+            return SimpleNamespace(external_draft_id="ext-original", thread_id="th-original")
+
+        monkeypatch.setattr(outbound_registry, "create_draft", fake_create_draft)
+        monkeypatch.setattr(outbound_service, "persist_outbound_projection", lambda *_args, **_kwargs: asyncio.sleep(0, result=True))
+
+        initial = _durable_draft("draft-reapprove", status="approved", email="lead@example.com")
+        await outbound_service.create_provider_draft_after_approval(
+            initial, SESSION, OWNER, "workspace-test",
+        )
+
+        reapproved = _durable_draft("draft-reapprove", status="approved", email="lead@example.com")
+        reapproved["metadata"] = {
+            "outbound_projection": {
+                "provider_id": provider,
+                "external_draft_id": "ext-original",
+                "status": "pending_approval",
+                "approval_state": "pending",
+                "recipient": {"email": "lead@example.com", "name": "Ada Lovelace"},
+                "sender": {"email": "a@x.com", "name": ""},
+            },
+        }
+        await outbound_service.create_provider_draft_after_approval(
+            reapproved, SESSION, OWNER, "workspace-test",
+        )
+
+        assert calls == [(provider, "draft-reapprove")]
+
 
 def _durable_draft(draft_id: str, campaign_id: str = "c-1", status: str = "approved",
                    email: str = "ada@acme.com") -> dict:

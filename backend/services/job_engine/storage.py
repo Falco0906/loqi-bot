@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from services.job_engine.models import BatchItem, BatchItemStatus, Job, JobStatus
@@ -31,6 +31,9 @@ class JobStorage:
                 "result": job.result or {},
                 "error_message": job.error_message,
                 "result_ready": job.result_ready,
+                "run_at": job.run_at.isoformat() if job.run_at else None,
+                "lease_owner": job.lease_owner or None,
+                "lease_expires_at": job.lease_expires_at.isoformat() if job.lease_expires_at else None,
                 "created_at": job.created_at.isoformat(),
                 "updated_at": job.updated_at.isoformat(),
             }
@@ -77,6 +80,7 @@ class JobStorage:
         result_ready: Optional[bool] = None,
         result: Optional[dict] = None,
         completed_at: Optional[datetime] = None,
+        clear_lease: bool = False,
     ) -> bool:
         client = get_supabase_client()
         if not client:
@@ -99,10 +103,70 @@ class JobStorage:
                 updates["result"] = result
             if completed_at is not None:
                 updates["completed_at"] = completed_at.isoformat()
+            if clear_lease or status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}:
+                updates["lease_owner"] = None
+                updates["lease_expires_at"] = None
             client.table("jobs").update(updates).eq("id", job_id).execute()
             return True
         except Exception as e:
             _log(f"update_job error: {e}")
+            return False
+
+    def claim_due_jobs(
+        self, lease_owner: str, job_types: list[str], *, limit: int = 25, lease_seconds: int = 120,
+    ) -> list[Job]:
+        """Atomically claim due delayed jobs through the database RPC."""
+        if not lease_owner or not job_types:
+            return []
+        client = get_supabase_client()
+        if not client:
+            return []
+        try:
+            result = client.rpc("claim_due_jobs", {
+                "p_lease_owner": lease_owner,
+                "p_job_types": job_types,
+                "p_limit": limit,
+                "p_lease_seconds": lease_seconds,
+            }).execute()
+            return [Job.from_dict(row) for row in (getattr(result, "data", None) or [])]
+        except Exception as error:
+            _log(f"claim_due_jobs error: {error}")
+            return []
+
+    def renew_job_lease(self, job_id: str, lease_owner: str, *, lease_seconds: int = 120) -> bool:
+        """Extend one owned running-job lease without reviving another worker's job."""
+        client = get_supabase_client()
+        if not client or not job_id or not lease_owner:
+            return False
+        try:
+            result = client.table("jobs").update({
+                "lease_expires_at": (datetime.now(timezone.utc) + timedelta(seconds=lease_seconds)).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", job_id).eq("status", JobStatus.RUNNING.value).eq(
+                "lease_owner", lease_owner,
+            ).execute()
+            return bool(getattr(result, "data", None))
+        except Exception as error:
+            _log(f"renew_job_lease error: {error}")
+            return False
+
+    def cancel_unclaimed_delayed_job(self, job_id: str) -> bool:
+        """Cancel a queued delayed job before any worker has claimed it."""
+        client = get_supabase_client()
+        if not client or not job_id:
+            return False
+        try:
+            result = client.table("jobs").update({
+                "status": JobStatus.CANCELLED.value,
+                "stage": "Cancelled",
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", job_id).eq("status", JobStatus.QUEUED.value).not_.is_(
+                "run_at", "null",
+            ).execute()
+            return bool(getattr(result, "data", None))
+        except Exception as error:
+            _log(f"cancel_unclaimed_delayed_job error: {error}")
             return False
 
     def store_search_results(self, job_id: str, leads: list[dict]) -> bool:

@@ -25,7 +25,8 @@ class JobManager:
         created = await asyncio.to_thread(self._storage.create_job, job)
         if not created:
             return None
-        self._runner.start_job(job, on_update=on_update, on_complete=on_complete)
+        if job.run_at is None:
+            self._runner.start_job(job, on_update=on_update, on_complete=on_complete)
         return {"job_id": job.id, "status": job.status.value}
 
     async def create_batch_job(
@@ -46,15 +47,37 @@ class JobManager:
 
         if not await asyncio.to_thread(persist):
             return None
-        if start:
+        if start and job.run_at is None:
             self._runner.start_job(job)
         return {"job_id": job.id, "status": job.status.value}
 
     def resume_job(self, job: Job) -> bool:
         if get_registry().get(job.type) is None:
             return False
+        if job.run_at is not None:
+            return False
         self._runner.start_job(job)
         return True
+
+    async def start_due_jobs(self, *, limit: int = 25) -> int:
+        """Atomically claim and start due delayed jobs for registered workflows.
+
+        The database claim is the single cross-worker authority. This method
+        is safe to call both from startup recovery and a future scheduler poll.
+        """
+        import asyncio
+
+        job_types = get_registry().list_types()
+        claimed = await asyncio.to_thread(
+            self._storage.claim_due_jobs,
+            self._runner.worker_id,
+            job_types,
+            limit=limit,
+            lease_seconds=self._runner.lease_seconds,
+        )
+        for job in claimed:
+            self._runner.start_job(job, claimed=True)
+        return len(claimed)
 
     async def create_search_job(self, user_id: str, query: str, on_update=None, on_complete=None, discovery_id: str = "") -> Optional[dict]:
         import asyncio
@@ -107,6 +130,11 @@ class JobManager:
         return {"ok": True, "leads": leads}
 
     def cancel_job(self, job_id: str) -> bool:
+        job = self._storage.get_job(job_id)
+        if job and job.run_at is not None and job.status == JobStatus.QUEUED:
+            return self._storage.cancel_unclaimed_delayed_job(job_id)
+        # A remote worker cannot safely interrupt a provider call. A local
+        # running task is still cancellable through the existing runner path.
         return self._runner.cancel_job(job_id)
 
     def list_active_jobs(self, user_id: str) -> list[dict]:

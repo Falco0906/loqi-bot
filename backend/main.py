@@ -334,6 +334,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.warning("Search job recovery sweep failed: %s", e)
 
+    # Delayed jobs are recovered through the same atomic claim operation a
+    # future scheduler poll uses. Existing immediate job types have run_at=NULL
+    # and are intentionally unaffected.
+    try:
+        from services.job_engine import job_manager
+
+        claimed_due_jobs = await job_manager.start_due_jobs()
+        if claimed_due_jobs:
+            log.info("Claimed %d due delayed job(s) after restart", claimed_due_jobs)
+    except Exception as e:
+        log.warning("Delayed job recovery sweep failed: %s", e)
+
     # Backfill canonical launch tables from the event log (idempotent).
     try:
         from services.persistence.launch import backfill_all

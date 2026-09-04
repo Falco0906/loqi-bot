@@ -24,7 +24,7 @@ from services.workflow_events import (
     clear as clear_events, restore_events,
 )
 from services.workflow_executor import execute, pause, resume, cancel
-from services.workflow_retry import (
+from services.workflows.retry import (
     RetryPolicy, RetryState, classify_error, ErrorClass,
     should_retry, get_retry_delay,
 )

@@ -25,7 +25,7 @@ from services.workflow_events import (
     emit_lock_conflict,
 )
 from services.workflow_registry import dispatch
-from services.workflow_retry import (
+from services.workflows.retry import (
     RetryState, classify_error, ErrorClass, should_retry,
     DEFAULT_MAX_RETRIES, DEFAULT_POLICY,
 )

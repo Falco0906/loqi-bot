@@ -435,7 +435,9 @@ class TestCopilotOperationBoundary:
         assert result["messages"][0]["data"]["tool"] == "analytics.workspace.summary"
 
     def test_discovery_title_is_natural_and_separate_from_provider_query(self):
-        title = main_module._discovery_title_from_search_context
+        from services.copilot.runners import _discovery_title_from_search_context
+
+        title = _discovery_title_from_search_context
         assert title({"industry": ["cafe"]}) == "Cafe leads"
         assert title({"industry": ["cafe"], "decision_makers": ["cafe_owner"]}) == "Cafe owners"
         assert title({"industry": ["cafe"], "decision_makers": ["cafe_owner"], "location": ["Hyderabad"]}) == "Cafe owners in Hyderabad"
@@ -996,7 +998,7 @@ class TestCopilotOperationBoundary:
         monkeypatch.setattr("services.workspace_state.ensure_workspace", lambda _user_id: "workspace-1")
         async def fail_runner(*_args, **_kwargs):
             raise RuntimeError("provider unavailable")
-        monkeypatch.setattr(main_module, "_run_copilot_discovery", fail_runner)
+        monkeypatch.setattr("services.copilot.runners.run_discovery", fail_runner)
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
         payload = main_module.SendWebMessageRequest(text="I need restaurant leads", copilot=main_module.CopilotContextModel(current_page="Mission Control", message_history=[]))
         result = await main_module.post_web_session_message("session-1", payload, request)

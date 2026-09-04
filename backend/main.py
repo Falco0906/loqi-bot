@@ -39,6 +39,7 @@ import services.drafts.service as draft_service
 import services.campaigns.service as campaign_service
 import services.outbound.service as outbound_service
 import services.conversations.service as conversation_service
+import services.copilot.runners as copilot_runners
 from services.campaigns.service import load_campaigns
 from services.conversations.api import router as conversations_router
 from services.conversations.conversation_store import conversation_in_workspace, conversation_owned_by
@@ -1291,89 +1292,6 @@ class CopilotContextModel(BaseModel):
 class SendWebMessageRequest(BaseModel):
     text: str
     copilot: CopilotContextModel | None = None
-
-
-def _discovery_query_from_search_context(search_context: dict) -> str:
-    """Build the provider query from the validated structured search state."""
-    industries = [str(v).strip() for v in search_context.get("industry", []) if str(v).strip()]
-    decision_makers = [str(v).strip().replace("_", " ") for v in search_context.get("decision_makers", []) if str(v).strip()]
-    locations = [str(v).strip() for v in search_context.get("location", []) if str(v).strip()]
-    parts: list[str] = []
-    if industries:
-        parts.append("industries: " + ", ".join(industries))
-    if decision_makers:
-        parts.append("decision makers: " + ", ".join(decision_makers))
-    if locations:
-        parts.append("locations: " + ", ".join(locations))
-    quantity = search_context.get("quantity")
-    if isinstance(quantity, int) and quantity > 0:
-        parts.append(f"quantity: {quantity}")
-    return "Find leads matching " + "; ".join(parts) if parts else "Find leads"
-
-
-def _discovery_title_from_search_context(search_context: dict) -> str:
-    """Return a concise display label without changing the execution query."""
-    def values(key: str) -> list[str]:
-        raw = search_context.get(key, [])
-        if isinstance(raw, str):
-            raw = [raw]
-        return [str(value).strip() for value in raw if str(value).strip()]
-
-    def natural(items: list[str]) -> str:
-        rendered = [item.replace("_", " ").strip() for item in items]
-        if len(rendered) < 2:
-            return (rendered[0][0].upper() + rendered[0][1:]) if rendered else ""
-        return ", ".join(rendered[:-1]) + " and " + rendered[-1]
-
-    industries = values("industry")
-    decision_makers = values("decision_makers")
-    locations = values("location")
-    if decision_makers:
-        role_parts: list[str] = []
-        for role in decision_makers:
-            words = role.replace("_", " ").split()
-            if words and words[-1].lower() not in {"s", "ss"}:
-                words[-1] += "s"
-            role_parts.append(" ".join(words))
-        label = natural(role_parts)
-    elif industries:
-        industry_names = [
-            industry[:-1] if industry.lower().endswith("s") and not industry.lower().endswith("ss") else industry
-            for industry in industries
-        ]
-        label = f"{natural(industry_names)} leads"
-    else:
-        label = "Leads"
-
-    if label:
-        label = label[0].upper() + label[1:]
-
-    quantity = search_context.get("quantity")
-    if isinstance(quantity, int) and quantity > 0:
-        label = f"{quantity} {label[0].lower() + label[1:] if label else 'leads'}"
-    if locations:
-        label += f" in {natural(locations)}"
-    return label
-
-
-async def _run_copilot_discovery(
-    user_id: str,
-    search_context: dict,
-    session_token: str,
-    *,
-    workspace_id: str,
-) -> dict:
-    """Discovery tool adapter; the existing search-run pipeline remains authoritative."""
-    from services.discovery.service import create_search_run
-
-    discovery_query = _discovery_query_from_search_context(search_context)
-    return await create_search_run(
-        user_id,
-        discovery_query,
-        session_token,
-        display_title=_discovery_title_from_search_context(search_context),
-        workspace_id=workspace_id,
-    )
 
 
 async def _run_copilot_campaign(
@@ -2852,7 +2770,7 @@ async def post_web_session_message(
                     workspace_id=workspace_id,
                     session_token=session_token,
                     decision=requested_decision,
-                    discovery_runner=_run_copilot_discovery,
+                    discovery_runner=copilot_runners.run_discovery,
                     campaign_runner=_run_copilot_campaign,
                     outreach_runner=_run_copilot_outreach,
                     inbox_runner=lambda *args: _run_copilot_inbox(*args, request=request),

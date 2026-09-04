@@ -8,7 +8,7 @@ from fastapi import HTTPException
 
 import main as main_module
 import services.workspace_state as workspace_state
-from services.workflow_models import PlanningInput
+from services.workflows.models import PlanningInput
 
 
 def _request() -> SimpleNamespace:

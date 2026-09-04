@@ -9,7 +9,7 @@ import time
 import tempfile
 import shutil
 
-from services.workflow_models import WorkflowPlan, WorkflowStep, ActionType
+from services.workflows.models import WorkflowPlan, WorkflowStep, ActionType
 from services.workflow_runtime import (
     RuntimeStatus, RuntimeEntry,
     create_runtime, get_runtime, update_status, clear as clear_runtime,

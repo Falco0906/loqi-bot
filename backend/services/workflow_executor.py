@@ -9,7 +9,7 @@ Now with:
 """
 
 import time as time_module
-from services.workflow_models import WorkflowPlan, WorkflowStep, StepStatus
+from services.workflows.models import WorkflowPlan, WorkflowStep, StepStatus
 from services.workflow_runtime import (
     RuntimeEntry, RuntimeStatus, create_runtime, get_runtime,
     update_status, add_log, set_current_step,

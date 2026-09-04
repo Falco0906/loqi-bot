@@ -1,6 +1,6 @@
 from uuid import uuid4
 
-from services.workflow_models import (
+from services.workflows.models import (
     WorkflowPlan, WorkflowStep, AlternativePlanPair,
     ActionType, RiskLevel, StepStatus, PlanStatus,
     APPROVAL_ACTIONS, ACTION_DURATIONS,

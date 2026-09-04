@@ -43,7 +43,7 @@ def recover_all() -> dict:
             entry.status = RuntimeStatus.RUNNING
             emit_workflow_recovered(entry.workflow_id)
             from services.workflow_executor import execute_remaining
-            from services.workflow_models import WorkflowPlan
+            from services.workflows.models import WorkflowPlan
             plan = WorkflowPlan(**entry.plan)
             execute_remaining(plan, entry.session_token, entry.current_step_index)
             summary["resumed"] += 1

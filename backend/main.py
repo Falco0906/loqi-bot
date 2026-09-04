@@ -90,12 +90,12 @@ from services.strategic_intelligence_api import router as strategic_intelligence
 from services.rewrite_engine import execute_rewrite
 from services.draft_comparison import compare_versions
 from services.workflow_planner import plan_workflow
-from services.workflow_models import PlanningInput
+from services.workflows.models import PlanningInput
 from services.workflow_executor import execute as execute_workflow, approve as approve_workflow, pause as pause_workflow, resume as resume_workflow, cancel as cancel_workflow
 from services.workflow_runtime import get_runtime, get_active_runtimes, get_all_runtimes, get_history as get_workflow_history
 from services.workflow_progress import calculate_progress
 from services.workflow_events import get_events as get_workflow_events, get_latest_sequence
-from services.workflow_models import WorkflowPlan
+from services.workflows.models import WorkflowPlan
 from services.workflow_recovery import recover_all
 from services.conversation_models import ConversationMessage
 from services.communication.provider_registry import (

@@ -4,7 +4,7 @@ Tests are deterministic — no API calls, no mocks.
 Tests only the planning logic.
 """
 
-from services.workflow_models import (
+from services.workflows.models import (
     ActionType, RiskLevel, WorkflowPlan, WorkflowStep,
     PlanningInput, AlternativePlanPair,
 )

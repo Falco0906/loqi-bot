@@ -4,7 +4,7 @@ Executor only dispatches through this registry.
 Business services are never called directly by the executor.
 """
 
-from services.workflow_models import ActionType, WorkflowStep
+from services.workflows.models import ActionType, WorkflowStep
 
 
 def _log(msg: str) -> None:

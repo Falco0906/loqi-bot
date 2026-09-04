@@ -1294,76 +1294,6 @@ class SendWebMessageRequest(BaseModel):
     copilot: CopilotContextModel | None = None
 
 
-async def _run_copilot_analytics(
-    tool_name: str,
-    user_id: str,
-    workspace_id: str,
-    session_token: str,
-    decision: dict[str, Any],
-) -> dict[str, Any]:
-    """Read-only adapter over the existing workspace snapshot aggregations."""
-    from services.workspace_state import load_workspace_state, load_campaign_state
-    from services.workspace_snapshot import build_snapshot, enrich_campaigns
-
-    page = decision.get("page_context") or {}
-    campaign_id = str(
-        decision.get("campaign_id")
-        or page.get("campaign_id")
-        or page.get("active_campaign_id")
-        or ""
-    ).strip()
-    state = await asyncio.to_thread(load_workspace_state, user_id, False, workspace_id)
-    campaigns = state.get("campaigns") or []
-    drafts = state.get("drafts") or []
-    enriched = enrich_campaigns(campaigns, drafts)
-    total_leads = sum(int(c.get("lead_count") or 0) for c in campaigns)
-
-    if tool_name == "analytics.campaign.summary":
-        if not campaign_id:
-            return {"ok": False, "status": "unavailable", "tool": tool_name, "reason": "No campaign is selected for this metric."}
-        campaign = await asyncio.to_thread(load_campaign_state, user_id, campaign_id, workspace_id=workspace_id)
-        if not campaign:
-            return {"ok": False, "status": "failed", "tool": tool_name, "reason": "The selected campaign is not available in this workspace."}
-        target = next((item for item in enriched if str(item.get("id")) == campaign_id), campaign)
-        result = {"campaign": target, "metrics": {
-            "lead_count": target.get("lead_count", 0),
-            "pending_drafts": target.get("pending_drafts", 0),
-            "approved_drafts": target.get("approved_drafts", 0),
-            "sent_drafts": target.get("sent_drafts", 0),
-            "status": target.get("status", ""),
-            "current_step": target.get("current_step", ""),
-            "updated_at": target.get("updated_at", ""),
-        }}
-        return {"ok": True, "status": "completed", "tool": tool_name, "result": result}
-
-    snapshot = await asyncio.to_thread(
-        build_snapshot, session_token, campaigns, drafts, total_leads, False, user_id,
-    )
-    if tool_name == "analytics.leads.summary":
-        selected = [c for c in enriched if not campaign_id or str(c.get("id")) == campaign_id]
-        if campaign_id and not selected:
-            return {"ok": False, "status": "failed", "tool": tool_name, "reason": "The selected campaign is not available in this workspace."}
-        return {"ok": True, "status": "completed", "tool": tool_name, "result": {
-            "campaign_id": campaign_id,
-            "lead_count": sum(int(c.get("lead_count") or 0) for c in selected) if campaign_id else snapshot.get("total_leads", total_leads),
-            "campaigns": [{"id": c.get("id"), "name": c.get("name"), "lead_count": c.get("lead_count", 0)} for c in selected],
-        }}
-
-    if tool_name == "analytics.workspace.summary":
-        return {"ok": True, "status": "completed", "tool": tool_name, "result": {
-            "metrics": {
-                "total_leads": snapshot.get("total_leads", total_leads),
-                "campaign_count": snapshot.get("campaign_count", len(campaigns)),
-                "drafts": snapshot.get("drafts", {}),
-                "campaigns_ready": snapshot.get("campaigns_ready", 0),
-                "campaigns_draft_review": snapshot.get("campaigns_draft_review", 0),
-            },
-            "campaigns": snapshot.get("campaigns", []),
-            "analysis": snapshot.get("analysis", {}),
-        }}
-    return {"ok": False, "status": "unsupported", "tool": tool_name}
-
-
 def _copilot_read_message(result: dict) -> str:
     status = str(result.get("status") or "")
     if status != "completed":
@@ -2250,7 +2180,7 @@ async def post_web_session_message(
                     outreach_runner=copilot_runners.run_outreach,
                     inbox_runner=lambda *args: copilot_runners.run_inbox(*args, request=request),
                     knowledge_runner=copilot_runners.run_knowledge,
-                    analytics_runner=_run_copilot_analytics,
+                    analytics_runner=copilot_runners.run_analytics,
                 )
 
             if registered_tool.read_only:

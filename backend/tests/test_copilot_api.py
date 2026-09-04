@@ -226,7 +226,7 @@ class TestCopilotOperationBoundary:
             "services.workspace_snapshot.build_snapshot",
             lambda *_args, **_kwargs: {"total_leads": 12, "campaign_count": 1, "drafts": {"total": 0, "pending": 0, "approved": 0}, "campaigns_ready": 0, "campaigns_draft_review": 0, "campaigns": [{"id": "c-1", "name": "Outbound", "lead_count": 12}], "analysis": {}},
         )
-        result = await main_module._run_copilot_analytics(
+        result = await main_module.copilot_runners.run_analytics(
             "analytics.workspace.summary", "owner-1", "workspace-1", "session-1", {"page_context": {}},
         )
         assert result["ok"] is True
@@ -239,7 +239,7 @@ class TestCopilotOperationBoundary:
             "services.workspace_state.load_workspace_state",
             lambda *_args, **_kwargs: {"campaigns": [], "drafts": []},
         )
-        result = await main_module._run_copilot_analytics(
+        result = await main_module.copilot_runners.run_analytics(
             "analytics.campaign.summary", "owner-1", "workspace-1", "session-1", {"page_context": {}},
         )
         assert result["ok"] is False
@@ -424,7 +424,7 @@ class TestCopilotOperationBoundary:
             return {"ok": True, "status": "completed", "tool": "analytics.workspace.summary", "result": {"metrics": {"campaign_count": 0}}}
 
         monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", must_not_prefetch)
-        monkeypatch.setattr(main_module, "_run_copilot_analytics", analytics_runner)
+        monkeypatch.setattr(main_module.copilot_runners, "run_analytics", analytics_runner)
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
         payload = main_module.SendWebMessageRequest(
             text="How is my workspace performing?",

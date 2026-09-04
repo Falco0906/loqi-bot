@@ -21,8 +21,41 @@ import services.workspace_context as workspace_access
 import services.workspace_state as workspace_state
 from services.world_model import EventType as WMEventType, publish
 from services.communication.reply_simulator import maybe_schedule as simulate_reply
+from services.events_bus import publish_draft_event
 
 log = logging.getLogger("loqi")
+
+SCHEDULED_SEND_JOB_TYPE = "outbound_send"
+
+
+def _parse_send_at(send_at: str) -> datetime | None:
+    """Parse the existing ISO schedule field into a durable UTC due time."""
+    try:
+        parsed = datetime.fromisoformat(str(send_at or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _scheduled_job_id(outbound_draft: object) -> str:
+    metadata = getattr(outbound_draft, "metadata", None) or {}
+    projection = metadata.get("outbound_projection") or {}
+    return str(projection.get("scheduled_job_id") or metadata.get("scheduled_job_id") or "")
+
+
+def register_scheduled_send_workflow() -> None:
+    """Register the durable delayed-send workflow with the shared job engine."""
+    from services.job_engine.registry import WorkflowRegistration, get_registry
+
+    registry = get_registry()
+    if registry.get(SCHEDULED_SEND_JOB_TYPE) is None:
+        registry.register(WorkflowRegistration(
+            type=SCHEDULED_SEND_JOB_TYPE,
+            description="Send one approved outbound draft at its durable due time",
+            runner_fn=run_scheduled_outbound_send,
+        ))
 
 
 def find_outbound_gmail_provider_id() -> str:
@@ -232,10 +265,8 @@ def resolve_provider_for_draft(outbound_draft: object, owner_id: str = "") -> st
 def stage_draft_for_legacy_execution(outbound_draft: object) -> None:
     """Stage one hydrated draft for the legacy executor/scheduler only.
 
-    Scheduled delivery remains process-local until the dedicated durable
-    scheduling cutover.  These routes therefore need a short-lived runtime
-    projection even though regular outbound reads now hydrate from the
-    canonical Draft record.
+    Immediate sends and the existing executor still require this temporary
+    runtime projection. Delayed jobs hydrate it only at execution time.
     """
     from services.outbound.draft_store import draft_store
 
@@ -243,6 +274,191 @@ def stage_draft_for_legacy_execution(outbound_draft: object) -> None:
         draft_store.update(outbound_draft)
     else:
         draft_store.create(outbound_draft)
+
+
+async def enqueue_scheduled_outbound_send(
+    owner_id: str,
+    workspace_id: str,
+    canonical_draft: dict[str, Any],
+    outbound_draft: object,
+    send_at: str,
+) -> dict[str, Any]:
+    """Persist one authorized scheduled send before it can be claimed."""
+    from services.job_engine import Job, job_manager
+    from services.outbound.outbound_models import DraftStatus
+    from services.workspace_state import persist_draft_update_awaited
+
+    run_at = _parse_send_at(send_at)
+    if run_at is None:
+        return {"ok": False, "error": "Invalid send time"}
+    provider_id = resolve_provider_for_draft(outbound_draft, owner_id)
+    if not provider_id:
+        return {"ok": False, "error": "No Gmail outbound provider registered"}
+
+    register_scheduled_send_workflow()
+    job = Job(
+        user_id=owner_id,
+        type=SCHEDULED_SEND_JOB_TYPE,
+        workspace_id=workspace_id,
+        campaign_id=str(canonical_draft.get("campaign_id") or ""),
+        run_at=run_at,
+        payload={
+            "draft_id": str(canonical_draft.get("id") or outbound_draft.id),
+            "provider_id": provider_id,
+        },
+    )
+    if not await job_manager.create_job(job):
+        return {"ok": False, "error": "Scheduled send could not be created"}
+
+    outbound_draft.status = DraftStatus.SCHEDULED
+    outbound_draft.metadata["scheduled_job_id"] = job.id
+    outbound_draft.metadata["send_at"] = send_at
+    draft_id = str(canonical_draft.get("id") or outbound_draft.id)
+    if not await persist_draft_update_awaited(
+        owner_id, draft_id, {"status": "scheduled"}, workspace_id=workspace_id,
+    ):
+        await asyncio.to_thread(job_manager.cancel_job, job.id)
+        return {"ok": False, "error": "Draft was scheduled but canonical persistence failed"}
+    if not await persist_outbound_projection(
+        owner_id, workspace_id, outbound_draft, change_summary="scheduled",
+    ):
+        await asyncio.to_thread(job_manager.cancel_job, job.id)
+        return {"ok": False, "error": "Draft schedule projection persistence failed"}
+    # schedule_id remains the canonical draft id for the existing cancel URL.
+    return {"ok": True, "schedule_id": draft_id, "job_id": job.id}
+
+
+async def cancel_scheduled_outbound_send(
+    owner_id: str,
+    workspace_id: str,
+    canonical_draft: dict[str, Any],
+    outbound_draft: object,
+) -> dict[str, Any]:
+    """Cancel one queued delayed send without interrupting remote provider work."""
+    from services.job_engine import job_manager
+    from services.outbound.outbound_models import DraftStatus
+    from services.workspace_state import persist_draft_update_awaited
+
+    job_id = _scheduled_job_id(outbound_draft)
+    if not job_id:
+        return {"ok": False, "error": "Draft is not scheduled"}
+    job = await asyncio.to_thread(job_manager.get_job, job_id)
+    if (
+        job is None
+        or job.get("type") != SCHEDULED_SEND_JOB_TYPE
+        or job.get("user_id") != owner_id
+        or job.get("workspace_id") != workspace_id
+        or str((job.get("payload") or {}).get("draft_id") or "") != str(canonical_draft.get("id") or "")
+    ):
+        return {"ok": False, "error": "Draft is not scheduled"}
+    if job.get("status") != "queued":
+        # A remote worker may already be inside a provider call. It is safer
+        # to report that state than claim cancellation prevented that send.
+        return {"ok": False, "error": "Scheduled send is already running"}
+    if not await asyncio.to_thread(job_manager.cancel_job, job_id):
+        return {"ok": False, "error": "Scheduled send is already running"}
+
+    draft_id = str(canonical_draft.get("id") or outbound_draft.id)
+    if not await persist_draft_update_awaited(
+        owner_id, draft_id, {"status": "pending"}, workspace_id=workspace_id,
+    ):
+        return {"ok": False, "error": "Schedule was cancelled but canonical Draft persistence failed"}
+    outbound_draft.status = DraftStatus.PENDING_APPROVAL
+    outbound_draft.metadata.pop("scheduled_job_id", None)
+    outbound_draft.metadata.pop("send_at", None)
+    if not await persist_outbound_projection(
+        owner_id, workspace_id, outbound_draft, change_summary="schedule cancelled",
+    ):
+        return {"ok": False, "error": "Draft schedule projection persistence failed"}
+    return {"ok": True}
+
+
+async def run_scheduled_outbound_send(job, on_progress) -> dict[str, Any]:
+    """Execute one claimed scheduled send from its canonical Draft state."""
+    from services.outbound.outbound_models import DraftStatus
+    from services.workspace_state import load_drafts_only, persist_draft_update_awaited
+
+    draft_id = str(job.payload.get("draft_id") or "")
+    if not draft_id or not job.user_id or not job.workspace_id:
+        return {"ok": False, "error": "Scheduled send is missing canonical draft context"}
+    canonical = next(
+        (
+            draft for draft in await asyncio.to_thread(
+                load_drafts_only, job.user_id, workspace_id=job.workspace_id,
+            )
+            if str(draft.get("id") or "") == draft_id
+        ),
+        None,
+    )
+    if canonical is None:
+        return {"ok": False, "error": "Scheduled draft no longer exists"}
+    if canonical.get("status") != "scheduled":
+        return {"ok": False, "error": "Scheduled draft is no longer active"}
+
+    outbound_draft = hydrate_outbound_draft(canonical, "", owner_id=job.user_id)
+    if _scheduled_job_id(outbound_draft) != job.id:
+        return {"ok": False, "error": "Scheduled draft has been superseded"}
+    provider_id = resolve_provider_for_draft(outbound_draft, job.user_id)
+    recipient = outbound_draft.recipient
+    if not provider_id:
+        return {"ok": False, "error": "No Gmail outbound provider registered"}
+    if not recipient or not str(recipient.email or "").strip():
+        return {"ok": False, "error": "This lead has no email address"}
+
+    # Persist the sending boundary before the provider side effect. If a
+    # process dies after this point, recovery refuses to guess and resend.
+    if not await persist_draft_update_awaited(
+        job.user_id, draft_id, {"status": "sending"}, workspace_id=job.workspace_id,
+    ):
+        return {"ok": False, "error": "Scheduled send could not enter sending state"}
+    outbound_draft.status = DraftStatus.SENDING
+    if not await persist_outbound_projection(
+        job.user_id, job.workspace_id, outbound_draft, change_summary="scheduled send started",
+    ):
+        return {"ok": False, "error": "Scheduled send projection persistence failed"}
+
+    stage_draft_for_legacy_execution(outbound_draft)
+    on_progress(job.id, "Sending scheduled draft", 50)
+    result = await asyncio.to_thread(
+        outbound_executor.execute,
+        "send_reply",
+        {
+            "provider_id": provider_id,
+            "draft_id": draft_id,
+            "conversation_id": outbound_draft.conversation_id,
+            "thread_id": outbound_draft.thread_id,
+            "workflow_id": outbound_draft.workflow_id,
+            "subject": outbound_draft.subject,
+            "body": outbound_draft.body,
+            "recipient": {"email": recipient.email, "name": recipient.name},
+            "sender": {"email": outbound_draft.sender.email, "name": outbound_draft.sender.name},
+        },
+    )
+    if not result.get("ok"):
+        outbound_draft.status = DraftStatus.FAILED
+        await persist_draft_update_awaited(
+            job.user_id, draft_id, {"status": "failed"}, workspace_id=job.workspace_id,
+        )
+        await persist_outbound_projection(
+            job.user_id, job.workspace_id, outbound_draft, change_summary="scheduled send failed",
+        )
+        await publish_draft_event(job.user_id, "draft.failed", draft_id=draft_id)
+        return {"ok": False, "error": result.get("error", "Scheduled send failed")}
+
+    outbound_draft.status = DraftStatus.SENT
+    outbound_draft.metadata.pop("scheduled_job_id", None)
+    outbound_draft.metadata.pop("send_at", None)
+    if not await persist_draft_update_awaited(
+        job.user_id, draft_id, {"status": "sent"}, workspace_id=job.workspace_id,
+    ):
+        return {"ok": False, "error": "Email was sent but the canonical Draft could not be updated"}
+    if not await persist_outbound_projection(
+        job.user_id, job.workspace_id, outbound_draft, change_summary="scheduled send completed",
+    ):
+        return {"ok": False, "error": "Email was sent but the outbound projection could not be updated"}
+    await publish_draft_event(job.user_id, "draft.sent", draft_id=draft_id)
+    on_progress(job.id, "Scheduled draft sent", 100)
+    return {"ok": True, "result": {"draft_id": draft_id, "send_result": result.get("send_result") or {}}}
 
 
 async def create_provider_draft_after_approval(

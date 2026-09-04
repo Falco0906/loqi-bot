@@ -201,6 +201,7 @@ async def lifespan(app: FastAPI):
     log_config_warnings()
     startup_diagnostics(app)
     register_workflows()
+    outbound_service.register_scheduled_send_workflow()
 
     # PR10.2: validate runtime configuration BEFORE any background worker,
     # provider restore, or sync engine starts. Fail fast with non-secret,
@@ -343,6 +344,7 @@ async def lifespan(app: FastAPI):
         claimed_due_jobs = await job_manager.start_due_jobs()
         if claimed_due_jobs:
             log.info("Claimed %d due delayed job(s) after restart", claimed_due_jobs)
+        background_tasks.append(asyncio.create_task(job_manager.poll_due_jobs()))
     except Exception as e:
         log.warning("Delayed job recovery sweep failed: %s", e)
 
@@ -1719,12 +1721,15 @@ async def _run_copilot_outreach(
     if not provider_id:
         return {"ok": False, "status": "failed", "tool": tool_name, "reason": "No authorized Gmail provider is available."}
     if tool_name == "outreach.draft.schedule":
-        from services.outbound.outbound_scheduler import outbound_scheduler
         send_at = str(decision.get("send_at") or "").strip()
-        outbound_service.stage_draft_for_legacy_execution(outbound)
-        result = outbound_scheduler.schedule(target_id, provider_id, send_at) if send_at else {"ok": False, "error": "A send time is required."}
+        result = (
+            await outbound_service.enqueue_scheduled_outbound_send(
+                user_id, workspace_id, target, outbound, send_at,
+            )
+            if send_at
+            else {"ok": False, "error": "A send time is required."}
+        )
         if result.get("ok"):
-            await persist_draft_update_awaited(user_id, target_id, {"status": "scheduled"}, workspace_id=workspace_id)
             await publish_draft_event(user_id, "draft.scheduled", draft_id=target_id, campaign_id=str(target.get("campaign_id") or ""))
     else:
         outbound_service.stage_draft_for_legacy_execution(outbound)
@@ -4436,9 +4441,6 @@ class ScheduleDraftRequest(BaseModel):
 @app.post("/api/web/session/{session_token}/drafts/{draft_id}/schedule")
 async def schedule_draft(session_token: str, draft_id: str, payload: ScheduleDraftRequest, request: Request):
     session_token = identity_dependencies.web_session_token(request)
-    from services.outbound.draft_store import draft_store as outbound_draft_store
-    from services.outbound.outbound_scheduler import outbound_scheduler
-    from services.outbound.outbound_models import DraftStatus
     owner_id, ws_id, canonical_draft, outbound_draft = await outbound_service.require_canonical_outbound_draft(
         request, session_token, draft_id,
     )
@@ -4449,18 +4451,10 @@ async def schedule_draft(session_token: str, draft_id: str, payload: ScheduleDra
     if not real_provider_id:
         return {"ok": False, "error": "No Gmail outbound provider registered"}
     log.info("[schedule_draft] Scheduling draft %s at %s via provider %s", draft_id, payload.send_at, real_provider_id)
-    outbound_service.stage_draft_for_legacy_execution(outbound_draft)
-    result = outbound_scheduler.schedule(draft_id, real_provider_id, payload.send_at)
+    result = await outbound_service.enqueue_scheduled_outbound_send(
+        owner_id, ws_id, canonical_draft, outbound_draft, payload.send_at,
+    )
     if result.get("ok"):
-        from services.workspace_state import persist_draft_update_awaited
-        if not await persist_draft_update_awaited(
-            owner_id, draft_id, {"status": "scheduled"}, workspace_id=ws_id,
-        ):
-            raise HTTPException(status_code=503, detail="Draft was scheduled but canonical persistence failed")
-        outbound_draft.status = DraftStatus.SCHEDULED
-        outbound_draft_store.update(outbound_draft)
-        if not await outbound_service.persist_outbound_projection(owner_id, ws_id, outbound_draft, change_summary="scheduled"):
-            raise HTTPException(status_code=503, detail="Draft schedule projection persistence failed")
         await publish_draft_event(owner_id, "draft.scheduled", draft_id=draft_id)
         publish(session_token, WMEventType.DRAFT_SCHEDULED, {
             "draft_id": draft_id,
@@ -4468,35 +4462,34 @@ async def schedule_draft(session_token: str, draft_id: str, payload: ScheduleDra
             "provider_id": real_provider_id,
             "campaign_id": outbound_draft.workflow_id if outbound_draft else "",
         }, actor="user")
+    if result.get("error") == "Draft was scheduled but canonical persistence failed":
+        raise HTTPException(status_code=503, detail=result["error"])
+    if result.get("error") == "Draft schedule projection persistence failed":
+        raise HTTPException(status_code=503, detail=result["error"])
+    result.pop("job_id", None)
     return result
 
 
 @app.post("/api/web/session/{session_token}/drafts/{draft_id}/cancel-schedule")
 async def cancel_schedule_draft(session_token: str, draft_id: str, request: Request):
     session_token = identity_dependencies.web_session_token(request)
-    from services.outbound.draft_store import draft_store as outbound_draft_store
-    from services.outbound.outbound_scheduler import outbound_scheduler
-    owner_id, ws_id, _canonical, outbound_draft = await outbound_service.require_canonical_outbound_draft(
+    owner_id, ws_id, canonical_draft, outbound_draft = await outbound_service.require_canonical_outbound_draft(
         request, session_token, draft_id,
     )
-    outbound_service.stage_draft_for_legacy_execution(outbound_draft)
-    result = outbound_scheduler.cancel_schedule(draft_id, outbound_draft.provider_id)
+    result = await outbound_service.cancel_scheduled_outbound_send(
+        owner_id, ws_id, canonical_draft, outbound_draft,
+    )
     if result.get("ok"):
-        from services.workspace_state import persist_draft_update_awaited
-        if not await persist_draft_update_awaited(
-            owner_id, draft_id, {"status": "pending"}, workspace_id=ws_id,
-        ):
-            raise HTTPException(status_code=503, detail="Schedule was cancelled but canonical Draft persistence failed")
-        outbound_draft.status = DraftStatus.PENDING_APPROVAL
-        outbound_draft_store.update(outbound_draft)
-        if not await outbound_service.persist_outbound_projection(owner_id, ws_id, outbound_draft, change_summary="schedule cancelled"):
-            raise HTTPException(status_code=503, detail="Draft schedule projection persistence failed")
         await publish_draft_event(owner_id, "draft.updated", draft_id=draft_id)
         publish(session_token, WMEventType.DRAFT_UPDATED, {
             "draft_id": draft_id,
             "status": "pending",
             "previous_status": "scheduled",
         }, actor="user")
+    if result.get("error") == "Schedule was cancelled but canonical Draft persistence failed":
+        raise HTTPException(status_code=503, detail=result["error"])
+    if result.get("error") == "Draft schedule projection persistence failed":
+        raise HTTPException(status_code=503, detail=result["error"])
     return result
 
 
@@ -4520,21 +4513,18 @@ async def outbound_cancel_schedule(session_token: str, schedule_id: str, provide
     if request is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     session_token = identity_dependencies.web_session_token(request)
-    from services.outbound.outbound_scheduler import outbound_scheduler
-    from services.outbound.draft_store import draft_store as outbound_draft_store
-    owner_id, ws_id, _canonical, draft = await outbound_service.require_canonical_outbound_draft(
+    owner_id, ws_id, canonical_draft, draft = await outbound_service.require_canonical_outbound_draft(
         request, session_token, schedule_id, provider_id,
     )
-    outbound_service.stage_draft_for_legacy_execution(draft)
-    result = outbound_scheduler.cancel_schedule(schedule_id, draft.provider_id)
+    result = await outbound_service.cancel_scheduled_outbound_send(
+        owner_id, ws_id, canonical_draft, draft,
+    )
     if result.get("ok"):
-        from services.workspace_state import persist_draft_update_awaited
-        if not await persist_draft_update_awaited(owner_id, schedule_id, {"status": "pending"}, workspace_id=ws_id):
-            raise HTTPException(status_code=503, detail="Schedule was cancelled but canonical Draft persistence failed")
-        draft.status = DraftStatus.PENDING_APPROVAL
-        outbound_draft_store.update(draft)
-        if not await outbound_service.persist_outbound_projection(owner_id, ws_id, draft, change_summary="schedule cancelled"):
-            raise HTTPException(status_code=503, detail="Draft schedule projection persistence failed")
+        await publish_draft_event(owner_id, "draft.updated", draft_id=schedule_id)
+    if result.get("error") == "Schedule was cancelled but canonical Draft persistence failed":
+        raise HTTPException(status_code=503, detail=result["error"])
+    if result.get("error") == "Draft schedule projection persistence failed":
+        raise HTTPException(status_code=503, detail=result["error"])
     return result
 
 

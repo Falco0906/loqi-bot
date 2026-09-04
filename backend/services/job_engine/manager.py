@@ -79,6 +79,17 @@ class JobManager:
             self._runner.start_job(job, claimed=True)
         return len(claimed)
 
+    async def poll_due_jobs(self, *, interval_seconds: int = 15) -> None:
+        """Run the durable due-job claim loop until the lifespan cancels it."""
+        import asyncio
+
+        while True:
+            try:
+                await self.start_due_jobs()
+            except Exception as error:
+                _log(f"due-job poll failed: {error}")
+            await asyncio.sleep(interval_seconds)
+
     async def create_search_job(self, user_id: str, query: str, on_update=None, on_complete=None, discovery_id: str = "") -> Optional[dict]:
         import asyncio
         from services.job_engine.registry import STAGES_SEARCH

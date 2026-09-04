@@ -103,6 +103,10 @@ def projection_from_draft(draft) -> dict[str, Any]:
         "status": draft.status.value,
         "last_editor": draft.last_editor,
         "version": draft.version,
+        # Empty for immediate drafts. These fields make the delayed job and
+        # its due time available when hydrating after a process restart.
+        "scheduled_job_id": str((draft.metadata or {}).get("scheduled_job_id") or ""),
+        "send_at": str((draft.metadata or {}).get("send_at") or ""),
     }
 
 

@@ -199,7 +199,7 @@ class TestCopilotOperationBoundary:
             metadata={"workspace_id": "workspace-b"},
         )
         monkeypatch.setattr(conversation_store, "get_conversation", lambda _cid: foreign)
-        result = await main_module._run_copilot_inbox(
+        result = await main_module.copilot_runners.run_inbox(
             "inbox.conversation.read",
             "owner-1",
             "workspace-a",
@@ -313,7 +313,7 @@ class TestCopilotOperationBoundary:
         )
         monkeypatch.setattr(conversation_store, "get_conversation", lambda _cid: convo)
         monkeypatch.setattr(conversation_store, "get_messages_for_conversation", lambda _cid: [])
-        result = await main_module._run_copilot_inbox(
+        result = await main_module.copilot_runners.run_inbox(
             "inbox.conversation.read", "owner-1", "workspace-1", "session-1",
             {"conversation_id": "conversation-1", "page_context": {}},
         )
@@ -340,7 +340,7 @@ class TestCopilotOperationBoundary:
             called = True
 
         monkeypatch.setattr(conversation_service, "send_reply", must_not_send)
-        result = await main_module._run_copilot_inbox(
+        result = await main_module.copilot_runners.run_inbox(
             "inbox.reply.send", "owner-1", "workspace-1", "session-1",
             {"conversation_id": "conversation-1", "reply_body": "Thanks"},
         )
@@ -578,8 +578,8 @@ class TestCopilotOperationBoundary:
 
         import services.conversations.conversation_store as conversation_module
         monkeypatch.setattr(conversation_module, "conversation_store", Store())
-        monkeypatch.setattr(main_module, "conversation_owned_by", lambda *_args: True)
-        result = await main_module._run_copilot_inbox(
+        monkeypatch.setattr(conversation_module, "conversation_owned_by", lambda *_args: True)
+        result = await main_module.copilot_runners.run_inbox(
             "inbox.conversation.recommend", "owner-1", "workspace-1", "session-1", {},
         )
         assert result["ok"] is True

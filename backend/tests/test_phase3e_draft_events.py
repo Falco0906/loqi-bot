@@ -53,16 +53,13 @@ def _wire_send_route(app, monkeypatch):
     """Minimal app exposing the send route with all externals stubbed."""
     from services.outbound import outbound_registry
     from services.communication import provider_registry as comm_registry
-    from services.outbound.draft_store import draft_store as outbound_draft_store
     from services.outbound.outbound_models import (
         DraftMessage, DraftStatus, ApprovalState, Recipient,
     )
 
-    # clear registries/stores
+    # Clear provider registries.
     comm_registry._instances.clear()
     outbound_registry._instances.clear()
-    if hasattr(outbound_draft_store, "_drafts"):
-        outbound_draft_store._drafts.clear()
 
     async def fake_owner(request=None, session_token=None):
         return OWNER
@@ -72,7 +69,7 @@ def _wire_send_route(app, monkeypatch):
     monkeypatch.setattr(outbound_service, "resolve_provider_for_draft", lambda d, o: "prov-1")
 
     class StubExecutor:
-        def execute(self, action, params):
+        def send_hydrated_draft(self, draft, *, provider_id, recipient_override=None):
             return {"ok": True, "send_result": {"thread_id": "t", "external_message_id": "m"}}
     main_module.outbound_executor = StubExecutor()
 
@@ -86,8 +83,6 @@ def _wire_send_route(app, monkeypatch):
         status=DraftStatus.APPROVED,
         approval_state=ApprovalState.APPROVED,
     )
-    outbound_draft_store.create(draft)
-
     async def fake_canonical_draft(*_args, **_kwargs):
         return OWNER, "workspace-events", {"id": draft.id, "status": "approved"}, draft
 

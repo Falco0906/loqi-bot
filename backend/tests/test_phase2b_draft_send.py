@@ -36,7 +36,6 @@ from services.outbound.outbound_models import (
     ApprovalState,
     Recipient,
 )
-import services.outbound.draft_store as outbound_draft_store_module
 from services.communication import provider_registry as comm_registry
 
 OWNER = "2b-owner-0001"
@@ -68,21 +67,6 @@ def register_gmail(provider_id: str, user_id: str, email: str = ""):
     return pid
 
 
-def make_outbound_draft(draft_id: str, provider_id: str) -> DraftMessage:
-    d = DraftMessage(
-        id=draft_id,
-        provider_id=provider_id,
-        subject="S",
-        body="B",
-        recipient=Recipient(email="lead@example.com", name="Lead"),
-        sender=Recipient(email="", name=""),
-        status=DraftStatus.APPROVED,
-        approval_state=ApprovalState.APPROVED,
-    )
-    outbound_draft_store_module.draft_store.create(d)
-    return d
-
-
 def durable_draft(draft_id: str, status: str = "approved") -> dict:
     return {
         "id": draft_id,
@@ -97,12 +81,7 @@ def durable_draft(draft_id: str, status: str = "approved") -> dict:
 
 @pytest.fixture()
 def harness(monkeypatch):
-    # Reset stores/registries
-    outbound_draft_store = outbound_draft_store_module.draft_store
-    outbound_draft_store._drafts.clear() if hasattr(outbound_draft_store, "_drafts") else None
-    for attr in ("_drafts", "_store"):
-        if hasattr(outbound_draft_store, attr):
-            getattr(outbound_draft_store, attr).clear()
+    # Reset provider registries. Durable workspace drafts are supplied below.
     comm_registry._instances.clear()
     outbound_registry._instances.clear()
     main_module._gmail_connect_locks.clear()
@@ -110,9 +89,8 @@ def harness(monkeypatch):
     state = {
         "durable": [],            # durable drafts returned by workspace_state
         "workspace_ids_seen": [],
-        "executed": [],           # outbound_executor.execute captures
+        "executed": [],           # outbound_executor.send_hydrated_draft captures
         "executor_result": {"ok": True},
-        "legacy": {},             # legacy session-scoped drafts
     }
 
     monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda request: SESSION)
@@ -146,8 +124,8 @@ def harness(monkeypatch):
     monkeypatch.setattr(main_module, "_test_recipient_override_enabled", lambda: False)
 
     class StubExecutor:
-        def execute(self, action, params):
-            state["executed"].append({"action": action, **params})
+        def send_hydrated_draft(self, draft, *, provider_id, recipient_override=None):
+            state["executed"].append({"provider_id": provider_id, "draft_id": draft.id})
             result = dict(state["executor_result"])
             if state["executor_result"].get("ok"):
                 result.setdefault("send_result", {"thread_id": "t", "external_message_id": "m"})
@@ -172,8 +150,7 @@ def test_a_approved_durable_draft_sends(harness):
     body = r.json()
     assert r.status_code == 200 and body.get("ok") is True, body
     assert state["executed"] and state["executed"][0]["provider_id"] == own
-    synced = outbound_draft_store_module.draft_store.get("draft-a")
-    assert synced.provider_id == own
+    assert state["durable"][0]["status"] == "sent"
 
 
 def test_b_unknown_draft_is_404(harness):
@@ -197,7 +174,7 @@ def test_c_foreign_provider_draft_stays_404(harness):
         id=foreign, provider_type=ProviderType.GMAIL,
         user_id=OTHER, status=ProviderStatus.HEALTHY,
     ))
-    make_outbound_draft("draft-c", foreign)
+    state["durable"] = [dict(durable_draft("draft-c"), provider=foreign)]
     r = client.post("/api/web/session/X/drafts/draft-c/send")
     assert r.status_code == 404
     assert r.json()["detail"] == "Draft not found"
@@ -222,7 +199,7 @@ def test_e_freshly_approved_durable_draft_sendable(harness):
     state["durable"] = [durable_draft("draft-e", status="approved")]
     r = client.post("/api/web/session/X/drafts/draft-e/send")
     assert r.status_code == 200 and r.json().get("ok") is True
-    assert outbound_draft_store_module.draft_store.get("draft-e").status == DraftStatus.SENT
+    assert state["durable"][0]["status"] == "sent"
 
 
 def test_f_stale_frontend_draft_fails_cleanly(harness):
@@ -243,8 +220,6 @@ def test_g_send_failure_does_not_corrupt_state(harness):
     body = r.json()
     assert r.status_code == 200 and body.get("ok") is False
 
-    d = outbound_draft_store_module.draft_store.get("draft-g")
-    assert d is not None and d.status != DraftStatus.SENT, "failed send must not mark sent"
     # Durable copy untouched (still approved, not sent).
     assert state["durable"][0]["status"] == "approved"
 
@@ -264,7 +239,4 @@ def test_h_production_bug_second_user_does_not_poison_first(harness):
     assert body.get("ok") is False
     assert body.get("error") == "No Gmail outbound provider registered"
 
-    # No provider means the legacy execution projection is deliberately not
-    # staged; the response proves owner-scoped durable hydration did not use
-    # the other user's globally registered provider.
-    assert outbound_draft_store_module.draft_store.get("draft-h") is None
+    # Owner-scoped durable hydration did not use the other user's provider.

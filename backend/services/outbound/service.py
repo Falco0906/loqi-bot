@@ -262,20 +262,6 @@ def resolve_provider_for_draft(outbound_draft: object, owner_id: str = "") -> st
     return resolved
 
 
-def stage_draft_for_legacy_execution(outbound_draft: object) -> None:
-    """Stage one hydrated draft for the legacy executor/scheduler only.
-
-    Immediate sends and the existing executor still require this temporary
-    runtime projection. Delayed jobs hydrate it only at execution time.
-    """
-    from services.outbound.draft_store import draft_store
-
-    if draft_store.get(outbound_draft.id):
-        draft_store.update(outbound_draft)
-    else:
-        draft_store.create(outbound_draft)
-
-
 async def enqueue_scheduled_outbound_send(
     owner_id: str,
     workspace_id: str,
@@ -417,22 +403,11 @@ async def run_scheduled_outbound_send(job, on_progress) -> dict[str, Any]:
     ):
         return {"ok": False, "error": "Scheduled send projection persistence failed"}
 
-    stage_draft_for_legacy_execution(outbound_draft)
     on_progress(job.id, "Sending scheduled draft", 50)
     result = await asyncio.to_thread(
-        outbound_executor.execute,
-        "send_reply",
-        {
-            "provider_id": provider_id,
-            "draft_id": draft_id,
-            "conversation_id": outbound_draft.conversation_id,
-            "thread_id": outbound_draft.thread_id,
-            "workflow_id": outbound_draft.workflow_id,
-            "subject": outbound_draft.subject,
-            "body": outbound_draft.body,
-            "recipient": {"email": recipient.email, "name": recipient.name},
-            "sender": {"email": outbound_draft.sender.email, "name": outbound_draft.sender.name},
-        },
+        outbound_executor.send_hydrated_draft,
+        outbound_draft,
+        provider_id=provider_id,
     )
     if not result.get("ok"):
         outbound_draft.status = DraftStatus.FAILED
@@ -573,17 +548,11 @@ async def dispatch_campaign_sends(
                 publish(session_token, WMEventType.DRAFT_FAILED, {"draft_id": draft.id, "campaign_id": campaign_id, "error": error}, actor="system")
                 await update_campaign_launch_progress(owner_id, session_token, campaign_id, sent_count, failed_count, len(approved))
                 continue
-            result = await asyncio.to_thread(outbound_executor.execute, "send_reply", {
-                "provider_id": provider_id,
-                "draft_id": draft.id,
-                "conversation_id": draft.conversation_id,
-                "thread_id": draft.thread_id,
-                "workflow_id": draft.workflow_id,
-                "subject": draft.subject,
-                "body": draft.body,
-                "recipient": {"email": recipient.email, "name": recipient.name},
-                "sender": {"email": draft.sender.email, "name": draft.sender.name},
-            })
+            result = await asyncio.to_thread(
+                outbound_executor.send_hydrated_draft,
+                draft,
+                provider_id=provider_id,
+            )
             if result.get("ok"):
                 from services.workspace_state import persist_draft_update_awaited
                 if not await persist_draft_update_awaited(owner_id, draft.id, {"status": "sent"}, workspace_id=workspace_id):

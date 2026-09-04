@@ -26,7 +26,6 @@ import pytest
 import services.workspace_state as workspace_state
 from services.drafts import api as drafts_api
 from services.drafts import service as drafts_service
-from services.outbound.draft_store import draft_store as outbound_draft_store
 import services.outbound.service as outbound_service
 from services.outbound.outbound_models import DraftMessage, DraftStatus, Recipient
 from services.persistence.launch.models import Draft
@@ -48,13 +47,6 @@ def _fake_workspace(workspace_id: str = "workspace-1"):
     return fake_workspace
 
 
-@pytest.fixture(autouse=True)
-def _clean_outbound_store():
-    outbound_draft_store._drafts.clear()
-    yield
-    outbound_draft_store._drafts.clear()
-
-
 def _sent_outbound_draft(status: DraftStatus) -> DraftMessage:
     draft = DraftMessage(
         id=f"draft-{uuid.uuid4().hex[:8]}",
@@ -65,7 +57,6 @@ def _sent_outbound_draft(status: DraftStatus) -> DraftMessage:
         sender=Recipient(email="faisal@loqi.com", name="Faisal"),
         status=status,
     )
-    outbound_draft_store.create(draft)
     return draft
 
 
@@ -242,12 +233,12 @@ class TestSendDraftGuard:
         self._canonical_guard(monkeypatch, draft)
         calls: list = []
 
-        def fake_execute(action_type: str, params: dict):
-            calls.append((action_type, params))
+        def fake_send(*args, **kwargs):
+            calls.append((args, kwargs))
             return {"ok": True, "send_result": {}}
 
         monkeypatch.setattr(main_module, "outbound_executor",
-                            MagicMock(execute=fake_execute))
+                            MagicMock(send_hydrated_draft=fake_send))
 
         result = await main_module.send_draft("token", draft.id, MagicMock())
 
@@ -259,12 +250,12 @@ class TestSendDraftGuard:
         self._canonical_guard(monkeypatch, draft)
         calls: list = []
 
-        def fake_execute(action_type: str, params: dict):
-            calls.append((action_type, params))
+        def fake_send(*args, **kwargs):
+            calls.append((args, kwargs))
             return {"ok": True, "send_result": {}}
 
         monkeypatch.setattr(main_module, "outbound_executor",
-                            MagicMock(execute=fake_execute))
+                            MagicMock(send_hydrated_draft=fake_send))
 
         result = await main_module.send_draft("token", draft.id, MagicMock())
 

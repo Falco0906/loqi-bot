@@ -27,7 +27,6 @@ from fastapi import HTTPException
 import main as main_module
 import services.discovery.api as discovery_api
 import services.identity.dependencies as identity_dependencies
-import services.outbound.draft_store as outbound_draft_store_module
 import services.outbound.service as outbound_service
 from services.outbound import outbound_registry
 from services.outbound.outbound_models import DraftMessage, Recipient
@@ -115,7 +114,6 @@ def _clean_runtime_state(monkeypatch):
     comm_store._by_conversation.clear()
     comm_store._seen_message_ids.clear()
     conversation_store.reload()
-    outbound_draft_store_module.draft_store.clear()
     _CANONICAL_DRAFTS.clear()
     from services.workflow_runtime import _runtimes
     _runtimes.clear()
@@ -179,7 +177,6 @@ def _victim_draft(draft_id, provider_id="prov-b"):
         recipient=Recipient(email="victim-target@x.com", name="Target"),
         sender=Recipient(email="victim@x.com", name="Victim"),
     )
-    outbound_draft_store_module.draft_store.create(draft)
     provider = comm_store.get_provider(provider_id)
     if provider is not None:
         _CANONICAL_DRAFTS.setdefault(provider.user_id, []).append({

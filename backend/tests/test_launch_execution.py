@@ -25,9 +25,6 @@ def _auth_request(token="pr3b-tok-1"):
 
 
 import services.workspace_state as workspace_state
-from services.outbound.draft_store import DraftStore
-
-import services.outbound.draft_store as outbound_draft_store_module
 
 
 def _draft(draft_id: str, campaign_id: str = "c-1", status: str = "approved",
@@ -63,8 +60,7 @@ class _FakeFeedback:
 
 @pytest.fixture
 def env(monkeypatch):
-    """Fresh outbound DraftStore + fake workspace_state for one launch."""
-    outbound_draft_store_module.draft_store = DraftStore()
+    """Fake canonical workspace state for one launch."""
     state = {
         "drafts": [],
         "campaigns": [_campaign()],
@@ -93,8 +89,10 @@ def env(monkeypatch):
                 d.update(updates)
         return True
 
-    def fake_execute(kind: str, payload: dict) -> dict:
-        calls.append(payload)
+    def fake_send(draft, *, provider_id: str, recipient_override=None) -> dict:
+        calls.append({"draft_id": draft.id, "provider_id": provider_id, "recipient": {
+            "email": draft.recipient.email, "name": draft.recipient.name,
+        }})
         return {"ok": True, "send_result": {"thread_id": "th-1", "external_message_id": "em-1"}}
 
     monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", fake_owner)
@@ -107,7 +105,7 @@ def env(monkeypatch):
     monkeypatch.setattr(campaign_api.service, "publish", lambda *a, **k: None)
     monkeypatch.setattr("services.workspace_timeline.record_campaign_launched", lambda *a, **k: None)
     monkeypatch.setattr(campaign_api.service, "_feedback", lambda: _FakeFeedback())
-    monkeypatch.setattr(outbound_service.outbound_executor, "execute", fake_execute)
+    monkeypatch.setattr(outbound_service.outbound_executor, "send_hydrated_draft", fake_send)
     monkeypatch.setattr(
         outbound_service,
         "persist_outbound_projection",
@@ -176,13 +174,13 @@ async def test_dispatch_partial_failure_tracks_progress(env, monkeypatch):
     env["state"]["drafts"] = [_draft("d-1"), _draft("d-2")]
     attempts = [0]
 
-    def flaky(kind: str, payload: dict) -> dict:
+    def flaky(draft, *, provider_id: str, recipient_override=None) -> dict:
         attempts[0] += 1
         if attempts[0] == 2:
             return {"ok": False, "error": "Gmail 403"}
         return {"ok": True, "send_result": {"thread_id": "th", "external_message_id": "em"}}
 
-    monkeypatch.setattr(outbound_service.outbound_executor, "execute", flaky)
+    monkeypatch.setattr(outbound_service.outbound_executor, "send_hydrated_draft", flaky)
     result = await outbound_service.dispatch_campaign_sends("tok-1", _campaign(), "owner-1", workspace_id="workspace-test")
     assert result["sent"] == 1
     assert result["failed"] == 1

@@ -445,11 +445,10 @@ backend/
 │   │   ├── outbound_models.py
 │   │   ├── outbound_registry.py
 │   │   ├── outbound_executor.py
-│   │   ├── outbound_scheduler.py
 │   │   ├── outbound_persistence.py
 │   │   ├── outbound_events.py
 │   │   ├── gmail_outbound.py
-│   │   └── draft_store.py
+│   │   └── service.py
 │   │
 │   ├── providers/              # Lead data providers
 │   │   ├── base_provider.py

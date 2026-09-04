@@ -254,20 +254,9 @@ class TestLegacyConnectProductionGuard:
 class TestSendDraftOwnership:
     def test_send_denied_for_another_users_draft(self, monkeypatch):
         import main as main_module
-        from services.outbound.draft_store import draft_store
-        from services.outbound.outbound_models import DraftMessage, Recipient
         from services.communication.communication_store import store
 
         store._providers["prov-b"] = _provider_record("prov-b", "victim@b.com", user_id="owner-b")
-        draft = DraftMessage(
-            id="draft-b-1",
-            provider_id="prov-b",
-            subject="Victim draft",
-            body="Secret body",
-            recipient=Recipient(email="victim-target@x.com", name="Target"),
-            sender=Recipient(email="victim@b.com", name="Victim"),
-        )
-        draft_store.create(draft)
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-a"))
         monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda request: "tok")
 
@@ -281,7 +270,6 @@ class TestSendDraftOwnership:
             asyncio.run(main_module.send_draft("tok", "draft-b-1", request))
         # Safe not-found (no existence leak): a foreign draft is 404, not 403.
         assert exc.value.status_code == 404
-        draft_store.delete("draft-b-1")
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -42,7 +42,6 @@ def _clean_state():
     from services.outbound import outbound_registry as or_reg
     from services.communication.communication_store import store as comm_store
     from services.conversations.conversation_store import conversation_store
-    from services.outbound.draft_store import draft_store as ods
     from services.workflow_runtime import _runtimes
 
     for pid in list(pr.list_providers().keys()):
@@ -55,8 +54,6 @@ def _clean_state():
     comm_store._by_conversation.clear()
     comm_store._seen_message_ids.clear()
     conversation_store.reload()
-    ods._drafts.clear()
-    ods._versions.clear()
     _runtimes.clear()
     yield
 
@@ -214,13 +211,6 @@ class TestTenantIsolationFinal:
         monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", workspace)
         monkeypatch.setattr(main_module, "_workspace_drafts", lambda *args, **kwargs: [])
         self._provider("prov-b", "owner-b")
-        from services.outbound.draft_store import draft_store as ods
-        from services.outbound.outbound_models import DraftMessage, Recipient
-        ods.create(DraftMessage(
-            id="draft-b", provider_id="prov-b", subject="s", body="b",
-            recipient=Recipient(email="t@x.com", name="T"),
-            sender=Recipient(email="s@x.com", name="S"),
-        ))
         with pytest.raises(HTTPException) as exc:
             asyncio.run(main_module.outbound_approve_draft("_", "draft-b", False, _req("token-a")))
         assert exc.value.status_code == 404

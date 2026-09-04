@@ -85,15 +85,14 @@ async def test_scheduled_workflow_hydrates_then_sends_and_persists_terminal_stat
     monkeypatch.setattr("services.workspace_state.persist_draft_update_awaited", persist_update)
     monkeypatch.setattr(outbound, "hydrate_outbound_draft", lambda *_args, **_kwargs: draft)
     monkeypatch.setattr(outbound, "resolve_provider_for_draft", lambda *_: "provider")
-    monkeypatch.setattr(outbound, "stage_draft_for_legacy_execution", lambda *_: None)
     monkeypatch.setattr(
         outbound, "persist_outbound_projection",
         lambda *_args, **kwargs: projections.append(kwargs["change_summary"]) or _async(True),
     )
     monkeypatch.setattr(
         outbound.outbound_executor,
-        "execute",
-        lambda _action, payload: executed.append(payload) or {"ok": True, "send_result": {"id": "sent"}},
+        "send_hydrated_draft",
+        lambda sent_draft, *, provider_id: executed.append({"draft_id": sent_draft.id, "provider_id": provider_id}) or {"ok": True, "send_result": {"id": "sent"}},
     )
     monkeypatch.setattr(outbound, "publish_draft_event", lambda *_args, **_kwargs: _async(None))
 

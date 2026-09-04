@@ -571,46 +571,6 @@ class TestOutboundPersistenceSafety:
         assert convo.status in guard_set
         assert conversation_store.get_conversation(convo.conversation_id).status in guard_set
 
-    def test_no_auto_resend_on_persistence_failure(self, monkeypatch):
-        """A post-send persistence failure must never trigger a resend.
-
-        The only resend path is the outbound scheduler, and it dispatches
-        exclusively SCHEDULED drafts — a draft already marked SENT is never
-        re-sent regardless of any conversation-persistence failure.
-        """
-        from services.outbound.draft_store import draft_store
-        from services.outbound.outbound_models import (
-            DraftMessage,
-            DraftStatus,
-            Recipient,
-        )
-        from services.outbound.outbound_scheduler import outbound_scheduler
-        draft = DraftMessage(
-            id="d-sent-1",
-            provider_id="p108",
-            subject="never resend",
-            body="body",
-            recipient=Recipient(email="c@d.com", name="C"),
-            sender=Recipient(email="a@b.com", name="A"),
-            status=DraftStatus.SENT,
-            metadata={"send_at": "2000-01-01T00:00:00+00:00"},
-        )
-        draft_store.create(draft)
-        sent = [d for d in draft_store.list_all().drafts if d.status == DraftStatus.SENT]
-        assert len(sent) == 1
-        # The scheduler tick only selects SCHEDULED drafts.
-        tick = outbound_scheduler._tick
-        executed = []
-        monkeypatch.setattr(
-            outbound_scheduler, "_execute_scheduled",
-            lambda did, pid: executed.append(did),
-        )
-        tick()
-        assert executed == []
-        # Clean up the global draft store so no state leaks into other tests.
-        draft_store.delete("d-sent-1")
-
-
 # ═══════════════════════════════════════════════════════════════════════
 # 6. Ownership boundaries
 # ═══════════════════════════════════════════════════════════════════════

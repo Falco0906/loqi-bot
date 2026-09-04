@@ -284,7 +284,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.warning("Provider startup restoration failed: %s", e)
 
-    _start_outbound_scheduler()
     inbox_sync_engine = None
     try:
         from services.communication.inbox_sync_engine import inbox_sync_engine as _inbox_sync_engine
@@ -456,11 +455,6 @@ async def lifespan(app: FastAPI):
             cancel_tasks.append(simulator_task)
     except Exception as e:
         log.warning("Reply simulator shutdown failed: %s", e)
-
-    global _scheduler_task
-    if _scheduler_task is not None and not _scheduler_task.done():
-        _scheduler_task.cancel()
-        cancel_tasks.append(_scheduler_task)
 
     await _cancel_and_wait(cancel_tasks, timeout=shutdown_timeout)
     log.info("application_shutdown_completed")
@@ -1732,17 +1726,10 @@ async def _run_copilot_outreach(
         if result.get("ok"):
             await publish_draft_event(user_id, "draft.scheduled", draft_id=target_id, campaign_id=str(target.get("campaign_id") or ""))
     else:
-        outbound_service.stage_draft_for_legacy_execution(outbound)
         result = await asyncio.to_thread(
-            outbound_executor.execute,
-            "send_reply",
-            {
-                "provider_id": provider_id, "draft_id": target_id,
-                "conversation_id": outbound.conversation_id, "thread_id": outbound.thread_id,
-                "workflow_id": outbound.workflow_id, "subject": outbound.subject, "body": outbound.body,
-                "recipient": {"email": outbound.recipient.email, "name": outbound.recipient.name},
-                "sender": {"email": outbound.sender.email, "name": outbound.sender.name},
-            },
+            outbound_executor.send_hydrated_draft,
+            outbound,
+            provider_id=provider_id,
         )
         if result.get("ok"):
             await persist_draft_update_awaited(user_id, target_id, {"status": "sent"}, workspace_id=workspace_id)
@@ -2220,7 +2207,6 @@ def _register_credential_instance(access_token: str, refresh_token: str, email: 
     log.info("Credential instance registered: %s", instance.credential_id)
 
 
-_scheduler_task: asyncio.Task | None = None
 
 
 def _restore_providers_for_startup() -> None:
@@ -2312,16 +2298,6 @@ def _reconcile_runtime_providers() -> None:
             )
     if removed:
         log.info("runtime_provider_reconcile removed=%d duplicate provider record(s)", removed)
-
-
-def _start_outbound_scheduler() -> None:
-    global _scheduler_task
-    try:
-        from services.outbound.outbound_scheduler import outbound_scheduler
-        _scheduler_task = asyncio.create_task(outbound_scheduler.run())
-        log.info("Outbound scheduler started")
-    except Exception as e:
-        log.warning("Failed to start outbound scheduler: %s", e)
 
 
 @app.get("/", response_class=PlainTextResponse)
@@ -4304,7 +4280,6 @@ def _test_recipient_override_enabled() -> bool:
 @app.post("/api/web/session/{session_token}/drafts/{draft_id}/send")
 async def send_draft(session_token: str, draft_id: str, request: Request, payload: SendDraftRequest = None):
     session_token = identity_dependencies.web_session_token(request)
-    from services.outbound.draft_store import draft_store as outbound_draft_store
     payload = payload or SendDraftRequest()
     test_recipient = payload.test_recipient or ""
     if test_recipient and not _test_recipient_override_enabled():
@@ -4347,21 +4322,11 @@ async def send_draft(session_token: str, draft_id: str, request: Request, payloa
                  recipient_email, test_recipient)
 
     log.info("[send_draft] Sending draft %s via provider %s", draft_id, real_provider_id)
-    outbound_service.stage_draft_for_legacy_execution(outbound_draft)
     result = await asyncio.to_thread(
-        outbound_executor.execute,
-        "send_reply",
-        {
-            "provider_id": real_provider_id,
-            "draft_id": outbound_draft.id,
-            "conversation_id": outbound_draft.conversation_id,
-            "thread_id": outbound_draft.thread_id,
-            "workflow_id": outbound_draft.workflow_id,
-            "subject": outbound_draft.subject,
-            "body": outbound_draft.body,
-            "recipient": send_recipient,
-            "sender": {"email": outbound_draft.sender.email, "name": outbound_draft.sender.name},
-        },
+        outbound_executor.send_hydrated_draft,
+        outbound_draft,
+        provider_id=real_provider_id,
+        recipient_override=Recipient(**send_recipient),
     )
     if result.get("ok"):
         from services.workspace_state import persist_draft_update_awaited
@@ -4370,7 +4335,6 @@ async def send_draft(session_token: str, draft_id: str, request: Request, payloa
         ):
             raise HTTPException(status_code=503, detail="Email was sent but the canonical Draft could not be updated")
         outbound_draft.status = DraftStatus.SENT
-        outbound_draft_store.mark_sent(draft_id)
         if not await outbound_service.persist_outbound_projection(owner_id, ws_id, outbound_draft, change_summary="sent"):
             raise HTTPException(status_code=503, detail="Email was sent but the outbound projection could not be updated")
         await publish_draft_event(
@@ -5852,7 +5816,7 @@ async def send_conversation_reply_route(
     from services.conversations.conversation_store import conversation_store
     from services.conversations.state_machine import transition as state_transition
     from services.conversations.timeline import TimelineEventType, build_timeline_event
-    from services.outbound.outbound_executor import OutboundActionType
+    from services.outbound.outbound_models import SendRequest
 
     payload = body or SendConversationReplyRequest(body="")
     reply_body = (payload.body or "").strip()
@@ -5937,18 +5901,18 @@ async def send_conversation_reply_route(
         log.info("[TEST RECIPIENT] original_recipient=%s effective_recipient=%s", contact_email, test_recipient)
 
     result = await asyncio.to_thread(
-        outbound_executor.execute,
-        OutboundActionType.SEND_REPLY,
-        {
-            "provider_id": provider_id,
-            "body": reply_body,
-            "conversation_id": conversation_id,
-            "subject": "Re: " + ((thread.subject if thread else convo.subject) or ""),
-            "thread_id": external_thread_id,
-            "reply_to_message_id": reply_to_message_id,
-            "recipient": {"email": envelope_email, "name": envelope_name},
-            "sender": {"email": sender_email, "name": ""},
-        },
+        outbound_executor.send_request,
+        SendRequest(
+            provider_id=provider_id,
+            body=reply_body,
+            conversation_id=conversation_id,
+            subject="Re: " + ((thread.subject if thread else convo.subject) or ""),
+            thread_id=external_thread_id,
+            reply_to_message_id=reply_to_message_id,
+            recipient=Recipient(email=envelope_email, name=envelope_name),
+            sender=Recipient(email=sender_email, name=""),
+        ),
+        original_recipient_email=contact_email,
     )
     if not result or not result.get("ok"):
         raise HTTPException(status_code=502, detail=(result or {}).get("error") or "Failed to send reply")
@@ -6023,7 +5987,7 @@ async def send_conversation_followup_route(
     from services.conversations.conversation_store import conversation_store
     from services.conversations.state_machine import transition as state_transition
     from services.conversations.timeline import TimelineEventType, build_timeline_event
-    from services.outbound.outbound_executor import OutboundActionType
+    from services.outbound.outbound_models import SendRequest
 
     payload = body or SendConversationReplyRequest(body="")
     follow_up_body = (payload.body or "").strip()
@@ -6083,17 +6047,17 @@ async def send_conversation_followup_route(
         log.info("[TEST RECIPIENT] original_recipient=%s effective_recipient=%s", contact_email, test_recipient)
 
     result = await asyncio.to_thread(
-        outbound_executor.execute,
-        OutboundActionType.SEND_REPLY,
-        {
-            "provider_id": provider_id,
-            "body": follow_up_body,
-            "conversation_id": conversation_id,
-            "subject": "Re: " + ((thread.subject if thread else convo.subject) or ""),
-            "thread_id": external_thread_id,
-            "recipient": {"email": envelope_email, "name": envelope_name},
-            "sender": {"email": sender_email, "name": ""},
-        },
+        outbound_executor.send_request,
+        SendRequest(
+            provider_id=provider_id,
+            body=follow_up_body,
+            conversation_id=conversation_id,
+            subject="Re: " + ((thread.subject if thread else convo.subject) or ""),
+            thread_id=external_thread_id,
+            recipient=Recipient(email=envelope_email, name=envelope_name),
+            sender=Recipient(email=sender_email, name=""),
+        ),
+        original_recipient_email=contact_email,
     )
     if not result or not result.get("ok"):
         raise HTTPException(status_code=502, detail=(result or {}).get("error") or "Failed to send follow-up")

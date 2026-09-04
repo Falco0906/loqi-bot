@@ -96,6 +96,11 @@ def _wire_send_route(app, monkeypatch):
 
     monkeypatch.setattr(outbound_service, "require_canonical_outbound_draft", fake_canonical_draft)
     monkeypatch.setattr("services.workspace_state.persist_draft_update_awaited", fake_persist)
+    monkeypatch.setattr(
+        outbound_service,
+        "persist_outbound_projection",
+        lambda *_args, **_kwargs: asyncio.sleep(0, result=True),
+    )
 
     sess = type("S", (), {})
     sess.get = lambda _id: [d for d in []]  # legacy store empty → durable path unused

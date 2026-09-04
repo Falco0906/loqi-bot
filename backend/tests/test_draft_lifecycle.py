@@ -174,8 +174,7 @@ class TestApprovalLifecycle:
         monkeypatch.setattr(
             workspace_state, "persist_draft_update_awaited", fake_persist
         )
-        monkeypatch.setattr(outbound_service, "sync_draft_to_outbound", lambda *args, **kwargs: None)
-        monkeypatch.setattr(outbound_service, "create_provider_draft_after_approval", lambda *args, **kwargs: None)
+        monkeypatch.setattr(outbound_service, "create_provider_draft_after_approval", AsyncMock())
         monkeypatch.setattr(drafts_service, "publish_draft_event", emitted)
         monkeypatch.setattr(drafts_service, "publish", lambda *args, **kwargs: None)
 
@@ -273,19 +272,15 @@ class TestSendDraftGuard:
         assert calls == []
 
     async def test_D3_durable_sent_draft_guard_fires_before_sync(self, monkeypatch):
-        """A durable-row sent draft is caught before projection sync."""
-        synced: list = []
+        """A durable-row sent draft is caught before projection hydration."""
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(
             main_module, "_workspace_drafts",
             lambda uid, tok="", **_kwargs: [{"id": "d-durable-sent", "status": "sent"}],
         )
-        monkeypatch.setattr(outbound_service, "sync_draft_to_outbound",
-                            lambda draft, tok: synced.append(draft))
         outbound = _sent_outbound_draft(DraftStatus.SENT)
         self._canonical_guard(monkeypatch, outbound)
 
         result = await main_module.send_draft("token", "d-durable-sent", MagicMock())
 
         assert result == {"ok": False, "error": "Draft already sent"}
-        assert synced == []

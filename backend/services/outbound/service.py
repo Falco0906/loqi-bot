@@ -11,7 +11,6 @@ from fastapi import HTTPException, Request
 from services.communication.communication_store import store as communication_store
 from services.communication.provider_registry import get_provider as get_communication_provider
 import services.identity.dependencies as identity_dependencies
-from services.outbound import draft_store as outbound_draft_store_module
 from services.outbound import outbound_registry
 from services.outbound.outbound_executor import executor as outbound_executor
 from services.outbound.outbound_registry import (
@@ -51,8 +50,13 @@ def resolve_owner_gmail_provider(owner_id: str) -> str:
     return candidates[0][1] if candidates else ""
 
 
-def sync_draft_to_outbound(legacy_draft: dict, session_token: str, owner_id: str = "") -> None:
-    """Project a durable campaign draft into the outbound DraftStore."""
+def hydrate_outbound_draft(legacy_draft: dict, session_token: str, owner_id: str = "") -> Any:
+    """Build an outbound message from one durable canonical draft.
+
+    This is deliberately a read-only hydration step.  The durable Draft row
+    and its ``outbound_projection`` metadata remain the source of truth; the
+    legacy in-memory store is not populated here.
+    """
     from services.outbound.outbound_models import ApprovalState, DraftMessage, DraftStatus, Recipient
 
     from services.outbound.outbound_persistence import hydrate_draft_projection
@@ -100,10 +104,7 @@ def sync_draft_to_outbound(legacy_draft: dict, session_token: str, owner_id: str
             "session_token": session_token,
         },
         )
-    if outbound_draft_store_module.draft_store.get(outbound_draft.id):
-        outbound_draft_store_module.draft_store.update(outbound_draft)
-    else:
-        outbound_draft_store_module.draft_store.create(outbound_draft)
+    return outbound_draft
 
 
 def provider_owned_by(provider_id: str, owner_id: str) -> bool:
@@ -159,10 +160,7 @@ async def require_canonical_outbound_draft(
         raise HTTPException(status_code=404, detail="Draft not found")
     if canonical_provider and not provider_record_owned_by(canonical_provider, owner_id):
         raise HTTPException(status_code=404, detail="Draft not found")
-    sync_draft_to_outbound(canonical, session_token, owner_id=owner_id)
-    outbound_draft = outbound_draft_store_module.draft_store.get(draft_id)
-    if outbound_draft is None:
-        raise HTTPException(status_code=503, detail="Draft projection could not be loaded")
+    outbound_draft = hydrate_outbound_draft(canonical, session_token, owner_id=owner_id)
     if canonical_provider and not outbound_draft_owned_by(outbound_draft, owner_id):
         raise HTTPException(status_code=404, detail="Draft not found")
     return owner_id, workspace_id, canonical, outbound_draft
@@ -170,7 +168,7 @@ async def require_canonical_outbound_draft(
 
 def outbound_to_legacy_draft(outbound_draft: object) -> dict[str, Any]:
     """Return the existing legacy dictionary representation of an outbound draft."""
-    from services.outbound.outbound_models import DraftStatus
+    from services.outbound.outbound_models import ApprovalState, DraftStatus
 
     lead = outbound_draft.metadata.get("lead", {}) if outbound_draft.metadata else {}
     status_map = {
@@ -186,17 +184,6 @@ def outbound_to_legacy_draft(outbound_draft: object) -> dict[str, Any]:
         DraftStatus.CANCELLED: "cancelled",
         DraftStatus.ARCHIVED: "archived",
     }
-
-
-async def persist_outbound_projection(
-    owner_id: str, workspace_id: str, outbound_draft: object, *, change_summary: str = "",
-) -> bool:
-    """Commit provider-only draft state to the authorized canonical Draft."""
-    from services.outbound.outbound_persistence import persist_draft_projection
-
-    return await persist_draft_projection(
-        owner_id, workspace_id, outbound_draft, change_summary=change_summary,
-    )
     return {
         "id": outbound_draft.id,
         "campaign_id": outbound_draft.workflow_id,
@@ -215,6 +202,17 @@ async def persist_outbound_projection(
     }
 
 
+async def persist_outbound_projection(
+    owner_id: str, workspace_id: str, outbound_draft: object, *, change_summary: str = "",
+) -> bool:
+    """Commit provider-only draft state to the authorized canonical Draft."""
+    from services.outbound.outbound_persistence import persist_draft_projection
+
+    return await persist_draft_projection(
+        owner_id, workspace_id, outbound_draft, change_summary=change_summary,
+    )
+
+
 def resolve_provider_for_draft(outbound_draft: object, owner_id: str = "") -> str:
     """Resolve a usable, owner-authorized outbound provider for a draft."""
     provider_id = getattr(outbound_draft, "provider_id", "") or ""
@@ -228,39 +226,60 @@ def resolve_provider_for_draft(outbound_draft: object, owner_id: str = "") -> st
     )
     if resolved and outbound_draft and provider_id != resolved:
         outbound_draft.provider_id = resolved
-        outbound_draft_store_module.draft_store.update(outbound_draft)
     return resolved
 
 
-def create_provider_draft_after_approval(draft_id: str) -> None:
-    """Create the existing provider-side Gmail draft after a local approval."""
-    from services.outbound.outbound_models import DraftStatus
+def stage_draft_for_legacy_execution(outbound_draft: object) -> None:
+    """Stage one hydrated draft for the legacy executor/scheduler only.
 
+    Scheduled delivery remains process-local until the dedicated durable
+    scheduling cutover.  These routes therefore need a short-lived runtime
+    projection even though regular outbound reads now hydrate from the
+    canonical Draft record.
+    """
+    from services.outbound.draft_store import draft_store
+
+    if draft_store.get(outbound_draft.id):
+        draft_store.update(outbound_draft)
+    else:
+        draft_store.create(outbound_draft)
+
+
+async def create_provider_draft_after_approval(
+    canonical_draft: dict[str, Any],
+    session_token: str,
+    owner_id: str,
+    workspace_id: str,
+) -> None:
+    """Create and durably record a provider-side draft after approval."""
+    from services.outbound.outbound_models import ApprovalState, DraftStatus
+
+    draft_id = str(canonical_draft.get("id") or "")
     try:
-        outbound_draft = outbound_draft_store_module.draft_store.get(draft_id)
-        if not outbound_draft:
-            log.warning("[outbound_adapter] Draft %s not found in outbound store", draft_id)
-            return
-        if outbound_draft.status in (DraftStatus.APPROVED, DraftStatus.AUTO_APPROVED, DraftStatus.SENT):
+        outbound_draft = hydrate_outbound_draft(canonical_draft, session_token, owner_id=owner_id)
+        draft_id = outbound_draft.id
+        if outbound_draft.status == DraftStatus.SENT:
             return
         recipient_email = (outbound_draft.recipient.email if outbound_draft.recipient else "") or ""
         if not str(recipient_email).strip():
             log.info("[outbound_adapter] Draft %s has no recipient email — skipping Gmail draft creation", draft_id)
             return
-        outbound_draft_store_module.draft_store.approve(draft_id)
-        provider_id = resolve_provider_for_draft(outbound_draft)
+        outbound_draft.status = DraftStatus.APPROVED
+        outbound_draft.approval_state = ApprovalState.APPROVED
+        provider_id = resolve_provider_for_draft(outbound_draft, owner_id)
         if not provider_id:
             log.warning("[outbound_adapter] No Gmail outbound provider registered — cannot create Gmail draft for %s", draft_id)
             return
         provider_result = outbound_registry.create_draft(provider_id, outbound_draft)
         if provider_result and provider_result.external_draft_id:
-            updated = outbound_draft_store_module.draft_store.get(draft_id)
-            if updated:
-                updated.external_draft_id = provider_result.external_draft_id
-                if provider_result.thread_id:
-                    updated.thread_id = provider_result.thread_id
-                updated.provider_id = provider_id
-                outbound_draft_store_module.draft_store.update(updated)
+            outbound_draft.external_draft_id = provider_result.external_draft_id
+            if provider_result.thread_id:
+                outbound_draft.thread_id = provider_result.thread_id
+            outbound_draft.provider_id = provider_id
+            if not await persist_outbound_projection(
+                owner_id, workspace_id, outbound_draft, change_summary="provider draft created",
+            ):
+                raise RuntimeError("Provider draft projection persistence failed")
     except Exception as error:
         log.warning("[outbound_adapter] approve_draft failed for %s: %s", draft_id, error)
 
@@ -306,14 +325,9 @@ async def dispatch_campaign_sends(
         draft for draft in durable
         if draft.get("campaign_id") == campaign_id and draft.get("status") == "approved"
     ]
-    for draft in approved_durable:
-        sync_draft_to_outbound(draft, session_token, owner_id=owner_id)
-
-    approved_ids = {draft["id"] for draft in approved_durable}
-    all_outbound = outbound_draft_store_module.draft_store.list_by_workflow(campaign_id)
     approved = [
-        draft for draft in all_outbound.drafts
-        if draft.id in approved_ids and draft.status.value in ("approved", "auto_approved")
+        hydrate_outbound_draft(draft, session_token, owner_id=owner_id)
+        for draft in approved_durable
     ]
     if not approved:
         log.info("[campaign_launch] No approved drafts found for campaign %s", campaign_id)
@@ -355,8 +369,13 @@ async def dispatch_campaign_sends(
                 from services.workspace_state import persist_draft_update_awaited
                 if not await persist_draft_update_awaited(owner_id, draft.id, {"status": "sent"}, workspace_id=workspace_id):
                     raise RuntimeError("Email was sent but canonical Draft persistence failed")
+                from services.outbound.outbound_models import DraftStatus
+                draft.status = DraftStatus.SENT
+                if not await persist_outbound_projection(
+                    owner_id, workspace_id, draft, change_summary="sent",
+                ):
+                    raise RuntimeError("Email was sent but the outbound projection could not be persisted")
                 sent_count += 1
-                outbound_draft_store_module.draft_store.mark_sent(draft.id)
                 send_data = result.get("send_result", {})
                 publish(session_token, WMEventType.DRAFT_SENT, {
                     "draft_id": draft.id,

@@ -153,9 +153,8 @@ class TestProviderResolution:
             "subject": "Subject",
             "text": "Body",
         }
-        outbound_service.sync_draft_to_outbound(durable_like, SESSION)
-        synced = outbound_draft_store_module.draft_store.get("draft-f")
-        assert synced.provider_id == other_prov  # sync pins first registered gmail provider
+        synced = outbound_service.hydrate_outbound_draft(durable_like, SESSION)
+        assert synced.provider_id == other_prov  # hydration uses the first registered provider without an owner
         resolved = outbound_service.resolve_provider_for_draft(synced, OWNER)
         assert resolved == own_prov
         assert resolved != other_prov

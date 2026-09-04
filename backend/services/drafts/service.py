@@ -328,7 +328,6 @@ async def run_draft_batch_job(job, on_progress) -> dict[str, Any]:
                 job.user_id, "draft.created", draft_id=draft["id"],
                 campaign_id=str(job.campaign_id or ""), lead_name=name,
             )
-            outbound_service.sync_draft_to_outbound(draft, session_token, owner_id=job.user_id)
         except Exception as error:
             await asyncio.to_thread(storage.mark_batch_item_failed, item.id, str(error))
             completed += 1
@@ -620,8 +619,9 @@ async def approve_draft(
     target["status"] = new_status
     campaign_id = target.get("campaign_id")
     if new_status == "approved":
-        outbound_service.sync_draft_to_outbound(target, session_token, owner_id=owner_id)
-        outbound_service.create_provider_draft_after_approval(draft_id)
+        await outbound_service.create_provider_draft_after_approval(
+            target, session_token, owner_id, workspace_id,
+        )
         await publish_draft_event(
             owner_id, "draft.approved", draft_id=draft_id,
             campaign_id=str(campaign_id or ""),
@@ -653,11 +653,21 @@ async def undo_draft(session_token: str, owner_id: str, draft_id: str) -> dict[s
     raise HTTPException(status_code=400, detail="No history to undo")
 
 
-async def draft_history(session_token: str, owner_id: str, draft_id: str) -> dict[str, Any]:
-    from services.outbound.draft_store import draft_store
+async def draft_history(
+    session_token: str, owner_id: str, workspace_id: str, draft_id: str,
+) -> dict[str, Any]:
+    from services.workspace_state import load_drafts_only
 
-    draft = draft_store.get(draft_id) if hasattr(draft_store, "get") else None
-    if not outbound_service.outbound_draft_owned_by(draft, owner_id):
+    draft = next(
+        (
+            candidate for candidate in await asyncio.to_thread(
+                load_drafts_only, owner_id, workspace_id,
+            )
+            if str(candidate.get("id") or "") == str(draft_id)
+        ),
+        None,
+    )
+    if draft is None:
         raise HTTPException(status_code=404, detail="Draft not found")
     return {"ok": True, "history": [], "current_version": 1}
 

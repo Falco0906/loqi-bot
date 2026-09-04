@@ -13,6 +13,7 @@ boundaries:
 
 No Supabase or Gmail runs: stores/providers are faked like the other suites.
 """
+import asyncio
 import os
 import sys
 import uuid
@@ -202,7 +203,7 @@ class TestSendAndScheduleEndpointGuard:
 
 
 class TestOutboundApprovalAdapterGuard:
-    def test_no_email_draft_skips_gmail_draft_creation(self, monkeypatch):
+    async def test_no_email_draft_skips_gmail_draft_creation(self, monkeypatch):
         draft = make_outbound_draft(
             "draft-adapt-no-email", email="", status=DraftStatus.PENDING_APPROVAL
         )
@@ -213,10 +214,13 @@ class TestOutboundApprovalAdapterGuard:
             calls.append((args, kwargs))
 
         monkeypatch.setattr(outbound_registry, "create_draft", fake_create_draft)
-        outbound_service.create_provider_draft_after_approval(draft.id)
+        monkeypatch.setattr(outbound_service, "persist_outbound_projection", lambda *_args, **_kwargs: asyncio.sleep(0, result=True))
+        await outbound_service.create_provider_draft_after_approval(
+            _durable_draft(draft.id, status="pending", email=""), SESSION, OWNER, "workspace-test",
+        )
         assert calls == []
 
-    def test_with_email_still_creates_gmail_draft(self, monkeypatch):
+    async def test_with_email_still_creates_gmail_draft(self, monkeypatch):
         draft = make_outbound_draft(
             "draft-adapt-email", email="lead@example.com", status=DraftStatus.PENDING_APPROVAL
         )
@@ -229,7 +233,10 @@ class TestOutboundApprovalAdapterGuard:
             return SimpleNamespace(external_draft_id="ext-1", thread_id="th-1")
 
         monkeypatch.setattr(outbound_registry, "create_draft", fake_create_draft)
-        outbound_service.create_provider_draft_after_approval(draft.id)
+        monkeypatch.setattr(outbound_service, "persist_outbound_projection", lambda *_args, **_kwargs: asyncio.sleep(0, result=True))
+        await outbound_service.create_provider_draft_after_approval(
+            _durable_draft(draft.id, status="pending", email="lead@example.com"), SESSION, OWNER, "workspace-test",
+        )
         assert captured == {"provider_id": provider, "draft_id": draft.id}
 
 
@@ -315,6 +322,7 @@ class TestLaunchDispatchGuard:
         monkeypatch.setattr(main_module, "record_campaign_launched", lambda *a, **k: None)
         monkeypatch.setattr(main_module, "_get_feedback", lambda: _FakeFeedback())
         monkeypatch.setattr(outbound_service.outbound_executor, "execute", fake_execute)
+        monkeypatch.setattr(outbound_service, "persist_outbound_projection", lambda *_args, **_kwargs: asyncio.sleep(0, result=True))
 
         yield {"state": state, "calls": calls}
         outbound_draft_store_module.draft_store = original_store

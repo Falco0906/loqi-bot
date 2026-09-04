@@ -57,6 +57,15 @@ def _clean_store(monkeypatch):
 
     monkeypatch.setattr(outbound_service, "require_canonical_outbound_draft", fake_canonical_draft)
     monkeypatch.setattr("services.workspace_state.persist_draft_update_awaited", fake_persist)
+    monkeypatch.setattr(
+        outbound_service,
+        "persist_outbound_projection",
+        lambda *_args, **_kwargs: asyncio.sleep(0, result=True),
+    )
+    monkeypatch.setattr(
+        "services.outbound.outbound_persistence.persist_outbound_message",
+        lambda _item: True,
+    )
     monkeypatch.setattr(main_module, "outbound_executor", outbound_service.outbound_executor)
     yield
     outbound_draft_store._drafts.clear()

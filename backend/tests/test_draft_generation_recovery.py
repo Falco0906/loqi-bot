@@ -112,8 +112,6 @@ async def test_restart_resumes_only_incomplete_items_without_duplicate_drafts(mo
     monkeypatch.setattr("services.workspace_state.persist_draft_awaited", lambda *_args, **_kwargs: asyncio.sleep(0, result=True))
     monkeypatch.setattr(drafts, "publish", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(drafts, "publish_draft_event", lambda *_args, **_kwargs: asyncio.sleep(0))
-    monkeypatch.setattr(drafts.outbound_service, "sync_draft_to_outbound", lambda *_args, **_kwargs: None)
-
     job = _job()
     job.campaign_id = ""
     result = await drafts.run_draft_batch_job(job, lambda *_args: None)

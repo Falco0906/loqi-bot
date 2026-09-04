@@ -13,6 +13,7 @@ from services.outbound.outbound_models import (
     Recipient,
 )
 from services.outbound.outbound_events import emit_event, OutboundEventType
+from services.persistence.launch.communication_persistence import persist_outbound_message
 
 
 class OutboundPersistence:
@@ -36,6 +37,9 @@ class OutboundPersistence:
             draft_id=result.draft_id,
             error=result.error,
         )
+        # The durable communication record is authoritative.  Do not expose
+        # a process-local success entry when its canonical write failed.
+        persist_outbound_message(item)
         self._history.append(item)
         self._send_results[result.id] = result
         if result.status == DeliveryStatus.FAILED:
@@ -46,15 +50,6 @@ class OutboundPersistence:
             emit_event(OutboundEventType.MESSAGE_SENT, result.provider_id,
                        f"Message sent: {subject[:60]}",
                        {"send_id": result.id, "external_id": result.external_message_id})
-        # SaaS-2.6: best-effort durable write of user-visible send history
-        # (workspace-owned). Never blocks/fails the live in-memory path.
-        try:
-            from services.persistence.launch.communication_persistence import (
-                persist_outbound_message,
-            )
-            persist_outbound_message(item)
-        except Exception:  # noqa: BLE001
-            pass
         return item
 
     def record_delivery_update(self, send_id: str, status: DeliveryStatus) -> bool:

@@ -9,6 +9,7 @@ the workspace_state / store boundary so no Supabase or Gmail runs.
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -107,6 +108,11 @@ def env(monkeypatch):
     monkeypatch.setattr("services.workspace_timeline.record_campaign_launched", lambda *a, **k: None)
     monkeypatch.setattr(campaign_api.service, "_feedback", lambda: _FakeFeedback())
     monkeypatch.setattr(outbound_service.outbound_executor, "execute", fake_execute)
+    monkeypatch.setattr(
+        outbound_service,
+        "persist_outbound_projection",
+        lambda *_args, **_kwargs: asyncio.sleep(0, result=True),
+    )
 
     async def fake_route_owner(_request, _session_token: str) -> str:
         return "owner-1"

@@ -27,6 +27,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 import main as main_module
+import services.outbound.service as outbound_service
 import services.workspace_state as workspace_state
 from services.outbound import outbound_registry
 from services.outbound.outbound_models import (
@@ -136,6 +137,11 @@ def harness(monkeypatch):
                 return True
         return False
     monkeypatch.setattr(workspace_state, "persist_draft_update_awaited", fake_persist_draft)
+    monkeypatch.setattr(
+        outbound_service,
+        "persist_outbound_projection",
+        lambda *_args, **_kwargs: asyncio.sleep(0, result=True),
+    )
 
     monkeypatch.setattr(main_module, "_test_recipient_override_enabled", lambda: False)
 
@@ -258,5 +264,7 @@ def test_h_production_bug_second_user_does_not_poison_first(harness):
     assert body.get("ok") is False
     assert body.get("error") == "No Gmail outbound provider registered"
 
-    synced = outbound_draft_store_module.draft_store.get("draft-h")
-    assert synced.provider_id != "prov-foreign-live"
+    # No provider means the legacy execution projection is deliberately not
+    # staged; the response proves owner-scoped durable hydration did not use
+    # the other user's globally registered provider.
+    assert outbound_draft_store_module.draft_store.get("draft-h") is None

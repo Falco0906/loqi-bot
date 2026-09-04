@@ -133,8 +133,8 @@ async def undo_draft(session_token: str, draft_id: str, request: Request):
 @router.get("/api/web/session/{session_token}/drafts/{draft_id}/history")
 async def draft_rewrite_history(session_token: str, draft_id: str, request: Request = None):
     del session_token
-    owner_id, bearer_token = await _authorized_identity(request)
-    return await service.draft_history(bearer_token, owner_id, draft_id)
+    owner_id, bearer_token, workspace_id = await _authorized_workspace(request)
+    return await service.draft_history(bearer_token, owner_id, workspace_id, draft_id)
 
 
 @router.post("/api/web/session/{session_token}/drafts/compare")

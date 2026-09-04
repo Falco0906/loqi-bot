@@ -27,7 +27,13 @@ from services.outbound.outbound_executor import OutboundExecutor
 # ── Fixtures ──
 
 @pytest.fixture(autouse=True)
-def clean_state():
+def clean_state(monkeypatch):
+    # This suite isolates the legacy runtime engine. Durable communication
+    # persistence is characterized separately at its repository boundary.
+    monkeypatch.setattr(
+        "services.outbound.outbound_persistence.persist_outbound_message",
+        lambda _item: True,
+    )
     draft_store.clear()
     outbound_persistence.clear()
     reset_events()

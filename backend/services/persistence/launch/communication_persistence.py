@@ -1,10 +1,8 @@
 """SaaS-2.6 — Durable outbound message + provider event persistence.
 
-Wraps the workspace-owned OutboundMessage / ProviderEvent repositories so the
-in-memory communication stores can persist user-visible product state without
-blocking the live path. All writes are best-effort (a Supabase failure never
-breaks the in-memory send/event path) and are resolved to a canonical workspace
-from the connected provider's owning user.
+Outbound send history is canonical workspace state: its write is synchronous
+at the outbound execution boundary so successful sends are immediately visible
+to authorized history reads. Provider-event persistence remains best-effort.
 
 Ownership is always derived server-side (provider -> user -> canonical
 workspace); the client never supplies tenant authority.
@@ -13,7 +11,6 @@ workspace); the client never supplies tenant authority.
 from __future__ import annotations
 
 import asyncio
-import inspect
 import threading
 
 
@@ -55,36 +52,41 @@ def _workspace_for_provider(provider_id: str) -> str:
         return ""
 
 
-def persist_outbound_message(item) -> None:
-    """Best-effort durable write of one outbound send-history item."""
+def persist_outbound_message(item) -> bool:
+    """Persist one outbound send-history item before reporting send success.
+
+    This is called from the outbound executor, which production async callers
+    already run off the event loop. Failure is deliberately surfaced to that
+    boundary instead of being hidden behind a daemon thread.
+    """
     provider_id = getattr(item, "provider_id", "") or ""
+    workspace_id = _workspace_for_provider(provider_id)
+    if not workspace_id:
+        raise RuntimeError("Outbound message has no resolvable workspace")
+    from services.persistence.launch.models import OutboundMessage
+    from services.persistence.launch.repositories import OutboundMessageRepository
 
-    def _write():
-        from services.persistence.launch.models import OutboundMessage
-        from services.persistence.launch.repositories import OutboundMessageRepository
-        workspace_id = _workspace_for_provider(provider_id)
-        if not workspace_id:
-            return None
-        recipient = getattr(item, "recipient", None)
-        entity = OutboundMessage(
-            workspace_id=workspace_id,
-            provider_id=provider_id,
-            draft_id=getattr(item, "draft_id", "") or "",
-            conversation_id=getattr(item, "conversation_id", "") or "",
-            thread_id=getattr(item, "thread_id", "") or "",
-            subject=getattr(item, "subject", "") or "",
-            recipient_email=getattr(recipient, "email", "") or "",
-            recipient_name=getattr(recipient, "name", "") or "",
-            status=str(getattr(item, "status", "sent") or "sent"),
-            error=getattr(item, "error", "") or "",
-            external_message_id=getattr(item, "external_message_id", "") or "",
-        )
-        raw_id = getattr(item, "id", "") or ""
-        if raw_id:
-            entity.id = raw_id
-        return OutboundMessageRepository().save(entity)
-
-    _run_threaded(_write)
+    recipient = getattr(item, "recipient", None)
+    entity = OutboundMessage(
+        workspace_id=workspace_id,
+        provider_id=provider_id,
+        draft_id=getattr(item, "draft_id", "") or "",
+        conversation_id=getattr(item, "conversation_id", "") or "",
+        thread_id=getattr(item, "thread_id", "") or "",
+        subject=getattr(item, "subject", "") or "",
+        recipient_email=getattr(recipient, "email", "") or "",
+        recipient_name=getattr(recipient, "name", "") or "",
+        status=str(getattr(item, "status", "sent") or "sent"),
+        error=getattr(item, "error", "") or "",
+        external_message_id=getattr(item, "external_message_id", "") or "",
+    )
+    raw_id = getattr(item, "id", "") or ""
+    if raw_id:
+        entity.id = raw_id
+    result = OutboundMessageRepository().save(entity)
+    if result is None:
+        raise RuntimeError("Outbound message persistence failed")
+    return True
 
 
 def persist_provider_event(provider_id: str, event_type: str, message: str = "",

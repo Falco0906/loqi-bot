@@ -46,8 +46,6 @@ async def test_draft_batch_runner_completes_durable_item(monkeypatch):
     monkeypatch.setattr("services.workspace_state.load_campaign_state", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(drafts, "publish", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(drafts, "publish_draft_event", lambda *_args, **_kwargs: asyncio.sleep(0))
-    monkeypatch.setattr(drafts.outbound_service, "sync_draft_to_outbound", lambda *_args, **_kwargs: None)
-
     result = await drafts.run_draft_batch_job(
         Job(id="job", user_id="user", type="draft_batch", workspace_id="workspace", payload={}),
         lambda *_: None,

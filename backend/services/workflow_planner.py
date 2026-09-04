@@ -5,7 +5,7 @@ from services.workflows.models import (
     ActionType, RiskLevel, StepStatus, PlanStatus,
     APPROVAL_ACTIONS, ACTION_DURATIONS,
 )
-from services.workflow_reasoner import WorkflowReasoner
+from services.workflows.reasoner import WorkflowReasoner
 
 
 OBJECTIVE_PATTERNS: list[tuple[str, list[str], str]] = [

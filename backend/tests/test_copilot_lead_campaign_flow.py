@@ -44,7 +44,7 @@ async def test_lead_save_normalizes_provider_status_and_returns_workspace_lead_i
 
 @pytest.mark.asyncio
 async def test_campaign_create_returns_authoritative_campaign_and_attached_ids(monkeypatch):
-    import main as main_module
+    from services.copilot import runners
 
     persisted = {}
 
@@ -74,7 +74,7 @@ async def test_campaign_create_returns_authoritative_campaign_and_attached_ids(m
     monkeypatch.setattr("services.workspace_state.load_campaign_state", lambda _u, _c, workspace_id="": persisted)
     monkeypatch.setattr("services.workspace_state.append_event", lambda *_args, **_kwargs: None)
 
-    result = await main_module._run_copilot_campaign(
+    result = await runners.run_campaign(
         "campaign.create",
         "owner-1",
         "workspace-1",

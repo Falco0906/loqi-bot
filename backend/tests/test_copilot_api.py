@@ -600,7 +600,7 @@ class TestCopilotOperationBoundary:
             "services.knowledge.context_adapter.retrieve_knowledge_context",
             lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}),
         )
-        monkeypatch.setattr(main_module, "_run_copilot_campaign", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("mutation must not execute")))
+        monkeypatch.setattr(main_module.copilot_runners, "run_campaign", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("mutation must not execute")))
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
         payload = main_module.SendWebMessageRequest(
             text="create a campaign for these leads",
@@ -627,8 +627,8 @@ class TestCopilotOperationBoundary:
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
         monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *_args, **_kwargs: {"snapshot": {}, "analysis": {}})
         monkeypatch.setattr(
-            main_module,
-            "_run_copilot_campaign",
+            main_module.copilot_runners,
+            "run_campaign",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("runner must not execute before confirmation")),
         )
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
@@ -660,7 +660,7 @@ class TestCopilotOperationBoundary:
                 "result": {"campaign": {"id": "campaign-1", "name": "Campaign A", "objective": "New objective"}},
             }
 
-        monkeypatch.setattr(main_module, "_run_copilot_campaign", campaign_runner)
+        monkeypatch.setattr(main_module.copilot_runners, "run_campaign", campaign_runner)
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
         payload = main_module.SendWebMessageRequest(
             text="I confirm: update this campaign objective to New objective",
@@ -684,7 +684,7 @@ class TestCopilotOperationBoundary:
         async def failed_runner(*_args, **_kwargs):
             return {"ok": False, "status": "verification_failed", "tool": "campaign.refine", "reason": "Campaign changes could not be verified in this workspace."}
 
-        monkeypatch.setattr(main_module, "_run_copilot_campaign", failed_runner)
+        monkeypatch.setattr(main_module.copilot_runners, "run_campaign", failed_runner)
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
         payload = main_module.SendWebMessageRequest(
             text="I confirm: rename this campaign to Changed",
@@ -709,7 +709,7 @@ class TestCopilotOperationBoundary:
             raise HTTPException(status_code=404, detail="Workspace not found")
 
         monkeypatch.setattr(main_module.workspace_access, "resolve_selected_workspace_context", unavailable)
-        monkeypatch.setattr(main_module, "_run_copilot_campaign", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("runner must not execute outside workspace")))
+        monkeypatch.setattr(main_module.copilot_runners, "run_campaign", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("runner must not execute outside workspace")))
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
         payload = main_module.SendWebMessageRequest(
             text="Rename this campaign to Changed",
@@ -828,7 +828,7 @@ class TestCopilotOperationBoundary:
                 "result": {"campaigns": [{"id": "c-1", "name": "Restaurant outreach", "status": "planning", "lead_count": 5}]},
             }
 
-        monkeypatch.setattr(main_module, "_run_copilot_campaign", fake_campaign_runner)
+        monkeypatch.setattr(main_module.copilot_runners, "run_campaign", fake_campaign_runner)
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
         payload = main_module.SendWebMessageRequest(
             text="show my campaigns",

@@ -33,6 +33,7 @@ from services.strategic.api import router as strategic_router
 from services.discovery.api import router as discovery_router
 from services.campaigns.api import router as campaigns_router
 from services.drafts.api import router as drafts_router
+from services.outbound.api import router as outbound_router
 import services.outbound.service as outbound_service
 import services.conversations.service as conversation_service
 import services.copilot.runners as copilot_runners
@@ -236,6 +237,7 @@ app.include_router(mission_control_router)
 app.include_router(discovery_router)
 app.include_router(campaigns_router)
 app.include_router(drafts_router)
+app.include_router(outbound_router)
 app.include_router(conversations_router)
 
 # ── Wire Organization Platform services ──
@@ -2550,10 +2552,6 @@ from services.outbound.outbound_models import (
     Recipient,
 )
 from services.outbound.outbound_executor import executor as outbound_executor
-from services.outbound.outbound_events import (
-    get_events as get_outbound_events,
-    latest_sequence as outbound_latest_sequence,
-)
 
 
 class OutboundCreateDraftRequest(BaseModel):
@@ -2970,33 +2968,6 @@ async def outbound_cancel_schedule(session_token: str, schedule_id: str, provide
     return result
 
 
-@app.get("/api/web/session/{session_token}/outbound/drafts")
-async def outbound_list_drafts(session_token: str, request: Request, provider_id: str = ""):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    if provider_id and not outbound_service.provider_owned_by(provider_id, owner_id):
-        raise HTTPException(status_code=404, detail="Provider not found")
-    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    from services.workspace_state import load_drafts_only
-
-    drafts = [
-        outbound_service.hydrate_outbound_draft(draft, session_token, owner_id=owner_id)
-        for draft in load_drafts_only(owner_id, workspace_id=workspace_id)
-        if (draft.get("provider") or (draft.get("metadata") or {}).get("outbound_projection"))
-        and (not provider_id or str(draft.get("provider") or (draft.get("metadata") or {}).get("outbound_projection", {}).get("provider_id") or "") == provider_id)
-    ]
-    return {"ok": True, "drafts": [d.model_dump() for d in drafts], "total": len(drafts)}
-
-
-@app.get("/api/web/session/{session_token}/outbound/drafts/{draft_id}")
-async def outbound_get_draft(session_token: str, draft_id: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    _owner_id, _ws_id, canonical, _draft = await outbound_service.require_canonical_outbound_draft(
-        request, session_token, draft_id,
-    )
-    return {"ok": True, "draft": canonical}
-
-
 @app.post("/api/web/session/{session_token}/outbound/drafts/{draft_id}/approve")
 async def outbound_approve_draft(session_token: str, draft_id: str, auto: bool = False, request: Request = None):
     if request is None:
@@ -3122,77 +3093,6 @@ async def outbound_approve_all(session_token: str, payload: ApproveAllRequest, r
         "failed_count": failed,
     }, actor="user")
     return {"ok": True, "total": len(pending), "created": created, "failed": failed, "results": results}
-
-
-@app.get("/api/web/session/{session_token}/outbound/history")
-async def outbound_history(session_token: str, request: Request, provider_id: str = ""):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    ws = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    if provider_id and not outbound_service.provider_record_owned_by(provider_id, owner_id):
-        raise HTTPException(status_code=404, detail="Provider not found")
-    from services.persistence.launch.communication_persistence import list_outbound_history
-    durable = await asyncio.to_thread(list_outbound_history, ws, provider_id, 100)
-
-    def _hist_dict(h):
-        if hasattr(h, "model_dump"):
-            return h.model_dump()
-        return {
-            "id": getattr(h, "id", ""),
-            "provider_id": getattr(h, "provider_id", ""),
-            "external_message_id": getattr(h, "external_message_id", ""),
-            "conversation_id": getattr(h, "conversation_id", ""),
-            "thread_id": getattr(h, "thread_id", ""),
-            "workflow_id": "",
-            "subject": getattr(h, "subject", ""),
-            "recipient": {"email": getattr(h, "recipient_email", ""), "name": getattr(h, "recipient_name", "")},
-            "status": getattr(h, "status", "sent"),
-            "sent_at": getattr(h, "sent_at", "").isoformat() if getattr(h, "sent_at", None) else "",
-            "draft_id": getattr(h, "draft_id", ""),
-            "error": getattr(h, "error", ""),
-        }
-
-    return {"ok": True, "history": [_hist_dict(h) for h in durable]}
-
-
-@app.get("/api/web/session/{session_token}/outbound/events")
-async def outbound_events_endpoint(session_token: str, request: Request, provider_id: str = "", after: int = 0):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    if provider_id and not outbound_service.provider_owned_by(provider_id, owner_id):
-        raise HTTPException(status_code=404, detail="Provider not found")
-    events = [
-        event for event in get_outbound_events(provider_id=provider_id, after_sequence=after)
-        if outbound_service.provider_owned_by(event.provider_id, owner_id)
-    ]
-    return {
-        "ok": True,
-        "events": [
-            {
-                "id": e.id,
-                "event_type": e.event_type.value,
-                "provider_id": e.provider_id,
-                "message": e.message,
-                "timestamp": e.timestamp,
-                "sequence": e.sequence,
-                "metadata": e.metadata,
-            }
-            for e in events
-        ],
-        "latest_sequence": outbound_latest_sequence(),
-    }
-
-
-@app.get("/api/web/session/{session_token}/outbound/drafts/{draft_id}/versions")
-async def outbound_draft_versions(session_token: str, draft_id: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    _owner_id, _workspace_id, canonical, _draft = await outbound_service.require_canonical_outbound_draft(
-        request, session_token, draft_id,
-    )
-    versions = list((canonical.get("metadata") or {}).get("outbound_versions") or [])
-    return {"ok": True, "versions": [
-        {"draft_id": draft_id, **version} for version in versions
-    ]}
 
 
 # ── Campaign Endpoints ──

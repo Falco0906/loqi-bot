@@ -204,10 +204,12 @@ def _victim_draft(draft_id, provider_id="prov-b"):
 
 class TestOutboundDraftIdor:
     def test_get_victim_draft_denied(self):
+        from services.outbound.api import outbound_get_draft
+
         _provider("prov-b", OWNER_B)
         _victim_draft("draft-victim", "prov-b")
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.outbound_get_draft("_", "draft-victim", _req(TOKEN_A)))
+            asyncio.run(outbound_get_draft("_", "draft-victim", _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_approve_victim_draft_denied(self):
@@ -232,9 +234,11 @@ class TestOutboundDraftIdor:
         assert exc.value.status_code == 404
 
     def test_owner_can_approve_own_draft(self):
+        from services.outbound.api import outbound_get_draft
+
         _provider("prov-a", OWNER_A)
         _victim_draft("draft-owner", "prov-a")
-        result = asyncio.run(main_module.outbound_get_draft("_", "draft-owner", _req(TOKEN_A)))
+        result = asyncio.run(outbound_get_draft("_", "draft-owner", _req(TOKEN_A)))
         assert result["ok"] is True
 
     def test_approve_all_only_touches_owner_drafts(self):

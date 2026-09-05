@@ -32,8 +32,6 @@ from services.mission_control.api import router as mission_control_router
 from services.discovery.api import router as discovery_router
 from services.campaigns.api import router as campaigns_router
 from services.drafts.api import router as drafts_router
-import services.drafts.service as draft_service
-import services.campaigns.service as campaign_service
 import services.outbound.service as outbound_service
 import services.conversations.service as conversation_service
 import services.copilot.runners as copilot_runners
@@ -1944,10 +1942,6 @@ class GenerateDraftsRequest(BaseModel):
     campaign_id: str
 
 
-class RegenerateStrategyRequest(BaseModel):
-    force: bool = False
-
-
 class SelectLeadRequest(BaseModel):
     index: int
 
@@ -3343,174 +3337,6 @@ def _copilot_tool_failure_reason(tool_name: str) -> str:
 def _workspace_drafts(user_id: str, session_token: str = "", workspace_id: str = "") -> list[dict[str, Any]]:
     from services.workspace_state import load_drafts_only
     return load_drafts_only(user_id, workspace_id=workspace_id)
-
-
-@app.post("/api/web/session/{session_token}/campaigns/{campaign_id}/generate-strategy", status_code=202)
-async def generate_campaign_strategy(session_token: str, campaign_id: str, payload: RegenerateStrategyRequest | None, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    """Generate (or regenerate) and persist the strategy artifact for a campaign.
-
-    Returns 202 immediately and runs generation as a background job; poll
-    ``GET /api/web/session/{session_token}/campaigns/{campaign_id}/strategy-jobs/{job_id}``
-    for status. A running job for the same campaign is reused (idempotent).
-
-    Reuse rules (zero unused AI work):
-    - A current strategy exists, the campaign objective is unchanged, and the
-      user did not explicitly force a regenerate (``force=true``) → the
-      existing strategy is returned as-is, no job is started.
-    - Otherwise a generation job is enqueued (first generation, objective
-      change, or explicit regenerate request).
-
-    Lifecycle status is untouched — workflow progression is derived
-    (current_step) from persisted state.
-    """
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    campaigns = load_campaigns(owner_id, workspace_id=workspace_id)
-    target = next((c for c in campaigns if c.get("id") == campaign_id), None)
-    if not target:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    objective = str(target.get("objective") or "").strip()
-    if not objective:
-        raise HTTPException(status_code=400, detail="Campaign objective is required")
-    if not (target.get("leads") or []):
-        raise HTTPException(status_code=400, detail="Research prospects before generating a strategy")
-
-    force = bool(payload and payload.force)
-    current_strategy = target.get("strategy") if isinstance(target.get("strategy"), dict) else None
-    if current_strategy and not force:
-        stored_objective = str(
-            current_strategy.get("objective")
-            or current_strategy.get("campaign_objective")
-            or ""
-        ).strip()
-        if stored_objective == objective:
-            return {
-                "ok": True,
-                "job_id": None,
-                "status": "completed",
-                "reused": True,
-                "strategy": current_strategy,
-            }
-
-    job_id, status = await campaign_service.enqueue_strategy_job(session_token, owner_id, campaign_id, objective, target, workspace_id=workspace_id)
-    return {"ok": True, "job_id": job_id, "status": status}
-
-
-
-@app.get("/api/web/session/{session_token}/campaigns/{campaign_id}/strategy-jobs/{job_id}")
-async def strategy_job_status(session_token: str, campaign_id: str, job_id: str, request: Request):
-    """Poll endpoint for a background strategy generation job.
-
-    PR-3F: when the in-memory record is gone (process restart) the durable
-    ``settings.strategy_job`` record is reconciled lazily — a stale
-    queued/running entry becomes an explicit FAILED with an actionable
-    message instead of leaving the client polling forever."""
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    from services.job_engine import job_manager
-    job = await asyncio.to_thread(job_manager.get_job, job_id)
-    if not job or job.get("type") != "strategy" or job.get("campaign_id") != campaign_id or job.get("workspace_id") != workspace_id or job.get("user_id") != owner_id:
-        raise HTTPException(status_code=404, detail="Strategy job not found")
-    return {
-        "job_id": job_id,
-        "status": job.get("status"),
-        "strategy": (job.get("result") or {}).get("strategy"),
-        "error": job.get("error_message"),
-    }
-
-
-@app.get("/api/web/session/{session_token}/campaigns/{campaign_id}/drafts")
-async def list_campaign_drafts(session_token: str, campaign_id: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    all_drafts = _workspace_drafts(owner_id, session_token, workspace_id=workspace_id)
-    filtered = [d for d in all_drafts if d.get("campaign_id") == campaign_id]
-    return {"ok": True, "drafts": filtered}
-
-
-@app.post("/api/web/session/{session_token}/campaigns/{campaign_id}/generate-drafts", status_code=202)
-async def generate_campaign_drafts(session_token: str, campaign_id: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    from services.workspace_state import load_campaign_state
-    target = await asyncio.to_thread(load_campaign_state, owner_id, campaign_id, workspace_id=workspace_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-
-    active_job = await draft_service.active_draft_batch(owner_id, workspace_id, campaign_id)
-    if active_job:
-        return {"ok": True, "batch_id": active_job["batch_id"], "total": active_job["total"]}
-    generation = target.get("generation")
-    generation = generation if isinstance(generation, dict) else {}
-    if generation.get("status") == "completed" and generation.get("batch_id"):
-        return {"ok": True, "batch_id": generation.get("batch_id"), "total": generation.get("total", 0)}
-
-    leads = target.get("leads") or []
-    strategy = target.get("strategy") or {}
-    strategy_campaigns = strategy.get("campaigns") if isinstance(strategy, dict) else []
-
-    if not leads:
-        for sc in strategy_campaigns if isinstance(strategy_campaigns, list) else []:
-            sc_leads = sc.get("leads") if isinstance(sc, dict) else []
-            if isinstance(sc_leads, list):
-                leads.extend(sc_leads)
-
-    if not leads:
-        raise HTTPException(status_code=400, detail="No leads found in campaign")
-
-    batch = await draft_service.schedule_campaign_draft_batch(
-        session_token, owner_id, workspace_id, leads, campaign_id,
-    )
-    batch_id, total = batch["batch_id"], batch["total"]
-    target["updated_at"] = datetime.now(timezone.utc).isoformat()
-    publish(session_token, WMEventType.CAMPAIGN_UPDATED, {
-        "campaign_id": campaign_id,
-        "generation": {"batch_id": batch_id, "total": total, "status": "processing"},
-        "lead_count": total,
-    }, actor="user")
-    return {"ok": True, "batch_id": batch_id, "total": total}
-
-
-@app.get("/api/web/session/{session_token}/campaigns/{campaign_id}/generation-status")
-async def campaign_generation_status(session_token: str, campaign_id: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    active_job = await draft_service.active_draft_batch(owner_id, workspace_id, campaign_id)
-    if active_job:
-        status = await draft_service.draft_batch_status(owner_id, workspace_id, active_job["batch_id"])
-        if status:
-            return {
-                "ok": True,
-                "active": True,
-                "status": "processing",
-                "total": status["total"],
-                "completed": status["completed"],
-                "batch_id": status["batch_id"],
-            }
-
-    campaigns = load_campaigns(owner_id, workspace_id=workspace_id)
-    target = next((c for c in campaigns if c.get("id") == campaign_id), None)
-    if not target:
-        return {
-            "ok": True, "active": False, "status": "unknown", "jobs": [],
-        }
-
-    generation = target.get("generation")
-    generation = generation if isinstance(generation, dict) else {}
-
-    return {
-        "ok": True,
-        "active": False,
-        "status": generation.get("status", "unknown"),
-        "total": generation.get("total", 0),
-        "completed": generation.get("completed", 0),
-        "batch_id": generation.get("batch_id"),
-    }
 
 
 async def _launch_initial_research(

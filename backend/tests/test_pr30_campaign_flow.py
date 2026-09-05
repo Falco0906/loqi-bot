@@ -207,7 +207,8 @@ async def _generate_strategy_direct(main_module, token, campaign_id) -> dict:
     original = main_module.identity_dependencies.authenticated_user_id
     main_module.identity_dependencies.authenticated_user_id = _owner
     try:
-        started = await main_module.generate_campaign_strategy(
+        from services.campaigns.api import generate_campaign_strategy
+        started = await generate_campaign_strategy(
             token, campaign_id, MagicMock())
     finally:
         main_module.identity_dependencies.authenticated_user_id = original
@@ -247,7 +248,8 @@ async def _start_draft_batch(main_module, token, campaign_id, user_id):
     original = main_module.identity_dependencies.authenticated_user_id
     main_module.identity_dependencies.authenticated_user_id = _owner
     try:
-        return await main_module.generate_campaign_drafts(
+        from services.campaigns.api import generate_campaign_drafts
+        return await generate_campaign_drafts(
             token, campaign_id, MagicMock())
     finally:
         main_module.identity_dependencies.authenticated_user_id = original
@@ -282,7 +284,8 @@ async def _await_batch_done(main_module, token, campaign_id, timeout=150):
     original = main_module.identity_dependencies.authenticated_user_id
     main_module.identity_dependencies.authenticated_user_id = _owner
     try:
-        status = await main_module.campaign_generation_status(
+        from services.campaigns.api import campaign_generation_status
+        status = await campaign_generation_status(
             token, campaign_id, MagicMock())
     finally:
         main_module.identity_dependencies.authenticated_user_id = original

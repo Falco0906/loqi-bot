@@ -223,7 +223,8 @@ def test_status_endpoint_reports_durable_running_job(durable, monkeypatch):
     request = type("R", (), {"headers": {}})()
 
     async def run():
-        return await m.strategy_job_status("sess", "cmp-stale", "job-stale", request)
+        from services.campaigns.api import strategy_job_status
+        return await strategy_job_status("sess", "cmp-stale", "job-stale", request)
     result = asyncio.run(run())
     assert result["status"] == "running"
 
@@ -242,7 +243,8 @@ def test_completed_durable_record_reports_completed(durable, monkeypatch):
     request = type("R", (), {"headers": {}})()
 
     async def run():
-        return await m.strategy_job_status("sess", "cmp-ok", "job-done", request)
+        from services.campaigns.api import strategy_job_status
+        return await strategy_job_status("sess", "cmp-ok", "job-done", request)
     result = asyncio.run(run())
     assert result["status"] == "completed"
 
@@ -262,7 +264,8 @@ def test_tenant_isolation_strategy_status(durable, monkeypatch):
     request = type("R", (), {"headers": {}})()
 
     async def run():
-        return await m.strategy_job_status("sess", "cmp-private", "job-p", request)
+        from services.campaigns.api import strategy_job_status
+        return await strategy_job_status("sess", "cmp-private", "job-p", request)
 
     try:
         result = asyncio.run(run())

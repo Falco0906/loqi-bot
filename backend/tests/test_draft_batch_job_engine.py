@@ -63,7 +63,7 @@ async def test_manual_batch_adapter_preserves_response_shape(monkeypatch):
 
     monkeypatch.setattr(main.identity_dependencies, "authenticated_user_id", user_id)
     monkeypatch.setattr(main.workspace_access, "resolve_legacy_workspace_id", workspace)
-    monkeypatch.setattr(main.draft_service, "enqueue_draft_batch", enqueue)
+    monkeypatch.setattr(drafts, "enqueue_draft_batch", enqueue)
     request = SimpleNamespace(headers={"authorization": "Bearer token"})
     payload = BatchDraftRequest(leads=[{"id": "lead-1"}])
     response = await batch_draft("_", payload, request)

@@ -26,6 +26,7 @@ from fastapi import HTTPException
 
 import main as main_module
 import services.discovery.api as discovery_api
+import services.drafts.service as draft_service
 import services.identity.dependencies as identity_dependencies
 import services.outbound.service as outbound_service
 from services.outbound import outbound_registry
@@ -372,12 +373,12 @@ class TestDraftHistoryAndBatchIdor:
             assert requested_batch_id == batch_id
             return None
 
-        original = main_module.draft_service.draft_batch_status
-        main_module.draft_service.draft_batch_status = inaccessible
+        original = draft_service.draft_batch_status
+        draft_service.draft_batch_status = inaccessible
         with pytest.raises(HTTPException) as exc:
             from services.drafts.api import batch_status
             asyncio.run(batch_status("_", batch_id, _req(TOKEN_A)))
-        main_module.draft_service.draft_batch_status = original
+        draft_service.draft_batch_status = original
         assert exc.value.status_code == 404
 
 

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from services import workspace_context as workspace_access
 from services.campaigns import service
+from services.drafts import service as draft_service
 from services.campaigns.service import load_campaigns
 from services.identity import dependencies as identity_dependencies
 from services.workspace_memory import record_campaign_open
@@ -55,6 +56,10 @@ class AttachDiscoveryRequest(BaseModel):
 class AddCampaignLeadRequest(BaseModel):
     lead: dict
     discovery_id: str = ""
+
+
+class RegenerateStrategyRequest(BaseModel):
+    force: bool = False
 
 
 @router.post("/api/web/session/{session_token}/campaigns")
@@ -219,3 +224,57 @@ async def campaign_timeline(session_token: str, campaign_id: str, request: Reque
         if len(batch) < 100:
             break
     return {"ok": True, "campaign_id": campaign_id, "events": events}
+
+
+@router.post("/api/web/session/{session_token}/campaigns/{campaign_id}/generate-strategy", status_code=202)
+async def generate_campaign_strategy(
+    session_token: str,
+    campaign_id: str,
+    payload: RegenerateStrategyRequest | None,
+    request: Request,
+):
+    del session_token
+    owner_id, bearer_token, workspace_id = await _authorized_workspace(request)
+    return await service.start_strategy_generation(
+        bearer_token,
+        owner_id,
+        workspace_id,
+        campaign_id,
+        force=bool(payload and payload.force),
+    )
+
+
+@router.get("/api/web/session/{session_token}/campaigns/{campaign_id}/strategy-jobs/{job_id}")
+async def strategy_job_status(session_token: str, campaign_id: str, job_id: str, request: Request):
+    del session_token
+    owner_id, _, workspace_id = await _authorized_workspace(request)
+    job = await service.strategy_job_status(owner_id, workspace_id, campaign_id, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Strategy job not found")
+    return job
+
+
+@router.get("/api/web/session/{session_token}/campaigns/{campaign_id}/drafts")
+async def list_campaign_drafts(session_token: str, campaign_id: str, request: Request):
+    del session_token
+    owner_id, _, workspace_id = await _authorized_workspace(request)
+    return await draft_service.list_campaign_drafts(owner_id, workspace_id, campaign_id)
+
+
+@router.post("/api/web/session/{session_token}/campaigns/{campaign_id}/generate-drafts", status_code=202)
+async def generate_campaign_drafts(session_token: str, campaign_id: str, request: Request):
+    del session_token
+    owner_id, bearer_token, workspace_id = await _authorized_workspace(request)
+    return await draft_service.start_campaign_draft_generation(
+        bearer_token,
+        owner_id,
+        workspace_id,
+        campaign_id,
+    )
+
+
+@router.get("/api/web/session/{session_token}/campaigns/{campaign_id}/generation-status")
+async def campaign_generation_status(session_token: str, campaign_id: str, request: Request):
+    del session_token
+    owner_id, _, workspace_id = await _authorized_workspace(request)
+    return await draft_service.campaign_draft_generation_status(owner_id, workspace_id, campaign_id)

@@ -65,7 +65,7 @@ async def test_batch_status_adapter_preserves_response_shape(monkeypatch):
     monkeypatch.setattr(main.workspace_access, "resolve_legacy_workspace_id", workspace)
     from services.drafts.api import batch_status
 
-    monkeypatch.setattr(main.draft_service, "draft_batch_status", status)
+    monkeypatch.setattr(drafts, "draft_batch_status", status)
     response = await batch_status("_", "batch-1", SimpleNamespace(headers={}))
 
     assert response["ok"] is True
@@ -133,9 +133,10 @@ async def test_generation_status_uses_active_durable_batch(monkeypatch):
     monkeypatch.setattr(main.identity_dependencies, "web_session_token", lambda _request: "token")
     monkeypatch.setattr(main.identity_dependencies, "authenticated_user_id", user_id)
     monkeypatch.setattr(main.workspace_access, "resolve_legacy_workspace_id", workspace)
-    monkeypatch.setattr(main.draft_service, "active_draft_batch", active)
-    monkeypatch.setattr(main.draft_service, "draft_batch_status", status)
-    response = await main.campaign_generation_status("_", "campaign-1", SimpleNamespace(headers={}))
+    monkeypatch.setattr(drafts, "active_draft_batch", active)
+    monkeypatch.setattr(drafts, "draft_batch_status", status)
+    from services.campaigns.api import campaign_generation_status
+    response = await campaign_generation_status("_", "campaign-1", SimpleNamespace(headers={}))
 
     assert response == {
         "ok": True, "active": True, "status": "processing", "total": 2,

@@ -309,7 +309,8 @@ class TestDraftBatchIdempotency:
 
         monkeypatch.setattr("services.drafts.service.schedule_campaign_draft_batch", enqueue)
 
-        result = await main_module.generate_campaign_drafts(
+        from services.campaigns.api import generate_campaign_drafts
+        result = await generate_campaign_drafts(
             "token", campaign["id"], MagicMock())
 
         assert result["ok"] is True
@@ -348,7 +349,8 @@ class TestDraftBatchIdempotency:
 
         monkeypatch.setattr("services.drafts.service.schedule_campaign_draft_batch", enqueue)
 
-        result = await main_module.generate_campaign_drafts(
+        from services.campaigns.api import generate_campaign_drafts
+        result = await generate_campaign_drafts(
             "token", campaign["id"], MagicMock())
 
         assert result["ok"] is True

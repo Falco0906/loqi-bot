@@ -537,6 +537,80 @@ async def enqueue_strategy_job(session_token: str, owner_id: str, campaign_id: s
     return job.id, "queued"
 
 
+async def start_strategy_generation(
+    session_token: str,
+    owner_id: str,
+    workspace_id: str,
+    campaign_id: str,
+    *,
+    force: bool,
+) -> dict[str, Any]:
+    """Reuse or queue one durable strategy job for an authorized campaign."""
+    from fastapi import HTTPException
+
+    campaigns = await asyncio.to_thread(load_campaigns, owner_id, workspace_id=workspace_id)
+    target = next((campaign for campaign in campaigns if campaign.get("id") == campaign_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    objective = str(target.get("objective") or "").strip()
+    if not objective:
+        raise HTTPException(status_code=400, detail="Campaign objective is required")
+    if not (target.get("leads") or []):
+        raise HTTPException(status_code=400, detail="Research prospects before generating a strategy")
+
+    current_strategy = target.get("strategy") if isinstance(target.get("strategy"), dict) else None
+    if current_strategy and not force:
+        stored_objective = str(
+            current_strategy.get("objective")
+            or current_strategy.get("campaign_objective")
+            or ""
+        ).strip()
+        if stored_objective == objective:
+            return {
+                "ok": True,
+                "job_id": None,
+                "status": "completed",
+                "reused": True,
+                "strategy": current_strategy,
+            }
+
+    job_id, status = await enqueue_strategy_job(
+        session_token,
+        owner_id,
+        campaign_id,
+        objective,
+        target,
+        workspace_id=workspace_id,
+    )
+    return {"ok": True, "job_id": job_id, "status": status}
+
+
+async def strategy_job_status(
+    owner_id: str,
+    workspace_id: str,
+    campaign_id: str,
+    job_id: str,
+) -> dict[str, Any] | None:
+    """Return a strategy job only when all durable ownership fields match."""
+    from services.job_engine import job_manager
+
+    job = await asyncio.to_thread(job_manager.get_job, job_id)
+    if (
+        not job
+        or job.get("type") != "strategy"
+        or job.get("campaign_id") != campaign_id
+        or job.get("workspace_id") != workspace_id
+        or job.get("user_id") != owner_id
+    ):
+        return None
+    return {
+        "job_id": job_id,
+        "status": job.get("status"),
+        "strategy": (job.get("result") or {}).get("strategy"),
+        "error": job.get("error_message"),
+    }
+
+
 async def maybe_auto_strategy(session_token: str, owner_id: str, campaign_id: str, objective: str, target: dict[str, Any], *, workspace_id: str) -> str | None:
     if not objective or not campaign_id or not str(target.get("discovery_id") or "").strip() or (isinstance(target.get("strategy"), dict) and target.get("strategy")) or not target.get("leads"):
         return None

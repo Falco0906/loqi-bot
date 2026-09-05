@@ -506,6 +506,111 @@ async def draft_batch_status(owner_id: str, workspace_id: str, batch_id: str) ->
     return _legacy_batch_status(job, items)
 
 
+async def list_campaign_drafts(
+    owner_id: str,
+    workspace_id: str,
+    campaign_id: str,
+) -> dict[str, Any]:
+    """List canonical drafts for one campaign in the selected workspace."""
+    drafts = await asyncio.to_thread(load_drafts, owner_id, workspace_id=workspace_id)
+    return {"ok": True, "drafts": [draft for draft in drafts if draft.get("campaign_id") == campaign_id]}
+
+
+async def start_campaign_draft_generation(
+    session_token: str,
+    owner_id: str,
+    workspace_id: str,
+    campaign_id: str,
+) -> dict[str, Any]:
+    """Create or reuse the durable draft-batch job for one campaign."""
+    from services.workspace_state import load_campaign_state
+
+    target = await asyncio.to_thread(
+        load_campaign_state,
+        owner_id,
+        campaign_id,
+        workspace_id=workspace_id,
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    active_job = await active_draft_batch(owner_id, workspace_id, campaign_id)
+    if active_job:
+        return {"ok": True, "batch_id": active_job["batch_id"], "total": active_job["total"]}
+    generation = target.get("generation")
+    generation = generation if isinstance(generation, dict) else {}
+    if generation.get("status") == "completed" and generation.get("batch_id"):
+        return {"ok": True, "batch_id": generation.get("batch_id"), "total": generation.get("total", 0)}
+
+    leads = list(target.get("leads") or [])
+    strategy = target.get("strategy") or {}
+    strategy_campaigns = strategy.get("campaigns") if isinstance(strategy, dict) else []
+    if not leads:
+        for strategy_campaign in strategy_campaigns if isinstance(strategy_campaigns, list) else []:
+            strategy_leads = strategy_campaign.get("leads") if isinstance(strategy_campaign, dict) else []
+            if isinstance(strategy_leads, list):
+                leads.extend(strategy_leads)
+    if not leads:
+        raise HTTPException(status_code=400, detail="No leads found in campaign")
+
+    batch = await schedule_campaign_draft_batch(
+        session_token,
+        owner_id,
+        workspace_id,
+        leads,
+        campaign_id,
+    )
+    batch_id, total = batch["batch_id"], batch["total"]
+    target["updated_at"] = datetime.now(timezone.utc).isoformat()
+    publish(session_token, WMEventType.CAMPAIGN_UPDATED, {
+        "campaign_id": campaign_id,
+        "generation": {"batch_id": batch_id, "total": total, "status": "processing"},
+        "lead_count": total,
+    }, actor="user")
+    return {"ok": True, "batch_id": batch_id, "total": total}
+
+
+async def campaign_draft_generation_status(
+    owner_id: str,
+    workspace_id: str,
+    campaign_id: str,
+) -> dict[str, Any]:
+    """Return the frozen campaign-generation status from durable state."""
+    from services.workspace_state import load_campaign_state
+
+    active_job = await active_draft_batch(owner_id, workspace_id, campaign_id)
+    if active_job:
+        status = await draft_batch_status(owner_id, workspace_id, active_job["batch_id"])
+        if status:
+            return {
+                "ok": True,
+                "active": True,
+                "status": "processing",
+                "total": status["total"],
+                "completed": status["completed"],
+                "batch_id": status["batch_id"],
+            }
+
+    target = await asyncio.to_thread(
+        load_campaign_state,
+        owner_id,
+        campaign_id,
+        workspace_id=workspace_id,
+    )
+    if not target:
+        return {"ok": True, "active": False, "status": "unknown", "jobs": []}
+    generation = target.get("generation")
+    generation = generation if isinstance(generation, dict) else {}
+    return {
+        "ok": True,
+        "active": False,
+        "status": generation.get("status", "unknown"),
+        "total": generation.get("total", 0),
+        "completed": generation.get("completed", 0),
+        "batch_id": generation.get("batch_id"),
+    }
+
+
 async def reconcile_stale_draft_batch_jobs() -> int:
     """Resume durable queued/running draft batches after process restart."""
     from services.job_engine import job_manager

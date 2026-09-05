@@ -205,6 +205,8 @@ class TestTenantIsolationFinal:
         assert exc.value.status_code in (403, 404)
 
     def test_cross_tenant_outbound_draft_side_effect_denied(self, monkeypatch):
+        from services.outbound.api import outbound_approve_draft
+
         resolve, owner, workspace = self._two_user_resolver()
         monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", resolve)
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner)
@@ -212,7 +214,7 @@ class TestTenantIsolationFinal:
         monkeypatch.setattr(main_module, "_workspace_drafts", lambda *args, **kwargs: [])
         self._provider("prov-b", "owner-b")
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.outbound_approve_draft("_", "draft-b", False, _req("token-a")))
+            asyncio.run(outbound_approve_draft("_", "draft-b", False, _req("token-a")))
         assert exc.value.status_code == 404
 
 

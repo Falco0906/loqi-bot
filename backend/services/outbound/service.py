@@ -475,6 +475,204 @@ async def run_scheduled_outbound_send(job, on_progress) -> dict[str, Any]:
     return {"ok": True, "result": {"draft_id": draft_id, "send_result": result.get("send_result") or {}}}
 
 
+async def create_outbound_draft(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+    """Create a canonical draft and its provider projection."""
+    from services.outbound.outbound_models import DraftMessage, Recipient
+
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    provider_id = str(payload.get("provider_id") or "")
+    if not provider_owned_by(provider_id, owner_id):
+        raise HTTPException(status_code=404, detail="Provider not found")
+    draft = DraftMessage(
+        provider_id=provider_id, conversation_id=str(payload.get("conversation_id") or ""),
+        thread_id=str(payload.get("thread_id") or ""), workflow_id=str(payload.get("workflow_id") or ""),
+        subject=str(payload.get("subject") or ""), body=str(payload.get("body") or ""),
+        recipient=Recipient(email=str(payload.get("recipient_email") or ""), name=str(payload.get("recipient_name") or "")),
+        sender=Recipient(email=str(payload.get("sender_email") or ""), name=str(payload.get("sender_name") or "")),
+        cc=[Recipient(**item) for item in (payload.get("cc") or [])],
+        bcc=[Recipient(**item) for item in (payload.get("bcc") or [])],
+        reply_to_message_id=str(payload.get("reply_to_message_id") or ""),
+        in_reply_to=str(payload.get("in_reply_to") or ""), references=str(payload.get("references") or ""),
+    )
+    canonical = {
+        "id": draft.id, "campaign_id": draft.workflow_id, "provider": provider_id,
+        "subject": draft.subject, "body": draft.body, "status": "draft",
+        "lead": {"email": draft.recipient.email, "name": draft.recipient.name},
+    }
+    if not await workspace_state.persist_draft_awaited(owner_id, canonical):
+        raise HTTPException(status_code=503, detail="Draft could not be persisted")
+    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
+    try:
+        result = outbound_registry.create_draft(provider_id, draft)
+        if not result:
+            raise RuntimeError("Provider did not return a draft projection")
+        draft = result
+        if not await persist_outbound_projection(owner_id, workspace_id, draft, change_summary="provider draft created"):
+            raise RuntimeError("Provider draft projection could not be persisted")
+    except Exception as error:
+        await workspace_state.persist_draft_update_awaited(owner_id, draft.id, {"status": "failed"})
+        raise HTTPException(status_code=502, detail="Draft was persisted but provider projection failed") from error
+    publish(session_token, WMEventType.DRAFT_GENERATED, {
+        "id": draft.id, "campaign_id": draft.workflow_id, "subject": draft.subject,
+        "body_preview": draft.body[:200], "recipient_email": draft.recipient.email, "provider_id": provider_id,
+    }, actor="user")
+    return {"ok": True, "draft": draft.model_dump()}
+
+
+async def update_outbound_draft(request: Request, draft_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Update one authorized canonical draft and its provider projection."""
+    from services.outbound.outbound_models import Recipient
+
+    session_token = identity_dependencies.web_session_token(request)
+    provider_id = str(payload.get("provider_id") or "")
+    owner_id, workspace_id, _canonical, existing = await require_canonical_outbound_draft(
+        request, session_token, draft_id, provider_id=provider_id,
+    )
+    update_data: dict[str, Any] = {}
+    if payload.get("subject"):
+        update_data["subject"] = payload["subject"]
+    if payload.get("body"):
+        update_data["body"] = payload["body"]
+    if payload.get("recipient_email"):
+        update_data["recipient"] = Recipient(email=payload["recipient_email"], name=str(payload.get("recipient_name") or ""))
+    canonical_updates = {key: value for key, value in update_data.items() if key in {"subject", "body"}}
+    if canonical_updates and not await workspace_state.persist_draft_update_awaited(
+        owner_id, draft_id, canonical_updates, workspace_id=workspace_id,
+    ):
+        raise HTTPException(status_code=503, detail="Draft update could not be persisted")
+    updated = existing.model_copy(update=update_data)
+    if payload.get("external_draft_id"):
+        updated = outbound_registry.update_draft(provider_id, updated)
+        if not updated:
+            raise HTTPException(status_code=502, detail="Provider draft update failed")
+    if not await persist_outbound_projection(owner_id, workspace_id, updated, change_summary="provider draft updated"):
+        raise HTTPException(status_code=503, detail="Draft projection could not be persisted")
+    publish(session_token, WMEventType.DRAFT_UPDATED, {
+        "draft_id": draft_id, "provider_id": provider_id, "subject": payload.get("subject") or existing.subject,
+    }, actor="user")
+    return {"ok": True, "draft": updated.model_dump()}
+
+
+async def delete_outbound_draft(request: Request | None, draft_id: str, provider_id: str = "") -> dict[str, Any]:
+    """Reject an authorized draft and remove its provider-side projection."""
+    if request is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id, workspace_id, _canonical, draft = await require_canonical_outbound_draft(
+        request, session_token, draft_id, provider_id=provider_id,
+    )
+    if draft and draft.external_draft_id and provider_id:
+        outbound_registry.delete_draft(provider_id, draft.external_draft_id)
+    if not await workspace_state.persist_draft_update_awaited(owner_id, draft_id, {"status": "rejected"}, workspace_id=workspace_id):
+        raise HTTPException(status_code=503, detail="Draft deletion could not be persisted")
+    from services.outbound.outbound_models import DraftStatus
+
+    draft.status = DraftStatus.REJECTED
+    if not await persist_outbound_projection(owner_id, workspace_id, draft, change_summary="provider draft deleted"):
+        raise HTTPException(status_code=503, detail="Draft deletion projection could not be persisted")
+    publish(session_token, WMEventType.DRAFT_REJECTED, {"draft_id": draft_id, "provider_id": provider_id}, actor="user")
+    from services.learning.behavior_tracker import get_tracker
+    from services.learning.feedback_interpreter import FeedbackInterpreter
+
+    FeedbackInterpreter(get_tracker()).on_draft_rejected(session_token, draft_id)
+    return {"ok": True}
+
+
+async def approve_outbound_draft(request: Request | None, draft_id: str, auto: bool = False) -> dict[str, Any]:
+    """Approve an authorized draft and create its provider-side draft."""
+    if request is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id, workspace_id, _canonical, draft = await require_canonical_outbound_draft(request, session_token, draft_id)
+    from services.outbound.outbound_models import ApprovalState, DraftStatus
+
+    draft.approval_state = ApprovalState.AUTO_APPROVED if auto else ApprovalState.APPROVED
+    draft.status = DraftStatus.AUTO_APPROVED if auto else DraftStatus.APPROVED
+    try:
+        updated = outbound_registry.create_draft(draft.provider_id, draft)
+        if not updated:
+            raise HTTPException(status_code=502, detail="No provider registered for " + draft.provider_id)
+        if not updated.external_draft_id:
+            raise HTTPException(status_code=502, detail="Provider created draft but returned no external_draft_id")
+        updated.status = draft.status
+        updated.approval_state = draft.approval_state
+        if not await workspace_state.persist_draft_update_awaited(owner_id, draft_id, {"status": "approved"}, workspace_id=workspace_id):
+            raise HTTPException(status_code=503, detail="Provider draft was created but canonical Draft persistence failed")
+        if not await persist_outbound_projection(owner_id, workspace_id, updated, change_summary="provider draft created"):
+            raise HTTPException(status_code=503, detail="Provider draft projection persistence failed")
+        publish(session_token, WMEventType.DRAFT_APPROVED, {
+            "draft_id": draft_id, "provider_id": draft.provider_id, "auto": auto, "campaign_id": draft.workflow_id or "",
+        }, actor="user")
+        return {"ok": True, "draft": updated.model_dump()}
+    except HTTPException:
+        raise
+    except Exception as error:
+        publish(session_token, WMEventType.DRAFT_FAILED, {"draft_id": draft_id, "error": str(error)}, actor="system")
+        raise HTTPException(status_code=502, detail=str(error))
+
+
+async def reject_outbound_draft(request: Request | None, draft_id: str) -> dict[str, Any]:
+    """Reject one authorized outbound draft and persist its projection."""
+    if request is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id, workspace_id, _canonical, draft = await require_canonical_outbound_draft(request, session_token, draft_id)
+    from services.outbound.outbound_models import ApprovalState, DraftStatus
+
+    draft.approval_state = ApprovalState.REJECTED
+    draft.status = DraftStatus.REJECTED
+    if not await workspace_state.persist_draft_update_awaited(owner_id, draft_id, {"status": "rejected"}, workspace_id=workspace_id):
+        raise HTTPException(status_code=503, detail="Canonical Draft persistence failed")
+    if not await persist_outbound_projection(owner_id, workspace_id, draft, change_summary="rejected"):
+        raise HTTPException(status_code=503, detail="Draft rejection projection persistence failed")
+    publish(session_token, WMEventType.DRAFT_REJECTED, {
+        "draft_id": draft_id, "provider_id": draft.provider_id, "campaign_id": draft.workflow_id or "",
+    }, actor="user")
+    return {"ok": True, "draft": draft.model_dump()}
+
+
+async def approve_all_outbound_drafts(request: Request | None, auto: bool = False) -> dict[str, Any]:
+    """Approve every pending canonical draft in the selected workspace."""
+    if request is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
+    pending = [draft for draft in workspace_state.load_drafts_only(owner_id, workspace_id=workspace_id)
+               if str(draft.get("status") or "") in ("draft", "pending_approval")]
+    if not pending:
+        return {"ok": True, "total": 0, "created": 0, "failed": 0, "results": []}
+    results = []
+    from services.outbound.outbound_models import ApprovalState, DraftStatus
+
+    for canonical in pending:
+        draft_id = str(canonical.get("id") or "")
+        try:
+            _owner, _workspace, _canonical, draft = await require_canonical_outbound_draft(request, session_token, draft_id)
+            draft.approval_state = ApprovalState.AUTO_APPROVED if auto else ApprovalState.APPROVED
+            draft.status = DraftStatus.AUTO_APPROVED if auto else DraftStatus.APPROVED
+            updated = outbound_registry.create_draft(draft.provider_id, draft)
+            if not updated or not updated.external_draft_id:
+                results.append({"draft_id": draft.id, "ok": False, "error": "No provider or no external_draft_id"})
+                continue
+            updated.status = draft.status
+            updated.approval_state = draft.approval_state
+            if not await workspace_state.persist_draft_update_awaited(owner_id, draft.id, {"status": "approved"}, workspace_id=workspace_id):
+                raise RuntimeError("canonical Draft persistence failed")
+            if not await persist_outbound_projection(owner_id, workspace_id, updated, change_summary="provider draft created"):
+                raise RuntimeError("Provider draft projection persistence failed")
+            results.append({"draft_id": draft.id, "ok": True})
+        except Exception as error:
+            results.append({"draft_id": draft_id, "ok": False, "error": str(error)})
+    created = sum(1 for result in results if result["ok"])
+    failed = sum(1 for result in results if not result["ok"])
+    publish(session_token, WMEventType.CAMPAIGN_STATUS_CHANGED, {
+        "campaign_id": "approve_all", "status": "approved", "draft_count": created, "failed_count": failed,
+    }, actor="user")
+    return {"ok": True, "total": len(pending), "created": created, "failed": failed, "results": results}
+
+
 async def create_provider_draft_after_approval(
     canonical_draft: dict[str, Any],
     session_token: str,

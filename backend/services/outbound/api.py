@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
 from services import workspace_context as workspace_access
 from services.identity import dependencies as identity_dependencies
@@ -12,6 +13,38 @@ from services.outbound.outbound_events import get_events, latest_sequence
 
 
 router = APIRouter(tags=["Outbound"])
+
+
+class OutboundCreateDraftRequest(BaseModel):
+    provider_id: str
+    conversation_id: str = ""
+    thread_id: str = ""
+    workflow_id: str = ""
+    subject: str
+    body: str
+    recipient_email: str
+    recipient_name: str = ""
+    sender_email: str
+    sender_name: str = ""
+    cc: list[dict] = []
+    bcc: list[dict] = []
+    reply_to_message_id: str = ""
+    in_reply_to: str = ""
+    references: str = ""
+
+
+class OutboundUpdateDraftRequest(BaseModel):
+    provider_id: str
+    draft_id: str
+    external_draft_id: str = ""
+    subject: str = ""
+    body: str = ""
+    recipient_email: str = ""
+    recipient_name: str = ""
+
+
+class ApproveAllRequest(BaseModel):
+    auto: bool = False
 
 
 async def _authorized_owner(request: Request) -> tuple[str, str]:
@@ -50,6 +83,48 @@ def _history_dict(history: object) -> dict:
         "draft_id": getattr(history, "draft_id", ""),
         "error": getattr(history, "error", ""),
     }
+
+
+@router.post("/api/web/session/{session_token}/outbound/drafts")
+async def outbound_create_draft(session_token: str, payload: OutboundCreateDraftRequest, request: Request):
+    del session_token
+    return await service.create_outbound_draft(request, payload.model_dump())
+
+
+@router.patch("/api/web/session/{session_token}/outbound/drafts/{draft_id}")
+async def outbound_update_draft(
+    session_token: str, draft_id: str, payload: OutboundUpdateDraftRequest, request: Request,
+):
+    del session_token
+    return await service.update_outbound_draft(request, draft_id, payload.model_dump())
+
+
+@router.delete("/api/web/session/{session_token}/outbound/drafts/{draft_id}")
+async def outbound_delete_draft(
+    session_token: str, draft_id: str, provider_id: str = "", request: Request = None,
+):
+    del session_token
+    return await service.delete_outbound_draft(request, draft_id, provider_id)
+
+
+@router.post("/api/web/session/{session_token}/outbound/drafts/{draft_id}/approve")
+async def outbound_approve_draft(
+    session_token: str, draft_id: str, auto: bool = False, request: Request = None,
+):
+    del session_token
+    return await service.approve_outbound_draft(request, draft_id, auto)
+
+
+@router.post("/api/web/session/{session_token}/outbound/drafts/{draft_id}/reject")
+async def outbound_reject_draft(session_token: str, draft_id: str, request: Request = None):
+    del session_token
+    return await service.reject_outbound_draft(request, draft_id)
+
+
+@router.post("/api/web/session/{session_token}/outbound/approve-all")
+async def outbound_approve_all(session_token: str, payload: ApproveAllRequest, request: Request = None):
+    del session_token
+    return await service.approve_all_outbound_drafts(request, payload.auto)
 
 
 @router.get("/api/web/session/{session_token}/outbound/drafts")

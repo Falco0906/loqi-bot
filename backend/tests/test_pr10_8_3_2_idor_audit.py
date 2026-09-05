@@ -213,17 +213,21 @@ class TestOutboundDraftIdor:
         assert exc.value.status_code == 404
 
     def test_approve_victim_draft_denied(self):
+        from services.outbound.api import outbound_approve_draft
+
         _provider("prov-b", OWNER_B)
         _victim_draft("draft-victim", "prov-b")
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.outbound_approve_draft("_", "draft-victim", False, _req(TOKEN_A)))
+            asyncio.run(outbound_approve_draft("_", "draft-victim", False, _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_reject_victim_draft_denied(self):
+        from services.outbound.api import outbound_reject_draft
+
         _provider("prov-b", OWNER_B)
         _victim_draft("draft-victim", "prov-b")
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.outbound_reject_draft("_", "draft-victim", _req(TOKEN_A)))
+            asyncio.run(outbound_reject_draft("_", "draft-victim", _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_cancel_victim_draft_schedule_denied(self):
@@ -242,13 +246,15 @@ class TestOutboundDraftIdor:
         assert result["ok"] is True
 
     def test_approve_all_only_touches_owner_drafts(self):
+        from services.outbound.api import outbound_approve_all
+
         _provider("prov-a", OWNER_A)
         _provider("prov-b", OWNER_B)
         _victim_draft("draft-a", "prov-a")
         _victim_draft("draft-b", "prov-b")
         payload = MagicMock()
         payload.auto = False
-        result = asyncio.run(main_module.outbound_approve_all("_", payload, _req(TOKEN_A)))
+        result = asyncio.run(outbound_approve_all("_", payload, _req(TOKEN_A)))
         result_ids = [r["draft_id"] for r in result.get("results", [])]
         assert "draft-b" not in result_ids
 
@@ -392,11 +398,13 @@ class TestDraftHistoryAndBatchIdor:
 
 class TestChainedAndSubstitution:
     def test_draft_provider_chain_victim_denied(self):
+        from services.outbound.api import outbound_approve_draft
+
         # Victim draft references victim provider; attacker supplies both.
         _provider("prov-b", OWNER_B)
         _victim_draft("draft-victim", "prov-b")
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.outbound_approve_draft("_", "draft-victim", False, _req(TOKEN_A)))
+            asyncio.run(outbound_approve_draft("_", "draft-victim", False, _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_list_jobs_ignores_client_supplied_user_id(self):

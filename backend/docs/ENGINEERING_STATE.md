@@ -1141,6 +1141,5 @@ The `.env` file contains:
 - `GMAIL_CREDENTIALS` / `GMAIL_TOKEN` — Gmail OAuth config
 - `SERPAPI_KEY` — SerpAPI for lead sourcing
 - `APOLLO_API_KEY` — Apollo.io for lead data
-- `PDL_API_KEY` — People Data Labs for enrichment
 
 Test runner: `pytest` from `backend/` directory with `PYTHONPATH` set to include `backend/`.

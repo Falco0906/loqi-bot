@@ -106,31 +106,3 @@ async def retry_async(
             await _asleep_with_jitter(delay)
     assert last_error is not None
     raise last_error
-
-
-def retry_sync(
-    factory: Callable[[], T],
-    *,
-    attempts: int = DEFAULT_ATTEMPTS,
-    base_delay: float = DEFAULT_BASE_DELAY,
-    max_delay: float = DEFAULT_MAX_DELAY,
-    category: str = "",
-) -> T:
-    """Synchronous compatibility wrapper with non-blocking retry backoff.
-
-    The factory itself runs in a worker thread.  Callers should use
-    :func:`retry_async` from async code; this adapter exists for synchronous
-    integration boundaries only.
-    """
-    async def _factory() -> T:
-        return await asyncio.to_thread(factory)
-
-    return asyncio.run(
-        retry_async(
-            _factory,
-            attempts=attempts,
-            base_delay=base_delay,
-            max_delay=max_delay,
-            category=category,
-        )
-    )

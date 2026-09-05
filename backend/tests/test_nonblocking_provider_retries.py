@@ -104,26 +104,3 @@ def test_lead_provider_retry_offloads_sync_provider_and_uses_async_sleep(monkeyp
     assert result["ok"] is True
     assert provider.calls == 2
     assert len(pauses) == 1
-
-
-def test_retry_sync_uses_async_retry_backoff(monkeypatch):
-    from services.persistence import retry
-
-    pauses = []
-    attempts = 0
-
-    async def fake_sleep(delay):
-        pauses.append(delay)
-
-    def factory():
-        nonlocal attempts
-        attempts += 1
-        if attempts == 1:
-            raise ConnectionError("temporary")
-        return "ok"
-
-    monkeypatch.setattr(retry, "_asleep_with_jitter", fake_sleep)
-
-    assert retry.retry_sync(factory, attempts=2, base_delay=0.01) == "ok"
-    assert attempts == 2
-    assert pauses == [0.01]

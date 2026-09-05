@@ -730,6 +730,7 @@ async def rate_limit_middleware(request: Request, call_next):
     session_token = identity_dependencies.web_session_token(request)
     identity = f"ip:{request.client.host if request.client else 'unknown'}"
     if session_token:
+        # Compatibility seam: main supplies the legacy session lookup so rate_limit stays independent of ConversationEngine.
         user_id = await resolve_rate_limit_identity(session_token, engine.get_web_session_user_id)
         if user_id:
             identity = f"u:{user_id}"

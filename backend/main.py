@@ -196,18 +196,7 @@ async def lifespan(app: FastAPI):
     background_tasks: list[asyncio.Task] = []
     app_lifespan.start_memory_consolidation(background_tasks)
 
-    # Rehydrate the conversation store from its persisted snapshot before
-    # any API, workflow recovery, or background task (simulator, sync)
-    # touches conversations.
-    try:
-        from services.conversations.conversation_store import conversation_store
-        conversation_store.reload()
-        log.info("Conversation store rehydrated: %d conversations",
-                 sum(conversation_store.count_by_status().values()))
-    except Exception as e:
-        if (os.getenv("ENVIRONMENT") or os.getenv("APP_ENV") or "development").strip().lower() == "production":
-            raise RuntimeError("Durable Inbox persistence is required in production") from e
-        log.warning("Conversation store rehydration failed: %s", e)
+    app_lifespan.rehydrate_conversation_store()
 
     app_lifespan.rehydrate_communication_store()
 

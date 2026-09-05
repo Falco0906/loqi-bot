@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from typing import Any
 
@@ -193,6 +194,25 @@ def start_memory_consolidation(background_tasks: list[Any]) -> None:
         log.info("Memory consolidation startup task created")
     except Exception as error:
         log.warning("Memory consolidation startup failed: %s", error)
+
+
+def rehydrate_conversation_store() -> None:
+    """Reload durable Inbox state, failing closed when production cannot read it."""
+    try:
+        from services.conversations.conversation_store import conversation_store
+
+        conversation_store.reload()
+        log.info(
+            "Conversation store rehydrated: %d conversations",
+            sum(conversation_store.count_by_status().values()),
+        )
+    except Exception as error:
+        environment = (
+            os.getenv("ENVIRONMENT") or os.getenv("APP_ENV") or "development"
+        ).strip().lower()
+        if environment == "production":
+            raise RuntimeError("Durable Inbox persistence is required in production") from error
+        log.warning("Conversation store rehydration failed: %s", error)
 
 
 def rehydrate_communication_store() -> None:

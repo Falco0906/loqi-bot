@@ -194,14 +194,7 @@ async def lifespan(app: FastAPI):
     app_lifespan.register_execution_observability()
 
     background_tasks: list[asyncio.Task] = []
-    try:
-        from services.memory.consolidation import consolidate_memories
-        from services.memory.memory_store import get_memory_provider
-        result = asyncio.create_task(consolidate_memories(get_memory_provider()))
-        background_tasks.append(result)
-        log.info("Memory consolidation startup task created")
-    except Exception as e:
-        log.warning("Memory consolidation startup failed: %s", e)
+    app_lifespan.start_memory_consolidation(background_tasks)
 
     # Rehydrate the conversation store from its persisted snapshot before
     # any API, workflow recovery, or background task (simulator, sync)

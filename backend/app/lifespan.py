@@ -182,6 +182,19 @@ def register_execution_observability() -> None:
     log.info("Memory subscriber registered")
 
 
+def start_memory_consolidation(background_tasks: list[Any]) -> None:
+    """Schedule optional memory consolidation and retain its shutdown handle."""
+    try:
+        from services.memory.consolidation import consolidate_memories
+        from services.memory.memory_store import get_memory_provider
+
+        task = asyncio.create_task(consolidate_memories(get_memory_provider()))
+        background_tasks.append(task)
+        log.info("Memory consolidation startup task created")
+    except Exception as error:
+        log.warning("Memory consolidation startup failed: %s", error)
+
+
 def rehydrate_communication_store() -> None:
     """Restore communication cursors and thread mappings before workers start."""
     try:

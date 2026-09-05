@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import main
 import services.drafts.service as drafts
+from services.drafts.api import BatchDraftRequest, batch_draft
 from services.job_engine.models import BatchItem, BatchItemStatus, Job
 
 
@@ -64,6 +65,6 @@ async def test_manual_batch_adapter_preserves_response_shape(monkeypatch):
     monkeypatch.setattr(main.workspace_access, "resolve_legacy_workspace_id", workspace)
     monkeypatch.setattr(main.draft_service, "enqueue_draft_batch", enqueue)
     request = SimpleNamespace(headers={"authorization": "Bearer token"})
-    payload = main.BatchDraftRequest(leads=[{"id": "lead-1"}])
-    response = await main.batch_draft("_", payload, request)
+    payload = BatchDraftRequest(leads=[{"id": "lead-1"}])
+    response = await batch_draft("_", payload, request)
     assert response == {"ok": True, "batch_id": "job-1", "total": 1}

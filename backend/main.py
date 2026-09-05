@@ -1930,14 +1930,14 @@ async def post_web_session_message(
     return _result
 
 
-class BatchDraftRequest(BaseModel):
-    leads: list[dict]
-    campaign_id: str | None = None
-
-
 class LeadDecisionRequest(BaseModel):
     lead: dict
     approved: bool
+
+
+class AnalyzeCampaignsRequest(BaseModel):
+    leads: list[dict]
+    campaign_id: str | None = None
 
 
 class GenerateDraftsRequest(BaseModel):
@@ -1952,36 +1952,8 @@ class SelectLeadRequest(BaseModel):
     index: int
 
 
-@app.post("/api/web/session/{session_token}/batch-draft", status_code=202)
-async def batch_draft(session_token: str, payload: BatchDraftRequest, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    if not payload.leads:
-        raise HTTPException(status_code=400, detail="No leads provided")
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    batch = await draft_service.enqueue_draft_batch(
-        session_token,
-        owner_id,
-        workspace_id,
-        payload.leads,
-        payload.campaign_id or "",
-    )
-    return {"ok": True, "batch_id": batch["batch_id"], "total": batch["total"]}
-
-
-@app.get("/api/web/session/{session_token}/batch-status/{batch_id}")
-async def batch_status(session_token: str, batch_id: str, request: Request = None):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    job = await draft_service.draft_batch_status(owner_id, workspace_id, batch_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Batch not found")
-    return {"ok": True, **job}
-
-
 @app.post("/api/web/session/{session_token}/analyze-campaigns")
-async def analyze_campaigns_endpoint(session_token: str, payload: BatchDraftRequest):
+async def analyze_campaigns_endpoint(session_token: str, payload: AnalyzeCampaignsRequest):
     result = analyze_campaigns(payload.leads)
     return result
 

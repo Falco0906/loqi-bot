@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import time
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from services import workspace_context as workspace_access
@@ -65,6 +65,11 @@ class CompareDraftVersionsRequest(BaseModel):
     old_text: str
     new_text: str
     change_summary: list[str] | None = None
+
+
+class BatchDraftRequest(BaseModel):
+    leads: list[dict]
+    campaign_id: str | None = None
 
 
 async def _authorized_identity(request: Request) -> tuple[str, str]:
@@ -141,3 +146,29 @@ async def draft_rewrite_history(session_token: str, draft_id: str, request: Requ
 async def compare_draft_versions(session_token: str, payload: CompareDraftVersionsRequest):
     del session_token
     return await service.compare_draft_versions(payload.model_dump())
+
+
+@router.post("/api/web/session/{session_token}/batch-draft", status_code=202)
+async def batch_draft(session_token: str, payload: BatchDraftRequest, request: Request):
+    del session_token
+    if not payload.leads:
+        raise HTTPException(status_code=400, detail="No leads provided")
+    owner_id, bearer_token, workspace_id = await _authorized_workspace(request)
+    batch = await service.enqueue_draft_batch(
+        bearer_token,
+        owner_id,
+        workspace_id,
+        payload.leads,
+        payload.campaign_id or "",
+    )
+    return {"ok": True, "batch_id": batch["batch_id"], "total": batch["total"]}
+
+
+@router.get("/api/web/session/{session_token}/batch-status/{batch_id}")
+async def batch_status(session_token: str, batch_id: str, request: Request = None):
+    del session_token
+    owner_id, _, workspace_id = await _authorized_workspace(request)
+    job = await service.draft_batch_status(owner_id, workspace_id, batch_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    return {"ok": True, **job}

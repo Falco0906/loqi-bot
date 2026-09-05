@@ -375,7 +375,8 @@ class TestDraftHistoryAndBatchIdor:
         original = main_module.draft_service.draft_batch_status
         main_module.draft_service.draft_batch_status = inaccessible
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.batch_status("_", batch_id, _req(TOKEN_A)))
+            from services.drafts.api import batch_status
+            asyncio.run(batch_status("_", batch_id, _req(TOKEN_A)))
         main_module.draft_service.draft_batch_status = original
         assert exc.value.status_code == 404
 

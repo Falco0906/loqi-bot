@@ -63,8 +63,10 @@ async def test_batch_status_adapter_preserves_response_shape(monkeypatch):
     monkeypatch.setattr(main.identity_dependencies, "web_session_token", lambda _request: "token")
     monkeypatch.setattr(main.identity_dependencies, "authenticated_user_id", user_id)
     monkeypatch.setattr(main.workspace_access, "resolve_legacy_workspace_id", workspace)
+    from services.drafts.api import batch_status
+
     monkeypatch.setattr(main.draft_service, "draft_batch_status", status)
-    response = await main.batch_status("_", "batch-1", SimpleNamespace(headers={}))
+    response = await batch_status("_", "batch-1", SimpleNamespace(headers={}))
 
     assert response["ok"] is True
     assert {"batch_id", "total", "completed", "current_index", "current_name", "status"} <= response.keys()

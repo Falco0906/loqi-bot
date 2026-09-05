@@ -772,7 +772,6 @@ backend/
 |---|---|---|---|---|---|---|
 | `/` | GET | Health check | None | `"Loqi backend running"` | None | Operational |
 | `/health` | GET | Detailed health | None | JSON with uptime, DB, providers | Supabase | Operational |
-| `/webhook` | POST | Telegram webhook | Telegram Update | `{"ok": true}` | conversation_engine | Operational |
 | `/api/auth/gmail/url` | GET | Gmail OAuth URL | None | `{"url": "...", "state": "..."}` | google_auth | Operational |
 | `/api/auth/gmail/callback` | GET | Gmail OAuth callback | code, state | Redirect | google_auth, gmail_provider | Operational |
 | `/api/web/session` | POST | Create web session | None | `{"session_token": "..."}` | conversation_store | Operational |
@@ -1139,7 +1138,6 @@ class CalendarAdapter(ExecutionAdapter):
 The `.env` file contains:
 - `SUPABASE_URL` / `SUPABASE_KEY` — Supabase credentials
 - `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` — AI provider keys
-- `TELEGRAM_TOKEN` — Telegram bot token
 - `GMAIL_CREDENTIALS` / `GMAIL_TOKEN` — Gmail OAuth config
 - `SERPAPI_KEY` — SerpAPI for lead sourcing
 - `APOLLO_API_KEY` — Apollo.io for lead data

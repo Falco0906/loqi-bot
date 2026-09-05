@@ -216,43 +216,6 @@ class TestTenantIsolationFinal:
         assert exc.value.status_code == 404
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# 3. Webhook authentication
-# ═══════════════════════════════════════════════════════════════════════
-
-class TestWebhookFinal:
-    def test_telegram_webhook_rejects_when_secret_is_unset(self, monkeypatch):
-        monkeypatch.delenv("TELEGRAM_WEBHOOK_SECRET", raising=False)
-        request = MagicMock()
-        with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.telegram_webhook(request))
-        assert exc.value.status_code == 503
-
-    def test_telegram_webhook_requires_secret_when_configured(self, monkeypatch):
-        monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "secret-abc")
-        request = MagicMock()
-        request.headers.get = lambda k, d="": ""
-        with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.telegram_webhook(request))
-        assert exc.value.status_code == 403
-
-    def test_telegram_webhook_accepts_matching_secret(self, monkeypatch):
-        from unittest.mock import patch
-        monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "secret-abc")
-        request = MagicMock()
-        request.headers.get = lambda k, d="": "secret-abc"
-        request.json = asyncio.coroutine(lambda: {}) if False else _AsyncJson({})
-        with patch.object(main_module, "process_message", lambda *a, **k: None):
-            result = asyncio.run(main_module.telegram_webhook(request))
-        assert result == {"status": "ok"}
-
-
-class _AsyncJson:
-    def __init__(self, data):
-        self._data = data
-
-    async def __call__(self):
-        return self._data
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -70,7 +70,6 @@ POSITIVE_INT_KEYS = (
     "RATE_LIMIT_AI_PER_MINUTE",
     "RATE_LIMIT_OUTBOUND_PER_MINUTE",
     "RATE_LIMIT_AUTH_PER_MINUTE",
-    "RATE_LIMIT_WEBHOOK_PER_MINUTE",
 )
 POSITIVE_FLOAT_KEYS = ("SIMULATE_REPLY_MULTIPLIER",)
 
@@ -147,20 +146,6 @@ def validate_config(env: Mapping[str, str] | None = None) -> tuple[list[str], li
             errors.append("RATE_LIMIT_ENABLED must not be disabled in production")
         if not _raw(source, "LOQI_CREDENTIAL_ENCRYPTION_KEY"):
             errors.append("LOQI_CREDENTIAL_ENCRYPTION_KEY is required in production")
-        # PR10.8.3: if the Telegram bot is active in production, the webhook
-        # must be authenticated with a shared secret (Telegram secret_token).
-        if _raw(source, "TELEGRAM_BOT_TOKEN"):
-            if not _raw(source, "TELEGRAM_WEBHOOK_SECRET"):
-                errors.append(
-                    "TELEGRAM_WEBHOOK_SECRET is required in production when "
-                    "TELEGRAM_BOT_TOKEN is set (the /webhook endpoint would "
-                    "otherwise be unauthenticated)"
-                )
-        elif not _raw(source, "TELEGRAM_WEBHOOK_SECRET"):
-            warnings.append(
-                "TELEGRAM_WEBHOOK_SECRET is not set — /webhook rejects Telegram requests"
-            )
-
     # ── Type / format validation (only when the variable is set) ──
     for key in URL_KEYS:
         value = _raw(source, key)

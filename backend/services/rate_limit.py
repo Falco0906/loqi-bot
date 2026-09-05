@@ -38,7 +38,6 @@ DEFAULT_LIMITS = {
     "auth": 20,
     "ai": 20,
     "outbound": 30,
-    "webhook": 120,
     "default": 300,
 }
 
@@ -69,8 +68,6 @@ _OUTBOUND_MARKERS = ("/send", "/schedule", "/reply", "/follow-up", "/cancel-sche
 def classify_rate_limit(path: str) -> str:
     if path in _HEALTH_PATHS:
         return "health"
-    if path == "/webhook":
-        return "webhook"
     if any(marker in path for marker in _AUTH_MARKERS):
         return "auth"
     if any(marker in path for marker in _OUTBOUND_MARKERS):
@@ -98,7 +95,6 @@ def limits_from_env(env: dict[str, str] | None = None) -> dict[str, int]:
         "auth": "RATE_LIMIT_AUTH_PER_MINUTE",
         "ai": "RATE_LIMIT_AI_PER_MINUTE",
         "outbound": "RATE_LIMIT_OUTBOUND_PER_MINUTE",
-        "webhook": "RATE_LIMIT_WEBHOOK_PER_MINUTE",
         "default": "RATE_LIMIT_DEFAULT_PER_MINUTE",
     }
     limits: dict[str, int] = {}

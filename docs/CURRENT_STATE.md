@@ -17,7 +17,6 @@ POST /api/web/session                  - Create new session
 GET  /api/web/session/{token}          - Get session info
 GET  /api/web/session/{token}/messages - Get message history
 POST /api/web/session/{token}/messages - Send message
-POST /webhook                           - Telegram webhook
 GET  /google/callback                   - Gmail OAuth callback
 ```
 

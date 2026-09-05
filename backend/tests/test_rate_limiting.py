@@ -36,8 +36,8 @@ class TestClassifier:
         assert classify_rate_limit("/api/web/session/s/conversations/c1/reply") == "outbound"
         assert classify_rate_limit("/api/web/session/s/conversations/c1/follow-up") == "outbound"
 
-    def test_webhook_and_default(self):
-        assert classify_rate_limit("/webhook") == "webhook"
+    def test_default(self):
+        assert classify_rate_limit("/webhook") == "default"
         assert classify_rate_limit("/api/web/session/s/conversations") == "default"
 
 

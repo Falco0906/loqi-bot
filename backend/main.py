@@ -1,7 +1,6 @@
 import asyncio
 import csv
 import hashlib
-import hmac
 import io
 import json
 import logging
@@ -20,7 +19,6 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
-from services.agent import process_message
 import services.identity.dependencies as identity_dependencies
 import services.workspace_context as workspace_access
 from services.identity.api import router as auth_router
@@ -69,7 +67,6 @@ from starlette.responses import JSONResponse
 from services.conversation_engine import ConversationEngine, _message
 from services.google_auth import exchange_code_for_tokens
 from services.supabase import save_google_tokens
-from services.telegram import send_message
 from services.operations.diagnostics import get_build_metadata
 from services.campaign_planner import analyze_campaigns
 from workflow_dispatcher import register_workflows
@@ -1892,40 +1889,6 @@ if (window.opener) {{
 </script>
 </body></html>"""
     return HTMLResponse(content=html)
-
-
-@app.post("/webhook")
-async def telegram_webhook(request: Request):
-    # Telegram's secret_token is mandatory: accepting updates without it
-    # would let an arbitrary caller trigger a Telegram conversation.
-    _webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
-    if not _webhook_secret:
-        raise HTTPException(status_code=503, detail="Telegram webhook is not configured")
-    header_value = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-    if not header_value or not hmac.compare_digest(header_value, _webhook_secret):
-        raise HTTPException(status_code=403, detail="Invalid webhook secret")
-    try:
-        data = await request.json()
-        if "message" in data and "text" in data["message"]:
-            chat_id = data["message"]["chat"]["id"]
-            telegram_id = str(data["message"].get("from", {}).get("id", chat_id))
-            username = data["message"].get("from", {}).get("username")
-            text = data["message"]["text"]
-            await asyncio.to_thread(
-                process_message, chat_id, telegram_id, text, username=username,
-            )
-            publish(f"telegram:{telegram_id}", WMEventType.MESSAGE_RECEIVED, {
-                "chat_id": chat_id,
-                "telegram_id": telegram_id,
-                "from": username or telegram_id,
-                "text_preview": text[:200],
-                "channel": "telegram",
-            }, actor="user")
-
-        return {"status": "ok"}
-    except Exception as error:
-        print(f"Error processing webhook: {error}")
-        return {"status": "error", "message": str(error)}
 
 
 @app.post("/api/web/session")
@@ -4495,7 +4458,7 @@ async def get_web_gmail_status(session_token: str, request: Request = None):
 
 @app.get("/google/callback")
 async def google_callback(code: str, state: str):
-    """Legacy Telegram Gmail-connect callback.
+    """Gmail-connect callback for the web application.
 
     Harden (SaaS-1.5): the ``state`` must be a server-issued, single-use,
     expiring token bound to the initiating user/context (issued by
@@ -4508,8 +4471,7 @@ async def google_callback(code: str, state: str):
     if not user_id or user_id == "gmail_user":
         raise HTTPException(status_code=401, detail="Invalid or expired OAuth state")
     context = context or {}
-    channel = context.get("channel", "telegram")
-    transport_id = str(context.get("transport_id", "") or "")
+    channel = "web"
 
     try:
         tokens = await asyncio.to_thread(exchange_code_for_tokens, code)
@@ -4517,7 +4479,7 @@ async def google_callback(code: str, state: str):
             save_google_tokens,
             user_id,
             email=tokens.get("email", ""),
-            telegram_chat_id=int(transport_id) if channel == "telegram" else None,
+            telegram_chat_id=None,
             access_token=tokens.get("access_token", ""),
             refresh_token=tokens.get("refresh_token", ""),
             token_expiry=tokens.get("token_expiry"),
@@ -4531,14 +4493,6 @@ async def google_callback(code: str, state: str):
             "email": tokens.get("email", ""),
             "channel": channel,
         }, actor="user")
-
-        if channel == "telegram":
-            await asyncio.to_thread(
-                send_message,
-                chat_id=int(transport_id),
-                text="Gmail connected successfully. You can send emails now.",
-            )
-            return PlainTextResponse("Gmail connected. You can go back to Telegram.")
 
         return HTMLResponse(
             f"""

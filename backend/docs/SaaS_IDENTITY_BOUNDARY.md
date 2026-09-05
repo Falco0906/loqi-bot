@@ -77,7 +77,7 @@ actor identity.
 | Auth entry points | `/api/v1/auth/signup/email`, `/signup/email/verify`, `/signup/email/complete`, `/signup/email/status/{id}`, `/login`, `/refresh`, `/logout`, `/password-reset/request`, `/password-reset/confirm` |
 | OAuth entry | `/api/v1/auth/oauth/google`, `/api/v1/auth/oauth/google/callback` |
 | Gmail connect | `/api/auth/gmail/url`, `/api/auth/gmail/callback` |
-| Callback / webhook | `POST /webhook` (Telegram; rejects requests unless `TELEGRAM_WEBHOOK_SECRET` is set), `/api/v1/billing/webhooks/stripe` |
+| Callback / webhook | `/api/v1/billing/webhooks/stripe` |
 | Public catalogs | `/api/v1/billing/plans`, `/api/v1/capabilities` (definition catalog only) |
 | Web-session bootstrap | `POST /api/web/session` |
 

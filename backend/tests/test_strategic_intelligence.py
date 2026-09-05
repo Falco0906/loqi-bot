@@ -26,6 +26,11 @@ from services.strategic.collector import collect_workspace_signals
 from services.strategic.models import StrategicSignal
 from services.strategic.patterns import detect_patterns
 from services.strategic.service import StrategicIntelligenceService
+from services.strategic.api import (
+    get_strategic_update,
+    list_strategic_updates,
+    refresh_strategic_updates,
+)
 
 from tests.test_knowledge_service import FakeSupabaseClient  # noqa: E402
 import main as main_module  # noqa: E402
@@ -267,13 +272,13 @@ class TestStrategicUpdateRoutes:
             return OWNER_B
 
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner_a)
-        refresh = asyncio.run(main_module.refresh_strategic_updates("session", object()))
+        refresh = asyncio.run(refresh_strategic_updates("session", object()))
         update_id = refresh["updates"][0]["id"]
 
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner_b)
-        listing = asyncio.run(main_module.list_strategic_updates("session", object()))
+        listing = asyncio.run(list_strategic_updates("session", object()))
         with pytest.raises(Exception) as error:
-            asyncio.run(main_module.get_strategic_update("session", update_id, object()))
+            asyncio.run(get_strategic_update("session", update_id, object()))
 
         assert listing["updates"] == []
         assert getattr(error.value, "status_code", None) == 404

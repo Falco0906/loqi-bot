@@ -29,6 +29,7 @@ from services.billing.api import register_provider_and_config as _register_billi
 from services.capabilities.api import router as capabilities_router, register_deps as register_capability_deps, CapabilityDeps
 from services.knowledge.api import router as knowledge_router
 from services.mission_control.api import router as mission_control_router
+from services.strategic.api import router as strategic_router
 from services.discovery.api import router as discovery_router
 from services.campaigns.api import router as campaigns_router
 from services.drafts.api import router as drafts_router
@@ -230,6 +231,7 @@ app.include_router(billing_router)
 app.include_router(capabilities_router)
 app.include_router(knowledge_router)
 app.include_router(strategic_intelligence_router)
+app.include_router(strategic_router)
 app.include_router(mission_control_router)
 app.include_router(discovery_router)
 app.include_router(campaigns_router)
@@ -3191,139 +3193,6 @@ async def outbound_draft_versions(session_token: str, draft_id: str, request: Re
     return {"ok": True, "versions": [
         {"draft_id": draft_id, **version} for version in versions
     ]}
-
-
-# ── Strategic Intelligence Endpoints ──
-# Refreshing creates/refreshes read-only evidence-backed updates. It never
-# mutates Knowledge, campaigns, drafts, conversations, or messages.
-
-def _strategic_service():
-    from services.strategic.service import StrategicIntelligenceService
-    return StrategicIntelligenceService()
-
-
-@app.get("/api/web/session/{session_token}/strategic-updates")
-async def list_strategic_updates(
-    session_token: str,
-    request: Request,
-    update_type: str = "",
-    confidence: str = "",
-    q: str = "",
-    include_archived: bool = False,
-):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    updates = await _strategic_service().list_updates(
-        owner_id,
-        update_type=update_type or None,
-        confidence=confidence or None,
-        query=q or None,
-        include_archived=include_archived,
-    )
-    last_analyzed = max(
-        (str(update.get("updated_at") or "") for update in updates),
-        default=None,
-    )
-    return {"ok": True, "updates": updates, "last_analyzed": last_analyzed}
-
-
-@app.post("/api/web/session/{session_token}/strategic-updates/refresh")
-async def refresh_strategic_updates(session_token: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    return await _strategic_service().refresh(owner_id)
-
-
-@app.get("/api/web/session/{session_token}/strategic-updates/{update_id}/actions")
-async def list_strategic_actions(session_token: str, update_id: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    actions = await _strategic_action_service().list_actions(owner_id, update_id)
-    return {"ok": True, "actions": actions}
-
-
-@app.post("/api/web/session/{session_token}/strategic-updates/{update_id}/actions")
-async def propose_strategic_action(
-    session_token: str, update_id: str, request: Request, payload: dict = None,
-):
-    session_token = identity_dependencies.web_session_token(request)
-    from services.strategic.actions import StrategicActionError
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    action_type = str((payload or {}).get("action_type") or "").strip()
-    try:
-        action = await _strategic_action_service().propose(owner_id, update_id, action_type)
-    except StrategicActionError as error:
-        raise _strategic_action_http_error(error)
-    return {"ok": True, "action": action}
-
-
-@app.get("/api/web/session/{session_token}/strategic-updates/{update_id}")
-async def get_strategic_update(session_token: str, update_id: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    update = await _strategic_service().get_update(owner_id, update_id)
-    if update is None:
-        raise HTTPException(status_code=404, detail="Strategic Update not found")
-    return {"ok": True, "update": update}
-
-
-def _strategic_action_service():
-    from services.strategic.actions import StrategicActionService
-    return StrategicActionService()
-
-
-def _strategic_action_http_error(error: Exception) -> HTTPException:
-    status = 404 if "not found" in str(error).lower() else 400
-    return HTTPException(status_code=status, detail=str(error))
-
-
-async def _action_route_call(method: str, owner_id: str, action_id: str, *args):
-    from services.strategic.actions import StrategicActionError
-    try:
-        return await getattr(_strategic_action_service(), method)(owner_id, action_id, *args)
-    except StrategicActionError as error:
-        raise _strategic_action_http_error(error)
-
-
-@app.post("/api/web/session/{session_token}/strategic-actions/{action_id}/approve")
-async def approve_strategic_action(session_token: str, action_id: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    return {"ok": True, "action": await _action_route_call("approve", owner_id, action_id)}
-
-
-@app.post("/api/web/session/{session_token}/strategic-actions/{action_id}/dismiss")
-async def dismiss_strategic_action(session_token: str, action_id: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    return {"ok": True, "action": await _action_route_call("dismiss", owner_id, action_id)}
-
-
-@app.post("/api/web/session/{session_token}/strategic-actions/{action_id}/refine")
-async def refine_strategic_action(
-    session_token: str, action_id: str, request: Request, payload: dict = None,
-):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    changes = (payload or {}).get("changes") if isinstance(payload, dict) else {}
-    return {"ok": True, "action": await _action_route_call("refine", owner_id, action_id, changes or {})}
-
-
-@app.post("/api/web/session/{session_token}/strategic-actions/{action_id}/execute")
-async def execute_strategic_action(session_token: str, action_id: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    return {"ok": True, "action": await _action_route_call("execute", owner_id, action_id)}
-
-
-@app.delete("/api/web/session/{session_token}/strategic-updates/{update_id}")
-async def archive_strategic_update(session_token: str, update_id: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    update = await _strategic_service().archive_update(owner_id, update_id)
-    if update is None:
-        raise HTTPException(status_code=404, detail="Strategic Update not found")
-    return {"ok": True, "update": update}
 
 
 # ── Campaign Endpoints ──

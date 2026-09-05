@@ -17,6 +17,11 @@ from services.persistence import reset_connection_manager, set_connection_manage
 from services.persistence.database import SupabaseConnectionManager
 from services.persistence.launch import StrategicUpdate, StrategicUpdateRepository
 from services.strategic.actions import StrategicActionError, StrategicActionService
+from services.strategic.api import (
+    approve_strategic_action,
+    execute_strategic_action,
+    propose_strategic_action,
+)
 
 from tests.test_knowledge_service import FakeSupabaseClient  # noqa: E402
 import main as main_module  # noqa: E402
@@ -243,12 +248,12 @@ class TestActionRoutes:
             return OWNER_A
 
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner)
-        proposal = asyncio.run(main_module.propose_strategic_action(
+        proposal = asyncio.run(propose_strategic_action(
             "session", update.id, object(), {"action_type": "update_messaging"}))
         action_id = proposal["action"]["id"]
         assert proposal["action"]["status"] == "proposed"
 
         with pytest.raises(Exception):
-            asyncio.run(main_module.execute_strategic_action("session", action_id, object()))
-        approved = asyncio.run(main_module.approve_strategic_action("session", action_id, object()))
+            asyncio.run(execute_strategic_action("session", action_id, object()))
+        approved = asyncio.run(approve_strategic_action("session", action_id, object()))
         assert approved["action"]["status"] == "approved"

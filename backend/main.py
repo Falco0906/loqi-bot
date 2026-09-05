@@ -208,25 +208,7 @@ async def lifespan(app: FastAPI):
 
     await app_lifespan.recover_search_and_start_due_jobs(background_tasks)
 
-    # Backfill canonical launch tables from the event log (idempotent).
-    try:
-        from services.persistence.launch import backfill_all
-        backfill_task = asyncio.create_task(asyncio.to_thread(backfill_all))
-        startup_backfill_task = backfill_task
-
-        def _on_backfill_done(task: "asyncio.Task") -> None:
-            try:
-                result = task.result()
-                log.info("backfill startup task completed sessions_marked=%s", result)
-            except asyncio.CancelledError:
-                log.warning("backfill startup task cancelled")
-            except BaseException as error:
-                log.error("backfill startup task raised error_type=%s", type(error).__name__)
-
-        backfill_task.add_done_callback(_on_backfill_done)
-        background_tasks.append(backfill_task)
-    except Exception as e:
-        log.warning("Canonical backfill startup task failed: %s", e)
+    app_lifespan.start_launch_backfill(background_tasks)
 
     # Abandoned-registration lifecycle cleanup (SaaS): periodically reclaim
     # emails blocked by expired abandoned signup attempts. Uses the same

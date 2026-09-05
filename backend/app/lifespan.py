@@ -263,6 +263,28 @@ def start_generation_recovery(background_tasks: list[asyncio.Task[Any]]) -> None
     background_tasks.append(asyncio.create_task(recover_strategy_jobs()))
 
 
+def start_launch_backfill(background_tasks: list[asyncio.Task[Any]]) -> None:
+    """Schedule idempotent launch-table backfill and retain its task for shutdown."""
+    try:
+        from services.persistence.launch import backfill_all
+
+        backfill_task = asyncio.create_task(asyncio.to_thread(backfill_all))
+
+        def log_backfill_completion(task: asyncio.Task[Any]) -> None:
+            try:
+                result = task.result()
+                log.info("backfill startup task completed sessions_marked=%s", result)
+            except asyncio.CancelledError:
+                log.warning("backfill startup task cancelled")
+            except BaseException as error:
+                log.error("backfill startup task raised error_type=%s", type(error).__name__)
+
+        backfill_task.add_done_callback(log_backfill_completion)
+        background_tasks.append(backfill_task)
+    except Exception as error:
+        log.warning("Canonical backfill startup task failed: %s", error)
+
+
 async def start_communication_background_services() -> tuple[Any | None, asyncio.Task[Any] | None]:
     """Start Inbox sync and the optional development reply simulator."""
     inbox_sync_engine = None

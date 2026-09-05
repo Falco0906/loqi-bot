@@ -114,3 +114,32 @@ async def test_generation_recovery_schedules_durable_jobs_without_blocking_start
 
     assert "Resumed 2 interrupted draft generation(s) after restart" in caplog.text
     assert "Reconciled 1 interrupted strategy generation(s) after restart" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_launch_backfill_runs_in_background_and_logs_completion(monkeypatch, caplog):
+    monkeypatch.setattr("services.persistence.launch.backfill_all", lambda: 3)
+    background_tasks = []
+
+    with caplog.at_level("INFO", logger="loqi"):
+        main.app_lifespan.start_launch_backfill(background_tasks)
+        assert len(background_tasks) == 1
+        await background_tasks[0]
+
+    assert "backfill startup task completed sessions_marked=3" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_launch_backfill_logs_background_failure(monkeypatch, caplog):
+    def fail_backfill():
+        raise RuntimeError("backfill unavailable")
+
+    monkeypatch.setattr("services.persistence.launch.backfill_all", fail_backfill)
+    background_tasks = []
+
+    with caplog.at_level("ERROR", logger="loqi"):
+        main.app_lifespan.start_launch_backfill(background_tasks)
+        with pytest.raises(RuntimeError, match="backfill unavailable"):
+            await background_tasks[0]
+
+    assert "backfill startup task raised error_type=RuntimeError" in caplog.text

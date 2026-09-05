@@ -69,7 +69,7 @@ from services.google_auth import exchange_code_for_tokens
 from services.supabase import save_google_tokens
 from services.operations.diagnostics import get_build_metadata
 from services.campaign_planner import analyze_campaigns
-from workflow_dispatcher import register_workflows
+from app import lifespan as app_lifespan
 from services.workspace_memory import record as record_memory, record_draft_review, record_search
 from services.workspace_timeline import (
     add_event as add_timeline_event,
@@ -189,15 +189,7 @@ async def _cancel_and_wait(tasks: list["asyncio.Task"], timeout: float) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from services.lifecycle import set_starting, set_failed, set_ready, set_shutting_down
-    set_starting()
-    startup_started = time.time()
-    log.info("application_starting")
-    set_startup_time()
-    log_config_warnings()
-    startup_diagnostics(app)
-    register_workflows()
-    outbound_service.register_scheduled_send_workflow()
+    startup_started = app_lifespan.begin_startup(app)
 
     # PR10.2: validate runtime configuration BEFORE any background worker,
     # provider restore, or sync engine starts. Fail fast with non-secret,
@@ -210,6 +202,8 @@ async def lifespan(app: FastAPI):
         assert_valid_startup_config()
         log.info("Configuration validated successfully")
     except RuntimeError as e:
+        from services.lifecycle import set_failed
+
         log.error("Configuration validation failed — refusing to start: %s", e)
         set_failed()
         raise
@@ -227,17 +221,7 @@ async def lifespan(app: FastAPI):
     from services.execution.adapter_registry_resolver import init_planner_registry
     init_planner_registry(_execution_adapter_registry)
 
-    # Subscribe execution engine event bus for production observability
-    from services.execution.execution_pipeline import get_pipeline
-    from services.execution.logging_subscriber import LoggingSubscriber
-    from services.execution.metrics_collector import MetricsCollector
-    get_pipeline().event_bus.subscribe(LoggingSubscriber())
-    get_pipeline().event_bus.subscribe(MetricsCollector())
-    log.info("Execution engine logging + metrics subscribers registered")
-
-    from services.memory.subscriber import MemorySubscriber
-    get_pipeline().event_bus.subscribe(MemorySubscriber())
-    log.info("Memory subscriber registered")
+    app_lifespan.register_execution_observability()
 
     background_tasks: list[asyncio.Task] = []
     try:
@@ -262,15 +246,7 @@ async def lifespan(app: FastAPI):
             raise RuntimeError("Durable Inbox persistence is required in production") from e
         log.warning("Conversation store rehydration failed: %s", e)
 
-    # Rehydrate the communication store (sync cursor, seen-message set,
-    # thread mappings) BEFORE any provider/sync worker starts, so a restart
-    # resumes incremental sync from the last cursor instead of re-syncing
-    # from scratch (PR10.8 restart durability).
-    try:
-        from services.communication.communication_store import store as communication_store
-        communication_store.load_state()
-    except Exception as e:
-        log.warning("Communication store rehydration failed: %s", e)
+    app_lifespan.rehydrate_communication_store()
 
     # Restore providers and recover interrupted workflow work BEFORE any
     # worker task that consumes provider state starts (PR10.8 ordering —
@@ -280,24 +256,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.warning("Provider startup restoration failed: %s", e)
 
-    inbox_sync_engine = None
-    try:
-        from services.communication.inbox_sync_engine import inbox_sync_engine as _inbox_sync_engine
-        inbox_sync_engine = _inbox_sync_engine
-        await inbox_sync_engine.start()
-    except Exception as e:
-        log.warning("Inbox sync engine startup failed: %s", e)
-    # Development reply simulator (SIMULATE_REPLIES=true): schedules synthetic
-    # inbound replies after sends. No-op when disabled.
-    simulator_task = None
-    try:
-        from services.communication import reply_simulator
-        if reply_simulator.is_enabled():
-            simulator_task = reply_simulator.start_scheduler()
-            log.info("[sim] Reply simulator enabled (SIMULATE_REPLIES=true), pending=%d",
-                     reply_simulator.pending_count())
-    except Exception as e:
-        log.warning("Reply simulator startup failed: %s", e)
+    inbox_sync_engine, simulator_task = await app_lifespan.start_communication_background_services()
     # Draft-batch recovery is scheduled as a background task so startup is
     # never blocked. The durable job engine resumes each incomplete item using
     # its idempotency key, rather than reconciling from process-local state.
@@ -321,27 +280,7 @@ async def lifespan(app: FastAPI):
 
     background_tasks.append(asyncio.create_task(_run_strategy_recovery()))
 
-    try:
-        from services.discovery.service import reconcile_stale_search_jobs
-
-        recovered_jobs = await reconcile_stale_search_jobs()
-        if recovered_jobs:
-            log.info("Reconciled %d interrupted search job(s) after restart", recovered_jobs)
-    except Exception as e:
-        log.warning("Search job recovery sweep failed: %s", e)
-
-    # Delayed jobs are recovered through the same atomic claim operation a
-    # future scheduler poll uses. Existing immediate job types have run_at=NULL
-    # and are intentionally unaffected.
-    try:
-        from services.job_engine import job_manager
-
-        claimed_due_jobs = await job_manager.start_due_jobs()
-        if claimed_due_jobs:
-            log.info("Claimed %d due delayed job(s) after restart", claimed_due_jobs)
-        background_tasks.append(asyncio.create_task(job_manager.poll_due_jobs()))
-    except Exception as e:
-        log.warning("Delayed job recovery sweep failed: %s", e)
+    await app_lifespan.recover_search_and_start_due_jobs(background_tasks)
 
     # Backfill canonical launch tables from the event log (idempotent).
     try:
@@ -416,6 +355,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.warning("Abandoned-registration cleanup startup failed: %s", e)
 
+    from services.lifecycle import set_ready
+
     set_ready()
     try:
         import pwd
@@ -428,6 +369,8 @@ async def lifespan(app: FastAPI):
     log.info("application_ready duration_ms=%d", int((time.time() - startup_started) * 1000))
 
     yield
+
+    from services.lifecycle import set_shutting_down
 
     set_shutting_down()
     log.info("application_shutdown_started")

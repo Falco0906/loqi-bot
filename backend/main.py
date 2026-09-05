@@ -151,27 +151,6 @@ from services.logging_setup import configure_logging
 configure_logging()
 log = logging.getLogger("loqi")
 
-async def _cancel_and_wait(tasks: list["asyncio.Task"], timeout: float) -> None:
-    """Cancel background tasks and await them with a bounded timeout.
-
-    A task that ignores cancellation is logged but never blocks shutdown.
-    """
-    pending: list[asyncio.Task] = []
-    for task in tasks:
-        if task is None or task.done():
-            continue
-        task.cancel()
-        pending.append(task)
-    if not pending:
-        return
-    try:
-        done, still_pending = await asyncio.wait(pending, timeout=timeout)
-    except Exception as error:
-        log.warning("shutdown await failed: %s", error)
-        return
-    for task in still_pending:
-        log.warning("shutdown_timeout task=%s still pending after %.1fs", task.get_name(), timeout)
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     startup_started = app_lifespan.begin_startup(app)
@@ -218,33 +197,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    from services.lifecycle import set_shutting_down
-
-    set_shutting_down()
-    log.info("application_shutdown_started")
-    try:
-        from services import redis_client
-        await redis_client.close()
-    except Exception as e:
-        log.warning("redis shutdown failed: %s", e)
-    shutdown_timeout = float(os.getenv("SHUTDOWN_TIMEOUT_SECONDS", "5"))
-
-    cancel_tasks: list[asyncio.Task] = list(background_tasks)
-    try:
-        if inbox_sync_engine is not None:
-            await inbox_sync_engine.stop()
-    except Exception as e:
-        log.warning("Inbox sync engine shutdown failed: %s", e)
-
-    try:
-        if simulator_task is not None and not simulator_task.done():
-            simulator_task.cancel()
-            cancel_tasks.append(simulator_task)
-    except Exception as e:
-        log.warning("Reply simulator shutdown failed: %s", e)
-
-    await _cancel_and_wait(cancel_tasks, timeout=shutdown_timeout)
-    log.info("application_shutdown_completed")
+    await app_lifespan.shutdown_runtime(background_tasks, inbox_sync_engine, simulator_task)
 
 _production_env = (os.getenv("ENVIRONMENT") or os.getenv("APP_ENV") or "development").strip().lower() == "production"
 

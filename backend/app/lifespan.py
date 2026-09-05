@@ -388,3 +388,58 @@ async def recover_search_and_start_due_jobs(background_tasks: list[asyncio.Task[
         background_tasks.append(asyncio.create_task(job_manager.poll_due_jobs()))
     except Exception as error:  # noqa: BLE001 -- polling can retry on the next process start
         log.warning("Delayed job recovery sweep failed: %s", error)
+
+
+async def cancel_and_wait(tasks: list[asyncio.Task[Any]], *, timeout: float) -> None:
+    """Cancel retained background tasks without allowing shutdown to block forever."""
+    pending: list[asyncio.Task[Any]] = []
+    for task in tasks:
+        if task is None or task.done():
+            continue
+        task.cancel()
+        pending.append(task)
+    if not pending:
+        return
+    try:
+        _, still_pending = await asyncio.wait(pending, timeout=timeout)
+    except Exception as error:
+        log.warning("shutdown await failed: %s", error)
+        return
+    for task in still_pending:
+        log.warning("shutdown_timeout task=%s still pending after %.1fs", task.get_name(), timeout)
+
+
+async def shutdown_runtime(
+    background_tasks: list[asyncio.Task[Any]],
+    inbox_sync_engine: Any | None,
+    simulator_task: asyncio.Task[Any] | None,
+) -> None:
+    """Stop runtime integrations and retained background tasks in startup-safe order."""
+    from services.lifecycle import set_shutting_down
+
+    set_shutting_down()
+    log.info("application_shutdown_started")
+    try:
+        from services import redis_client
+
+        await redis_client.close()
+    except Exception as error:
+        log.warning("redis shutdown failed: %s", error)
+
+    shutdown_timeout = float(os.getenv("SHUTDOWN_TIMEOUT_SECONDS", "5"))
+    cancel_tasks = list(background_tasks)
+    try:
+        if inbox_sync_engine is not None:
+            await inbox_sync_engine.stop()
+    except Exception as error:
+        log.warning("Inbox sync engine shutdown failed: %s", error)
+
+    try:
+        if simulator_task is not None and not simulator_task.done():
+            simulator_task.cancel()
+            cancel_tasks.append(simulator_task)
+    except Exception as error:
+        log.warning("Reply simulator shutdown failed: %s", error)
+
+    await cancel_and_wait(cancel_tasks, timeout=shutdown_timeout)
+    log.info("application_shutdown_completed")

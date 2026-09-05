@@ -208,3 +208,35 @@ async def test_abandoned_registration_cleanup_waits_before_first_mutation(monkey
     assert reports == [(False, client)]
     assert "Abandoned-registration cleanup loop started (interval=60s)" in caplog.text
     assert "scanned=3 cleaned_emails=1 cleaned_rows=2 skipped=0 failures=0" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_shutdown_runtime_stops_integrations_before_cancelling_tasks(monkeypatch):
+    events: list[str] = []
+
+    class InboxSyncEngine:
+        async def stop(self):
+            events.append("inbox")
+
+    async def close_redis():
+        events.append("redis")
+
+    async def wait_forever():
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("services.lifecycle.set_shutting_down", lambda: events.append("state"))
+    monkeypatch.setattr("services.redis_client.close", close_redis)
+    monkeypatch.setenv("SHUTDOWN_TIMEOUT_SECONDS", "0.1")
+    background_task = asyncio.create_task(wait_forever())
+    simulator_task = asyncio.create_task(wait_forever())
+    await asyncio.sleep(0)
+
+    await main.app_lifespan.shutdown_runtime(
+        [background_task],
+        InboxSyncEngine(),
+        simulator_task,
+    )
+
+    assert events == ["state", "redis", "inbox"]
+    assert background_task.cancelled()
+    assert simulator_task.cancelled()

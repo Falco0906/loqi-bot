@@ -117,7 +117,7 @@ class TestGracefulShutdown:
         async def run():
             task = asyncio.create_task(never_stops())
             await asyncio.sleep(0)
-            await main_module._cancel_and_wait([task], timeout=0.1)
+            await main_module.app_lifespan.cancel_and_wait([task], timeout=0.1)
             return task.done()
 
         assert asyncio.run(run()) is True
@@ -128,7 +128,7 @@ class TestGracefulShutdown:
         async def run():
             done = asyncio.create_task(asyncio.sleep(0))
             await done
-            await main_module._cancel_and_wait([done], timeout=0.1)
+            await main_module.app_lifespan.cancel_and_wait([done], timeout=0.1)
             return done.done()
 
         assert asyncio.run(run()) is True

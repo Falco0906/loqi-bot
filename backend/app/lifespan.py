@@ -285,6 +285,63 @@ def start_launch_backfill(background_tasks: list[asyncio.Task[Any]]) -> None:
         log.warning("Canonical backfill startup task failed: %s", error)
 
 
+def _abandoned_registration_cleanup_interval() -> int:
+    """Return the bounded interval between automatic abandoned-registration cleanup cycles."""
+    raw = os.getenv("ABANDONED_REGISTRATION_CLEANUP_INTERVAL_SECONDS", "900")
+    try:
+        return max(60, int(raw))
+    except (TypeError, ValueError):
+        return 900
+
+
+def start_abandoned_registration_cleanup(background_tasks: list[asyncio.Task[Any]]) -> None:
+    """Schedule fail-closed automatic cleanup of expired abandoned registrations."""
+    try:
+        from services.identity.registration_cleanup import (
+            abandoned_cleanup_runtime_enabled,
+            resolve_automatic_cleanup_client,
+            run_abandoned_cleanup,
+        )
+
+        enabled, reason = abandoned_cleanup_runtime_enabled()
+        if not enabled:
+            log.info("Abandoned-registration cleanup loop disabled: %s", reason)
+            return
+
+        client = resolve_automatic_cleanup_client()
+        if client is None:
+            log.info("Abandoned-registration cleanup loop disabled: cleanup client unavailable")
+            return
+
+        async def cleanup_loop() -> None:
+            interval = _abandoned_registration_cleanup_interval()
+            log.info("Abandoned-registration cleanup loop started (interval=%ss)", interval)
+            await asyncio.sleep(interval)
+            while True:
+                try:
+                    report = await asyncio.to_thread(
+                        run_abandoned_cleanup,
+                        dry_run=False,
+                        client=client,
+                    )
+                    log.info(
+                        "abandoned-registration cleanup cycle "
+                        "scanned=%d cleaned_emails=%d cleaned_rows=%d skipped=%d failures=%d",
+                        report.get("scanned", 0),
+                        report.get("cleaned_emails", 0),
+                        report.get("cleaned_rows", 0),
+                        report.get("skipped", 0),
+                        report.get("failures", 0),
+                    )
+                except Exception as error:  # noqa: BLE001 -- next periodic cycle retries
+                    log.warning("abandoned-registration cleanup cycle failed: %s", error)
+                await asyncio.sleep(interval)
+
+        background_tasks.append(asyncio.create_task(cleanup_loop()))
+    except Exception as error:
+        log.warning("Abandoned-registration cleanup startup failed: %s", error)
+
+
 async def start_communication_background_services() -> tuple[Any | None, asyncio.Task[Any] | None]:
     """Start Inbox sync and the optional development reply simulator."""
     inbox_sync_engine = None

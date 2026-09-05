@@ -143,3 +143,68 @@ async def test_launch_backfill_logs_background_failure(monkeypatch, caplog):
             await background_tasks[0]
 
     assert "backfill startup task raised error_type=RuntimeError" in caplog.text
+
+
+def test_abandoned_registration_cleanup_remains_fail_closed_when_disabled(monkeypatch, caplog):
+    monkeypatch.setattr(
+        "services.identity.registration_cleanup.abandoned_cleanup_runtime_enabled",
+        lambda: (False, "not an explicitly production environment"),
+    )
+    monkeypatch.setattr(
+        "services.identity.registration_cleanup.resolve_automatic_cleanup_client",
+        lambda: (_ for _ in ()).throw(AssertionError("client resolution must not run")),
+    )
+    background_tasks = []
+
+    with caplog.at_level("INFO", logger="loqi"):
+        main.app_lifespan.start_abandoned_registration_cleanup(background_tasks)
+
+    assert background_tasks == []
+    assert "Abandoned-registration cleanup loop disabled: not an explicitly production environment" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_abandoned_registration_cleanup_waits_before_first_mutation(monkeypatch, caplog):
+    client = object()
+    reports = []
+    sleep_calls = []
+
+    async def controlled_sleep(interval):
+        sleep_calls.append(interval)
+        if len(sleep_calls) == 1:
+            return
+        raise asyncio.CancelledError
+
+    def run_cleanup(*, dry_run, client):
+        reports.append((dry_run, client))
+        return {
+            "scanned": 3,
+            "cleaned_emails": 1,
+            "cleaned_rows": 2,
+            "skipped": 0,
+            "failures": 0,
+        }
+
+    monkeypatch.setattr(
+        "services.identity.registration_cleanup.abandoned_cleanup_runtime_enabled",
+        lambda: (True, "enabled"),
+    )
+    monkeypatch.setattr(
+        "services.identity.registration_cleanup.resolve_automatic_cleanup_client",
+        lambda: client,
+    )
+    monkeypatch.setattr("services.identity.registration_cleanup.run_abandoned_cleanup", run_cleanup)
+    monkeypatch.setattr(main.app_lifespan, "_abandoned_registration_cleanup_interval", lambda: 60)
+    monkeypatch.setattr(main.app_lifespan.asyncio, "sleep", controlled_sleep)
+    background_tasks = []
+
+    with caplog.at_level("INFO", logger="loqi"):
+        main.app_lifespan.start_abandoned_registration_cleanup(background_tasks)
+        assert len(background_tasks) == 1
+        with pytest.raises(asyncio.CancelledError):
+            await background_tasks[0]
+
+    assert sleep_calls == [60, 60]
+    assert reports == [(False, client)]
+    assert "Abandoned-registration cleanup loop started (interval=60s)" in caplog.text
+    assert "scanned=3 cleaned_emails=1 cleaned_rows=2 skipped=0 failures=0" in caplog.text

@@ -28,7 +28,7 @@ import pytest
 
 from services.planner.planner_router import PlannerRouter, is_schedule_intent
 from services.planner.planning_models import PlanGoal, PlanStatus, Task, TaskType
-from workflows import _run_async
+from services.workflows.service import _run_async
 from services.planner.strategies.booking import BookingStrategy
 
 from services.execution import (

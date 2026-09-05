@@ -30,7 +30,7 @@ from services.supabase import (
 )
 from services.enrichment.enrichment_factory import get_enricher
 from services.intelligence.lead_intelligence import generate_lead_intelligence
-from workflows import run_workflow
+from services.workflows.service import run_workflow
 from services.conversational_response_generator import (
     RESPONSE_VARIATIONS,
     generate_conversational_response,

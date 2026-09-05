@@ -171,7 +171,7 @@ class PlannerRouter:
         If neither is available the plan cannot execute and None is returned.
         """
         from services.execution.execution_pipeline import get_pipeline
-        from workflows import _run_async
+        from services.workflows.service import _run_async
 
         actual_resolver = resolver if resolver is not None else self._auto_resolver(plan)
         if actual_resolver is None:

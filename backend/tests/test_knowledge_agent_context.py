@@ -47,7 +47,7 @@ def _auth_request(token="session"):
 
 
 import services.ai as ai_module  # noqa: E402
-import workflows as workflows_module  # noqa: E402
+import services.workflows.service as workflows_module  # noqa: E402
 
 
 def _knowledge_item(item_id="ki-1", category="messaging"):

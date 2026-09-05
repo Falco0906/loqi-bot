@@ -243,6 +243,7 @@ class TestStartupRestoreSurfacesStatus:
         """Simulate the startup restore of an auth_failed account (as observed
         live: 'Provider restoration complete: 0 restored, 3 reauth-required')."""
         import main as main_module
+        from services.communication import provider_startup
         from services.communication.communication_store import store
         from services.communication.gmail_provider import GmailProvider
 
@@ -260,7 +261,7 @@ class TestStartupRestoreSurfacesStatus:
         }
         monkeypatch.setattr("services.supabase.load_all_provider_credentials", lambda: [row])
         monkeypatch.setattr("services.supabase.reconcile_connected_account_duplicates", lambda *a, **k: 0)
-        main_module._restore_providers_on_startup()
+        provider_startup.restore_gmail_providers()
 
         providers = store.get_user_providers("7de769b4-0000-0000-0000-000000000000")
         assert len(providers) == 1
@@ -268,6 +269,16 @@ class TestStartupRestoreSurfacesStatus:
         # The API surfaces auth_failed (never a stale healthy).
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id",
                             AsyncMock(return_value="7de769b4-0000-0000-0000-000000000000"))
+        monkeypatch.setattr(
+            "services.supabase.get_durable_providers_for_user",
+            lambda *_args: [{
+                "communication_provider_id": providers[0].id,
+                "status": "auth_failed",
+                "email": row["email"],
+                "created_at": None,
+                "last_synced_at": None,
+            }],
+        )
         monkeypatch.setattr(main_module, "get_provider",
                             lambda pid: _fake_instance("auth_failed"))
         result = asyncio.run(main_module.provider_list("tok", MagicMock()))

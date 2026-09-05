@@ -28,6 +28,23 @@ def begin_startup(app: Any) -> float:
     return startup_started
 
 
+def validate_startup_configuration() -> None:
+    """Fail startup when required runtime configuration is invalid."""
+    from services.config_validation import assert_valid_startup_config, validate_config
+    from services.lifecycle import set_failed
+
+    try:
+        _errors, warnings = validate_config()
+        for warning in warnings:
+            log.warning("config: %s", warning)
+        assert_valid_startup_config()
+        log.info("Configuration validated successfully")
+    except RuntimeError as error:
+        log.error("Configuration validation failed — refusing to start: %s", error)
+        set_failed()
+        raise
+
+
 def register_execution_observability() -> None:
     """Subscribe the production execution pipeline observers."""
     from services.execution.execution_pipeline import get_pipeline

@@ -188,22 +188,8 @@ async def _cancel_and_wait(tasks: list["asyncio.Task"], timeout: float) -> None:
 async def lifespan(app: FastAPI):
     startup_started = app_lifespan.begin_startup(app)
 
-    # PR10.2: validate runtime configuration BEFORE any background worker,
-    # provider restore, or sync engine starts. Fail fast with non-secret,
-    # key-only errors when required/unsafe configuration is invalid.
-    try:
-        from services.config_validation import assert_valid_startup_config, validate_config
-        errors, warnings = validate_config()
-        for warning in warnings:
-            log.warning("config: %s", warning)
-        assert_valid_startup_config()
-        log.info("Configuration validated successfully")
-    except RuntimeError as e:
-        from services.lifecycle import set_failed
-
-        log.error("Configuration validation failed — refusing to start: %s", e)
-        set_failed()
-        raise
+    # Validate before any background worker, provider restore, or sync engine.
+    app_lifespan.validate_startup_configuration()
 
     try:
         from services.migration import apply_migrations

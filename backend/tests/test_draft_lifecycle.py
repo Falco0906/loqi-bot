@@ -28,6 +28,7 @@ import services.ai as ai_service
 from services.drafts import api as drafts_api
 from services.drafts import service as drafts_service
 import services.outbound.service as outbound_service
+from services.outbound.api import send_draft
 from services.outbound.outbound_models import DraftMessage, DraftStatus, Recipient
 from services.persistence.launch.models import Draft
 
@@ -274,10 +275,10 @@ class TestSendDraftGuard:
             calls.append((args, kwargs))
             return {"ok": True, "send_result": {}}
 
-        monkeypatch.setattr(main_module, "outbound_executor",
+        monkeypatch.setattr(outbound_service, "outbound_executor",
                             MagicMock(send_hydrated_draft=fake_send))
 
-        result = await main_module.send_draft("token", draft.id, MagicMock())
+        result = await send_draft("token", draft.id, MagicMock())
 
         assert result == {"ok": False, "error": "Draft already sent"}
         assert calls == []
@@ -291,10 +292,10 @@ class TestSendDraftGuard:
             calls.append((args, kwargs))
             return {"ok": True, "send_result": {}}
 
-        monkeypatch.setattr(main_module, "outbound_executor",
+        monkeypatch.setattr(outbound_service, "outbound_executor",
                             MagicMock(send_hydrated_draft=fake_send))
 
-        result = await main_module.send_draft("token", draft.id, MagicMock())
+        result = await send_draft("token", draft.id, MagicMock())
 
         assert result == {"ok": False, "error": "Draft already sent"}
         assert calls == []
@@ -309,6 +310,6 @@ class TestSendDraftGuard:
         outbound = _sent_outbound_draft(DraftStatus.SENT)
         self._canonical_guard(monkeypatch, outbound)
 
-        result = await main_module.send_draft("token", "d-durable-sent", MagicMock())
+        result = await send_draft("token", "d-durable-sent", MagicMock())
 
         assert result == {"ok": False, "error": "Draft already sent"}

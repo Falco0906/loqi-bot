@@ -47,6 +47,26 @@ class ApproveAllRequest(BaseModel):
     auto: bool = False
 
 
+class SendDraftRequest(BaseModel):
+    test_recipient: str = ""
+    test_recipient_name: str = ""
+
+
+class ScheduleDraftRequest(BaseModel):
+    send_at: str
+
+
+class OutboundSendRequest(BaseModel):
+    provider_id: str
+    draft_id: str = ""
+
+
+class OutboundScheduleRequest(BaseModel):
+    provider_id: str
+    draft_id: str
+    send_at: str
+
+
 async def _authorized_owner(request: Request) -> tuple[str, str]:
     """Resolve the existing legacy bearer and authenticated owner."""
     session_token = identity_dependencies.web_session_token(request)
@@ -125,6 +145,49 @@ async def outbound_reject_draft(session_token: str, draft_id: str, request: Requ
 async def outbound_approve_all(session_token: str, payload: ApproveAllRequest, request: Request = None):
     del session_token
     return await service.approve_all_outbound_drafts(request, payload.auto)
+
+
+@router.post("/api/web/session/{session_token}/drafts/{draft_id}/send")
+async def send_draft(session_token: str, draft_id: str, request: Request, payload: SendDraftRequest = None):
+    del session_token
+    payload = payload or SendDraftRequest()
+    return await service.send_outbound_draft(
+        request, draft_id, test_recipient=payload.test_recipient, test_recipient_name=payload.test_recipient_name,
+    )
+
+
+@router.post("/api/web/session/{session_token}/drafts/{draft_id}/schedule")
+async def schedule_draft(session_token: str, draft_id: str, payload: ScheduleDraftRequest, request: Request):
+    del session_token
+    return await service.schedule_outbound_draft(request, draft_id, payload.send_at)
+
+
+@router.post("/api/web/session/{session_token}/drafts/{draft_id}/cancel-schedule")
+async def cancel_schedule_draft(session_token: str, draft_id: str, request: Request):
+    del session_token
+    return await service.cancel_outbound_draft_schedule(request, draft_id)
+
+
+@router.post("/api/web/session/{session_token}/outbound/send")
+async def outbound_send(session_token: str, payload: OutboundSendRequest, request: Request):
+    del session_token
+    if not payload.draft_id:
+        raise HTTPException(status_code=400, detail="Draft id is required")
+    return await service.send_outbound_draft(request, payload.draft_id)
+
+
+@router.post("/api/web/session/{session_token}/outbound/schedule")
+async def outbound_schedule(session_token: str, payload: OutboundScheduleRequest, request: Request):
+    del session_token
+    return await service.schedule_outbound_draft(request, payload.draft_id, payload.send_at)
+
+
+@router.delete("/api/web/session/{session_token}/outbound/schedule/{schedule_id}")
+async def outbound_cancel_schedule(
+    session_token: str, schedule_id: str, provider_id: str = "", request: Request = None,
+):
+    del session_token
+    return await service.cancel_outbound_draft_schedule(request, schedule_id, provider_id)
 
 
 @router.get("/api/web/session/{session_token}/outbound/drafts")

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -26,6 +27,11 @@ from services.events_bus import publish_draft_event
 log = logging.getLogger("loqi")
 
 SCHEDULED_SEND_JOB_TYPE = "outbound_send"
+
+
+def test_recipient_override_enabled() -> bool:
+    """Return whether the explicitly test-only recipient override is enabled."""
+    return os.getenv("LOQI_ENABLE_TEST_RECIPIENT_OVERRIDE", "").strip().lower() in {"1", "true", "yes"}
 
 
 def _parse_send_at(send_at: str) -> datetime | None:
@@ -473,6 +479,106 @@ async def run_scheduled_outbound_send(job, on_progress) -> dict[str, Any]:
     await publish_draft_event(job.user_id, "draft.sent", draft_id=draft_id)
     on_progress(job.id, "Scheduled draft sent", 100)
     return {"ok": True, "result": {"draft_id": draft_id, "send_result": result.get("send_result") or {}}}
+
+
+async def send_outbound_draft(
+    request: Request,
+    draft_id: str,
+    *,
+    test_recipient: str = "",
+    test_recipient_name: str = "",
+) -> dict[str, Any]:
+    """Send one authorized hydrated draft and persist the resulting state."""
+    if test_recipient and not test_recipient_override_enabled():
+        raise HTTPException(status_code=403, detail="Test recipient override is disabled")
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id, workspace_id, canonical, draft = await require_canonical_outbound_draft(request, session_token, draft_id)
+    from services.outbound.outbound_models import DraftStatus, Recipient
+
+    if canonical.get("status") == "sent" or draft.status in (DraftStatus.SENT, DraftStatus.SENDING):
+        return {"ok": False, "error": "Draft already sent"}
+    if owner_id and draft.provider_id:
+        provider = communication_store.get_provider(draft.provider_id)
+        if provider is not None and str(provider.user_id) != str(owner_id):
+            raise HTTPException(status_code=404, detail="Draft not found")
+    recipient = draft.recipient
+    if not recipient or not str(recipient.email or "").strip():
+        return {"ok": False, "error": "This lead has no email address"}
+    provider_id = resolve_provider_for_draft(draft, owner_id)
+    if not provider_id:
+        return {"ok": False, "error": "No Gmail outbound provider registered"}
+    effective_recipient = Recipient(
+        email=test_recipient or recipient.email,
+        name=(test_recipient_name or "Test Recipient") if test_recipient else recipient.name,
+    )
+    result = await asyncio.to_thread(
+        outbound_executor.send_hydrated_draft, draft, provider_id=provider_id, recipient_override=effective_recipient,
+    )
+    if not result.get("ok"):
+        publish(session_token, WMEventType.DRAFT_FAILED, {"draft_id": draft_id, "error": result.get("error", "Unknown error")}, actor="system")
+        return {"ok": False, "send_result": result}
+    if not await workspace_state.persist_draft_update_awaited(owner_id, draft_id, {"status": "sent"}, workspace_id=workspace_id):
+        raise HTTPException(status_code=503, detail="Email was sent but the canonical Draft could not be updated")
+    draft.status = DraftStatus.SENT
+    if not await persist_outbound_projection(owner_id, workspace_id, draft, change_summary="sent"):
+        raise HTTPException(status_code=503, detail="Email was sent but the outbound projection could not be updated")
+    await publish_draft_event(owner_id, "draft.sent", draft_id=draft_id, campaign_id=draft.workflow_id or "", lead_name=recipient.name)
+    send_data = result.get("send_result", {})
+    try:
+        from services.conversations.integration import create_conversation_from_send
+        conversation = create_conversation_from_send(
+            provider_id=provider_id, provider_type="gmail", external_thread_id=send_data.get("thread_id", ""),
+            external_message_id=send_data.get("external_message_id", ""), subject=draft.subject,
+            from_email=draft.sender.email, from_name=draft.sender.name, to_email=recipient.email, to_name=recipient.name,
+            body=draft.body, campaign_id=draft.workflow_id or "", workflow_id=draft.workflow_id or "",
+            owner_id=owner_id, workspace_id=workspace_id,
+        )
+        simulate_reply({"conversation_id": conversation.conversation_id, "external_thread_id": send_data.get("thread_id", ""),
+                        "subject": draft.subject, "from_email": draft.sender.email, "from_name": draft.sender.name,
+                        "to_email": recipient.email, "to_name": recipient.name, "body": draft.body,
+                        "campaign_id": draft.workflow_id or "", "workflow_id": draft.workflow_id or "",
+                        "lead": (draft.metadata or {}).get("lead", {}), "objective": ""})
+    except Exception as error:
+        log.error("persistence_write_failed category=conversation operation=create_from_send draft_id=%s provider_id=%s error_type=%s", draft_id[:12], provider_id[:12], type(error).__name__)
+    publish(session_token, WMEventType.DRAFT_SENT, {"draft_id": draft_id, "thread_id": send_data.get("thread_id", ""),
+            "external_message_id": send_data.get("external_message_id", ""), "provider_id": provider_id,
+            "subject": draft.subject, "recipient_email": recipient.email, "campaign_id": draft.workflow_id or ""}, actor="system")
+    return {"ok": True, "send_result": result}
+
+
+async def schedule_outbound_draft(request: Request, draft_id: str, send_at: str) -> dict[str, Any]:
+    """Schedule one authorized draft through the durable outbound job flow."""
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id, workspace_id, canonical, draft = await require_canonical_outbound_draft(request, session_token, draft_id)
+    if not draft.recipient or not str(draft.recipient.email or "").strip():
+        return {"ok": False, "error": "This lead has no email address"}
+    provider_id = resolve_provider_for_draft(draft, owner_id)
+    if not provider_id:
+        return {"ok": False, "error": "No Gmail outbound provider registered"}
+    result = await enqueue_scheduled_outbound_send(owner_id, workspace_id, canonical, draft, send_at)
+    if result.get("ok"):
+        await publish_draft_event(owner_id, "draft.scheduled", draft_id=draft_id)
+        publish(session_token, WMEventType.DRAFT_SCHEDULED, {"draft_id": draft_id, "send_at": send_at,
+                "provider_id": provider_id, "campaign_id": draft.workflow_id or ""}, actor="user")
+    if result.get("error") in {"Draft was scheduled but canonical persistence failed", "Draft schedule projection persistence failed"}:
+        raise HTTPException(status_code=503, detail=result["error"])
+    result.pop("job_id", None)
+    return result
+
+
+async def cancel_outbound_draft_schedule(request: Request | None, draft_id: str, provider_id: str = "") -> dict[str, Any]:
+    """Cancel one authorized durable scheduled-send job."""
+    if request is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    session_token = identity_dependencies.web_session_token(request)
+    owner_id, workspace_id, canonical, draft = await require_canonical_outbound_draft(request, session_token, draft_id, provider_id=provider_id)
+    result = await cancel_scheduled_outbound_send(owner_id, workspace_id, canonical, draft)
+    if result.get("ok"):
+        await publish_draft_event(owner_id, "draft.updated", draft_id=draft_id)
+        publish(session_token, WMEventType.DRAFT_UPDATED, {"draft_id": draft_id, "status": "pending", "previous_status": "scheduled"}, actor="user")
+    if result.get("error") in {"Schedule was cancelled but canonical Draft persistence failed", "Draft schedule projection persistence failed"}:
+        raise HTTPException(status_code=503, detail=result["error"])
+    return result
 
 
 async def create_outbound_draft(request: Request, payload: dict[str, Any]) -> dict[str, Any]:

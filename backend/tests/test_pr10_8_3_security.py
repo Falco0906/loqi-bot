@@ -216,6 +216,7 @@ class TestLegacyConnectProductionGuard:
 class TestSendDraftOwnership:
     def test_send_denied_for_another_users_draft(self, monkeypatch):
         import main as main_module
+        from services.outbound.api import send_draft
         from services.communication.communication_store import store
 
         store._providers["prov-b"] = _provider_record("prov-b", "victim@b.com", user_id="owner-b")
@@ -229,7 +230,7 @@ class TestSendDraftOwnership:
         monkeypatch.setattr(main_module, "_workspace_drafts", lambda *args, **kwargs: [])
         request = MagicMock()
         with pytest.raises(Exception) as exc:
-            asyncio.run(main_module.send_draft("tok", "draft-b-1", request))
+            asyncio.run(send_draft("tok", "draft-b-1", request))
         # Safe not-found (no existence leak): a foreign draft is 404, not 403.
         assert exc.value.status_code == 404
 

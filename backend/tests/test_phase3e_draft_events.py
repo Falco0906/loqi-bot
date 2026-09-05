@@ -65,13 +65,13 @@ def _wire_send_route(app, monkeypatch):
         return OWNER
     monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", fake_owner)
     monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda r: SESSION)
-    monkeypatch.setattr(main_module, "_test_recipient_override_enabled", lambda: False)
+    monkeypatch.setattr(outbound_service, "test_recipient_override_enabled", lambda: False)
     monkeypatch.setattr(outbound_service, "resolve_provider_for_draft", lambda d, o: "prov-1")
 
     class StubExecutor:
         def send_hydrated_draft(self, draft, *, provider_id, recipient_override=None):
             return {"ok": True, "send_result": {"thread_id": "t", "external_message_id": "m"}}
-    main_module.outbound_executor = StubExecutor()
+    monkeypatch.setattr(outbound_service, "outbound_executor", StubExecutor())
 
     draft = DraftMessage(
         id="draft-ev-1",
@@ -102,7 +102,13 @@ def _wire_send_route(app, monkeypatch):
 
     @app.post("/api/web/session/{session_token}/drafts/{draft_id}/send")
     async def send(session_token: str, draft_id: str, request: Request, payload: dict = None):
-        return await main_module.send_draft(session_token, draft_id, request, payload)
+        from services.outbound.api import SendDraftRequest, send_draft
+        return await send_draft(
+            session_token,
+            draft_id,
+            request,
+            SendDraftRequest(**payload) if payload else None,
+        )
 
     return draft
 
@@ -132,7 +138,8 @@ def test_draft_sent_event_published_and_scoped(monkeypatch, capture):
     request_stub = type("R", (), {"headers": {}})()
 
     async def run_send():
-        return await main_module.send_draft(SESSION, "draft-ev-1", request_stub, None)
+        from services.outbound.api import send_draft
+        return await send_draft(SESSION, "draft-ev-1", request_stub, None)
 
     resp = asyncio.run(run_send())
     assert resp.get("ok") is True, resp

@@ -8,6 +8,7 @@ import pytest
 
 import main as main_module
 import services.outbound.service as outbound_service
+from services.outbound.api import send_draft
 from services.outbound.outbound_models import ApprovalState, DraftMessage, DraftStatus, Recipient
 
 
@@ -26,12 +27,12 @@ async def _canonical(_request, _token, _draft_id, **_kwargs):
 
 def test_send_draft_without_email_never_invokes_executor(monkeypatch):
     monkeypatch.setattr(outbound_service, "require_canonical_outbound_draft", _canonical)
-    monkeypatch.setattr(main_module, "outbound_executor", MagicMock())
+    monkeypatch.setattr(outbound_service, "outbound_executor", MagicMock())
 
-    result = asyncio.run(main_module.send_draft("token", "draft-no-email", MagicMock()))
+    result = asyncio.run(send_draft("token", "draft-no-email", MagicMock()))
 
     assert result == {"ok": False, "error": "This lead has no email address"}
-    main_module.outbound_executor.send_hydrated_draft.assert_not_called()
+    outbound_service.outbound_executor.send_hydrated_draft.assert_not_called()
 
 
 async def test_campaign_dispatch_marks_no_email_draft_failed(monkeypatch):

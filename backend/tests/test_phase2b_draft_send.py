@@ -121,7 +121,7 @@ def harness(monkeypatch):
         lambda *_args, **_kwargs: asyncio.sleep(0, result=True),
     )
 
-    monkeypatch.setattr(main_module, "_test_recipient_override_enabled", lambda: False)
+    monkeypatch.setattr(outbound_service, "test_recipient_override_enabled", lambda: False)
 
     class StubExecutor:
         def send_hydrated_draft(self, draft, *, provider_id, recipient_override=None):
@@ -130,13 +130,19 @@ def harness(monkeypatch):
             if state["executor_result"].get("ok"):
                 result.setdefault("send_result", {"thread_id": "t", "external_message_id": "m"})
             return result
-    monkeypatch.setattr(main_module, "outbound_executor", StubExecutor())
+    monkeypatch.setattr(outbound_service, "outbound_executor", StubExecutor())
 
     app = FastAPI()
 
     @app.post("/api/web/session/{session_token}/drafts/{draft_id}/send")
     async def send(session_token: str, draft_id: str, request: Request, payload: dict = None):
-        return await main_module.send_draft(session_token, draft_id, request, payload)
+        from services.outbound.api import SendDraftRequest, send_draft
+        return await send_draft(
+            session_token,
+            draft_id,
+            request,
+            SendDraftRequest(**payload) if payload else None,
+        )
 
     client = TestClient(app, raise_server_exceptions=False)
     yield client, state

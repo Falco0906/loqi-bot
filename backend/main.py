@@ -102,9 +102,9 @@ from services.communication.provider_registry import (
 )
 from services.outbound.outbound_registry import (
     list_providers as outbound_list_providers,
-    register_instance as outbound_register_instance,
     remove_instance as outbound_remove_instance,
 )
+from services.communication import provider_startup
 from services.communication.provider_models import (
     ProviderType, ProviderStatus, CommunicationProvider,
 )
@@ -818,37 +818,6 @@ def _build_copilot_workspace_context(
     return result
 
 
-def _register_outbound_gmail_instance(comm_provider_id: str) -> None:
-    """Create and register a GmailOutboundProvider instance from a connected communication provider.
-    Copies tokens from the communication provider into the outbound provider.
-    """
-    from services.outbound.gmail_outbound import GmailOutboundProvider
-    comm_instance = get_provider(comm_provider_id)
-    if not comm_instance:
-        log.warning("[outbound] No communication provider found for %s", comm_provider_id)
-        return
-    access_token = getattr(comm_instance, '_access_token', '')
-    refresh_token = getattr(comm_instance, '_refresh_token', '')
-    client_id = getattr(comm_instance, '_client_id', '')
-    client_secret = getattr(comm_instance, '_client_secret', '')
-    token_expiry = getattr(comm_instance, '_token_expiry', 0.0)
-    if not access_token and not refresh_token:
-        log.warning("[outbound] No tokens available for provider %s", comm_provider_id)
-        return
-    outbound = GmailOutboundProvider()
-    outbound.configure(
-        provider_id=comm_provider_id,
-        access_token=access_token,
-        refresh_token=refresh_token,
-        client_id=client_id,
-        client_secret=client_secret,
-        token_expiry=token_expiry,
-        user_id=getattr(comm_instance, '_user_id', ''),
-    )
-    outbound_register_instance(comm_provider_id, outbound)
-    log.info("[outbound] Registered GmailOutboundProvider instance for %s", comm_provider_id)
-
-
 def _restore_providers_on_startup() -> None:
     """On startup, load saved provider credentials from Supabase and restore instances.
     Refreshes tokens if expired.
@@ -1525,7 +1494,7 @@ async def _perform_gmail_oauth_persistence(
             client_secret=GOOGLE_CLIENT_SECRET,
         )
         register_instance(provider_record.id, provider)
-        _register_outbound_gmail_instance(provider_record.id)
+        provider_startup.register_outbound_gmail_instance(provider_record.id)
 
         async def _rollback_runtime() -> None:
             """Remove runtime state created by THIS attempt after a durable
@@ -2739,7 +2708,7 @@ async def provider_connect(session_token: str, payload: ProviderConnectRequest, 
                 scope=payload.scope,
             )
             register_instance(provider.id, instance)
-            _register_outbound_gmail_instance(provider.id)
+            provider_startup.register_outbound_gmail_instance(provider.id)
     else:
         provider = instance.connect(
             auth_token=payload.auth_token,

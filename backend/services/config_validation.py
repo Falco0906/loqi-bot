@@ -158,7 +158,7 @@ def validate_config(env: Mapping[str, str] | None = None) -> tuple[list[str], li
                 )
         elif not _raw(source, "TELEGRAM_WEBHOOK_SECRET"):
             warnings.append(
-                "TELEGRAM_WEBHOOK_SECRET is not set — /webhook is unauthenticated"
+                "TELEGRAM_WEBHOOK_SECRET is not set — /webhook rejects Telegram requests"
             )
 
     # ── Type / format validation (only when the variable is set) ──

@@ -221,6 +221,13 @@ class TestTenantIsolationFinal:
 # ═══════════════════════════════════════════════════════════════════════
 
 class TestWebhookFinal:
+    def test_telegram_webhook_rejects_when_secret_is_unset(self, monkeypatch):
+        monkeypatch.delenv("TELEGRAM_WEBHOOK_SECRET", raising=False)
+        request = MagicMock()
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(main_module.telegram_webhook(request))
+        assert exc.value.status_code == 503
+
     def test_telegram_webhook_requires_secret_when_configured(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "secret-abc")
         request = MagicMock()

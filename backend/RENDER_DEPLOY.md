@@ -12,7 +12,7 @@ uvicorn main:app --host 0.0.0.0 --port $PORT
 
 Set these in Render:
 
-- `BOT_TOKEN`
+- `TELEGRAM_BOT_TOKEN`
 - `APOLLO_API_KEY`
 - `OPENAI_API_KEY`
 - `SUPABASE_URL`
@@ -36,7 +36,7 @@ uvicorn main:app --host 0.0.0.0 --port $PORT
 ```
 
 7. Add the environment variables:
-   `BOT_TOKEN`
+   `TELEGRAM_BOT_TOKEN`
    `APOLLO_API_KEY`
    `FRONTEND_ORIGIN`
 8. Deploy the service.
@@ -54,13 +54,13 @@ https://loqi-backend.onrender.com
 Set the webhook with:
 
 ```text
-https://api.telegram.org/bot<BOT_TOKEN>/setWebhook?url=<RENDER_URL>/webhook
+https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=<RENDER_URL>/webhook
 ```
 
 Example:
 
 ```text
-https://api.telegram.org/bot123456:ABCDEF/setWebhook?url=https://loqi-backend.onrender.com/webhook
+https://api.telegram.org/bot<your-token>/setWebhook?url=https://loqi-backend.onrender.com/webhook
 ```
 
 ### Validation
@@ -84,7 +84,7 @@ Loqi backend running
 
 - Check Render logs.
 - Make sure the webhook is set correctly.
-- Make sure `BOT_TOKEN` and `APOLLO_API_KEY` are correct in Render.
+- Make sure `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, and `APOLLO_API_KEY` are correct in Render.
 - Make sure `OPENAI_API_KEY`, `SUPABASE_URL`, and `SUPABASE_KEY` are set correctly.
 - Make sure `FRONTEND_ORIGIN` matches the deployed web app origin.
 - Make sure the service is binding to Render's `PORT` env var, not a hard-coded port.

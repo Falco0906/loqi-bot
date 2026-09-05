@@ -225,8 +225,8 @@ diagnostics.py`) is fail-fast **and redundant** at startup:
   placeholder rejected).
 - **Conditional requirements:**
   - `EMAIL_PROVIDER=resend` in production → `RESEND_API_KEY` required.
-  - `TELEGRAM_BOT_TOKEN` set → `TELEGRAM_WEBHOOK_SECRET` required (the
-    `/webhook` endpoint is otherwise unauthenticated).
+  - `TELEGRAM_BOT_TOKEN` set → `TELEGRAM_WEBHOOK_SECRET` required; without
+    it, `/webhook` rejects all Telegram callbacks.
   - `BILLING_PROVIDER_MODE=mock` → rejected in production.
   - `RATE_LIMIT_ENABLED` → must be enabled (truthy) in production.
   - `LOG_LEVEL=DEBUG` → rejected in production.
@@ -373,7 +373,7 @@ After any rollback or recovery, confirm each item before calling it done:
 
 ### S7. Webhook appears unauthenticated
 1. If `TELEGRAM_BOT_TOKEN` is set, production requires
-   `TELEGRAM_WEBHOOK_SECRET`; a `webhook_unauth` warning means it's unset.
+   `TELEGRAM_WEBHOOK_SECRET`; without it, `/webhook` returns 503.
 2. Set the secret in Railway variables, redeploy, re-register the webhook
    with the same `secret_token`.
 3. Verify a webhook POST with an invalid header returns 403.

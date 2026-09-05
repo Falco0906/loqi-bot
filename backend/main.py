@@ -1896,19 +1896,14 @@ if (window.opener) {{
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
-    # PR10.8.3: validate the Telegram webhook secret when one is configured
-    # (set via TELEGRAM_WEBHOOK_SECRET when registering the bot webhook with
-    # Telegram's secret_token). Without it, anyone could POST fabricated
-    # Telegram messages that the bot would act on.
+    # Telegram's secret_token is mandatory: accepting updates without it
+    # would let an arbitrary caller trigger a Telegram conversation.
     _webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
-    if _webhook_secret:
-        header_value = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        if not header_value or not hmac.compare_digest(header_value, _webhook_secret):
-            raise HTTPException(status_code=403, detail="Invalid webhook secret")
-    else:
-        log.warning(
-            "webhook_unauth TELEGRAM_WEBHOOK_SECRET is not configured — /webhook is unauthenticated"
-        )
+    if not _webhook_secret:
+        raise HTTPException(status_code=503, detail="Telegram webhook is not configured")
+    header_value = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not header_value or not hmac.compare_digest(header_value, _webhook_secret):
+        raise HTTPException(status_code=403, detail="Invalid webhook secret")
     try:
         data = await request.json()
         if "message" in data and "text" in data["message"]:

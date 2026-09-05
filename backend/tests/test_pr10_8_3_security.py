@@ -182,6 +182,17 @@ class TestProviderRouteOwnership:
 # ═══════════════════════════════════════════════════════════════════════
 
 class TestTelegramWebhookAuth:
+    def test_sender_uses_telegram_bot_token(self, monkeypatch):
+        import importlib
+        from services import telegram
+
+        monkeypatch.setenv("BOT_TOKEN", "legacy-token")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "canonical-token")
+        importlib.reload(telegram)
+        assert telegram.TELEGRAM_API_URL.endswith("botcanonical-token")
+        monkeypatch.undo()
+        importlib.reload(telegram)
+
     def test_webhook_rejected_without_secret_when_configured(self, monkeypatch):
         from fastapi import HTTPException
         import main as main_module
@@ -202,13 +213,14 @@ class TestTelegramWebhookAuth:
             result = asyncio.run(main_module.telegram_webhook(request))
         assert result == {"status": "ok"}
 
-    def test_webhook_accepted_when_secret_not_configured(self):
+    def test_webhook_rejected_when_secret_not_configured(self, monkeypatch):
+        from fastapi import HTTPException
         import main as main_module
+        monkeypatch.delenv("TELEGRAM_WEBHOOK_SECRET", raising=False)
         request = MagicMock()
-        request.json = AsyncMock(return_value={})
-        with patch.object(main_module, "process_message", lambda *a, **k: None):
-            result = asyncio.run(main_module.telegram_webhook(request))
-        assert result == {"status": "ok"}
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(main_module.telegram_webhook(request))
+        assert exc.value.status_code == 503
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -87,3 +87,30 @@ def test_recover_persisted_workflows_logs_nonempty_recovery(monkeypatch, caplog)
         main.app_lifespan.recover_persisted_workflows()
 
     assert "Workflow recovery: {'total_recovered': 1, 'resumed': 1}" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_generation_recovery_schedules_durable_jobs_without_blocking_startup(monkeypatch, caplog):
+    async def recover_draft_batches():
+        return 2
+
+    async def recover_strategy_jobs():
+        return 1
+
+    monkeypatch.setattr(
+        "services.drafts.service.reconcile_stale_draft_batch_jobs",
+        recover_draft_batches,
+    )
+    monkeypatch.setattr(
+        "services.campaigns.service.reconcile_stale_strategy_jobs",
+        recover_strategy_jobs,
+    )
+    background_tasks = []
+
+    with caplog.at_level("INFO", logger="loqi"):
+        main.app_lifespan.start_generation_recovery(background_tasks)
+        assert len(background_tasks) == 2
+        await asyncio.gather(*background_tasks)
+
+    assert "Resumed 2 interrupted draft generation(s) after restart" in caplog.text
+    assert "Reconciled 1 interrupted strategy generation(s) after restart" in caplog.text

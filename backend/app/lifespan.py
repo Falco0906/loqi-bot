@@ -237,6 +237,32 @@ def recover_persisted_workflows() -> None:
         log.warning("Workflow recovery failed: %s", error)
 
 
+def start_generation_recovery(background_tasks: list[asyncio.Task[Any]]) -> None:
+    """Schedule durable draft-batch and strategy recovery without blocking startup."""
+    async def recover_draft_batches() -> None:
+        from services.drafts.service import reconcile_stale_draft_batch_jobs
+
+        try:
+            recovered = await reconcile_stale_draft_batch_jobs()
+            if recovered:
+                log.info("Resumed %d interrupted draft generation(s) after restart", recovered)
+        except Exception as error:
+            log.warning("Draft generation recovery sweep failed: %s", error)
+
+    async def recover_strategy_jobs() -> None:
+        from services.campaigns.service import reconcile_stale_strategy_jobs
+
+        try:
+            recovered = await reconcile_stale_strategy_jobs()
+            if recovered:
+                log.info("Reconciled %d interrupted strategy generation(s) after restart", recovered)
+        except Exception as error:
+            log.warning("Strategy generation recovery sweep failed: %s", error)
+
+    background_tasks.append(asyncio.create_task(recover_draft_batches()))
+    background_tasks.append(asyncio.create_task(recover_strategy_jobs()))
+
+
 async def start_communication_background_services() -> tuple[Any | None, asyncio.Task[Any] | None]:
     """Start Inbox sync and the optional development reply simulator."""
     inbox_sync_engine = None

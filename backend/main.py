@@ -204,28 +204,7 @@ async def lifespan(app: FastAPI):
     provider_startup.initialize_gmail_runtime(_credential_registry)
 
     inbox_sync_engine, simulator_task = await app_lifespan.start_communication_background_services()
-    # Draft-batch recovery is scheduled as a background task so startup is
-    # never blocked. The durable job engine resumes each incomplete item using
-    # its idempotency key, rather than reconciling from process-local state.
-    async def _run_generation_recovery() -> None:
-        try:
-            recovered = await draft_service.reconcile_stale_draft_batch_jobs()
-            if recovered:
-                log.info("Resumed %d interrupted draft generation(s) after restart", recovered)
-        except Exception as e:
-            log.warning("Draft generation recovery sweep failed: %s", e)
-
-    background_tasks.append(asyncio.create_task(_run_generation_recovery()))
-
-    async def _run_strategy_recovery() -> None:
-        try:
-            recovered = await campaign_service.reconcile_stale_strategy_jobs()
-            if recovered:
-                log.info("Reconciled %d interrupted strategy generation(s) after restart", recovered)
-        except Exception as e:
-            log.warning("Strategy generation recovery sweep failed: %s", e)
-
-    background_tasks.append(asyncio.create_task(_run_strategy_recovery()))
+    app_lifespan.start_generation_recovery(background_tasks)
 
     await app_lifespan.recover_search_and_start_due_jobs(background_tasks)
 

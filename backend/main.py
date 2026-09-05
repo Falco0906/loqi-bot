@@ -123,8 +123,6 @@ from services.buying_signal import detect_signals
 from services.adapters.credential_registry import CredentialRegistry
 from services.adapters.credentials import CredentialDescriptor, CredentialInstance
 from services.execution import AdapterRegistry as ExecutionAdapterRegistry
-from services.execution import BridgeAdapter
-from services.planner.planning_models import TaskType
 from services.operations import (
     RequestLoggingMiddleware,
     log_config_warnings,
@@ -191,18 +189,7 @@ async def lifespan(app: FastAPI):
     # Validate before any background worker, provider restore, or sync engine.
     app_lifespan.validate_startup_configuration()
 
-    try:
-        from services.migration import apply_migrations
-        apply_migrations()
-    except Exception as e:
-        log.warning("Migration check failed: %s", e)
-    log.info("Job engine initialized")
-    _register_outbound_providers()
-    _register_execution_adapters()
-
-    # Wire the global adapter registry to the PlannerRouter
-    from services.execution.adapter_registry_resolver import init_planner_registry
-    init_planner_registry(_execution_adapter_registry)
+    app_lifespan.initialize_runtime_services(_execution_adapter_registry)
 
     app_lifespan.register_execution_observability()
 
@@ -1237,117 +1224,6 @@ async def _copilot_grounded_response_text(
             "mvp_read_only": True,
         },
         context={"user_id": "", "service": "", "target": ""},
-    )
-
-
-def _register_outbound_providers() -> None:
-    try:
-        from services.outbound.outbound_registry import register_outbound_provider
-        from services.outbound.gmail_outbound import GmailOutboundProvider
-        register_outbound_provider(GmailOutboundProvider)
-        log.info("GmailOutboundProvider registered")
-    except Exception as e:
-        log.warning("Failed to register GmailOutboundProvider: %s", e)
-
-
-def _register_execution_adapters() -> None:
-    from services.execution.credential_factory import resolve_google_credentials
-
-    from services.adapters.google.gmail import GmailAdapter
-    gmail = GmailAdapter()
-    gmail_bridge = BridgeAdapter(
-        sdk_adapter=gmail,
-        action_mapping={
-            TaskType.SEND_EMAIL: "gmail_send_email",
-        },
-        credentials_factory=resolve_google_credentials,
-    )
-    _execution_adapter_registry.register(gmail_bridge, priority=100, version="1.0.0")
-    log.info(
-        "Execution adapter registered: %s (types=%s, factory=%s)",
-        gmail_bridge.adapter_type,
-        [t.value for t in gmail_bridge.supported_task_types],
-        "resolve_google_credentials",
-    )
-
-    from services.adapters.google.calendar import CalendarAdapter
-    calendar = CalendarAdapter()
-    calendar_bridge = BridgeAdapter(
-        sdk_adapter=calendar,
-        action_mapping={
-            TaskType.CALENDAR_LIST_EVENTS: "calendar_list_events",
-            TaskType.CALENDAR_GET_EVENT: "calendar_get_event",
-            TaskType.CALENDAR_CREATE_EVENT: "calendar_create_event",
-            TaskType.CALENDAR_UPDATE_EVENT: "calendar_update_event",
-            TaskType.CALENDAR_DELETE_EVENT: "calendar_delete_event",
-        },
-        credentials_factory=resolve_google_credentials,
-    )
-    _execution_adapter_registry.register(calendar_bridge, priority=100, version="1.0.0")
-    log.info(
-        "Execution adapter registered: %s (types=%s, factory=%s)",
-        calendar_bridge.adapter_type,
-        [t.value for t in calendar_bridge.supported_task_types],
-        "resolve_google_credentials",
-    )
-
-    from services.adapters.analysis import ReplyAnalysisAdapter
-    analysis = ReplyAnalysisAdapter()
-    analysis_bridge = BridgeAdapter(
-        sdk_adapter=analysis,
-        action_mapping={
-            TaskType.ANALYZE_REPLY: "analyze_reply",
-        },
-    )
-    _execution_adapter_registry.register(analysis_bridge, priority=100, version="1.0.0")
-    log.info(
-        "Execution adapter registered: %s (types=%s)",
-        analysis_bridge.adapter_type,
-        [t.value for t in analysis_bridge.supported_task_types],
-    )
-
-    from services.adapters.crm import CrmAdapter
-    crm = CrmAdapter()
-    crm_bridge = BridgeAdapter(
-        sdk_adapter=crm,
-        action_mapping={
-            TaskType.FIND_CONTACT: "find_contact",
-            TaskType.CREATE_CONTACT: "create_contact",
-            TaskType.UPDATE_CONTACT: "update_contact",
-            TaskType.FIND_COMPANY: "find_company",
-            TaskType.CREATE_COMPANY: "create_company",
-            TaskType.CREATE_OPPORTUNITY: "create_opportunity",
-            TaskType.UPDATE_OPPORTUNITY: "update_opportunity",
-            TaskType.CREATE_ACTIVITY: "create_activity",
-            TaskType.CREATE_NOTE: "create_note",
-            TaskType.ASSIGN_OWNER: "assign_owner",
-        },
-    )
-    _execution_adapter_registry.register(crm_bridge, priority=100, version="1.0.0")
-    log.info(
-        "Execution adapter registered: %s (types=%s)",
-        crm_bridge.adapter_type,
-        [t.value for t in crm_bridge.supported_task_types],
-    )
-
-    from services.adapters.memory import MemoryAdapter
-    memory_adapter = MemoryAdapter()
-    memory_bridge = BridgeAdapter(
-        sdk_adapter=memory_adapter,
-        action_mapping={
-            TaskType.STORE_MEMORY: "store_memory",
-            TaskType.RETRIEVE_MEMORY: "retrieve_memory",
-            TaskType.SEARCH_MEMORY: "search_memory",
-            TaskType.UPDATE_MEMORY: "update_memory",
-            TaskType.DELETE_MEMORY: "delete_memory",
-            TaskType.SUMMARIZE_MEMORY: "summarize_memory",
-        },
-    )
-    _execution_adapter_registry.register(memory_bridge, priority=100, version="1.0.0")
-    log.info(
-        "Execution adapter registered: %s (types=%s)",
-        memory_bridge.adapter_type,
-        [t.value for t in memory_bridge.supported_task_types],
     )
 
 

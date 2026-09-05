@@ -29,11 +29,10 @@ def test_lifespan_logs_configuration_warnings_then_allows_startup(monkeypatch, c
         "services.config_validation.assert_valid_startup_config",
         lambda: calls.append("asserted"),
     )
-    monkeypatch.setattr("services.migration.apply_migrations", lambda: None)
     monkeypatch.setattr(
-        main,
-        "_register_outbound_providers",
-        lambda: (_ for _ in ()).throw(_StopAfterConfiguration()),
+        main.app_lifespan,
+        "initialize_runtime_services",
+        lambda registry: (_ for _ in ()).throw(_StopAfterConfiguration()),
     )
 
     with caplog.at_level("INFO", logger="loqi"):

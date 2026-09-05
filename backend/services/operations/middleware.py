@@ -5,12 +5,14 @@ import re
 import time
 import traceback
 import uuid
+from contextvars import ContextVar
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 log = logging.getLogger("loqi")
+request_id_var: ContextVar[str] = ContextVar("request_id")
 
 # The web session token is a bearer credential carried in the URL path for
 # legacy routes (`/api/web/session/{token}/...`). It must never reach logs,
@@ -31,6 +33,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
         request_id = str(uuid.uuid4())[:8]
         request.state.request_id = request_id
+        request_id_var.set(request_id)
         start = time.monotonic()
 
         try:
@@ -47,7 +50,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 str(exc),
                 "".join(traceback.format_tb(exc.__traceback__)),
             )
-            return JSONResponse(
+            response = JSONResponse(
                 status_code=500,
                 content={
                     "error": {
@@ -57,6 +60,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     }
                 },
             )
+            response.headers["X-Request-ID"] = request_id
+            response.headers["X-API-Version"] = "1"
+            return response
 
         duration_ms = int((time.monotonic() - start) * 1000)
         log.info(
@@ -68,4 +74,5 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             duration_ms,
         )
         response.headers["X-Request-ID"] = request_id
+        response.headers["X-API-Version"] = "1"
         return response

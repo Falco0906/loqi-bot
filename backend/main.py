@@ -9,7 +9,6 @@ import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
-from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
 
@@ -133,6 +132,7 @@ from services.operations import (
     set_startup_time,
     startup_diagnostics,
     redact_session_path,
+    request_id_var,
 )
 from services.world_model import EventType as WMEventType, publish
 
@@ -153,9 +153,6 @@ logging.basicConfig(
 from services.logging_setup import configure_logging
 configure_logging()
 log = logging.getLogger("loqi")
-
-request_id_var: ContextVar[str] = ContextVar("request_id")
-
 
 def _abandoned_registration_cleanup_interval() -> int:
     """Seconds between abandoned-registration cleanup cycles (min 60s)."""
@@ -407,9 +404,6 @@ app = FastAPI(
     openapi_url=None if _production_env else "/openapi.json",
     redoc_url=None if _production_env else "/redoc",
 )
-app.add_middleware(RequestLoggingMiddleware)
-
-
 @app.middleware("http")
 async def require_web_session_auth(request: Request, call_next):
     """PR10.8.3.1: every /api/web/session/... route (except the session
@@ -1181,22 +1175,6 @@ async def rate_limit_middleware(request: Request, call_next):
     return await call_next(request)
 
 
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    req_id = str(uuid.uuid4())[:8]
-    request_id_var.set(req_id)
-    start = time.time()
-    response = await call_next(request)
-    duration = (time.time() - start) * 1000
-    log.info(
-        "%s %s %s %.0fms %s",
-        req_id, request.method, redact_session_path(request.url.path), duration, response.status_code,
-    )
-    response.headers["X-Request-ID"] = req_id
-    response.headers["X-API-Version"] = "1"
-    return response
-
-
 # ── CORS Configuration ──
 _frontend_origins = {
     "http://localhost:3000",
@@ -1211,6 +1189,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Keep correlation and API-version headers around every response, including
+# early rate-limit and session-auth rejections from the middleware below it.
+app.add_middleware(RequestLoggingMiddleware)
 
 
 class CreateWebSessionRequest(BaseModel):

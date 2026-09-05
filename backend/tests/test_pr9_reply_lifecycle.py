@@ -24,6 +24,7 @@ from services.conversations.conversation_store import conversation_store
 from services.conversations.integration import create_conversation_from_send, handle_reply
 from services.conversations.state_machine import transition as state_transition
 from services.conversations.timeline import TimelineEventType
+from services.conversations import api as conversations_api
 
 import main as main_module  # noqa: E402
 
@@ -322,10 +323,22 @@ class TestConversationReplyTestRecipient:
         convo, _ = _make_conversation()
         _inbound_reply(convo.conversation_id)
         fake = FakeOutboundExecutor()
-        monkeypatch.setattr(main_module, "outbound_executor", fake)
+        from services.conversations import service as conversations_service
+        monkeypatch.setattr(conversations_service, "outbound_executor", fake)
 
         with pytest.raises(Exception) as exc_info:
-            self._send_with_test_recipient(convo.conversation_id, "Hi", "tofu9262@gmail.com")
+            asyncio.run(
+                conversations_api.send_conversation_reply_route(
+                    SESSION,
+                    convo.conversation_id,
+                    conversations_api.SendConversationReplyRequest(
+                        body="Hi",
+                        test_recipient="tofu9262@gmail.com",
+                        test_recipient_name="Test Recipient",
+                    ),
+                    _auth_request(),
+                )
+            )
         assert getattr(exc_info.value, "status_code", None) == 403
         assert fake.calls == []
 

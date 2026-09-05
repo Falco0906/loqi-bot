@@ -9,15 +9,22 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from services.ai import OpenAIError, analyze_draft as analyze_draft_with_ai, answer_draft_question
+from services.ai import (
+    OpenAIError,
+    analyze_draft as analyze_draft_with_ai,
+    answer_draft_question,
+    generate_outreach_email,
+    rewrite_message,
+)
 from services.draft_comparison import compare_versions
 from services.draft_intelligence import analyze_draft as analyze_draft_intelligence
 from services.events_bus import publish_draft_event
+from services.enrichment.enrichment_factory import get_enricher
+from services.intelligence.lead_intelligence import generate_lead_intelligence
 from services.outbound import service as outbound_service
 from services.rewrite_engine import execute_rewrite
 from services.world_model import EventType as WMEventType, publish
 from services.workspace_timeline import record_drafts_generated
-from workflows import run_workflow
 
 log = logging.getLogger("loqi")
 
@@ -45,6 +52,81 @@ _CONTEXT_FIELDS = (
     "campaign_id", "campaign_name", "company", "contact", "role", "industry",
     "messaging_angle", "business_summary",
 )
+
+
+def _legacy_tone(payload: dict[str, Any]) -> str:
+    tone = str(payload.get("tone") or "").strip().lower()
+    if tone in {"casual", "formal", "aggressive", "friendly"}:
+        return tone
+    text = " ".join([str(payload.get("edit_request") or ""), *(payload.get("conversation_context") or [])]).lower()
+    if any(word in text for word in ("sir", "madam", "regards", "sincerely", "professional", "formal")):
+        return "formal"
+    if text and len(text.split()) <= 3:
+        return "aggressive"
+    if any(word in text for word in ("aggressive", "stronger", "hard sell")):
+        return "aggressive"
+    return "casual"
+
+
+def _legacy_length(payload: dict[str, Any]) -> str:
+    length = str(payload.get("length") or "").strip().lower()
+    if length in {"short", "medium", "long"}:
+        return length
+    text = " ".join([str(payload.get("edit_request") or ""), " ".join(payload.get("conversation_context") or [])]).lower()
+    if "shorter" in text or "short" in text:
+        return "short"
+    if "longer" in text or "long" in text:
+        return "long"
+    return "medium"
+
+
+def _legacy_edit_request(value: str) -> str:
+    value = value.strip()
+    if value.lower() == "rewrite":
+        return "Rewrite the message from scratch using the same goal."
+    if "add urgency" in value.lower():
+        return "Add urgency and make the call to action more time-sensitive."
+    return value
+
+
+def _draft_message_from_legacy_input(payload: dict[str, Any]) -> dict[str, Any]:
+    """Preserve the Telegram draft-message envelope for Drafts-owned callers."""
+    lead = payload.get("lead") or {}
+    edit_request = _legacy_edit_request(str(payload.get("edit_request") or ""))
+    tone = _legacy_tone(payload)
+    length = _legacy_length(payload)
+    previous_message = str(payload.get("previous_message") or "")
+    context = payload.get("context") or {}
+    knowledge_context = payload.get("knowledge_context") if payload.get("_knowledge_context_trusted") else {}
+    company_intelligence = None
+    lead_intelligence = None
+    try:
+        enricher = get_enricher()
+        if enricher.health_check().get("ok"):
+            company_intelligence = enricher.enrich_lead(lead)
+    except Exception:
+        pass
+    try:
+        lead_intelligence = generate_lead_intelligence(lead, company_intelligence)
+    except Exception:
+        pass
+    if edit_request and previous_message:
+        try:
+            rewrite_context = dict(context)
+            if knowledge_context:
+                rewrite_context["knowledge_context"] = knowledge_context
+            body = rewrite_message(edit_request, previous_message, rewrite_context)
+            subject = ""
+        except OpenAIError as error:
+            return {"ok": False, "type": "draft_message", "message": "Couldn't rewrite the draft due to a generation error. Want to try a different instruction or start fresh?", "lead": lead, "edit_request": edit_request, "tone": tone, "length": length, "error": str(error), "company_intelligence": company_intelligence, "lead_intelligence": lead_intelligence}
+    else:
+        try:
+            generated = generate_outreach_email(lead, company_intelligence, lead_intelligence, strategy=payload.get("campaign_strategy"), knowledge_context=knowledge_context)
+            body = generated.get("body", "")
+            subject = generated.get("subject", "")
+        except OpenAIError as error:
+            return {"ok": False, "type": "draft_message", "message": "I wasn't able to generate a draft right now. Try again or adjust the targeting.", "lead": lead, "edit_request": edit_request, "tone": tone, "length": length, "error": str(error), "company_intelligence": company_intelligence, "lead_intelligence": lead_intelligence}
+    return {"ok": True, "type": "draft_message", "message": f"Draft ready:\n\n---\n{body}\n---", "lead": lead, "subject": subject, "edit_request": edit_request, "tone": tone, "length": length, "company_intelligence": company_intelligence, "lead_intelligence": lead_intelligence}
 
 
 def _parse_draft_body(message: str) -> str | None:
@@ -127,7 +209,7 @@ async def _run_draft_with_retry(loop, workflow_input: dict, attempts: int = 3) -
     last_error: Exception | None = None
     for attempt in range(attempts):
         try:
-            result = await loop.run_in_executor(None, run_workflow, workflow_input)
+            result = await loop.run_in_executor(None, _draft_message_from_legacy_input, workflow_input)
             return result
         except Exception as e:
             last_error = e
@@ -541,7 +623,7 @@ async def refine_draft(
         }
         if context:
             workflow_input["context"] = context
-        workflow_result = await asyncio.to_thread(run_workflow, workflow_input)
+        workflow_result = await asyncio.to_thread(_draft_message_from_legacy_input, workflow_input)
         new_body = _draft_body(workflow_result.get("message", ""))
         rewritten_text = new_body or target["text"]
         if new_body:

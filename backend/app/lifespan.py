@@ -225,6 +225,18 @@ def rehydrate_communication_store() -> None:
         log.warning("Communication store rehydration failed: %s", error)
 
 
+def recover_persisted_workflows() -> None:
+    """Restore legacy workflow runtime state before background workers start."""
+    from services.workflow_recovery import recover_all
+
+    try:
+        recovered = recover_all()
+        if recovered["total_recovered"] > 0:
+            log.info("Workflow recovery: %s", recovered)
+    except Exception as error:
+        log.warning("Workflow recovery failed: %s", error)
+
+
 async def start_communication_background_services() -> tuple[Any | None, asyncio.Task[Any] | None]:
     """Start Inbox sync and the optional development reply simulator."""
     inbox_sync_engine = None

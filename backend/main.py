@@ -92,10 +92,9 @@ from services.workflow_runtime import get_runtime, get_active_runtimes, get_all_
 from services.workflow_progress import calculate_progress
 from services.workflow_events import get_events as get_workflow_events, get_latest_sequence
 from services.workflows.models import WorkflowPlan
-from services.workflow_recovery import recover_all
 from services.conversation_models import ConversationMessage
 from services.communication.provider_registry import (
-    register_provider, get_provider, list_providers,
+    get_provider, list_providers,
     instantiate_provider, register_instance, remove_instance,
     disconnect_provider as registry_disconnect, health_check,
     list_registered_types,
@@ -121,7 +120,7 @@ from services.conversation_timeline import get_events as get_conversation_events
 from services.conversation_models import FollowupAction, BuyingSignal, SignalStrength, ConversationStage
 from services.buying_signal import detect_signals
 from services.adapters.credential_registry import CredentialRegistry
-from services.adapters.credentials import CredentialDescriptor, CredentialInstance
+from services.adapters.credentials import CredentialInstance
 from services.execution import AdapterRegistry as ExecutionAdapterRegistry
 from services.operations import (
     RequestLoggingMiddleware,
@@ -200,13 +199,9 @@ async def lifespan(app: FastAPI):
 
     app_lifespan.rehydrate_communication_store()
 
-    # Restore providers and recover interrupted workflow work BEFORE any
-    # worker task that consumes provider state starts (PR10.8 ordering —
-    # workers must not begin consuming state before rehydration completes).
-    try:
-        _restore_providers_for_startup()
-    except Exception as e:
-        log.warning("Provider startup restoration failed: %s", e)
+    # Restore workflow and provider runtime state before any worker consumes it.
+    app_lifespan.recover_persisted_workflows()
+    provider_startup.initialize_gmail_runtime(_credential_registry)
 
     inbox_sync_engine, simulator_task = await app_lifespan.start_communication_background_services()
     # Draft-batch recovery is scheduled as a background task so startup is
@@ -1040,20 +1035,6 @@ async def _copilot_grounded_response_text(
     )
 
 
-def _register_credential_descriptors() -> None:
-    from services.adapters.google.gmail.gmail_adapter import CREDENTIAL_DESCRIPTORS
-    for desc in CREDENTIAL_DESCRIPTORS:
-        descriptor = CredentialDescriptor(
-            name=desc["name"],
-            display_name=desc.get("display_name", desc["name"]),
-            description=desc.get("description", ""),
-            auth_type=desc["auth_type"],
-        )
-        if not _credential_registry.exists(descriptor.name):
-            _credential_registry.register(descriptor)
-            log.info("Credential descriptor registered: %s", descriptor.name)
-
-
 def _register_credential_instance(access_token: str, refresh_token: str, email: str) -> None:
     instance = CredentialInstance(
         credential_id=f"google_oauth2::{email}",
@@ -1065,101 +1046,6 @@ def _register_credential_instance(access_token: str, refresh_token: str, email: 
         },
     )
     log.info("Credential instance registered: %s", instance.credential_id)
-
-
-
-
-def _restore_providers_for_startup() -> None:
-    """Restore provider instances and recover interrupted work at startup.
-
-    Runs BEFORE the outbound scheduler task is created so the scheduler can
-    never tick against an empty provider registry (PR10.8 startup ordering).
-    After restoration, runtime providers are reconciled to the invariant
-    (exactly one active provider per user/provider type) so a process that
-    accumulated duplicates self-heals on the next boot (PR10.8.2.2).
-    """
-    try:
-        recovered = recover_all()
-        if recovered["total_recovered"] > 0:
-            log.info("Workflow recovery: %s", recovered)
-    except Exception as e:
-        log.warning("Workflow recovery failed: %s", e)
-    try:
-        register_provider(GmailProvider)
-        log.info("Gmail provider registered")
-    except Exception as e:
-        log.warning("Gmail provider registration failed: %s", e)
-    try:
-        _register_credential_descriptors()
-    except Exception as e:
-        log.warning("Credential descriptor registration failed: %s", e)
-    try:
-        provider_startup.restore_gmail_providers()
-    except Exception as e:
-        log.warning("Provider startup restoration failed: %s", e)
-    try:
-        _reconcile_runtime_providers()
-    except Exception as e:
-        log.warning("Runtime provider reconciliation failed: %s", e)
-
-
-def _reconcile_runtime_providers() -> None:
-    """Enforce the one-active-provider-per-(user, provider_type) invariant.
-
-    If more than one runtime provider record exists for the same
-    (user, provider type) in the communication store, keep the newest active
-    one and remove the others from the communication store, the provider
-    registry, and the outbound registry. This is a runtime invariant fix, not
-    an API-level dedup: after this, provider_list returns one logical account
-    because only one exists.
-    """
-    from services.communication.provider_models import ProviderType
-    from services.outbound.outbound_registry import remove_instance as outbound_remove
-
-    by_key: dict[tuple[str, str], list[Any]] = {}
-    for provider in communication_store.list_providers():
-        by_key.setdefault(
-            (provider.user_id, provider.provider_type.value if hasattr(provider.provider_type, "value") else str(provider.provider_type)),
-            [],
-        ).append(provider)
-
-    removed = 0
-    for key, group in by_key.items():
-        if len(group) <= 1:
-            continue
-        # Newest active wins; a provider record that is auth_failed is NOT
-        # preferred over a healthy one (healthier credential wins).
-        canonical = max(
-            group,
-            key=lambda p: (
-                p.status.value not in ("auth_failed", "expired_token", "scope_insufficient", "disconnected", "offline"),
-                p.created_at or "",
-            ),
-        )
-        for other in group:
-            if other.id == canonical.id:
-                continue
-            try:
-                communication_store.remove_provider(other.id)
-            except Exception:
-                pass
-            try:
-                remove_instance(other.id)
-            except Exception:
-                pass
-            try:
-                outbound_remove(other.id)
-            except Exception:
-                pass
-            removed += 1
-            log.info(
-                "runtime_provider_reconciled provider_id=%s user_id=%s provider_type=%s reason=duplicate",
-                other.id[:12], other.user_id[:8] if other.user_id else "", key[1],
-            )
-    if removed:
-        log.info("runtime_provider_reconcile removed=%d duplicate provider record(s)", removed)
-
-
 @app.get("/", response_class=PlainTextResponse)
 def read_root():
     return "Loqi backend running"

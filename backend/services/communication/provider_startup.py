@@ -7,6 +7,7 @@ import os
 import time
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 from services.communication.provider_registry import get_provider
 from services.outbound.outbound_registry import register_instance as register_outbound_instance
@@ -199,3 +200,108 @@ def restore_gmail_providers() -> None:
         restored,
         reauth_restored,
     )
+
+
+def register_gmail_provider() -> None:
+    """Register the Gmail communication provider implementation."""
+    from services.communication.gmail_provider import GmailProvider
+    from services.communication.provider_registry import register_provider
+
+    register_provider(GmailProvider)
+    log.info("Gmail provider registered")
+
+
+def register_gmail_credential_descriptors(credential_registry: Any) -> None:
+    """Register Gmail's legacy execution credential descriptors once per process."""
+    from services.adapters.credentials import CredentialDescriptor
+    from services.adapters.google.gmail.gmail_adapter import CREDENTIAL_DESCRIPTORS
+
+    for raw_descriptor in CREDENTIAL_DESCRIPTORS:
+        descriptor = CredentialDescriptor(
+            name=raw_descriptor["name"],
+            display_name=raw_descriptor.get("display_name", raw_descriptor["name"]),
+            description=raw_descriptor.get("description", ""),
+            auth_type=raw_descriptor["auth_type"],
+        )
+        if not credential_registry.exists(descriptor.name):
+            credential_registry.register(descriptor)
+            log.info("Credential descriptor registered: %s", descriptor.name)
+
+
+def reconcile_runtime_providers() -> None:
+    """Keep one runtime provider instance per user and provider type."""
+    from services.communication.communication_store import store as communication_store
+    from services.communication.provider_registry import remove_instance
+    from services.outbound.outbound_registry import remove_instance as remove_outbound_instance
+
+    providers_by_key: dict[tuple[str, str], list[Any]] = {}
+    for provider in communication_store.list_providers():
+        provider_type = (
+            provider.provider_type.value
+            if hasattr(provider.provider_type, "value")
+            else str(provider.provider_type)
+        )
+        providers_by_key.setdefault((provider.user_id, provider_type), []).append(provider)
+
+    removed = 0
+    unavailable_statuses = {
+        "auth_failed",
+        "expired_token",
+        "scope_insufficient",
+        "disconnected",
+        "offline",
+    }
+    for (_, provider_type), providers in providers_by_key.items():
+        if len(providers) <= 1:
+            continue
+        canonical = max(
+            providers,
+            key=lambda provider: (
+                provider.status.value not in unavailable_statuses,
+                provider.created_at or "",
+            ),
+        )
+        for provider in providers:
+            if provider.id == canonical.id:
+                continue
+            try:
+                communication_store.remove_provider(provider.id)
+            except Exception:
+                pass
+            try:
+                remove_instance(provider.id)
+            except Exception:
+                pass
+            try:
+                remove_outbound_instance(provider.id)
+            except Exception:
+                pass
+            removed += 1
+            log.info(
+                "runtime_provider_reconciled provider_id=%s user_id=%s provider_type=%s reason=duplicate",
+                provider.id[:12],
+                provider.user_id[:8] if provider.user_id else "",
+                provider_type,
+            )
+    if removed:
+        log.info("runtime_provider_reconcile removed=%d duplicate provider record(s)", removed)
+
+
+def initialize_gmail_runtime(credential_registry: Any) -> None:
+    """Restore the Gmail runtime before workers consume communication providers."""
+    try:
+        register_gmail_provider()
+    except Exception as error:
+        log.warning("Gmail provider registration failed: %s", error)
+    try:
+        register_gmail_credential_descriptors(credential_registry)
+    except Exception as error:
+        log.warning("Credential descriptor registration failed: %s", error)
+    try:
+        restore_gmail_providers()
+    except Exception as error:
+        log.warning("Provider startup restoration failed: %s", error)
+    try:
+        reconcile_runtime_providers()
+    except Exception as error:
+        log.warning("Runtime provider reconciliation failed: %s", error)

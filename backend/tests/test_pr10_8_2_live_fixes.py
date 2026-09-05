@@ -100,7 +100,7 @@ class TestStoreLogicalAccount:
         assert len(store.list_providers()) == 2
 
     def test_remove_existing_gmail_provider_cleans_store(self):
-        import main as main_module
+        from services.communication import provider_startup
         from services.communication.communication_store import store
         from services.communication.gmail_provider import GmailProvider
         from services.communication import provider_registry
@@ -476,7 +476,7 @@ class TestStartupRuntimeReconciliation:
         """If a process accumulated two store records for the same user, the
         startup reconciliation keeps the newest healthy one and removes the
         rest from the store + provider registry + outbound registry."""
-        import main as main_module
+        from services.communication import provider_startup
         from services.communication.communication_store import store
         from services.communication import provider_registry
         from services.outbound import outbound_registry as or_reg
@@ -494,7 +494,7 @@ class TestStartupRuntimeReconciliation:
         or_reg.register_instance("p-new", object())
         assert len(store.get_user_providers("owner-1")) == 2
 
-        main_module._reconcile_runtime_providers()
+        provider_startup.reconcile_runtime_providers()
 
         providers = store.get_user_providers("owner-1")
         assert len(providers) == 1
@@ -505,7 +505,7 @@ class TestStartupRuntimeReconciliation:
         assert len(or_reg.list_providers()) == 1
 
     def test_reconcile_prefers_healthy_over_auth_failed(self):
-        import main as main_module
+        from services.communication import provider_startup
         from services.communication.communication_store import store
 
         store._providers["p-auth"] = _provider_record("p-auth", "a@b.com", account_id="s1",
@@ -514,7 +514,7 @@ class TestStartupRuntimeReconciliation:
                                                          status="healthy")
         store._user_providers["owner-1"] = ["p-auth", "p-healthy"]
 
-        main_module._reconcile_runtime_providers()
+        provider_startup.reconcile_runtime_providers()
         remaining = store.get_user_providers("owner-1")
         assert len(remaining) == 1
         assert remaining[0].id == "p-healthy"

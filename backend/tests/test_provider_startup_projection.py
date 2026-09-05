@@ -53,3 +53,47 @@ def test_register_outbound_gmail_instance_skips_provider_without_credentials(mon
 
     assert registered == []
     assert "No tokens available for provider provider-1" in caplog.text
+
+
+def test_initialize_gmail_runtime_keeps_startup_order(monkeypatch):
+    calls: list[str] = []
+    registry = object()
+
+    def register_descriptors(received_registry):
+        assert received_registry is registry
+        calls.append("descriptors")
+
+    monkeypatch.setattr(provider_startup, "register_gmail_provider", lambda: calls.append("provider"))
+    monkeypatch.setattr(
+        provider_startup,
+        "register_gmail_credential_descriptors",
+        register_descriptors,
+    )
+    monkeypatch.setattr(provider_startup, "restore_gmail_providers", lambda: calls.append("restore"))
+    monkeypatch.setattr(provider_startup, "reconcile_runtime_providers", lambda: calls.append("reconcile"))
+
+    provider_startup.initialize_gmail_runtime(registry)
+
+    assert calls == ["provider", "descriptors", "restore", "reconcile"]
+
+
+def test_initialize_gmail_runtime_continues_after_a_registration_failure(monkeypatch, caplog):
+    calls: list[str] = []
+
+    def fail_provider_registration():
+        raise RuntimeError("registration failed")
+
+    monkeypatch.setattr(provider_startup, "register_gmail_provider", fail_provider_registration)
+    monkeypatch.setattr(
+        provider_startup,
+        "register_gmail_credential_descriptors",
+        lambda _registry: calls.append("descriptors"),
+    )
+    monkeypatch.setattr(provider_startup, "restore_gmail_providers", lambda: calls.append("restore"))
+    monkeypatch.setattr(provider_startup, "reconcile_runtime_providers", lambda: calls.append("reconcile"))
+
+    with caplog.at_level("WARNING", logger="loqi"):
+        provider_startup.initialize_gmail_runtime(object())
+
+    assert calls == ["descriptors", "restore", "reconcile"]
+    assert "Gmail provider registration failed: registration failed" in caplog.text

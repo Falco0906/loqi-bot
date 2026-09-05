@@ -75,3 +75,15 @@ def test_outbound_provider_registration_keeps_gmail_provider(monkeypatch):
     main.app_lifespan.register_outbound_providers()
 
     assert [provider.__name__ for provider in registered] == ["GmailOutboundProvider"]
+
+
+def test_recover_persisted_workflows_logs_nonempty_recovery(monkeypatch, caplog):
+    monkeypatch.setattr(
+        "services.workflow_recovery.recover_all",
+        lambda: {"total_recovered": 1, "resumed": 1},
+    )
+
+    with caplog.at_level("INFO", logger="loqi"):
+        main.app_lifespan.recover_persisted_workflows()
+
+    assert "Workflow recovery: {'total_recovered': 1, 'resumed': 1}" in caplog.text

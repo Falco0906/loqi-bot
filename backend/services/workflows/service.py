@@ -65,7 +65,7 @@ def _run_async(coro):
 
 from services.google_auth import refresh_access_token
 from services.lead_provider import format_leads_message
-from services.ai import generate_outreach_email, rewrite_message, analyze_draft, answer_draft_question, OpenAIError
+from services.ai import generate_outreach_email, rewrite_message, OpenAIError
 from services.lead_provider import get_leads, search_with_expansion
 from services.supabase import get_user, get_google_credentials, is_token_expired, store_leads, update_google_access_token
 from services.conversations.compatibility import record_workflow_event
@@ -358,39 +358,6 @@ def draft_message(input: dict) -> dict:
     }
 
 
-def analyze_draft_workflow(input: dict) -> dict:
-    """Analyze a draft and return structured coaching feedback. Does NOT modify the draft."""
-    draft_text = input.get("draft_text") or ""
-    context = input.get("context") or {}
-    try:
-        analysis = analyze_draft(draft_text, context)
-        return {
-            "ok": True,
-            "type": "draft_analysis",
-            "analysis": analysis,
-            "draft_text": draft_text,
-        }
-    except OpenAIError as e:
-        return {
-            "ok": False,
-            "type": "draft_analysis",
-            "error": str(e),
-            "draft_text": draft_text,
-        }
-
-
-def draft_question_workflow(input: dict) -> dict:
-    """Answer an educational question about the draft. Does NOT modify the draft."""
-    question = input.get("question") or ""
-    draft_text = input.get("draft_text") or ""
-    context = input.get("context") or {}
-    try:
-        answer = answer_draft_question(question, draft_text, context)
-        return {"ok": True, "type": "draft_question", "answer": answer}
-    except OpenAIError as e:
-        return {"ok": False, "type": "draft_question", "answer": str(e)}
-
-
 def _resolve_gmail_credentials(user_id: str) -> dict | None:
     """Resolve Gmail OAuth credentials from connected_accounts, refreshing if expired."""
     creds = get_google_credentials(user_id)
@@ -543,12 +510,6 @@ def run_workflow(input: dict) -> dict:
 
     if workflow_type == "draft_message":
         return draft_message(input)
-
-    if workflow_type == "draft_analysis":
-        return analyze_draft_workflow(input)
-
-    if workflow_type == "draft_question":
-        return draft_question_workflow(input)
 
     if workflow_type == "send_outreach":
         return send_outreach(input)

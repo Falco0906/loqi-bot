@@ -27,7 +27,7 @@ import asyncio
 import logging
 import os
 import time
-from typing import Any
+from typing import Any, Callable
 
 log = logging.getLogger(__name__)
 
@@ -64,6 +64,13 @@ _AI_MARKERS = (
 )
 _OUTBOUND_MARKERS = ("/send", "/schedule", "/reply", "/follow-up", "/cancel-schedule")
 
+# Web-session identity cache used only to key rate-limit buckets. The caller
+# supplies the minimal session-owner lookup so this module stays independent
+# of ConversationEngine and never loads conversation/workflow state.
+_IDENTITY_TTL_SECONDS = 30.0
+_IDENTITY_CACHE_MAX = 5000
+_identity_cache: dict[str, tuple[float, str]] = {}
+
 
 def classify_rate_limit(path: str) -> str:
     if path in _HEALTH_PATHS:
@@ -75,6 +82,37 @@ def classify_rate_limit(path: str) -> str:
     if any(marker in path for marker in _AI_MARKERS):
         return "ai"
     return "default"
+
+
+async def resolve_rate_limit_identity(
+    session_token: str,
+    lookup_user_id: Callable[[str], str | None],
+) -> str:
+    """Return a web-session owner for rate limiting, or ``""`` on failure."""
+    if not session_token:
+        return ""
+    now = time.monotonic()
+    cached = _identity_cache.get(session_token)
+    if cached is not None:
+        expires_at, cached_user_id = cached
+        if expires_at > now:
+            return cached_user_id
+        _identity_cache.pop(session_token, None)
+
+    try:
+        user_id = await asyncio.to_thread(lookup_user_id, session_token)
+    except Exception as error:  # noqa: BLE001 — rate limiting must never fail a request
+        log.warning("rate_limit_identity_lookup_failed error=%s", error)
+        return ""
+    if user_id:
+        if len(_identity_cache) >= _IDENTITY_CACHE_MAX:
+            expired = [key for key, (expires_at, _) in _identity_cache.items() if expires_at <= now]
+            for key in expired:
+                _identity_cache.pop(key, None)
+            if len(_identity_cache) >= _IDENTITY_CACHE_MAX:
+                _identity_cache.clear()
+        _identity_cache[session_token] = (now + _IDENTITY_TTL_SECONDS, user_id)
+    return user_id
 
 
 def rate_limit_enabled(env: dict[str, str] | None = None) -> bool:

@@ -18,6 +18,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import main as main_module
+from services import rate_limit as rate_limit_module
 from services.rate_limit import rate_limiter
 
 TOKEN_A = "rl-token-a"
@@ -187,3 +188,63 @@ class TestFailClosed:
         # pass-through that would let abuse through.
         assert resp.status_code == 500
         assert SENTINEL not in resp.text
+
+
+class TestRateLimitIdentityResolution:
+    """Freeze the server-derived identity/cache behavior before its R12 move."""
+
+    def test_identity_lookup_is_cached_for_the_ttl(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(rate_limit_module, "_identity_cache", {})
+        monkeypatch.setattr(
+            main_module.engine,
+            "get_web_session_user_id",
+            lambda token: calls.append(token) or USER_A,
+        )
+
+        async def run():
+            first = await rate_limit_module.resolve_rate_limit_identity(
+                TOKEN_A, main_module.engine.get_web_session_user_id
+            )
+            second = await rate_limit_module.resolve_rate_limit_identity(
+                TOKEN_A, main_module.engine.get_web_session_user_id
+            )
+            return first, second
+
+        assert asyncio.run(run()) == (USER_A, USER_A)
+        assert calls == [TOKEN_A]
+
+    def test_expired_identity_cache_entry_is_refreshed(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            rate_limit_module,
+            "_identity_cache",
+            {TOKEN_A: (0.0, "stale-user")},
+        )
+        monkeypatch.setattr(
+            main_module.engine,
+            "get_web_session_user_id",
+            lambda token: calls.append(token) or USER_A,
+        )
+
+        async def run():
+            return await rate_limit_module.resolve_rate_limit_identity(
+                TOKEN_A, main_module.engine.get_web_session_user_id
+            )
+
+        assert asyncio.run(run()) == USER_A
+        assert calls == [TOKEN_A]
+
+    def test_lookup_failure_falls_back_to_ip_identity(self, monkeypatch):
+        monkeypatch.setattr(rate_limit_module, "_identity_cache", {})
+
+        def fail_lookup(_token):
+            raise RuntimeError("lookup unavailable")
+
+        monkeypatch.setattr(main_module.engine, "get_web_session_user_id", fail_lookup)
+
+        assert asyncio.run(
+            rate_limit_module.resolve_rate_limit_identity(
+                TOKEN_A, main_module.engine.get_web_session_user_id
+            )
+        ) == ""

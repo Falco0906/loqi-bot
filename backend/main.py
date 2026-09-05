@@ -704,58 +704,6 @@ def _classify_rewrite_strategy(instruction: str) -> str:
 
 # ── Logging Middleware ──
 
-# Rate-limit identity cache: session_token -> (expires_at, user_id).
-#
-# PR-P1.1: rate limiting only needs the owning user id, not the full web
-# session summary (which costs ~9-10 sequential Supabase round trips and was
-# executed synchronously on the event loop for EVERY request). We resolve the
-# identity via the cheap `get_web_session` lookup (1-3 queries) off the event
-# loop, and memoize it briefly. Only the non-sensitive user-id string is
-# cached; no conversations/messages/tasks data is involved.
-_RATE_LIMIT_IDENTITY_TTL_SECONDS = 30.0
-_RATE_LIMIT_IDENTITY_CACHE_MAX = 5000
-_rate_limit_identity_cache: dict[str, tuple[float, str]] = {}
-
-
-async def _resolve_rate_limit_identity(session_token: str) -> str:
-    """Return the user id owning this web-session token ("").
-
-    Deliberately cheap: never loads conversations/messages/workflow state.
-    Results are cached in-process for a short TTL so bursts of requests from
-    one tab cost at most one small lookup per TTL window.
-    """
-    if not session_token:
-        return ""
-    now = time.monotonic()
-    cached = _rate_limit_identity_cache.get(session_token)
-    if cached is not None:
-        expires_at, cached_user_id = cached
-        if expires_at > now:
-            return cached_user_id
-        _rate_limit_identity_cache.pop(session_token, None)
-
-    try:
-        # Uses the module-level `engine` instance so tests (and future
-        # decorators) can patch identity resolution in one place.
-        user_id = await asyncio.to_thread(engine.get_web_session_user_id, session_token)
-    except Exception as error:  # noqa: BLE001 — rate limiting must never fail a request
-        log.warning("rate_limit_identity_lookup_failed error=%s", error)
-        return ""
-    if user_id:
-        if len(_rate_limit_identity_cache) >= _RATE_LIMIT_IDENTITY_CACHE_MAX:
-            # Opportunistic prune; the map is bounded so it cannot grow forever.
-            expired = [k for k, (exp, _) in _rate_limit_identity_cache.items() if exp <= now]
-            for key in expired:
-                _rate_limit_identity_cache.pop(key, None)
-            if len(_rate_limit_identity_cache) >= _RATE_LIMIT_IDENTITY_CACHE_MAX:
-                _rate_limit_identity_cache.clear()
-        _rate_limit_identity_cache[session_token] = (
-            now + _RATE_LIMIT_IDENTITY_TTL_SECONDS,
-            user_id,
-        )
-    return user_id
-
-
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
     """PR10.5 — production rate limiting.
@@ -769,7 +717,7 @@ async def rate_limit_middleware(request: Request, call_next):
     summary. Only the owning user id is needed here; it is resolved with the
     minimal lookup off the event loop and short-cached.
     """
-    from services.rate_limit import classify_rate_limit, rate_limiter
+    from services.rate_limit import classify_rate_limit, rate_limiter, resolve_rate_limit_identity
 
     category = classify_rate_limit(request.url.path)
     if category == "health":
@@ -782,7 +730,7 @@ async def rate_limit_middleware(request: Request, call_next):
     session_token = identity_dependencies.web_session_token(request)
     identity = f"ip:{request.client.host if request.client else 'unknown'}"
     if session_token:
-        user_id = await _resolve_rate_limit_identity(session_token)
+        user_id = await resolve_rate_limit_identity(session_token, engine.get_web_session_user_id)
         if user_id:
             identity = f"u:{user_id}"
         try:

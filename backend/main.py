@@ -2890,7 +2890,6 @@ async def execute_workflow_endpoint(session_token: str, payload: ExecuteWorkflow
     }
 
 
-@app.get("/api/web/session/{session_token}/workflows/{workflow_id}")
 def _require_workflow_owned(workflow_id: str, request: Request, session_token: str = ""):
     """Return the workflow runtime only when it belongs to the caller's session.
 
@@ -2907,6 +2906,7 @@ def _require_workflow_owned(workflow_id: str, request: Request, session_token: s
     return runtime
 
 
+@app.get("/api/web/session/{session_token}/workflows/{workflow_id}")
 async def get_workflow_status(session_token: str, workflow_id: str, request: Request = None):
     runtime = _require_workflow_owned(workflow_id, request, session_token)
     progress = calculate_progress(runtime)

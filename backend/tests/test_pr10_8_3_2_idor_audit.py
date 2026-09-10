@@ -339,6 +339,22 @@ class TestWorkflowIdor:
         result = asyncio.run(main_module.get_workflow_status("_", wf_id, _req(TOKEN_B)))
         assert result["ok"] is True
 
+    def test_status_route_returns_status_envelope(self, client):
+        """The registered route must expose the status handler, not its guard."""
+        wf_id = self._victim_workflow()
+
+        response = client.get(
+            f"/api/web/session/ignored/workflows/{wf_id}",
+            headers={"Authorization": f"Bearer {TOKEN_B}"},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body) == {"ok", "runtime", "progress"}
+        assert body["ok"] is True
+        assert body["runtime"]["workflow_id"] == wf_id
+        assert isinstance(body["progress"], dict)
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # D. Provider data IDOR (threads / messages)

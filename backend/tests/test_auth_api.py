@@ -121,7 +121,7 @@ class TestRegistrationLifecycle:
         """Email signup must bridge its identity before workspace/session use."""
         from services.persistence.config import RepositoryProvider
         from services import supabase
-        from services import workspace_state
+        from services.workspace import state as workspace_state
 
         svc = _fresh_service()
         bridge_calls: list[tuple[str, str]] = []

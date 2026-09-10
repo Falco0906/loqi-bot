@@ -17,7 +17,7 @@ from fastapi import HTTPException
 @pytest.mark.asyncio
 async def test_search_job_is_not_created_when_discovery_insert_fails(monkeypatch):
     import services.discovery.service as discovery
-    import services.workspace_state as workspace_state
+    import services.workspace.state as workspace_state
 
     monkeypatch.setattr(workspace_state, "ensure_workspace", lambda _owner: "workspace-1")
     monkeypatch.setattr(discovery, "create_discovery", lambda *_args, **_kwargs: None)
@@ -54,7 +54,7 @@ async def test_discovery_finalization_fails_when_canonical_lead_persistence_fail
     marked: list[tuple[str, str, str]] = []
     monkeypatch.setattr(discovery, "get_supabase_client", lambda: Client())
     monkeypatch.setattr("services.job_engine.storage.JobStorage", Storage)
-    monkeypatch.setattr("services.workspace_state._normalize_lead", AsyncMock(return_value=None))
+    monkeypatch.setattr("services.workspace.state._normalize_lead", AsyncMock(return_value=None))
     monkeypatch.setattr(discovery, "mark_discovery_status", lambda *args: marked.append(args))
 
     completed = await discovery.finalize_discovery(

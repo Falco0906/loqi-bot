@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 import main
-from services import workspace_context
+from services.workspace import access as workspace_context
 
 
 def _request(headers=()):
@@ -56,7 +56,7 @@ async def test_legacy_workspace_fallback_only_applies_when_no_workspace_exists(m
         return "legacy-workspace"
 
     monkeypatch.setattr(workspace_context, "resolve_selected_workspace_id", no_workspace)
-    monkeypatch.setattr("services.workspace_state._async_workspace", legacy_workspace)
+    monkeypatch.setattr("services.workspace.state._async_workspace", legacy_workspace)
 
     assert await workspace_context.resolve_legacy_workspace_id(None, "legacy-user") == "legacy-workspace"
 

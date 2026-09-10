@@ -28,7 +28,7 @@ from fastapi.testclient import TestClient
 
 import main as main_module
 import services.outbound.service as outbound_service
-import services.workspace_state as workspace_state
+import services.workspace.state as workspace_state
 from services.outbound import outbound_registry
 from services.outbound.outbound_models import (
     DraftMessage,

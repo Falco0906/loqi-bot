@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import pytest
 
-from services.workspace_context import (
+from services.workspace.access import (
     AmbiguousWorkspaceError,
     NoWorkspaceAvailable,
     WorkspaceAccessDenied,
@@ -207,7 +207,7 @@ class TestWorkspaceSwitchChangesResourceBoundary:
                                        "name": "Campaign Y", "created_at": _iso(), "updated_at": _iso()})
 
     def test_load_workspace_state_scoped_to_selected_workspace(self):
-        from services.workspace_state import load_workspace_state
+        from services.workspace.state import load_workspace_state
         from services.persistence import (
             set_connection_manager, reset_connection_manager,
             set_repository_provider, reset_repository_provider, RepositoryProvider,
@@ -221,7 +221,7 @@ class TestWorkspaceSwitchChangesResourceBoundary:
         set_repository_provider(RepositoryProvider.SUPABASE)
         try:
             from unittest.mock import patch
-            with patch("services.workspace_state.get_supabase_client", return_value=db):
+            with patch("services.workspace.state.get_supabase_client", return_value=db):
                 a1 = load_workspace_state("u1", workspace_id="W-A1")
                 a2 = load_workspace_state("u1", workspace_id="W-A2")
             assert [c["id"] for c in a1["campaigns"]] == ["X"]
@@ -231,7 +231,7 @@ class TestWorkspaceSwitchChangesResourceBoundary:
             reset_repository_provider()
 
     def test_resource_write_under_selected_workspace(self):
-        from services.workspace_state import _write_campaign_row
+        from services.workspace.state import _write_campaign_row
         from services.persistence import (
             set_connection_manager, reset_connection_manager,
             set_repository_provider, reset_repository_provider, RepositoryProvider,
@@ -245,7 +245,7 @@ class TestWorkspaceSwitchChangesResourceBoundary:
         try:
             from unittest.mock import patch
             import asyncio
-            with patch("services.workspace_state.get_supabase_client", return_value=db):
+            with patch("services.workspace.state.get_supabase_client", return_value=db):
                 asyncio.run(_write_campaign_row("u1", {
                     "id": "new-c", "name": "New", "status": "planning",
                 }, workspace_id="W-A2"))
@@ -293,7 +293,7 @@ class TestWorkspaceCreation:
 class TestRoleRestrictions:
 
     def test_member_cannot_create_workspace(self):
-        from services.workspace_context import active_memberships
+        from services.workspace.access import active_memberships
         db = FakeClient({"memberships": [
             {"user_id": "u1", "organization_id": "org-A", "role": "member", "status": "active"},
         ]})
@@ -302,7 +302,7 @@ class TestRoleRestrictions:
         assert m["role"] not in ("owner", "admin")
 
     def test_owner_can_create_workspace(self):
-        from services.workspace_context import active_memberships
+        from services.workspace.access import active_memberships
         db = FakeClient({"memberships": [
             {"user_id": "u1", "organization_id": "org-A", "role": "owner", "status": "active"},
         ]})
@@ -365,7 +365,7 @@ class TestSelectedWorkspacePropagation:
         return db
 
     def test_resource_visibility_switches_with_workspace(self):
-        from services.workspace_state import load_workspace_state, load_drafts_only
+        from services.workspace.state import load_workspace_state, load_drafts_only
         from services.persistence import (
             set_connection_manager, reset_connection_manager,
             set_repository_provider, reset_repository_provider, RepositoryProvider,
@@ -378,7 +378,7 @@ class TestSelectedWorkspacePropagation:
         set_repository_provider(RepositoryProvider.SUPABASE)
         try:
             from unittest.mock import patch
-            with patch("services.workspace_state.get_supabase_client", return_value=db):
+            with patch("services.workspace.state.get_supabase_client", return_value=db):
                 a = load_workspace_state("u1", workspace_id="W-A1")
                 b = load_workspace_state("u1", workspace_id="W-A2")
                 drafts_a = load_drafts_only("u1", workspace_id="W-A1")
@@ -424,7 +424,7 @@ class TestSelectedWorkspacePropagation:
             assert discovery.get_discovery("dvB", workspace_id="W-A2") is not None
 
     def test_draft_write_persists_selected_workspace(self):
-        from services.workspace_state import _write_draft_row
+        from services.workspace.state import _write_draft_row
         from services.persistence import (
             set_connection_manager, reset_connection_manager,
             set_repository_provider, reset_repository_provider, RepositoryProvider,
@@ -438,7 +438,7 @@ class TestSelectedWorkspacePropagation:
         try:
             from unittest.mock import patch
             import asyncio
-            with patch("services.workspace_state.get_supabase_client", return_value=db):
+            with patch("services.workspace.state.get_supabase_client", return_value=db):
                 asyncio.run(_write_draft_row("u1", {"id": "d-new", "text": "hi"}, workspace_id="W-A2"))
             rows = db.tables["drafts"]
             new = [d for d in rows if d["id"] == "d-new"]

@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
 import services.identity.dependencies as identity_dependencies
-import services.workspace_context as workspace_access
+import services.workspace.access as workspace_access
 from services.identity.api import router as auth_router
 from services.onboarding.api import router as onboarding_router
 from services.organizations.api import router as organizations_router, _build_org_deps, register_deps as register_org_deps
@@ -477,7 +477,7 @@ def _build_copilot_workspace_context(
     campaigns = []
     drafts = []
     try:
-        from services.workspace_state import load_workspace_state
+        from services.workspace.state import load_workspace_state
         state = load_workspace_state(
             user_id,
             include_details=False,
@@ -1220,7 +1220,7 @@ async def create_web_session(payload: CreateWebSessionRequest, request: Request)
                 user_id,
                 canonical_session_id,
             )
-            from services.workspace_state import ensure_workspace
+            from services.workspace.state import ensure_workspace
             await asyncio.to_thread(ensure_workspace, user_id)
         return result
     except ValueError as error:
@@ -2099,7 +2099,7 @@ async def list_workspaces(session_token: str, request: Request):
     """List workspaces in every organization the caller actively belongs to."""
     session_token = identity_dependencies.web_session_token(request)
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    from services.workspace_context import workspaces_for_user
+    from services.workspace.access import workspaces_for_user
     ws = await asyncio.to_thread(workspaces_for_user, None, owner_id)
     return {"ok": True, "workspaces": ws}
 
@@ -2137,7 +2137,7 @@ async def create_workspace(session_token: str, payload: CreateWorkspaceRequest, 
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     org_id = (payload.organization_id or "").strip()
 
-    from services.workspace_context import active_memberships
+    from services.workspace.access import active_memberships
     memberships = await asyncio.to_thread(active_memberships, None, owner_id)
     membership = next((m for m in memberships if m.get("organization_id") == org_id), None)
     if membership is None:
@@ -2495,7 +2495,7 @@ async def provider_events_endpoint(session_token: str, request: Request, provide
     durable = []
     try:
         owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-        from services.workspace_state import ensure_workspace
+        from services.workspace.state import ensure_workspace
         ws = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
         if ws:
             from services.persistence.launch.communication_persistence import list_provider_events
@@ -2557,7 +2557,7 @@ def _copilot_tool_failure_reason(tool_name: str) -> str:
 
 
 def _workspace_drafts(user_id: str, session_token: str = "", workspace_id: str = "") -> list[dict[str, Any]]:
-    from services.workspace_state import load_drafts_only
+    from services.workspace.state import load_drafts_only
     return load_drafts_only(user_id, workspace_id=workspace_id)
 
 
@@ -2641,7 +2641,7 @@ async def export_csv(session_token: str, request: Request = None):
     session_token = identity_dependencies.web_session_token(request)
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     selected_workspace = await workspace_access.resolve_selected_workspace_context(request, owner_id)
-    from services.workspace_state import load_drafts_only
+    from services.workspace.state import load_drafts_only
     drafts = await asyncio.to_thread(
         load_drafts_only,
         owner_id,
@@ -2827,7 +2827,7 @@ async def plan_workflow_endpoint(session_token: str, payload: PlanningInput, req
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     selected_workspace = await workspace_access.resolve_selected_workspace_context(request, owner_id)
     workspace_id = selected_workspace.workspace_id
-    from services.workspace_state import load_drafts_only
+    from services.workspace.state import load_drafts_only
     campaigns, drafts = await asyncio.gather(
         asyncio.to_thread(load_campaigns, owner_id, workspace_id=workspace_id),
         asyncio.to_thread(load_drafts_only, owner_id, workspace_id=workspace_id),

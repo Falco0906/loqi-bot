@@ -214,7 +214,7 @@ async def resolve_legacy_workspace_id(
         if error.status_code != 404 or error.detail != "No accessible workspace":
             raise
     try:
-        from services.workspace_state import _async_workspace
+        from services.workspace.state import _async_workspace
         return await _async_workspace(user_id) or ""
     except Exception:
         return ""

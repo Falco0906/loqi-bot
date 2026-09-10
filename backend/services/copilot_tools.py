@@ -583,7 +583,7 @@ async def execute_copilot_tool(
 
     if tool_name == "lead.save":
         from services.persistence.launch import WorkspaceLeadRepository
-        from services.workspace_state import _normalize_lead
+        from services.workspace.state import _normalize_lead
         saved_ids = [
             saved for saved in await asyncio.gather(*[
                 _normalize_lead(workspace_id, lead) for lead in leads
@@ -602,7 +602,7 @@ async def execute_copilot_tool(
         return {"ok": True, "status": "completed", "tool": tool_name, "result": {**_lead_result(discovery, leads), "saved_ids": saved_ids}}
 
     if tool_name in {"lead.approve", "lead.reject"}:
-        from services.workspace_state import persist_lead_decision_awaited
+        from services.workspace.state import persist_lead_decision_awaited
         approved = tool_name == "lead.approve"
         updated = await asyncio.gather(*[
             persist_lead_decision_awaited(
@@ -622,7 +622,7 @@ async def execute_copilot_tool(
         campaign_id = str(decision.get("campaign_id") or (decision.get("page_context") or {}).get("campaign_id") or "")
         if not campaign_id:
             return {"ok": False, "status": "unavailable", "tool": tool_name, "reason": "A campaign must be selected before attaching leads."}
-        from services.workspace_state import load_campaign_state, persist_campaign_lead_id_awaited
+        from services.workspace.state import load_campaign_state, persist_campaign_lead_id_awaited
         campaign = await asyncio.to_thread(load_campaign_state, user_id, campaign_id, workspace_id=workspace_id)
         if not campaign:
             return {"ok": False, "status": "failed", "tool": tool_name, "reason": "The selected campaign is not available in this workspace."}

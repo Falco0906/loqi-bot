@@ -565,7 +565,7 @@ class OnboardingService:
         # Every user auto-owns a Personal Workspace within the org so the
         # canonical ownership chain (Org → Workspace → campaigns) holds.
         try:
-            from services.workspace_state import ensure_workspace
+            from services.workspace.state import ensure_workspace
             ensure_workspace(
                 user_id,
                 name=workspace_name,

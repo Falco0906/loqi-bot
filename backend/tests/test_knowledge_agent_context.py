@@ -169,10 +169,10 @@ class TestKnowledgeAdapter:
 
     async def test_explicit_knowledge_workspace_is_denied_without_membership(self, monkeypatch):
         from services.knowledge.service import KnowledgeService
-        from services.workspace_context import WorkspaceAccessDenied
+        from services.workspace.access import WorkspaceAccessDenied
 
         monkeypatch.setattr(
-            "services.workspace_context.resolve_workspace_context",
+            "services.workspace.access.resolve_workspace_context",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(WorkspaceAccessDenied("workspace-b")),
         )
         resolved = await KnowledgeService()._resolve_workspace("owner-a", "workspace-b")

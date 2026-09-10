@@ -137,7 +137,7 @@ def session_with_data(client):
 def _use_copilot_workspace(monkeypatch, campaigns: list[dict], drafts: list[dict]) -> None:
     """Bind Copilot integration tests to the canonical workspace projection."""
     from types import SimpleNamespace
-    import services.workspace_state as workspace_state
+    import services.workspace.state as workspace_state
 
     async def selected_workspace(_request, _owner_id):
         return SimpleNamespace(workspace_id="workspace-reasoner")

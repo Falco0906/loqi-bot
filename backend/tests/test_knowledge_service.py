@@ -183,7 +183,7 @@ def auth(monkeypatch, db):
     """Resolves session ownership for route-level tests."""
     monkeypatch.setattr(knowledge_api.identity_dependencies, "authenticated_user_id", _fake_owner("user-1"))
     monkeypatch.setattr(
-        "services.workspace_state._async_workspace", _fake_workspace)
+        "services.workspace.state._async_workspace", _fake_workspace)
     return {"owner": "user-1", "workspace": "ws-k1"}
 
 
@@ -404,14 +404,14 @@ class TestIsolation:
     async def test_6b_route_level_isolation(self, db, monkeypatch, svc):
         monkeypatch.setattr(knowledge_api.identity_dependencies, "authenticated_user_id", _fake_owner("user-2"))
         monkeypatch.setattr(
-            "services.workspace_state._async_workspace", _fake_workspace)
+            "services.workspace.state._async_workspace", _fake_workspace)
         await _r(knowledge_api.create_knowledge_item, "tok", knowledge_api.KnowledgeItemCreateRequest(
             category="icp", title="User B's ICP",
         ), MagicMock())
         # user-1 owns a different workspace and must never see it
         monkeypatch.setattr(knowledge_api.identity_dependencies, "authenticated_user_id", _fake_owner("user-1"))
         monkeypatch.setattr(
-            "services.workspace_state._async_workspace", _fake_workspace)
+            "services.workspace.state._async_workspace", _fake_workspace)
         res = await _r(knowledge_api.list_knowledge, "tok", MagicMock(), category="", q="", limit=200)
         assert res["items"] == []
         assert res["ok"] is True

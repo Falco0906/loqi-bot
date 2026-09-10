@@ -42,12 +42,12 @@ async def test_manual_campaign_returns_after_four_selected_leads_are_durable(mon
     monkeypatch.setattr("services.discovery.service.get_discovery", lambda discovery_id, workspace_id="": {
         "id": discovery_id, "workspace_id": workspace_id,
     })
-    monkeypatch.setattr("services.workspace_state.persist_campaign_row", persist_campaign)
-    monkeypatch.setattr("services.workspace_state.persist_campaign_lead_awaited", persist_lead)
-    monkeypatch.setattr("services.workspace_state.load_campaign_state", lambda _owner, campaign_id, workspace_id="": {
+    monkeypatch.setattr("services.workspace.state.persist_campaign_row", persist_campaign)
+    monkeypatch.setattr("services.workspace.state.persist_campaign_lead_awaited", persist_lead)
+    monkeypatch.setattr("services.workspace.state.load_campaign_state", lambda _owner, campaign_id, workspace_id="": {
         **persisted, "id": campaign_id, "lead_count": len(attached), "leads": leads,
     })
-    monkeypatch.setattr("services.workspace_state.append_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("services.workspace.state.append_event", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(main_module, "record_campaign_created", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(main_module, "publish", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("services.campaigns.service.maybe_auto_strategy", blocked_strategy)
@@ -99,11 +99,11 @@ async def test_manual_campaign_without_leads_returns_when_compatibility_event_is
     monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda _request: "session-1")
     monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", lambda *_args, **_kwargs: _async_value("owner-1"))
     monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", lambda *_args, **_kwargs: _async_value("workspace-1"))
-    monkeypatch.setattr("services.workspace_state.persist_campaign_row", persist_campaign)
-    monkeypatch.setattr("services.workspace_state.load_campaign_state", lambda _owner, campaign_id, workspace_id="": {
+    monkeypatch.setattr("services.workspace.state.persist_campaign_row", persist_campaign)
+    monkeypatch.setattr("services.workspace.state.load_campaign_state", lambda _owner, campaign_id, workspace_id="": {
         **persisted, "id": campaign_id, "lead_count": 0, "leads": [],
     })
-    monkeypatch.setattr("services.workspace_state.append_event", blocked_event)
+    monkeypatch.setattr("services.workspace.state.append_event", blocked_event)
     monkeypatch.setattr(main_module, "record_campaign_created", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(main_module, "publish", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(main_module, "_get_feedback", lambda: SimpleNamespace(on_campaign_created=lambda *_args: None))

@@ -267,7 +267,7 @@ class StrategicActionService:
         return {"entity_type": "knowledge_item", "entity_id": item["id"], "category": category}
 
     async def _execute_campaign(self, owner_id: str, action: StrategicAction):
-        from services.workspace_state import load_workspace_state, persist_campaign_row
+        from services.workspace.state import load_workspace_state, persist_campaign_row
         proposed = action.proposal.get("proposed_change") or {}
         state = await asyncio.to_thread(load_workspace_state, owner_id, include_details=False)
         for campaign in state.get("campaigns", []):
@@ -292,7 +292,7 @@ class StrategicActionService:
         return {"entity_type": "campaign", "entity_id": campaign["id"], "status": "planning"}
 
     async def _workspace(self, owner_id: str) -> str | None:
-        from services.workspace_state import _async_workspace
+        from services.workspace.state import _async_workspace
         return await _async_workspace(owner_id) if owner_id else None
 
     async def _owned_update(self, workspace_id: str, update_id: str):

@@ -7,7 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 import main as main_module
-import services.workspace_state as workspace_state
+import services.workspace.state as workspace_state
 from services.workflows.models import PlanningInput
 
 

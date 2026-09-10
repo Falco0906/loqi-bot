@@ -46,7 +46,7 @@ async def test_enqueue_scheduled_send_persists_a_delayed_job_before_returning(mo
     monkeypatch.setattr("services.job_engine.job_manager.create_job", create_job)
     monkeypatch.setattr(outbound, "resolve_provider_for_draft", lambda *_: "provider")
     monkeypatch.setattr(outbound, "persist_outbound_projection", lambda *_args, **_kwargs: _async(True))
-    monkeypatch.setattr("services.workspace_state.persist_draft_update_awaited", persist_update)
+    monkeypatch.setattr("services.workspace.state.persist_draft_update_awaited", persist_update)
 
     draft = _draft()
     result = await outbound.enqueue_scheduled_outbound_send(
@@ -78,11 +78,11 @@ async def test_scheduled_workflow_hydrates_then_sends_and_persists_terminal_stat
     projections: list[str] = []
     executed: list[dict] = []
 
-    monkeypatch.setattr("services.workspace_state.load_drafts_only", lambda *_args, **_kwargs: [canonical])
+    monkeypatch.setattr("services.workspace.state.load_drafts_only", lambda *_args, **_kwargs: [canonical])
     async def persist_update(*args, **_kwargs):
         updates.append(args[2])
         return True
-    monkeypatch.setattr("services.workspace_state.persist_draft_update_awaited", persist_update)
+    monkeypatch.setattr("services.workspace.state.persist_draft_update_awaited", persist_update)
     monkeypatch.setattr(outbound, "hydrate_outbound_draft", lambda *_args, **_kwargs: draft)
     monkeypatch.setattr(outbound, "resolve_provider_for_draft", lambda *_: "provider")
     monkeypatch.setattr(
@@ -121,7 +121,7 @@ async def test_cancelled_queued_send_never_reaches_the_provider(monkeypatch):
 
     monkeypatch.setattr("services.job_engine.job_manager.get_job", lambda job_id: job.to_dict() if job_id == job.id else None)
     monkeypatch.setattr("services.job_engine.job_manager.cancel_job", lambda job_id: cancelled.append(job_id) or True)
-    monkeypatch.setattr("services.workspace_state.persist_draft_update_awaited", lambda *_args, **_kwargs: _async(True))
+    monkeypatch.setattr("services.workspace.state.persist_draft_update_awaited", lambda *_args, **_kwargs: _async(True))
     monkeypatch.setattr(outbound, "persist_outbound_projection", lambda *_args, **_kwargs: _async(True))
 
     result = await outbound.cancel_scheduled_outbound_send(

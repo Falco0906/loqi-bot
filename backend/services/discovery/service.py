@@ -126,7 +126,7 @@ async def create_search_run(
     ``discovery_id`` for progress, failure, recovery, and finalization.
     """
     if not workspace_id:
-        from services.workspace_state import ensure_workspace
+        from services.workspace.state import ensure_workspace
 
         workspace_id = await asyncio.to_thread(ensure_workspace, user_id) or ""
 
@@ -650,7 +650,7 @@ async def finalize_discovery(job) -> bool:
         leads = await asyncio.to_thread(JobStorage().get_search_results, job.id)
         _log(f"[kickoff] finalize_discovery: search_results={len(leads) if leads else 0} for job {getattr(job, 'id', '')}")
 
-        from services.workspace_state import _normalize_lead
+        from services.workspace.state import _normalize_lead
 
         ws_lead_ids: list[str] = []
         normalized_leads: list[dict] = []

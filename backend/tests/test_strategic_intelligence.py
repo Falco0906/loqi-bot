@@ -137,7 +137,7 @@ def activity(monkeypatch):
     async def workspace_for_owner(owner_id):
         return WORKSPACE_A if owner_id == OWNER_A else WORKSPACE_B
 
-    monkeypatch.setattr("services.workspace_state._async_workspace", workspace_for_owner)
+    monkeypatch.setattr("services.workspace.state._async_workspace", workspace_for_owner)
     return campaign, conversations
 
 
@@ -222,7 +222,7 @@ class TestStrategicUpdatePersistence:
         async def workspace_for_owner(owner_id):
             return WORKSPACE_A
 
-        monkeypatch.setattr("services.workspace_state._async_workspace", workspace_for_owner)
+        monkeypatch.setattr("services.workspace.state._async_workspace", workspace_for_owner)
         result = asyncio.run(StrategicIntelligenceService().refresh(OWNER_A))
         assert result["updates"] == []
         assert result["patterns_found"] == 0

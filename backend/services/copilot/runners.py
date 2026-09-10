@@ -74,7 +74,7 @@ async def run_campaign(
     decision: dict[str, Any],
 ) -> dict[str, Any]:
     """Campaign tool adapter over the existing workspace and job services."""
-    from services.workspace_state import (
+    from services.workspace.state import (
         append_event,
         load_campaign_state,
         load_workspace_state,
@@ -256,7 +256,7 @@ async def run_outreach(
     decision: dict[str, Any],
 ) -> dict[str, Any]:
     """Copilot adapter over canonical workspace and outbound draft services."""
-    from services.workspace_state import load_drafts_only, persist_draft_update_awaited
+    from services.workspace.state import load_drafts_only, persist_draft_update_awaited
 
     page = decision.get("page_context") or {}
     draft_id = str(decision.get("draft_id") or page.get("draft_id") or page.get("active_draft_id") or "").strip()
@@ -601,7 +601,7 @@ async def run_analytics(
     decision: dict[str, Any],
 ) -> dict[str, Any]:
     """Read current, workspace-scoped analytics from canonical snapshots."""
-    from services.workspace_state import load_campaign_state, load_workspace_state
+    from services.workspace.state import load_campaign_state, load_workspace_state
     from services.workspace_snapshot import build_snapshot, enrich_campaigns
 
     page = decision.get("page_context") or {}

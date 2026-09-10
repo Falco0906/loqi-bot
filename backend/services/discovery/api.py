@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from services.identity import dependencies as identity_dependencies
-from services import workspace_context as workspace_access
+from services.workspace import access as workspace_access
 from services.discovery.service import (
     DiscoveryJobLifecycleError,
     create_search_run,

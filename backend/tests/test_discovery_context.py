@@ -17,7 +17,7 @@ from services.commercial_qualifier import score_lead
 from services.discovery_context import retrieve_discovery_context
 from services.persistence.launch.models import WorkspaceLead
 from services.persistence.launch.repositories import WorkspaceLeadRepository
-from services.workspace_state import _qualification_metadata
+from services.workspace.state import _qualification_metadata
 
 
 def _knowledge_context():

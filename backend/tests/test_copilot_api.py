@@ -158,7 +158,7 @@ class TestCopilotOperationBoundary:
                 "drafts": [],
             }
 
-        monkeypatch.setattr("services.workspace_state.load_workspace_state", load_state)
+        monkeypatch.setattr("services.workspace.state.load_workspace_state", load_state)
         monkeypatch.setattr(
             main_module,
             "build_snapshot",
@@ -219,7 +219,7 @@ class TestCopilotOperationBoundary:
     @pytest.mark.asyncio
     async def test_analytics_workspace_returns_authoritative_snapshot_metrics(self, monkeypatch):
         monkeypatch.setattr(
-            "services.workspace_state.load_workspace_state",
+            "services.workspace.state.load_workspace_state",
             lambda *_args, **_kwargs: {"campaigns": [{"id": "c-1", "name": "Outbound", "lead_count": 12, "status": "planning"}], "drafts": []},
         )
         monkeypatch.setattr(
@@ -236,7 +236,7 @@ class TestCopilotOperationBoundary:
     @pytest.mark.asyncio
     async def test_analytics_campaign_requires_real_selected_campaign(self, monkeypatch):
         monkeypatch.setattr(
-            "services.workspace_state.load_workspace_state",
+            "services.workspace.state.load_workspace_state",
             lambda *_args, **_kwargs: {"campaigns": [], "drafts": []},
         )
         result = await main_module.copilot_runners.run_analytics(
@@ -358,7 +358,7 @@ class TestCopilotOperationBoundary:
     @pytest.mark.asyncio
     async def test_outreach_read_uses_owned_workspace_drafts(self, monkeypatch):
         monkeypatch.setattr(
-            "services.workspace_state.load_drafts_only",
+            "services.workspace.state.load_drafts_only",
             lambda _user, _workspace: [{"id": "draft-1", "campaign_id": "campaign-1", "subject": "Hello", "text": "Hi there", "status": "pending"}],
         )
         result = await main_module.copilot_runners.run_outreach(
@@ -371,7 +371,7 @@ class TestCopilotOperationBoundary:
     @pytest.mark.asyncio
     async def test_outreach_send_and_schedule_require_explicit_confirmation(self, monkeypatch):
         monkeypatch.setattr(
-            "services.workspace_state.load_drafts_only",
+            "services.workspace.state.load_drafts_only",
             lambda _user, _workspace: [{"id": "draft-1", "subject": "Hello", "text": "Hi", "status": "pending"}],
         )
         for tool in ("outreach.draft.send", "outreach.draft.schedule"):
@@ -393,7 +393,7 @@ class TestCopilotOperationBoundary:
             "services.knowledge.context_adapter.retrieve_knowledge_context",
             lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}),
         )
-        monkeypatch.setattr("services.workspace_state.ensure_workspace", lambda _user_id: "workspace-1")
+        monkeypatch.setattr("services.workspace.state.ensure_workspace", lambda _user_id: "workspace-1")
 
         async def fake_outreach_runner(*_args, **_kwargs):
             return {"ok": True, "status": "completed", "tool": "outreach.drafts.read", "result": {"drafts": [{"id": "draft-1", "subject": "Hello"}]}}
@@ -818,7 +818,7 @@ class TestCopilotOperationBoundary:
             "services.knowledge.context_adapter.retrieve_knowledge_context",
             lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}),
         )
-        monkeypatch.setattr("services.workspace_state.ensure_workspace", lambda _user_id: "workspace-1")
+        monkeypatch.setattr("services.workspace.state.ensure_workspace", lambda _user_id: "workspace-1")
 
         async def fake_campaign_runner(*_args, **_kwargs):
             return {
@@ -904,7 +904,7 @@ class TestCopilotOperationBoundary:
             calls.append((user_id, lead["id"], approved, workspace_id))
             return lead["id"]
 
-        monkeypatch.setattr("services.workspace_state.persist_lead_decision_awaited", persist)
+        monkeypatch.setattr("services.workspace.state.persist_lead_decision_awaited", persist)
         completed = await execute_copilot_tool(
             "lead.approve", user_id="u-1", workspace_id="w-1", session_token="s-1",
             decision={**decision, "confirmed": True}, discovery_runner=None,
@@ -927,7 +927,7 @@ class TestCopilotOperationBoundary:
             "services.knowledge.context_adapter.retrieve_knowledge_context",
             lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}),
         )
-        monkeypatch.setattr("services.workspace_state.ensure_workspace", lambda _user_id: "workspace-1")
+        monkeypatch.setattr("services.workspace.state.ensure_workspace", lambda _user_id: "workspace-1")
         monkeypatch.setattr(
             "services.discovery.service.get_discovery",
             lambda *_args: {
@@ -969,7 +969,7 @@ class TestCopilotOperationBoundary:
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
         monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
         monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}))
-        monkeypatch.setattr("services.workspace_state.ensure_workspace", lambda _user_id: "workspace-1")
+        monkeypatch.setattr("services.workspace.state.ensure_workspace", lambda _user_id: "workspace-1")
         monkeypatch.setattr("services.discovery.service.create_search_run", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("read/conversation must not create Discovery")))
         monkeypatch.setattr("services.discovery.service.get_discovery", lambda *_args: {"id": "d-1", "status": "completed", "title": "Restaurant leads", "discovery_leads": [], "discovery_companies": [], "summary": {}})
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
@@ -995,7 +995,7 @@ class TestCopilotOperationBoundary:
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
         monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
         monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}))
-        monkeypatch.setattr("services.workspace_state.ensure_workspace", lambda _user_id: "workspace-1")
+        monkeypatch.setattr("services.workspace.state.ensure_workspace", lambda _user_id: "workspace-1")
         async def fail_runner(*_args, **_kwargs):
             raise RuntimeError("provider unavailable")
         monkeypatch.setattr("services.copilot.runners.run_discovery", fail_runner)

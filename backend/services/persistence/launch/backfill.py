@@ -141,7 +141,7 @@ async def _backfill_session_async(user_id: str, session_id: str) -> None:
     if client is None:
         return
 
-    from services.workspace_state import (
+    from services.workspace.state import (
         _events,
         _persist_campaign_lead_row,
         _update_campaign_row,
@@ -159,7 +159,7 @@ async def _backfill_session_async(user_id: str, session_id: str) -> None:
     # id, so the "already seeded" guard must key on the durable workspace, not
     # the session id. Falls back to the session id (legacy workspaces where the
     # two are the same row).
-    from services.workspace_state import _async_workspace
+    from services.workspace.state import _async_workspace
 
     try:
         workspace_id = await _async_workspace(user_id) or session_id

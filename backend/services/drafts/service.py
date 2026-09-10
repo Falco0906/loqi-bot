@@ -283,7 +283,7 @@ async def schedule_campaign_draft_batch(
 ) -> dict[str, Any]:
     """Persist campaign generation metadata before starting its durable batch."""
     from services.job_engine import job_manager
-    from services.workspace_state import persist_campaign_update_awaited
+    from services.workspace.state import persist_campaign_update_awaited
 
     batch = await enqueue_draft_batch(
         session_token, owner_id, workspace_id, leads, campaign_id, start=False,
@@ -328,7 +328,7 @@ async def run_draft_batch_job(job, on_progress) -> dict[str, Any]:
     """Generate drafts from durable batch items, resuming incomplete items only."""
     from services.job_engine import job_manager
     from services.knowledge.context_adapter import retrieve_knowledge_context
-    from services.workspace_state import (
+    from services.workspace.state import (
         load_campaign_state,
         load_workspace_state,
         persist_campaign_update,
@@ -523,7 +523,7 @@ async def start_campaign_draft_generation(
     campaign_id: str,
 ) -> dict[str, Any]:
     """Create or reuse the durable draft-batch job for one campaign."""
-    from services.workspace_state import load_campaign_state
+    from services.workspace.state import load_campaign_state
 
     target = await asyncio.to_thread(
         load_campaign_state,
@@ -576,7 +576,7 @@ async def campaign_draft_generation_status(
     campaign_id: str,
 ) -> dict[str, Any]:
     """Return the frozen campaign-generation status from durable state."""
-    from services.workspace_state import load_campaign_state
+    from services.workspace.state import load_campaign_state
 
     active_job = await active_draft_batch(owner_id, workspace_id, campaign_id)
     if active_job:
@@ -632,7 +632,7 @@ async def reconcile_stale_draft_batch_jobs() -> int:
 
 def load_drafts(owner_id: str, *, workspace_id: str = "") -> list[dict[str, Any]]:
     """Load canonical workspace drafts without legacy session projections."""
-    from services.workspace_state import load_drafts_only
+    from services.workspace.state import load_drafts_only
 
     return load_drafts_only(owner_id, workspace_id=workspace_id)
 
@@ -663,7 +663,7 @@ async def list_drafts(owner_id: str, workspace_id: str) -> dict[str, Any]:
 
 
 async def update_draft(session_token: str, owner_id: str, draft_id: str, text: str) -> dict[str, Any]:
-    from services.workspace_state import persist_draft_update
+    from services.workspace.state import persist_draft_update
 
     drafts = load_drafts(owner_id)
     for draft in drafts:
@@ -684,7 +684,7 @@ async def update_draft(session_token: str, owner_id: str, draft_id: str, text: s
 async def refine_draft(
     session_token: str, owner_id: str, draft_id: str, payload: dict[str, Any],
 ) -> dict[str, Any]:
-    from services.workspace_state import persist_draft_update
+    from services.workspace.state import persist_draft_update
 
     target = next((draft for draft in load_drafts(owner_id) if draft.get("id") == draft_id), None)
     if not target:
@@ -793,7 +793,7 @@ async def approve_draft(
     session_token: str, owner_id: str, workspace_id: str, draft_id: str,
 ) -> dict[str, Any]:
     from services.workspace_snapshot import enrich_campaigns
-    from services.workspace_state import load_workspace_state, persist_draft_update_awaited
+    from services.workspace.state import load_workspace_state, persist_draft_update_awaited
 
     state = await asyncio.to_thread(
         load_workspace_state, owner_id, include_details=False, workspace_id=workspace_id,
@@ -837,7 +837,7 @@ async def approve_draft(
 
 
 async def undo_draft(session_token: str, owner_id: str, draft_id: str) -> dict[str, Any]:
-    from services.workspace_state import persist_draft_update
+    from services.workspace.state import persist_draft_update
 
     target = next((draft for draft in load_drafts(owner_id) if draft.get("id") == draft_id), None)
     if not target:
@@ -848,7 +848,7 @@ async def undo_draft(session_token: str, owner_id: str, draft_id: str) -> dict[s
 async def draft_history(
     session_token: str, owner_id: str, workspace_id: str, draft_id: str,
 ) -> dict[str, Any]:
-    from services.workspace_state import load_drafts_only
+    from services.workspace.state import load_drafts_only
 
     draft = next(
         (

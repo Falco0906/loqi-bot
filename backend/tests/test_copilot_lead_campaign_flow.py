@@ -69,10 +69,10 @@ async def test_campaign_create_returns_authoritative_campaign_and_attached_ids(m
             ],
         },
     )
-    monkeypatch.setattr("services.workspace_state.persist_campaign_row", persist_row)
-    monkeypatch.setattr("services.workspace_state.persist_campaign_lead_id_awaited", attach)
-    monkeypatch.setattr("services.workspace_state.load_campaign_state", lambda _u, _c, workspace_id="": persisted)
-    monkeypatch.setattr("services.workspace_state.append_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("services.workspace.state.persist_campaign_row", persist_row)
+    monkeypatch.setattr("services.workspace.state.persist_campaign_lead_id_awaited", attach)
+    monkeypatch.setattr("services.workspace.state.load_campaign_state", lambda _u, _c, workspace_id="": persisted)
+    monkeypatch.setattr("services.workspace.state.append_event", lambda *_args, **_kwargs: None)
 
     result = await runners.run_campaign(
         "campaign.create",
@@ -109,9 +109,9 @@ async def test_campaign_attach_returns_canonical_lead_ids_without_new_discovery(
             "discovery_companies": [],
         }),
     )
-    monkeypatch.setattr("services.workspace_state.load_campaign_state", lambda *_args, **_kwargs: {"id": "campaign-1"})
+    monkeypatch.setattr("services.workspace.state.load_campaign_state", lambda *_args, **_kwargs: {"id": "campaign-1"})
     monkeypatch.setattr(
-        "services.workspace_state.persist_campaign_lead_id_awaited",
+        "services.workspace.state.persist_campaign_lead_id_awaited",
         lambda *_args, **_kwargs: _async_value("workspace-lead-a"),
     )
 
@@ -206,14 +206,14 @@ async def test_endpoint_rank_then_campaign_stays_read_only_in_mvp(monkeypatch):
         persisted.update(campaign)
         return True
 
-    monkeypatch.setattr("services.workspace_state.persist_campaign_row", persist_campaign)
+    monkeypatch.setattr("services.workspace.state.persist_campaign_row", persist_campaign)
     async def persist_attachment(_u, _campaign, lead, workspace_id=""):
         attached.append(str(lead["id"]))
         return str(lead["id"])
 
-    monkeypatch.setattr("services.workspace_state.persist_campaign_lead_id_awaited", persist_attachment)
-    monkeypatch.setattr("services.workspace_state.load_campaign_state", lambda *_args, **_kwargs: {**persisted, "lead_count": len(attached)})
-    monkeypatch.setattr("services.workspace_state.append_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("services.workspace.state.persist_campaign_lead_id_awaited", persist_attachment)
+    monkeypatch.setattr("services.workspace.state.load_campaign_state", lambda *_args, **_kwargs: {**persisted, "lead_count": len(attached)})
+    monkeypatch.setattr("services.workspace.state.append_event", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("services.campaigns.service.maybe_auto_strategy", _noop_async)
 
     request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))

@@ -35,7 +35,7 @@ def _fake_owner(owner_id: str):
 @pytest.fixture
 def fake_persist(monkeypatch):
     """Persist campaign updates in-memory; assertable from the test."""
-    import services.workspace_state as workspace_state
+    import services.workspace.state as workspace_state
     updates: list[tuple[str, str, dict]] = []
 
     def fake(user_id: str, campaign_id: str, payload: dict, **_kwargs) -> bool:
@@ -298,7 +298,7 @@ class TestDraftBatchIdempotency:
         monkeypatch.setattr(main_module, "load_campaigns",
                             lambda uid, **_kwargs: [campaign])
         monkeypatch.setattr(
-            "services.workspace_state.load_campaign_state",
+            "services.workspace.state.load_campaign_state",
             lambda *args, **_kwargs: campaign,
         )
         launched: list = []
@@ -338,7 +338,7 @@ class TestDraftBatchIdempotency:
         monkeypatch.setattr(main_module, "load_campaigns",
                             lambda uid, **_kwargs: [campaign])
         monkeypatch.setattr(
-            "services.workspace_state.load_campaign_state",
+            "services.workspace.state.load_campaign_state",
             lambda *args, **_kwargs: campaign,
         )
         launched: list = []

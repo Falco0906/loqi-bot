@@ -286,7 +286,7 @@ class TestWorkspaceStateCanonicalFlip:
         return client
 
     def test_returns_canonical_state_when_seeded(self):
-        from services.workspace_state import load_workspace_state
+        from services.workspace.state import load_workspace_state
         t = "2026-01-01T00:00:00+00:00"
         client = self._shared_client({
             "workflow_sessions": [{"id": "ws1", "user_id": "u1", "channel": "workspace", "session_key": "u1"}],
@@ -338,7 +338,7 @@ class TestWorkspaceStateCanonicalFlip:
         })
         with patch("services.conversations.compatibility.get_supabase_client",
                    return_value=client), \
-             patch("services.workspace_state.get_supabase_client",
+             patch("services.workspace.state.get_supabase_client",
                    return_value=client):
             state = load_workspace_state("u1")
 
@@ -356,7 +356,7 @@ class TestWorkspaceStateCanonicalFlip:
 
     def test_lead_shape_contract_is_preserved(self):
         """The dict shape UI components depend on survives the canonical read."""
-        from services.workspace_state import load_workspace_state
+        from services.workspace.state import load_workspace_state
         t = "2026-01-01T00:00:00+00:00"
         client = self._shared_client({
             "workflow_sessions": [{"id": "ws1", "user_id": "u1", "channel": "workspace", "session_key": "u1"}],
@@ -396,7 +396,7 @@ class TestWorkspaceStateCanonicalFlip:
         })
         with patch("services.conversations.compatibility.get_supabase_client",
                    return_value=client), \
-             patch("services.workspace_state.get_supabase_client",
+             patch("services.workspace.state.get_supabase_client",
                    return_value=client):
             lead = load_workspace_state("u1")["campaigns"][0]["leads"][0]
 
@@ -419,7 +419,7 @@ class TestWorkspaceStateCanonicalFlip:
         assert lead["source"] == "apollo"
 
     def test_falls_back_to_projection_when_not_seeded(self):
-        from services.workspace_state import load_workspace_state
+        from services.workspace.state import load_workspace_state
         client = self._shared_client({
             "workflow_sessions": [{"id": "ws1", "user_id": "u1", "channel": "workspace", "session_key": "u1"}],
             "workspaces": [{"id": "ws1", "owner_user_id": "u1", "organization_id": "", "status": "active"}],
@@ -435,7 +435,7 @@ class TestWorkspaceStateCanonicalFlip:
         })
         with patch("services.conversations.compatibility.get_supabase_client",
                    return_value=client), \
-             patch("services.workspace_state.get_supabase_client",
+             patch("services.workspace.state.get_supabase_client",
                    return_value=client):
             state = load_workspace_state("u1")
 
@@ -447,7 +447,7 @@ class TestWorkspaceStateCanonicalFlip:
 class TestWorkspaceProjection:
 
     def test_project_from_events(self):
-        from services.workspace_state import _project_from_events
+        from services.workspace.state import _project_from_events
         events = [
             {"event_type": "campaign.created", "payload": {
                 "campaign": {"id": "c1", "name": "A", "strategy": {"angle": "x"}}}},
@@ -477,7 +477,7 @@ class TestEnsureWorkspace:
 
     def test_creates_workspace_and_owner_member(self):
         from uuid import UUID
-        from services.workspace_state import ensure_workspace
+        from services.workspace.state import ensure_workspace
         tables = {
             "workflow_sessions": [{"id": "ws1", "user_id": "u1", "channel": "workspace", "session_key": "u1"}],
             "workspaces": [],
@@ -485,7 +485,7 @@ class TestEnsureWorkspace:
         }
         client, cm = self._shared_client(tables)
         set_connection_manager(cm)
-        with patch("services.workspace_state.get_supabase_client", return_value=client):
+        with patch("services.workspace.state.get_supabase_client", return_value=client):
             ws_id = ensure_workspace("u1", name="Personal Workspace")
         # SaaS-2.1: the workspace owns its own durable uuid — NOT the workflow
         # session id, even though a workflow_sessions row exists.
@@ -499,7 +499,7 @@ class TestEnsureWorkspace:
         assert tables["workspace_members"][0]["role"] == "owner"
 
     def test_workspace_id_survives_workflow_session_recreation(self):
-        from services.workspace_state import ensure_workspace
+        from services.workspace.state import ensure_workspace
         tables = {
             "workflow_sessions": [{"id": "ws1", "user_id": "u1", "channel": "workspace", "session_key": "u1"}],
             "workspaces": [{"id": "w-0001", "owner_user_id": "u1", "status": "active"}],
@@ -507,19 +507,19 @@ class TestEnsureWorkspace:
         }
         client, cm = self._shared_client(tables)
         set_connection_manager(cm)
-        with patch("services.workspace_state.get_supabase_client", return_value=client):
+        with patch("services.workspace.state.get_supabase_client", return_value=client):
             ws_id = ensure_workspace("u1")
         # Existing durable workspace resolved by owner — not the workflow session id.
         assert ws_id == "w-0001"
         assert len(tables["workspaces"]) == 1
         # A recreated workflow session must not change the workspace identity.
         tables["workflow_sessions"] = [{"id": "ws-NEW", "user_id": "u1", "channel": "workspace", "session_key": "u1"}]
-        with patch("services.workspace_state.get_supabase_client", return_value=client):
+        with patch("services.workspace.state.get_supabase_client", return_value=client):
             ws_id2 = ensure_workspace("u1")
         assert ws_id2 == "w-0001"
 
     def test_does_not_duplicate_on_second_call(self):
-        from services.workspace_state import ensure_workspace
+        from services.workspace.state import ensure_workspace
         tables = {
             "workflow_sessions": [{"id": "ws1", "user_id": "u1", "channel": "workspace", "session_key": "u1"}],
             "workspaces": [{"id": "ws1", "owner_user_id": "u1"}],
@@ -527,7 +527,7 @@ class TestEnsureWorkspace:
         }
         client, cm = self._shared_client(tables)
         set_connection_manager(cm)
-        with patch("services.workspace_state.get_supabase_client", return_value=client):
+        with patch("services.workspace.state.get_supabase_client", return_value=client):
             ws_id = ensure_workspace("u1")
         assert ws_id == "ws1"
         assert len(tables["workspaces"]) == 1
@@ -545,7 +545,7 @@ class TestBackfill:
              patch("services.persistence.launch.backfill.ensure_workflow_session",
                    return_value="ws1"), \
              patch("services.persistence.launch.CampaignRepository") as CRepo, \
-             patch("services.workspace_state._write_campaign_row",
+             patch("services.workspace.state._write_campaign_row",
                    new_callable=AsyncMock) as write_campaign:
             inst = CRepo.return_value
             inst.list_for_workspace = AsyncMock(
@@ -570,13 +570,13 @@ class TestBackfill:
                    return_value=MagicMock()), \
              patch("services.persistence.launch.backfill.ensure_workflow_session",
                    return_value="ws1"), \
-             patch("services.workspace_state._events", return_value=events), \
+             patch("services.workspace.state._events", return_value=events), \
              patch("services.persistence.launch.CampaignRepository") as CRepo, \
-             patch("services.workspace_state._write_campaign_row",
+             patch("services.workspace.state._write_campaign_row",
                    new_callable=AsyncMock) as write_campaign, \
-             patch("services.workspace_state._write_strategy",
+             patch("services.workspace.state._write_strategy",
                    new_callable=AsyncMock) as write_strategy, \
-             patch("services.workspace_state._write_draft_row",
+             patch("services.workspace.state._write_draft_row",
                    new_callable=AsyncMock) as write_draft:
             inst = CRepo.return_value
             inst.list_for_workspace = AsyncMock(return_value=[])
@@ -594,7 +594,7 @@ class TestGlobalLeadDedup:
 
     @pytest.mark.asyncio
     async def test_normalize_lead_dedupes_globally(self):
-        from services.workspace_state import _normalize_lead
+        from services.workspace.state import _normalize_lead
         tables = {
             "workflow_sessions": [{"id": "ws1", "user_id": "u1", "channel": "workspace", "session_key": "u1"}],
             "workspaces": [],
@@ -610,7 +610,7 @@ class TestGlobalLeadDedup:
 
         with patch("services.conversations.compatibility.get_supabase_client",
                    return_value=client), \
-             patch("services.workspace_state.get_supabase_client",
+             patch("services.workspace.state.get_supabase_client",
                    return_value=client):
             lead = {
                 "email": "Ada.Lovelace@Acme.com",
@@ -635,7 +635,7 @@ class TestGlobalLeadDedup:
 
     @pytest.mark.asyncio
     async def test_cross_workspace_shares_global_rows(self):
-        from services.workspace_state import _normalize_lead
+        from services.workspace.state import _normalize_lead
         tables = {
             "workflow_sessions": [{"id": "ws1", "user_id": "u1", "channel": "workspace", "session_key": "u1"}, {"id": "ws2"}],
             "workspaces": [],
@@ -651,7 +651,7 @@ class TestGlobalLeadDedup:
 
         with patch("services.conversations.compatibility.get_supabase_client",
                    return_value=client), \
-             patch("services.workspace_state.get_supabase_client",
+             patch("services.workspace.state.get_supabase_client",
                    return_value=client):
             lead = {"email": "a@acme.com", "company": "Acme", "domain": "acme.com"}
             ws1_lead = await _normalize_lead("ws1", lead)

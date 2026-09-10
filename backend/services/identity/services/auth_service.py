@@ -501,7 +501,7 @@ class AuthService:
                     get_repository_provider,
                 )
                 if get_repository_provider() == RepositoryProvider.SUPABASE:
-                    from services.workspace_state import ensure_workspace
+                    from services.workspace.state import ensure_workspace
                     await asyncio.to_thread(
                         ensure_workspace,
                         user.id,

@@ -90,7 +90,7 @@ def _wire_send_route(app, monkeypatch):
         return True
 
     monkeypatch.setattr(outbound_service, "require_canonical_outbound_draft", fake_canonical_draft)
-    monkeypatch.setattr("services.workspace_state.persist_draft_update_awaited", fake_persist)
+    monkeypatch.setattr("services.workspace.state.persist_draft_update_awaited", fake_persist)
     monkeypatch.setattr(
         outbound_service,
         "persist_outbound_projection",

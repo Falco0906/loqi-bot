@@ -148,7 +148,7 @@ async def compute_shared_payload(
 ) -> dict[str, Any]:
     """Load state once and compute {campaigns, drafts, snapshot, analysis,
     recommendations, brief}; dedupe concurrent callers per key."""
-    from services.workspace_state import load_workspace_state
+    from services.workspace.state import load_workspace_state
     from services.workspace_snapshot import build_snapshot
     from services.recommendation_engine import generate_recommendations
     from services.executive_brief import generate_brief

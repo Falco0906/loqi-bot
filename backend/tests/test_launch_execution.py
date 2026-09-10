@@ -24,7 +24,7 @@ def _auth_request(token="pr3b-tok-1"):
     return request
 
 
-import services.workspace_state as workspace_state
+import services.workspace.state as workspace_state
 
 
 def _draft(draft_id: str, campaign_id: str = "c-1", status: str = "approved",

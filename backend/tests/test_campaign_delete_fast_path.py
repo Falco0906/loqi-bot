@@ -11,7 +11,7 @@ import pytest
 import main as main_module
 from services.campaigns import api as campaign_api
 from services.persistence.launch import CampaignRepository
-import services.workspace_state as workspace_state
+import services.workspace.state as workspace_state
 
 
 @pytest.mark.asyncio

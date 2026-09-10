@@ -6,7 +6,7 @@ import asyncio
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from services import workspace_context as workspace_access
+from services.workspace import access as workspace_access
 from services.identity import dependencies as identity_dependencies
 from services.outbound import service
 from services.outbound.outbound_events import get_events, latest_sequence
@@ -197,7 +197,7 @@ async def outbound_list_drafts(session_token: str, request: Request, provider_id
     if provider_id and not service.provider_owned_by(provider_id, owner_id):
         raise HTTPException(status_code=404, detail="Provider not found")
     workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
-    from services.workspace_state import load_drafts_only
+    from services.workspace.state import load_drafts_only
 
     drafts = [
         service.hydrate_outbound_draft(draft, bearer_token, owner_id=owner_id)

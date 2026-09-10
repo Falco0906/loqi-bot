@@ -488,7 +488,7 @@ class KnowledgeService:
         if requested_workspace_id:
             # Callers may pass an explicit active workspace, but it is still
             # only usable when the owner has an active membership there.
-            from services.workspace_context import (
+            from services.workspace.access import (
                 AmbiguousWorkspaceError,
                 NoWorkspaceAvailable,
                 WorkspaceAccessDenied,
@@ -504,7 +504,7 @@ class KnowledgeService:
                 return context.workspace_id
             except (WorkspaceAccessDenied, NoWorkspaceAvailable, AmbiguousWorkspaceError):
                 return None
-        from services.workspace_state import _async_workspace
+        from services.workspace.state import _async_workspace
         return await _async_workspace(owner_id)
 
     async def _audit_record(

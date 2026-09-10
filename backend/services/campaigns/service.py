@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from services.workspace_state import load_workspace_state
+from services.workspace.state import load_workspace_state
 from services.world_model import EventType as WMEventType, publish
 
 log = logging.getLogger("loqi")
@@ -51,7 +51,7 @@ async def create_campaign(
     """Create a durable campaign, selected lead links, and its strategy start."""
     from fastapi import HTTPException
     from services.discovery.service import get_discovery
-    from services.workspace_state import (
+    from services.workspace.state import (
         append_event,
         delete_campaign_row_awaited,
         load_campaign_state,
@@ -161,7 +161,7 @@ async def update_campaign(
     """Persist one selected-workspace campaign update and optional launch."""
     from fastapi import HTTPException
     from services.outbound.service import dispatch_campaign_sends
-    from services.workspace_state import load_drafts_only, persist_campaign_update_awaited
+    from services.workspace.state import load_drafts_only, persist_campaign_update_awaited
     from services.workspace_timeline import record_campaign_launched
 
     target = next(
@@ -229,7 +229,7 @@ async def add_campaign_lead(
 ) -> dict[str, Any]:
     """Add one unique lead to a campaign through canonical lead links."""
     from fastapi import HTTPException
-    from services.workspace_state import persist_campaign_lead_awaited, persist_campaign_update_awaited
+    from services.workspace.state import persist_campaign_lead_awaited, persist_campaign_update_awaited
 
     target = next(
         (campaign for campaign in load_campaigns(owner_id, workspace_id=workspace_id)
@@ -286,7 +286,7 @@ async def delete_campaign(
     """Soft-delete one campaign after a scoped durable lookup."""
     from fastapi import HTTPException
     from services.persistence.launch import CampaignRepository
-    from services.workspace_state import persist_campaign_update_awaited
+    from services.workspace.state import persist_campaign_update_awaited
 
     entity = await CampaignRepository().get_for_workspace(campaign_id, workspace_id)
     if entity is None:
@@ -312,7 +312,7 @@ async def duplicate_campaign(
 ) -> dict[str, Any]:
     """Duplicate canonical campaign data without runtime or outbound state."""
     from fastapi import HTTPException
-    from services.workspace_state import duplicate_campaign as duplicate_workspace_campaign
+    from services.workspace.state import duplicate_campaign as duplicate_workspace_campaign
 
     copy = await duplicate_workspace_campaign(owner_id, campaign_id, workspace_id=workspace_id)
     if copy is None:
@@ -333,7 +333,7 @@ async def attach_discovery(
     """Attach Discovery leads to a campaign with compensated durable writes."""
     from fastapi import HTTPException
     from services.discovery.service import get_discovery
-    from services.workspace_state import (
+    from services.workspace.state import (
         load_campaign_state,
         persist_campaign_lead_id_awaited,
         persist_campaign_update_awaited,
@@ -406,12 +406,12 @@ async def attach_discovery(
 
 
 async def persist_strategy_job_meta(owner_id: str, campaign_id: str, meta: dict, *, workspace_id: str) -> bool:
-    from services.workspace_state import persist_campaign_update_awaited
+    from services.workspace.state import persist_campaign_update_awaited
     return await persist_campaign_update_awaited(owner_id, campaign_id, {"strategy_job": meta}, workspace_id=workspace_id)
 
 
 async def load_strategy_job_meta(owner_id: str, campaign_id: str, *, workspace_id: str) -> dict | None:
-    from services.workspace_state import load_campaign_state
+    from services.workspace.state import load_campaign_state
     try:
         state = await asyncio.to_thread(load_campaign_state, owner_id, campaign_id, workspace_id=workspace_id)
     except Exception:
@@ -507,7 +507,7 @@ async def run_strategy_job(job, _on_progress) -> dict[str, Any]:
             from services.ai import _fallback_playbook
             strategy = _fallback_playbook(objective, context)
         strategy.update({"objective": objective, "generated_at": datetime.now(timezone.utc).isoformat()})
-        from services.workspace_state import persist_campaign_update_awaited
+        from services.workspace.state import persist_campaign_update_awaited
         if not await persist_campaign_update_awaited(job.user_id, job.campaign_id, {"strategy": strategy}, workspace_id=workspace_id):
             raise RuntimeError("Strategy could not be persisted")
         await persist_strategy_job_meta(job.user_id, job.campaign_id, {"id": job_id, "status": "completed", "started_at": job.created_at.isoformat(), "finished_at": datetime.now(timezone.utc).isoformat(), "error": None}, workspace_id=workspace_id)

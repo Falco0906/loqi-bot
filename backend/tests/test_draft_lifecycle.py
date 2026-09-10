@@ -23,7 +23,7 @@ sys.path.insert(0, ".")
 
 import pytest
 
-import services.workspace_state as workspace_state
+import services.workspace.state as workspace_state
 import services.ai as ai_service
 from services.drafts import api as drafts_api
 from services.drafts import service as drafts_service

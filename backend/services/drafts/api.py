@@ -7,7 +7,7 @@ import time
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from services import workspace_context as workspace_access
+from services.workspace import access as workspace_access
 from services.drafts import service
 from services.identity import dependencies as identity_dependencies
 

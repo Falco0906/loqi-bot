@@ -368,7 +368,7 @@ class TestIsolation:
 class TestNoAutomaticMigration:
 
     def test_request_path_does_not_auto_migrate(self):
-        from services.workspace_state import ensure_workspace
+        from services.workspace.state import ensure_workspace
         from services.persistence import (
             set_connection_manager,
             reset_connection_manager,
@@ -384,7 +384,7 @@ class TestNoAutomaticMigration:
         set_repository_provider(RepositoryProvider.SUPABASE)
         try:
             from unittest.mock import patch
-            with patch("services.workspace_state.get_supabase_client", return_value=db):
+            with patch("services.workspace.state.get_supabase_client", return_value=db):
                 ws_id = ensure_workspace("owner-1", organization_id="org-1")
         finally:
             reset_connection_manager()

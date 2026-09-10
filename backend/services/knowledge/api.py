@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from services.identity import dependencies as identity_dependencies
 from services.knowledge.service import KnowledgeService, KnowledgeValidationError
-from services import workspace_context as workspace_access
+from services.workspace import access as workspace_access
 
 
 router = APIRouter(tags=["Knowledge"])

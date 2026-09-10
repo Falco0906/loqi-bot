@@ -46,7 +46,7 @@ def _workspace_for_provider(provider_id: str) -> str:
         user_id = getattr(provider, "user_id", "") or ""
         if not user_id:
             return ""
-        from services.workspace_state import _async_workspace
+        from services.workspace.state import _async_workspace
         return asyncio.run(_async_workspace(user_id)) or ""
     except Exception:  # noqa: BLE001
         return ""

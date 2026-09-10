@@ -18,8 +18,8 @@ from services.outbound.outbound_registry import (
     get_provider as get_outbound_provider,
     list_providers as outbound_list_providers,
 )
-import services.workspace_context as workspace_access
-import services.workspace_state as workspace_state
+import services.workspace.access as workspace_access
+import services.workspace.state as workspace_state
 from services.world_model import EventType as WMEventType, publish
 from services.communication.reply_simulator import maybe_schedule as simulate_reply
 from services.events_bus import publish_draft_event
@@ -317,7 +317,7 @@ async def enqueue_scheduled_outbound_send(
     """Persist one authorized scheduled send before it can be claimed."""
     from services.job_engine import Job, job_manager
     from services.outbound.outbound_models import DraftStatus
-    from services.workspace_state import persist_draft_update_awaited
+    from services.workspace.state import persist_draft_update_awaited
 
     run_at = _parse_send_at(send_at)
     if run_at is None:
@@ -368,7 +368,7 @@ async def cancel_scheduled_outbound_send(
     """Cancel one queued delayed send without interrupting remote provider work."""
     from services.job_engine import job_manager
     from services.outbound.outbound_models import DraftStatus
-    from services.workspace_state import persist_draft_update_awaited
+    from services.workspace.state import persist_draft_update_awaited
 
     job_id = _scheduled_job_id(outbound_draft)
     if not job_id:
@@ -407,7 +407,7 @@ async def cancel_scheduled_outbound_send(
 async def run_scheduled_outbound_send(job, on_progress) -> dict[str, Any]:
     """Execute one claimed scheduled send from its canonical Draft state."""
     from services.outbound.outbound_models import DraftStatus
-    from services.workspace_state import load_drafts_only, persist_draft_update_awaited
+    from services.workspace.state import load_drafts_only, persist_draft_update_awaited
 
     draft_id = str(job.payload.get("draft_id") or "")
     if not draft_id or not job.user_id or not job.workspace_id:
@@ -830,7 +830,7 @@ async def update_campaign_launch_progress(
     total_count: int,
 ) -> None:
     """Persist campaign send progress for the existing polling endpoint."""
-    from services.workspace_state import persist_campaign_update_awaited
+    from services.workspace.state import persist_campaign_update_awaited
 
     if total_count <= 0:
         status = "idle"
@@ -897,7 +897,7 @@ async def dispatch_campaign_sends(
                 provider_id=provider_id,
             )
             if result.get("ok"):
-                from services.workspace_state import persist_draft_update_awaited
+                from services.workspace.state import persist_draft_update_awaited
                 if not await persist_draft_update_awaited(owner_id, draft.id, {"status": "sent"}, workspace_id=workspace_id):
                     raise RuntimeError("Email was sent but canonical Draft persistence failed")
                 from services.outbound.outbound_models import DraftStatus

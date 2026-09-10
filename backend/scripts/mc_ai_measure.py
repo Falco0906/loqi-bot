@@ -8,7 +8,7 @@ sys.path.insert(0, ".")
 TOKEN = sys.argv[1] if len(sys.argv) > 1 else "_5pbnHGls-9aDjIJJL2h0yCL"
 
 from services.conversations.compatibility import get_web_session
-from services.workspace_state import load_workspace_state
+from services.workspace.state import load_workspace_state
 from services.workspace_snapshot import build_snapshot
 from services.recommendation_engine import generate_recommendations
 from services.executive_brief import generate_brief

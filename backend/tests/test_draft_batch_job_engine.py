@@ -43,8 +43,8 @@ async def test_draft_batch_runner_completes_durable_item(monkeypatch):
 
     monkeypatch.setattr("services.job_engine.job_manager._storage", Storage())
     monkeypatch.setattr(drafts, "_run_draft_with_retry", lambda *_: asyncio.sleep(0, result={"message": "Draft ready: ---\nHello\n---", "subject": "Hi"}))
-    monkeypatch.setattr("services.workspace_state.persist_draft_awaited", lambda *_, **__: asyncio.sleep(0, result=True))
-    monkeypatch.setattr("services.workspace_state.load_campaign_state", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr("services.workspace.state.persist_draft_awaited", lambda *_, **__: asyncio.sleep(0, result=True))
+    monkeypatch.setattr("services.workspace.state.load_campaign_state", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(drafts, "publish", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(drafts, "publish_draft_event", lambda *_args, **_kwargs: asyncio.sleep(0))
     result = await drafts.run_draft_batch_job(

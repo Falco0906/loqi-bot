@@ -26,7 +26,7 @@ async def test_outbound_list_rejects_an_unowned_provider(monkeypatch):
 async def test_outbound_list_reads_authorized_canonical_drafts(monkeypatch):
     import main as main_module
     import services.outbound.service as outbound_service
-    import services.workspace_state as workspace_state
+    import services.workspace.state as workspace_state
     from services.outbound.api import outbound_list_drafts
 
     owned = SimpleNamespace(id="owned", model_dump=lambda: {"id": "owned"})

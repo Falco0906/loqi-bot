@@ -141,7 +141,7 @@ class TestSearchPipelineCompletes:
         from main import engine
         from services.discovery.service import create_search_run
         from services.job_engine.storage import JobStorage
-        from services.workspace_state import ensure_workspace
+        from services.workspace.state import ensure_workspace
 
         summary = await asyncio.to_thread(
             engine.get_web_session_summary, session_token
@@ -202,7 +202,7 @@ class TestDiscoveryEntity:
             engine.get_web_session_summary, authenticated_session
         )
         user_id = summary["user_id"]
-        from services.workspace_state import ensure_workspace
+        from services.workspace.state import ensure_workspace
 
         workspace_id = await asyncio.to_thread(ensure_workspace, user_id)
         assert workspace_id, "workspace must resolve"
@@ -280,7 +280,7 @@ class TestDiscoveryEntity:
             engine.get_web_session_summary, authenticated_session
         )
         user_id = summary["user_id"]
-        from services.workspace_state import ensure_workspace
+        from services.workspace.state import ensure_workspace
 
         workspace_id = await asyncio.to_thread(ensure_workspace, user_id)
         assert workspace_id, "workspace must resolve"

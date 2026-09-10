@@ -8,7 +8,7 @@ import uuid
 
 import pytest
 
-from services.copilot_execution_ledger import CopilotExecutionService
+from services.copilot.executions import CopilotExecutionService
 
 
 class InMemoryLedger:

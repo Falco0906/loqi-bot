@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from services.copilot_memory import (
+from services.copilot.memory import (
     MAX_TURNS,
     MEMORY_MAX_AGE,
     UNFINISHED_TASK_MAX_AGE,

@@ -131,7 +131,7 @@ async def run_campaign(
         ).strip()
         leads: list[dict[str, Any]] = []
         if discovery_id:
-            from services.copilot_tools import _requested_leads
+            from services.copilot.tools import _requested_leads
             from services.discovery.service import get_discovery
 
             discovery = await asyncio.to_thread(get_discovery, discovery_id, workspace_id)

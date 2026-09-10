@@ -27,7 +27,7 @@ def _selected_copilot_workspace(monkeypatch):
             return await operation()
 
     monkeypatch.setattr(
-        "services.copilot_execution_ledger.CopilotExecutionService",
+        "services.copilot.executions.CopilotExecutionService",
         PassthroughExecutionService,
     )
 
@@ -71,7 +71,7 @@ class TestCopilotOperationBoundary:
         monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", fake_resolve_session)
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
         monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
-        monkeypatch.setattr("services.copilot_memory.CopilotMemoryService", lambda: FakeMemory())
+        monkeypatch.setattr("services.copilot.memory.CopilotMemoryService", lambda: FakeMemory())
         monkeypatch.setattr("services.supabase.get_user_preferences", lambda _user_id: {"tone": "concise"})
         monkeypatch.setattr("services.conversational_response_generator.classify_copilot_read_question", lambda *_args, **_kwargs: None)
         monkeypatch.setattr("services.conversational_response_generator.decide_copilot_intent", fake_decide)
@@ -134,7 +134,7 @@ class TestCopilotOperationBoundary:
                 "search_context": {},
             },
         )
-        monkeypatch.setattr("services.copilot_tools.execute_copilot_tool", fake_execute)
+        monkeypatch.setattr("services.copilot.tools.execute_copilot_tool", fake_execute)
 
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
         payload = main_module.SendWebMessageRequest(
@@ -210,7 +210,7 @@ class TestCopilotOperationBoundary:
         assert result["status"] == "unavailable"
 
     def test_analytics_actions_select_read_tools(self):
-        from services.copilot_tools import select_copilot_tool
+        from services.copilot.tools import select_copilot_tool
 
         assert select_copilot_tool({"intent": "read", "action": "analytics.workspace.summary"}) == "analytics.workspace.summary"
         assert select_copilot_tool({"intent": "read", "action": "analytics.campaign.summary"}) == "analytics.campaign.summary"
@@ -247,7 +247,7 @@ class TestCopilotOperationBoundary:
         assert "No campaign" in result["reason"]
 
     def test_knowledge_actions_select_read_tools(self):
-        from services.copilot_tools import select_copilot_tool
+        from services.copilot.tools import select_copilot_tool
 
         assert select_copilot_tool({"intent": "read", "action": "knowledge.search"}) == "knowledge.search"
         assert select_copilot_tool({"intent": "read", "action": "knowledge.read"}) == "knowledge.read"
@@ -293,7 +293,7 @@ class TestCopilotOperationBoundary:
         assert "No matching Knowledge" in result["reason"]
 
     def test_inbox_actions_select_existing_contract(self):
-        from services.copilot_tools import select_copilot_tool
+        from services.copilot.tools import select_copilot_tool
 
         assert select_copilot_tool({"intent": "read", "action": "inbox.conversation.read"}) == "inbox.conversation.read"
         assert select_copilot_tool({"intent": "read", "action": "inbox.conversation.summary"}) == "inbox.conversation.summary"
@@ -349,7 +349,7 @@ class TestCopilotOperationBoundary:
         assert called is False
 
     def test_outreach_actions_select_existing_contract(self):
-        from services.copilot_tools import select_copilot_tool
+        from services.copilot.tools import select_copilot_tool
 
         assert select_copilot_tool({"intent": "read", "action": "outreach.drafts.read"}) == "outreach.drafts.read"
         assert select_copilot_tool({"intent": "action", "action": "outreach.draft.refine"}) == "outreach.draft.refine"
@@ -611,7 +611,7 @@ class TestCopilotOperationBoundary:
         assert result["messages"][0]["data"]["status"] == "unavailable"
 
     def test_phase2_confirmation_uses_user_text_not_model_flag(self):
-        from services.copilot_tools import mutation_confirmation_state
+        from services.copilot.tools import mutation_confirmation_state
 
         assert mutation_confirmation_state("lead.save", "Please save these leads") == "required"
         assert mutation_confirmation_state("lead.save", "I confirm: save these leads") == "confirmed"
@@ -721,7 +721,7 @@ class TestCopilotOperationBoundary:
 
     @pytest.mark.asyncio
     async def test_tool_boundary_does_not_execute_for_conversation_or_read(self, monkeypatch):
-        from services.copilot_tools import execute_copilot_tool, select_copilot_tool
+        from services.copilot.tools import execute_copilot_tool, select_copilot_tool
 
         assert select_copilot_tool({"intent": "conversation"}) is None
         monkeypatch.setattr(
@@ -747,7 +747,7 @@ class TestCopilotOperationBoundary:
 
     @pytest.mark.asyncio
     async def test_discovery_and_refinement_use_executor_runner(self):
-        from services.copilot_tools import execute_copilot_tool
+        from services.copilot.tools import execute_copilot_tool
         calls = []
 
         async def runner(user_id, context, session, *, workspace_id):
@@ -764,7 +764,7 @@ class TestCopilotOperationBoundary:
         assert calls == [("u-1", {"industry": ["restaurants"]}, "s-1", "w-1")]
 
     def test_lead_actions_select_only_from_structured_contract(self):
-        from services.copilot_tools import select_copilot_tool
+        from services.copilot.tools import select_copilot_tool
 
         assert select_copilot_tool({"intent": "read", "action": "lead.read"}) == "lead.read"
         assert select_copilot_tool({"intent": "read", "action": "lead.filter"}) == "lead.filter"
@@ -774,7 +774,7 @@ class TestCopilotOperationBoundary:
 
     def test_active_discovery_followups_route_to_lead_capabilities(self, monkeypatch):
         from services.conversational_response_generator import decide_copilot_intent
-        from services.copilot_tools import select_copilot_tool
+        from services.copilot.tools import select_copilot_tool
 
         decisions = iter([
             '{"intent":"read","action":"lead.rank","sort":"best","limit":5,"search_context":{},"reason":"rank existing leads"}',
@@ -798,7 +798,7 @@ class TestCopilotOperationBoundary:
         assert owners["filters"] == {"title": "restaurant owner"}
 
     def test_campaign_intents_select_existing_campaign_tools(self):
-        from services.copilot_tools import select_copilot_tool
+        from services.copilot.tools import select_copilot_tool
 
         assert select_copilot_tool({"intent": "read", "action": "campaign.list"}) == "campaign.list"
         assert select_copilot_tool({"intent": "read", "action": "campaign.drafts"}) == "campaign.drafts"
@@ -841,7 +841,7 @@ class TestCopilotOperationBoundary:
 
     @pytest.mark.asyncio
     async def test_lead_read_filter_and_rank_use_owned_discovery(self, monkeypatch):
-        from services.copilot_tools import execute_copilot_tool
+        from services.copilot.tools import execute_copilot_tool
 
         monkeypatch.setattr(
             "services.discovery.service.get_discovery",
@@ -882,7 +882,7 @@ class TestCopilotOperationBoundary:
 
     @pytest.mark.asyncio
     async def test_lead_mutations_require_confirmation_and_use_existing_services(self, monkeypatch):
-        from services.copilot_tools import execute_copilot_tool
+        from services.copilot.tools import execute_copilot_tool
 
         monkeypatch.setattr(
             "services.discovery.service.get_discovery",

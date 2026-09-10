@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from services.copilot_tools import execute_copilot_tool
+from services.copilot.tools import execute_copilot_tool
 from services.job_engine.manager import JobManager
 from services.job_engine.models import Job, JobStatus
 from services.job_engine.runner import BackgroundRunner
@@ -265,7 +265,7 @@ async def test_cancelled_job_has_a_durable_cancelled_terminal_state():
 
 def test_phase2_confirmation_stays_required_on_repeated_mutation_request():
     """Phase 3 must not turn a request retry into mutation authorization."""
-    from services.copilot_tools import mutation_confirmation_state
+    from services.copilot.tools import mutation_confirmation_state
 
     assert mutation_confirmation_state("lead.save", "please save these leads") == "required"
     assert mutation_confirmation_state("lead.save", "please save these leads") == "required"

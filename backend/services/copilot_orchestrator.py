@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-from services.copilot_tools import COPILOT_TOOLS
+from services.copilot.tools import COPILOT_TOOLS
 
 
 logger = logging.getLogger(__name__)

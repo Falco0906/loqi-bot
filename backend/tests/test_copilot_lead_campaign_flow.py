@@ -7,7 +7,7 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_lead_save_normalizes_provider_status_and_returns_workspace_lead_id(monkeypatch):
-    from services import workspace_state
+    from services.workspace import state as workspace_state
 
     captured = []
 
@@ -95,7 +95,7 @@ async def test_campaign_create_returns_authoritative_campaign_and_attached_ids(m
 
 @pytest.mark.asyncio
 async def test_campaign_attach_returns_canonical_lead_ids_without_new_discovery(monkeypatch):
-    from services import copilot_tools
+    from services.copilot import tools as copilot_tools
 
     monkeypatch.setattr(
         copilot_tools,
@@ -148,7 +148,7 @@ def test_campaign_result_exposes_active_campaign_context():
 
 
 def test_campaign_create_uses_selected_ranked_leads_not_entire_discovery():
-    from services.copilot_tools import _requested_leads
+    from services.copilot.tools import _requested_leads
 
     discovery = {
         "discovery_leads": [

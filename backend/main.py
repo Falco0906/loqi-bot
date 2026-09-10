@@ -1311,7 +1311,7 @@ async def post_web_session_message(
         workspace_id = str(selected_workspace.workspace_id or "")
         if not workspace_id:
             raise HTTPException(status_code=404, detail="No accessible workspace")
-        from services.copilot_memory import CopilotMemoryService, merge_turn_history
+        from services.copilot.memory import CopilotMemoryService, merge_turn_history
         conversation_key = str(payload.copilot.conversation_id or "").strip()[:128]
         if not conversation_key:
             # Older clients do not send a chat id. Keep their memory isolated
@@ -1404,7 +1404,7 @@ async def post_web_session_message(
             intent=str(decision.get("intent") or ""),
             tool=str(decision.get("action") or ""),
         )
-        from services.copilot_tools import execute_copilot_tool, select_copilot_tool
+        from services.copilot.tools import execute_copilot_tool, select_copilot_tool
         from services.copilot_orchestrator import execute_copilot_plan, has_multi_step_plan
 
         async def execute_at_copilot_boundary(
@@ -1412,7 +1412,7 @@ async def post_web_session_message(
             requested_decision: dict[str, Any],
         ) -> dict[str, Any]:
             """Run tools through the authenticated, durable Phase 6 boundary."""
-            from services.copilot_tools import COPILOT_TOOLS
+            from services.copilot.tools import COPILOT_TOOLS
 
             registered_tool = COPILOT_TOOLS.get(requested_tool_name)
             if registered_tool is None:
@@ -1439,7 +1439,7 @@ async def post_web_session_message(
             # The selected workspace was resolved from the authenticated
             # request before this closure was constructed. Model/page ids do
             # not participate in selecting either authority value.
-            from services.copilot_execution_ledger import CopilotExecutionService
+            from services.copilot.executions import CopilotExecutionService
             return await CopilotExecutionService().execute(
                 tool_name=requested_tool_name,
                 user_id=user_id,
@@ -1457,7 +1457,7 @@ async def post_web_session_message(
             mutation is evaluated against this user message before the
             existing tool executor receives it.
             """
-            from services.copilot_tools import (
+            from services.copilot.tools import (
                 COPILOT_TOOLS,
                 PHASE2_MUTATION_TOOLS,
                 mutation_confirmation_state,
@@ -1565,7 +1565,7 @@ async def post_web_session_message(
             except Exception as error:
                 log.warning("Copilot semantic Knowledge retrieval unavailable: %s", error)
         if tool_name:
-            from services.copilot_tools import (
+            from services.copilot.tools import (
                 COPILOT_TOOLS,
                 PHASE2_MUTATION_TOOLS,
                 mutation_confirmation_state,

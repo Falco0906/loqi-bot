@@ -34,6 +34,7 @@ from services.drafts.api import router as drafts_router
 from services.outbound.api import router as outbound_router
 from services.events.api import router as events_router
 from services.export.api import router as export_router
+from services.workspace.api import router as workspace_router
 import services.outbound.service as outbound_service
 import services.conversations.service as conversation_service
 import services.copilot.runners as copilot_runners
@@ -240,6 +241,7 @@ app.include_router(drafts_router)
 app.include_router(outbound_router)
 app.include_router(events_router)
 app.include_router(export_router)
+app.include_router(workspace_router)
 app.include_router(conversations_router)
 
 # ── Wire Organization Platform services ──
@@ -2084,93 +2086,6 @@ async def communication_timeline(session_token: str, conversation_id: str, reque
 
 class DevWorkspaceContextRequest(BaseModel):
     conversation_id: str = ""
-
-
-# ── Multi-Workspace Lifecycle (SaaS-2.7) ──
-
-class CreateWorkspaceRequest(BaseModel):
-    organization_id: str = ""
-    name: str = "Workspace"
-    slug: str = ""
-
-
-@app.get("/api/web/session/{session_token}/workspaces")
-async def list_workspaces(session_token: str, request: Request):
-    """List workspaces in every organization the caller actively belongs to."""
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    from services.workspace.access import workspaces_for_user
-    ws = await asyncio.to_thread(workspaces_for_user, None, owner_id)
-    return {"ok": True, "workspaces": ws}
-
-
-@app.post("/api/web/session/{session_token}/workspaces/select")
-async def select_workspace(session_token: str, request: Request):
-    """Validate + return the context for an explicitly selected workspace."""
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    ctx = await workspace_access.resolve_selected_workspace_context(request, owner_id)
-    return {
-        "ok": True,
-        "workspace": {
-            "id": ctx.workspace_id,
-            "organization_id": ctx.organization_id,
-            "name": ctx.workspace_name,
-            "membership_role": ctx.membership_role,
-            "membership_status": ctx.membership_status,
-        },
-    }
-
-
-@app.post("/api/web/session/{session_token}/workspaces")
-async def create_workspace(session_token: str, payload: CreateWorkspaceRequest, request: Request):
-    """Create an additional workspace in an organization the caller is an
-    ACTIVE member of (owner/admin role required).
-
-    The organization is validated against membership — never trusted as
-    authority by itself. The workspace gets a fresh uuid (independent of any
-    workflow/web session), owner_user_id = the authenticated user, and
-    organization_id = the validated org. No duplicate organization is created
-    and no existing workspace is modified.
-    """
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    org_id = (payload.organization_id or "").strip()
-
-    from services.workspace.access import active_memberships
-    memberships = await asyncio.to_thread(active_memberships, None, owner_id)
-    membership = next((m for m in memberships if m.get("organization_id") == org_id), None)
-    if membership is None:
-        raise HTTPException(status_code=404, detail="Organization not found")
-    if (membership.get("role") or "member") not in ("owner", "admin"):
-        raise HTTPException(status_code=403, detail="Insufficient role to create a workspace")
-
-    from uuid import uuid4
-    new_id = str(uuid4())
-    slug = (payload.slug or "").strip() or _default_workspace_slug(new_id, payload.name)
-    name = (payload.name or "").strip() or "Workspace"
-    from services.persistence.launch.repositories import WorkspaceRepository, WorkspaceMemberRepository
-    from services.persistence.launch.models import Workspace, WorkspaceMember
-    repo = WorkspaceRepository()
-    await repo.save(Workspace(
-        id=new_id, organization_id=org_id, name=name, slug=slug,
-        owner_user_id=owner_id, created_by=owner_id, updated_by=owner_id,
-        status="active",
-    ))
-    # Owner workspace-member row for the new workspace.
-    await WorkspaceMemberRepository().save(WorkspaceMember(
-        workspace_id=new_id, user_id=owner_id, role="owner", status="active",
-    ))
-    return {"ok": True, "workspace": {
-        "id": new_id, "organization_id": org_id, "name": name, "slug": slug,
-        "owner_user_id": owner_id, "status": "active",
-    }}
-
-
-def _default_workspace_slug(workspace_id: str, name: str = "Workspace") -> str:
-    base = (name or "Workspace").replace(" ", "-").lower()
-    suffix = str(workspace_id or "")[:8]
-    return f"{base}-{suffix}" if suffix else base
 
 
 @app.get("/api/web/session/{session_token}/workspace-context")

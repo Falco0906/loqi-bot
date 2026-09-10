@@ -260,8 +260,8 @@ class TestWorkspaceSwitchChangesResourceBoundary:
 class TestWorkspaceCreation:
 
     def test_default_slug_has_uuid_suffix(self):
-        import main as main_module
-        slug = main_module._default_workspace_slug("12345678-aaaa", "My Workspace")
+        from services.workspace.service import default_workspace_slug
+        slug = default_workspace_slug("12345678-aaaa", "My Workspace")
         assert slug == "my-workspace-12345678"
 
     def test_fresh_uuid_model(self):

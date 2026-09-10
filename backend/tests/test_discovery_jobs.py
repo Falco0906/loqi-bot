@@ -36,17 +36,14 @@ def client():
     return _AuthTestClient(app)
 
 
-@pytest.fixture(scope="module")
-def session_token(client):
-    resp = client.post("/api/web/session", json={})
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data.get("ok") is True
-    return data["session_token"]
+@pytest.fixture()
+def session_token(authenticated_session):
+    """Use the shared durable integration identity for every search job test."""
+    return authenticated_session
 
 
 @pytest.fixture()
-def authenticated_session(client, monkeypatch):
+def authenticated_session(client, monkeypatch, shared_test_identity):
     """A web session bound to a REAL identity user.
 
     Anonymous sessions only exist in the legacy ``users`` table, so
@@ -56,17 +53,7 @@ def authenticated_session(client, monkeypatch):
     bootstrap before the job engine's ``jobs.user_id`` foreign key is used.
     Seed only the identity row here so this test exercises that real bridge.
     """
-    from uuid import uuid4
-
-    from services.supabase import get_supabase_client
-
-    user_id = str(uuid4())
-    db = get_supabase_client()
-    assert db is not None, "supabase client required"
-    db.table("identity_users").insert({
-        "id": user_id,
-        "display_name": "Discovery Test",
-    }).execute()
+    user_id = shared_test_identity
     async def fake_auth(request):
         return user_id
 

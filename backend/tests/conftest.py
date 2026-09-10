@@ -1,12 +1,104 @@
 """Shared fixtures for backend tests."""
 
 import re
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 from fastapi import HTTPException
 
 import main as main_module
+
+
+# This row is intentionally durable across test runs.  Cleanup below may only
+# delete rows tied to this exact UUID; it never deletes an identity user.
+SHARED_TEST_USER_ID = "00000000-0000-4000-8000-000000000001"
+SHARED_TEST_EMAIL = "test-fixture@loqi.internal"
+
+
+def _rows(client, table: str, column: str, value: str) -> list[dict]:
+    response = client.table(table).select("id").eq(column, value).execute()
+    return list(getattr(response, "data", None) or [])
+
+
+def _delete_owned_test_data(client, user_id: str = SHARED_TEST_USER_ID) -> None:
+    """Delete only data attributable to the fixed integration-test identity.
+
+    Workspace deletion relies on the database's workspace-owned cascades.
+    Session/message rows are removed explicitly because they predate that
+    workspace graph.  The identity row is deliberately never deleted.
+    """
+    if user_id != SHARED_TEST_USER_ID:
+        raise AssertionError("test cleanup may only target the shared test identity")
+
+    session_ids = [row["id"] for row in _rows(client, "workflow_sessions", "user_id", user_id)]
+    for session_id in session_ids:
+        client.table("workflow_messages").delete().eq("workflow_session_id", session_id).execute()
+        client.table("workflow_events").delete().eq("workflow_session_id", session_id).execute()
+
+    # These predicates are deliberately exact, never prefix/pattern based.
+    client.table("web_session_bindings").delete().eq("canonical_user_id", user_id).execute()
+    client.table("sessions").delete().eq("user_id", user_id).execute()
+    client.table("password_reset_requests").delete().eq("user_id", user_id).execute()
+    client.table("notifications").delete().eq("user_id", user_id).execute()
+    client.table("workflow_sessions").delete().eq("user_id", user_id).execute()
+    client.table("workspaces").delete().eq("owner_user_id", user_id).execute()
+    client.table("workspace_members").delete().eq("user_id", user_id).execute()
+    # The legacy bridge is test-owned state. Deleting it cascades its jobs.
+    client.table("users").delete().eq("id", user_id).execute()
+
+
+def _ensure_shared_test_identity(client) -> str:
+    rows = _rows(client, "identity_users", "id", SHARED_TEST_USER_ID)
+    if not rows:
+        client.table("identity_users").insert({
+            "id": SHARED_TEST_USER_ID,
+            "display_name": "Loqi Test Fixture",
+            "email": SHARED_TEST_EMAIL,
+        }).execute()
+    return SHARED_TEST_USER_ID
+
+
+@pytest.fixture(scope="session")
+def durable_test_identity():
+    """One reusable live-Supabase identity, reset without changing its ID."""
+    from services.supabase import get_supabase_client
+
+    client = get_supabase_client()
+    if client is None:
+        pytest.skip("live Supabase integration fixture requires configured Supabase")
+    user_id = _ensure_shared_test_identity(client)
+    _delete_owned_test_data(client, user_id)
+    yield user_id
+    _delete_owned_test_data(client, user_id)
+
+
+@pytest.fixture()
+def shared_test_identity(durable_test_identity):
+    """Provide an empty owned-data graph for one live integration test."""
+    from services.supabase import get_supabase_client
+
+    client = get_supabase_client()
+    assert client is not None
+    _delete_owned_test_data(client, durable_test_identity)
+    yield durable_test_identity
+    _delete_owned_test_data(client, durable_test_identity)
+
+
+@pytest.fixture()
+def shared_authenticated_session(client, monkeypatch, shared_test_identity):
+    """Create one authenticated web session bound to the stable test user."""
+    async def current_auth(_request):
+        return SimpleNamespace(user_id=shared_test_identity, session_id="shared-test-session")
+
+    monkeypatch.setattr(main_module.identity_dependencies, "get_current_auth", current_auth)
+    response = client.post(
+        "/api/web/session",
+        json={"display_name": "Loqi Test Fixture"},
+        headers={"Authorization": "Bearer shared-test-token"},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["session_token"]
 
 # Captured BEFORE any test patches, so the security suite can exercise the
 # real authentication resolver directly.
@@ -143,6 +235,7 @@ def client():
 
 @pytest.fixture(scope="module")
 def session_token(client):
+    """Local compatibility session for unit/route tests without live DB setup."""
     resp = client.post("/api/web/session", json={})
     assert resp.status_code == 200
     data = resp.json()

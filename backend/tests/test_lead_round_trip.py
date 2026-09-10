@@ -29,25 +29,10 @@ def client():
 
 
 @pytest.fixture()
-def authenticated_session(client, monkeypatch):
+def authenticated_session(client, monkeypatch, shared_test_identity):
     """A web session bound to a REAL identity user. (Same pattern as
     test_discovery_jobs.py; kept here so this suite is self-contained.)"""
-    from uuid import uuid4
-
-    from services.supabase import get_supabase_client
-
-    user_id = str(uuid4())
-    db = get_supabase_client()
-    assert db is not None, "supabase client required"
-    db.table("identity_users").insert({
-        "id": user_id,
-        "display_name": "Lead Round Trip Test",
-    }).execute()
-    db.table("users").insert({
-        "id": user_id,
-        "telegram_id": f"web:test-{user_id}",
-        "username": "Lead Round Trip Test",
-    }).execute()
+    user_id = shared_test_identity
 
     async def fake_auth(request):
         return user_id

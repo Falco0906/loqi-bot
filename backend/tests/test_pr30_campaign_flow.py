@@ -123,21 +123,8 @@ def client():
 
 
 @pytest.fixture()
-def authenticated_session(client, monkeypatch):
-    from services.supabase import get_supabase_client
-
-    user_id = str(uuid4())
-    db = get_supabase_client()
-    assert db is not None, "supabase client required"
-    db.table("identity_users").insert({
-        "id": user_id,
-        "display_name": "PR30 E2E Test",
-    }).execute()
-    db.table("users").insert({
-        "id": user_id,
-        "telegram_id": f"web:test-{user_id}",
-        "username": "PR30 E2E Test",
-    }).execute()
+def authenticated_session(client, monkeypatch, shared_test_identity):
+    user_id = shared_test_identity
 
     async def fake_auth(request):
         return user_id

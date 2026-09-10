@@ -4,7 +4,7 @@ Example: Two workflows cannot both launch the same campaign.
 """
 
 from threading import Lock
-from services.workflow_runtime import acquire_lock as _acquire, release_lock as _release, has_active_lock as _has_active
+from services.workflows.runtime import acquire_lock as _acquire, release_lock as _release, has_active_lock as _has_active
 
 
 _resource_locks: dict[str, str] = {}  # resource -> workflow_id

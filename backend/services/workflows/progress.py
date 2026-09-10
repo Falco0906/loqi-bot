@@ -9,7 +9,7 @@ Responsible ONLY for:
 No execution logic.
 """
 
-from services.workflow_runtime import RuntimeEntry, RuntimeStatus
+from services.workflows.runtime import RuntimeEntry, RuntimeStatus
 
 
 def calculate_progress(runtime: RuntimeEntry) -> dict:

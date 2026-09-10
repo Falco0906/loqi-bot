@@ -79,7 +79,7 @@ def test_outbound_provider_registration_keeps_gmail_provider(monkeypatch):
 
 def test_recover_persisted_workflows_logs_nonempty_recovery(monkeypatch, caplog):
     monkeypatch.setattr(
-        "services.workflow_recovery.recover_all",
+        "services.workflows.recovery.recover_all",
         lambda: {"total_recovered": 1, "resumed": 1},
     )
 

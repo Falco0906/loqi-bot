@@ -86,12 +86,12 @@ from services.draft_intelligence import analyze_draft as analyze_draft_intellige
 from services.strategic_intelligence_api import router as strategic_intelligence_router
 from services.rewrite_engine import execute_rewrite
 from services.draft_comparison import compare_versions
-from services.workflow_planner import plan_workflow
+from services.workflows.planner import plan_workflow
 from services.workflows.models import PlanningInput
-from services.workflow_executor import execute as execute_workflow, approve as approve_workflow, pause as pause_workflow, resume as resume_workflow, cancel as cancel_workflow
-from services.workflow_runtime import get_runtime, get_active_runtimes, get_all_runtimes, get_history as get_workflow_history
-from services.workflow_progress import calculate_progress
-from services.workflow_events import get_events as get_workflow_events, get_latest_sequence
+from services.workflows.executor import execute as execute_workflow, approve as approve_workflow, pause as pause_workflow, resume as resume_workflow, cancel as cancel_workflow
+from services.workflows.runtime import get_runtime, get_active_runtimes, get_all_runtimes, get_history as get_workflow_history
+from services.workflows.progress import calculate_progress
+from services.workflows.events import get_events as get_workflow_events, get_latest_sequence
 from services.workflows.models import WorkflowPlan
 from services.conversation_models import ConversationMessage
 from services.communication.provider_registry import (
@@ -2897,7 +2897,7 @@ def _require_workflow_owned(workflow_id: str, request: Request, session_token: s
     Fail-closed (PR10.8.3.2): workflows are session-scoped (RuntimeEntry holds
     the creating session_token). A user may only read/mutate their own workflow.
     """
-    from services.workflow_runtime import get_runtime
+    from services.workflows.runtime import get_runtime
     runtime = get_runtime(workflow_id)
     if runtime is None:
         raise HTTPException(status_code=404, detail="Workflow not found")

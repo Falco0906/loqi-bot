@@ -10,28 +10,28 @@ Now with:
 
 import time as time_module
 from services.workflows.models import WorkflowPlan, WorkflowStep, StepStatus
-from services.workflow_runtime import (
+from services.workflows.runtime import (
     RuntimeEntry, RuntimeStatus, create_runtime, get_runtime,
     update_status, add_log, set_current_step,
     record_completed_step, record_failed_step, set_pending_step,
     increment_retry_count,
 )
-from services.workflow_progress import calculate_progress
-from services.workflow_events import (
+from services.workflows.progress import calculate_progress
+from services.workflows.events import (
     emit_workflow_started, emit_workflow_completed, emit_workflow_failed,
     emit_workflow_cancelled, emit_workflow_paused, emit_workflow_resumed,
     emit_step_started, emit_step_finished, emit_step_failed,
     emit_step_retrying, emit_approval_required, emit_approval_granted,
     emit_lock_conflict,
 )
-from services.workflow_registry import dispatch
+from services.workflows.registry import dispatch
 from services.workflows.retry import (
     RetryState, classify_error, ErrorClass, should_retry,
     DEFAULT_MAX_RETRIES, DEFAULT_POLICY,
 )
-from services.workflow_locks import try_lock, unlock_all, is_locked
-from services.workflow_persistence import persist
-from services.workflow_scheduler import schedule
+from services.workflows.locks import try_lock, unlock_all, is_locked
+from services.workflows.persistence import persist
+from services.workflows.scheduler import schedule
 
 
 _PERSIST_AFTER_EVERY_STEP = True

@@ -122,7 +122,7 @@ def _clean_runtime_state(monkeypatch):
     comm_store._seen_message_ids.clear()
     conversation_store.reload()
     _CANONICAL_DRAFTS.clear()
-    from services.workflow_runtime import _runtimes
+    from services.workflows.runtime import _runtimes
     _runtimes.clear()
     from services.job_engine import job_manager
     job_manager._storage = _FakeJobStorage()
@@ -306,7 +306,7 @@ class TestJobIdor:
 
 class TestWorkflowIdor:
     def _victim_workflow(self):
-        from services.workflow_runtime import create_runtime
+        from services.workflows.runtime import create_runtime
         wf = create_runtime({"goal": "x"}, session_token=TOKEN_B, workflow_id="wf-b")
         return wf.workflow_id
 

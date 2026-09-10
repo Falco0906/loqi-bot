@@ -8,7 +8,7 @@ from services.workflows.models import (
     ActionType, RiskLevel, WorkflowPlan, WorkflowStep,
     PlanningInput, AlternativePlanPair,
 )
-from services.workflow_planner import (
+from services.workflows.planner import (
     plan_workflow,
     _classify_objective,
     _extract_target,

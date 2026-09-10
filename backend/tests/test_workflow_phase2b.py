@@ -10,7 +10,7 @@ import tempfile
 import shutil
 
 from services.workflows.models import WorkflowPlan, WorkflowStep, ActionType
-from services.workflow_runtime import (
+from services.workflows.runtime import (
     RuntimeStatus, RuntimeEntry,
     create_runtime, get_runtime, update_status, clear as clear_runtime,
     get_active_runtimes, get_all_runtimes, get_history,
@@ -19,19 +19,19 @@ from services.workflow_runtime import (
     acquire_lock, release_lock, has_active_lock,
     restore_runtime,
 )
-from services.workflow_events import (
+from services.workflows.events import (
     emit, get_events, get_all_events, get_latest_sequence, EventType,
     clear as clear_events, restore_events,
 )
-from services.workflow_executor import execute, pause, resume, cancel
+from services.workflows.executor import execute, pause, resume, cancel
 from services.workflows.retry import (
     RetryPolicy, RetryState, classify_error, ErrorClass,
     should_retry, get_retry_delay,
 )
-from services.workflow_locks import try_lock, unlock, unlock_all, is_locked, get_lock_owner, clear as clear_locks
-from services.workflow_persistence import persist, load, remove, list_persisted, load_all, clear_all_persisted
-from services.workflow_scheduler import schedule, cancel_scheduled, cancel_all as cancel_all_scheduled
-from services.workflow_recovery import recover_all
+from services.workflows.locks import try_lock, unlock, unlock_all, is_locked, get_lock_owner, clear as clear_locks
+from services.workflows.persistence import persist, load, remove, list_persisted, load_all, clear_all_persisted
+from services.workflows.scheduler import schedule, cancel_scheduled, cancel_all as cancel_all_scheduled
+from services.workflows.recovery import recover_all
 
 
 def _simple_plan():

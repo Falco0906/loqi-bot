@@ -9,7 +9,7 @@ import os
 from datetime import datetime, timezone
 from threading import Lock
 
-from services.workflow_runtime import RuntimeEntry, restore_runtime
+from services.workflows.runtime import RuntimeEntry, restore_runtime
 
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "workflows")
@@ -88,7 +88,7 @@ def persist_and_restore(entry: RuntimeEntry) -> None:
 
 
 def persist_all_active() -> int:
-    from services.workflow_runtime import get_all_workflows
+    from services.workflows.runtime import get_all_workflows
     count = 0
     for entry in get_all_workflows():
         if persist(entry):

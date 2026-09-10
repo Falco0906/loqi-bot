@@ -42,7 +42,7 @@ def _clean_state():
     from services.outbound import outbound_registry as or_reg
     from services.communication.communication_store import store as comm_store
     from services.conversations.conversation_store import conversation_store
-    from services.workflow_runtime import _runtimes
+    from services.workflows.runtime import _runtimes
 
     for pid in list(pr.list_providers().keys()):
         pr.remove_instance(pid)

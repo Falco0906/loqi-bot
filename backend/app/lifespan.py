@@ -227,7 +227,7 @@ def rehydrate_communication_store() -> None:
 
 def recover_persisted_workflows() -> None:
     """Restore legacy workflow runtime state before background workers start."""
-    from services.workflow_recovery import recover_all
+    from services.workflows.recovery import recover_all
 
     try:
         recovered = recover_all()

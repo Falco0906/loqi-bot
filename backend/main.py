@@ -2640,36 +2640,25 @@ set_onboarding_completion_handler(_launch_initial_research)
 async def select_lead_endpoint(session_token: str, payload: SelectLeadRequest, request: Request = None):
     session_token = identity_dependencies.web_session_token(request)
     from services.conversations.compatibility import ensure_workflow_session, get_web_session
-    from services.supabase import log_conversation
 
     user = get_web_session(session_token)
     if user is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    engine = ConversationEngine()
     workflow_session_id = ensure_workflow_session(
         user_id=user["id"],
         channel="web",
         session_key=session_token,
     )
-    result = engine.select_lead_and_draft(
+    result = conversation_service.select_legacy_workflow_lead_and_draft(
         user_id=user["id"],
         lead_index=payload.index,
         workflow_session_id=workflow_session_id,
+        session_token=session_token,
     )
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("messages", [{}])[0].get("text", "Selection failed"))
 
-    for message in result.get("messages", []):
-        if message.get("role") == "assistant":
-            text = (message.get("text") or "").strip()
-            if text:
-                log_conversation(user["id"], "assistant", text)
-
-    publish(session_token, WMEventType.LEAD_SELECTED, {
-        "lead_index": payload.index,
-        "lead_name": result.get("messages", [{}])[0].get("lead_name", ""),
-    }, actor="user")
     return {"ok": True, "messages": result.get("messages", [])}
 
 
@@ -2686,8 +2675,7 @@ async def preview_lead_endpoint(session_token: str, payload: PreviewLeadRequest,
     if user is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    engine = ConversationEngine()
-    result = engine.preview_lead_intelligence(
+    result = conversation_service.preview_legacy_workflow_lead_intelligence(
         user_id=user["id"],
         lead_index=payload.index,
     )

@@ -4,12 +4,18 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 from fastapi import HTTPException
 from services.conversation_intelligence.intelligence_pipeline import IntelligencePipeline
 from services.conversations.conversation_models import ConversationMessage, ConversationStatus
 from services.conversations.conversation_store import conversation_owned_by, conversation_store
+from services.conversations.compatibility import record_workflow_message
+from services.conversational_response_generator import _get_after_draft_variation
+from services.enrichment.enrichment_factory import get_enricher
+from services.intelligence.lead_intelligence import generate_lead_intelligence
 from services.conversations.state_machine import transition as state_transition
 from services.conversations.timeline import TimelineEventType, build_timeline_event
 from services.outbound.outbound_executor import executor as outbound_executor
@@ -18,9 +24,180 @@ from services.outbound.service import resolve_provider_for_conversation
 from services.planner.exceptions import PlanningValidationError
 from services.planner.planning_pipeline import get_pipeline as get_planning_pipeline
 from services.reasoning.reasoning_pipeline import get_pipeline as get_reasoning_pipeline
+from services.supabase import (
+    get_pending_leads,
+    get_session_context,
+    get_user_preferences,
+    log_conversation,
+    select_lead,
+)
+from services.workflows.service import run_workflow
+from services.world_model import EventType as WorldModelEventType, publish
 
 
 log = logging.getLogger("loqi")
+
+
+def _legacy_message(*, message_type: str, text: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build one legacy web-workflow assistant message with its frozen shape."""
+    return {
+        "id": str(uuid4()),
+        "role": "assistant",
+        "type": message_type,
+        "text": text,
+        "data": data or {},
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _record_legacy_assistant_message(
+    workflow_session_id: str,
+    *,
+    message_type: str,
+    text: str,
+    data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Persist and return one legacy web-workflow assistant message."""
+    message = _legacy_message(message_type=message_type, text=text, data=data)
+    record_workflow_message(
+        session_id=workflow_session_id,
+        role="assistant",
+        message_type=message_type,
+        content=text,
+        metadata=data or {},
+    )
+    return message
+
+
+def _legacy_selected_lead_text(lead: dict[str, Any]) -> str:
+    name = str(lead.get("name") or "Unknown").strip()
+    title = str(lead.get("title") or "").strip()
+    company = str(lead.get("company") or "Unknown Company").strip()
+    return f"Selected: {name}{f' — {title}' if title else ''} @ {company}"
+
+
+def _legacy_draft_body(message: str) -> str | None:
+    if "Draft ready:" not in message or "---" not in message:
+        return None
+    parts = message.split("---")
+    return parts[1].strip() if len(parts) >= 3 else None
+
+
+def select_legacy_workflow_lead_and_draft(
+    *,
+    user_id: str,
+    lead_index: int,
+    workflow_session_id: str,
+    session_token: str,
+) -> dict[str, Any]:
+    """Select a legacy workflow lead and return its typed draft-generation messages.
+
+    This preserves the pre-workspace web-chat lead-card contract. The legacy
+    lead and conversation rows remain its source of truth until that product
+    flow is deliberately migrated to canonical workspace state.
+    """
+    context = get_session_context(user_id)
+    assistant_messages = list(context.get("assistant_messages") or [])
+    selected_lead = select_lead(
+        user_id,
+        str(lead_index),
+        since_timestamp=context.get("started_at"),
+    )
+    if selected_lead is None:
+        error_message = _legacy_message(
+            message_type="error",
+            text="Could not find that lead. Try searching again.",
+        )
+        return {"ok": False, "messages": [error_message]}
+
+    messages = [
+        _record_legacy_assistant_message(
+            workflow_session_id,
+            message_type="lead_selected",
+            text=_legacy_selected_lead_text(selected_lead),
+            data={"lead": selected_lead},
+        )
+    ]
+    workflow_result = run_workflow({
+        "type": "draft_message",
+        "service": context.get("service"),
+        "target": context.get("target"),
+        "lead": selected_lead,
+        "conversation_context": (list(context.get("user_messages") or []) + assistant_messages)[-10:],
+    })
+    draft_text = str(workflow_result.get("message") or "")
+    if not workflow_result.get("ok", True):
+        messages.append(
+            _record_legacy_assistant_message(
+                workflow_session_id,
+                message_type="error",
+                text=draft_text or "Operation failed. Please try again.",
+                data={"error": workflow_result.get("error")},
+            )
+        )
+    else:
+        draft_body = _legacy_draft_body(draft_text)
+        messages.append(
+            _record_legacy_assistant_message(
+                workflow_session_id,
+                message_type="draft_preview" if draft_body else "send_confirmation",
+                text=draft_text,
+                data={
+                    "lead": workflow_result.get("lead"),
+                    "draft": draft_body,
+                    "tone": workflow_result.get("tone"),
+                    "length": workflow_result.get("length"),
+                    "lead_intelligence": workflow_result.get("lead_intelligence"),
+                    "company_intelligence": workflow_result.get("company_intelligence"),
+                },
+            )
+        )
+    next_text = _get_after_draft_variation(
+        assistant_messages[-3:],
+        str(selected_lead.get("name") or ""),
+        get_user_preferences(user_id) or {},
+    )
+    messages.append(
+        _record_legacy_assistant_message(
+            workflow_session_id,
+            message_type="status",
+            text=next_text,
+        )
+    )
+    for message in messages:
+        text = str(message.get("text") or "").strip()
+        if text:
+            log_conversation(user_id, "assistant", text)
+    publish(
+        session_token,
+        WorldModelEventType.LEAD_SELECTED,
+        {
+            "lead_id": str(selected_lead.get("id") or ""),
+            "lead_index": lead_index,
+            "lead_name": str(selected_lead.get("name") or ""),
+        },
+        actor="user",
+    )
+    return {"ok": True, "messages": messages}
+
+
+def preview_legacy_workflow_lead_intelligence(*, user_id: str, lead_index: int) -> dict[str, Any]:
+    """Return best-effort intelligence for one pending legacy workflow lead."""
+    pending_leads = get_pending_leads(user_id, since_timestamp=None, limit=5)
+    if lead_index < 1 or lead_index > len(pending_leads):
+        return {"ok": False, "error": "Invalid lead index"}
+    lead = pending_leads[lead_index - 1]
+    company_intelligence = None
+    try:
+        enricher = get_enricher()
+        if enricher.health_check().get("ok"):
+            company_intelligence = enricher.enrich_lead(lead)
+    except Exception:
+        pass
+    return {
+        "ok": True,
+        "lead_intelligence": generate_lead_intelligence(lead, company_intelligence),
+    }
 
 
 def owned_conversation(conversation_id: str, owner_id: str):

@@ -1,7 +1,5 @@
 import asyncio
-import csv
 import hashlib
-import io
 import json
 import logging
 import os
@@ -35,6 +33,7 @@ from services.campaigns.api import router as campaigns_router
 from services.drafts.api import router as drafts_router
 from services.outbound.api import router as outbound_router
 from services.events.api import router as events_router
+from services.export.api import router as export_router
 import services.outbound.service as outbound_service
 import services.conversations.service as conversation_service
 import services.copilot.runners as copilot_runners
@@ -240,6 +239,7 @@ app.include_router(campaigns_router)
 app.include_router(drafts_router)
 app.include_router(outbound_router)
 app.include_router(events_router)
+app.include_router(export_router)
 app.include_router(conversations_router)
 
 # ── Wire Organization Platform services ──
@@ -2634,54 +2634,6 @@ async def _launch_initial_research(
 
 
 set_onboarding_completion_handler(_launch_initial_research)
-
-
-@app.get("/api/web/session/{session_token}/export-csv")
-async def export_csv(session_token: str, request: Request = None):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    selected_workspace = await workspace_access.resolve_selected_workspace_context(request, owner_id)
-    from services.workspace.state import load_drafts_only
-    drafts = await asyncio.to_thread(
-        load_drafts_only,
-        owner_id,
-        workspace_id=selected_workspace.workspace_id,
-    )
-    leads: list[dict] = []
-    for d in drafts:
-        lead = d.get("lead")
-        if lead:
-            leads.append(lead)
-
-    if not leads:
-        from services.conversation_engine import ConversationEngine, _message
-        local_engine = ConversationEngine()
-        summary = await asyncio.to_thread(local_engine.get_web_session_summary, session_token)
-        if summary:
-            for msg in (summary.get("messages") or []):
-                data = msg.get("data") or {}
-                msg_leads = data.get("leads") or []
-                leads.extend(msg_leads)
-
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["Name", "Title", "Company", "Email", "LinkedIn URL", "Industry", "Phone"])
-    for lead in leads:
-        writer.writerow([
-            lead.get("name") or f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip(),
-            lead.get("title", ""),
-            lead.get("company", ""),
-            lead.get("email", ""),
-            lead.get("linkedin_url", ""),
-            lead.get("company_industry", ""),
-            "",
-        ])
-
-    return Response(
-        content=output.getvalue(),
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=loqi-leads-{session_token[:8]}.csv"},
-    )
 
 
 @app.post("/api/web/session/{session_token}/select-lead")

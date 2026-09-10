@@ -7,6 +7,8 @@ import pytest
 from fastapi import HTTPException
 
 import main as main_module
+import services.export.api as export_api
+import services.export.service as export_service
 import services.workspace.state as workspace_state
 from services.workflows.models import PlanningInput
 
@@ -31,12 +33,12 @@ async def test_export_csv_reads_authorized_workspace_drafts(monkeypatch):
         seen.append((owner_id, workspace_id))
         return [{"lead": {"name": "Ada", "email": "ada@example.com"}}]
 
-    monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda _request: "test-token")
-    monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", _owner)
-    monkeypatch.setattr(main_module.workspace_access, "resolve_selected_workspace_context", _workspace)
-    monkeypatch.setattr(workspace_state, "load_drafts_only", load_drafts)
+    monkeypatch.setattr(export_api.identity_dependencies, "web_session_token", lambda _request: "test-token")
+    monkeypatch.setattr(export_api.identity_dependencies, "authenticated_user_id", _owner)
+    monkeypatch.setattr(export_api.workspace_access, "resolve_selected_workspace_context", _workspace)
+    monkeypatch.setattr(export_service, "load_drafts_only", load_drafts)
 
-    response = await main_module.export_csv("ignored-url-token", _request())
+    response = await export_api.export_csv("ignored-url-token", _request())
 
     assert seen == [("owner-1", "workspace-1")]
     assert b"Ada" in response.body

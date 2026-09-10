@@ -88,7 +88,8 @@ async def test_workflow_plan_reads_authorized_workspace_state(monkeypatch):
 
 def test_copilot_context_fails_closed_without_authorized_context():
     with pytest.raises(HTTPException) as error:
-        main_module._build_copilot_workspace_context("session-token")
+        from services.workspace.context import build_workspace_context
+        build_workspace_context("session-token")
 
     assert error.value.status_code == 401
     assert error.value.detail == "Authentication required"

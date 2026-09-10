@@ -70,7 +70,7 @@ class TestCopilotOperationBoundary:
 
         monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", fake_resolve_session)
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
-        monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
+        monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
         monkeypatch.setattr("services.copilot.memory.CopilotMemoryService", lambda: FakeMemory())
         monkeypatch.setattr("services.supabase.get_user_preferences", lambda _user_id: {"tone": "concise"})
         monkeypatch.setattr("services.conversational_response_generator.classify_copilot_read_question", lambda *_args, **_kwargs: None)
@@ -120,7 +120,7 @@ class TestCopilotOperationBoundary:
 
         monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", fake_resolve_session)
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
-        monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
+        monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
         monkeypatch.setattr("services.conversational_response_generator.classify_copilot_read_question", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(
             "services.conversational_response_generator.decide_copilot_intent",
@@ -158,7 +158,7 @@ class TestCopilotOperationBoundary:
                 "drafts": [],
             }
 
-        monkeypatch.setattr("services.workspace.state.load_workspace_state", load_state)
+        monkeypatch.setattr("services.workspace.context.load_workspace_state", load_state)
         monkeypatch.setattr(
             main_module,
             "build_snapshot",
@@ -178,7 +178,8 @@ class TestCopilotOperationBoundary:
         monkeypatch.setattr(main_module, "get_active_runtimes", lambda *_args: [])
         monkeypatch.setattr(main_module, "communication_store", SimpleNamespace(list_providers=lambda: []))
 
-        context = main_module._build_copilot_workspace_context(
+        from services.workspace.context import build_workspace_context
+        context = build_workspace_context(
             "session-a",
             user_id="owner-1",
             workspace_id="workspace-a",
@@ -388,7 +389,7 @@ class TestCopilotOperationBoundary:
             lambda *_args, **_kwargs: {"intent": "read", "action": "outreach.drafts.read", "search_context": {}, "reason": "read drafts"},
         )
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
-        monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
+        monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
         monkeypatch.setattr(
             "services.knowledge.context_adapter.retrieve_knowledge_context",
             lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}),
@@ -415,7 +416,7 @@ class TestCopilotOperationBoundary:
             lambda *_args, **_kwargs: {"intent": "read", "action": "analytics.workspace.summary", "search_context": {}},
         )
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
-        monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *_args, **_kwargs: {"snapshot": {}, "analysis": {}})
+        monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *_args, **_kwargs: {"snapshot": {}, "analysis": {}})
 
         async def must_not_prefetch(*_args, **_kwargs):
             raise AssertionError("read tools must not receive broad semantic prefetches")
@@ -595,7 +596,7 @@ class TestCopilotOperationBoundary:
             },
         )
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
-        monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
+        monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
         monkeypatch.setattr(
             "services.knowledge.context_adapter.retrieve_knowledge_context",
             lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}),
@@ -625,7 +626,7 @@ class TestCopilotOperationBoundary:
             lambda *_args, **_kwargs: {"intent": "action", "action": "campaign.refine", "campaign_id": "campaign-1", "campaign_updates": {"objective": "New objective"}, "search_context": {}},
         )
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
-        monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *_args, **_kwargs: {"snapshot": {}, "analysis": {}})
+        monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *_args, **_kwargs: {"snapshot": {}, "analysis": {}})
         monkeypatch.setattr(
             main_module.copilot_runners,
             "run_campaign",
@@ -648,7 +649,7 @@ class TestCopilotOperationBoundary:
             lambda *_args, **_kwargs: {"intent": "action", "action": "campaign.refine", "campaign_id": "campaign-1", "campaign_updates": {"objective": "New objective"}, "search_context": {}},
         )
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
-        monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *_args, **_kwargs: {"snapshot": {}, "analysis": {}})
+        monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *_args, **_kwargs: {"snapshot": {}, "analysis": {}})
         calls = []
 
         async def campaign_runner(tool_name, user_id, workspace_id, session_token, decision):
@@ -679,7 +680,7 @@ class TestCopilotOperationBoundary:
             lambda *_args, **_kwargs: {"intent": "action", "action": "campaign.refine", "campaign_id": "campaign-1", "campaign_updates": {"name": "Changed"}, "search_context": {}},
         )
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
-        monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *_args, **_kwargs: {"snapshot": {}, "analysis": {}})
+        monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *_args, **_kwargs: {"snapshot": {}, "analysis": {}})
 
         async def failed_runner(*_args, **_kwargs):
             return {"ok": False, "status": "verification_failed", "tool": "campaign.refine", "reason": "Campaign changes could not be verified in this workspace."}
@@ -813,7 +814,7 @@ class TestCopilotOperationBoundary:
             lambda *_args, **_kwargs: {"intent": "read", "action": "campaign.list", "search_context": {}, "reason": "list campaigns"},
         )
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
-        monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
+        monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
         monkeypatch.setattr(
             "services.knowledge.context_adapter.retrieve_knowledge_context",
             lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}),
@@ -922,7 +923,7 @@ class TestCopilotOperationBoundary:
             },
         )
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
-        monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
+        monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
         monkeypatch.setattr(
             "services.knowledge.context_adapter.retrieve_knowledge_context",
             lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}),
@@ -967,7 +968,7 @@ class TestCopilotOperationBoundary:
             lambda *_args, **_kwargs: next(decisions),
         )
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
-        monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
+        monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
         monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}))
         monkeypatch.setattr("services.workspace.state.ensure_workspace", lambda _user_id: "workspace-1")
         monkeypatch.setattr("services.discovery.service.create_search_run", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("read/conversation must not create Discovery")))
@@ -993,7 +994,7 @@ class TestCopilotOperationBoundary:
             lambda *_args, **_kwargs: {"intent": "discovery", "mode": "new", "search_context": {"industry": ["restaurants"]}},
         )
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
-        monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
+        monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
         monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}))
         monkeypatch.setattr("services.workspace.state.ensure_workspace", lambda _user_id: "workspace-1")
         async def fail_runner(*_args, **_kwargs):
@@ -1054,7 +1055,7 @@ class TestCopilotOperationBoundary:
             "handle_message",
             lambda **_kwargs: (_ for _ in ()).throw(AssertionError("legacy engine must not receive Copilot requests")),
         )
-        monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
+        monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
         monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", fake_knowledge)
         monkeypatch.setattr("services.discovery.service.create_search_run", fake_create_search_run)
 
@@ -1075,8 +1076,7 @@ class TestCopilotOperationBoundary:
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: next(summaries))
         monkeypatch.setattr(main_module.engine, "create_web_session", lambda **_kwargs: {"session_token": "created-session"})
         monkeypatch.setattr(
-            main_module,
-            "_build_copilot_workspace_context",
+            "services.workspace.context.build_workspace_context",
             lambda *_args, **_kwargs: {"snapshot": {}, "analysis": {}},
         )
         monkeypatch.setattr(
@@ -1390,8 +1390,7 @@ def _schema_responses(client, session_token, monkeypatch):
         },
     )
     monkeypatch.setattr(
-        main_module,
-        "_build_copilot_workspace_context",
+        "services.workspace.context.build_workspace_context",
         lambda *_args, **_kwargs: {"snapshot": {}, "analysis": {}},
     )
     return [

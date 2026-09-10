@@ -14,9 +14,10 @@ def test_copilot_context_reads_canonical_workspace_campaigns(monkeypatch):
             "drafts": [],
         }
 
-    monkeypatch.setattr("services.workspace.state.load_workspace_state", load_workspace_state)
+    monkeypatch.setattr("services.workspace.context.load_workspace_state", load_workspace_state)
 
-    context = main_module._build_copilot_workspace_context(
+    from services.workspace.context import build_workspace_context
+    context = build_workspace_context(
         "session-token",
         user_id="owner-1",
         workspace_id="workspace-1",

@@ -18,6 +18,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
 import services.identity.dependencies as identity_dependencies
 import services.workspace.access as workspace_access
+from services.workspace import context as workspace_context_service
 from services.identity.api import router as auth_router
 from services.onboarding.api import router as onboarding_router
 from services.organizations.api import router as organizations_router, _build_org_deps, register_deps as register_org_deps
@@ -460,217 +461,6 @@ _execution_adapter_registry = ExecutionAdapterRegistry()
 # R5/R8 compatibility projection only. Campaign strategy-job metadata is
 # persisted on the canonical campaign record; this map retains live task state
 # for legacy polling until that route family moves to the durable jobs boundary.
-
-
-def _build_copilot_workspace_context(
-    session_token: str,
-    current_page: str | None = None,
-    page_context: dict | None = None,
-    conversation_id: str | None = None,
-    user_id: str = "",
-    workspace_id: str = "",
-) -> dict:
-    # Copilot is a read/analyze surface. Its workspace context must come from
-    # the canonical workspace projection so a reload, another tab, or a
-    # previous session cannot leave the assistant reasoning over stale
-    # session-local campaign/draft state.
-    if not user_id or not workspace_id:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    campaigns = []
-    drafts = []
-    try:
-        from services.workspace.state import load_workspace_state
-        state = load_workspace_state(
-            user_id,
-            include_details=False,
-            workspace_id=workspace_id,
-            canonical_only=True,
-        )
-        campaigns = state.get("campaigns") or []
-        drafts = state.get("drafts") or []
-    except Exception as error:
-        log.warning("Copilot canonical workspace context unavailable: %s", error)
-    # Scope the prompt-facing operational set to the active resource. The
-    # canonical loaders remain authoritative; this only prevents unrelated
-    # campaigns/drafts from becoming retrieval context for the turn.
-    page_context = page_context or {}
-    active_campaign_id = str(
-        page_context.get("campaign_id") or page_context.get("active_campaign_id") or ""
-    ).strip()
-    active_draft_id = str(
-        page_context.get("draft_id") or page_context.get("active_draft_id") or ""
-    ).strip()
-    if active_campaign_id:
-        campaigns = [c for c in campaigns if str(c.get("id") or "") == active_campaign_id]
-        drafts = [d for d in drafts if str(d.get("campaign_id") or "") == active_campaign_id]
-    if active_draft_id:
-        drafts = [d for d in drafts if str(d.get("id") or "") == active_draft_id]
-    campaigns = campaigns[:20]
-    drafts = drafts[:50]
-    # Keep turn context deliberately narrow and workspace-scoped. The legacy
-    # snapshot helper also hydrates session memory/timeline and user-wide jobs;
-    # those are not authoritative for an explicitly selected workspace. Live
-    # questions use their canonical read tool after intent selection.
-    from services.workspace_snapshot import enrich_campaigns
-    from services.workspace_reasoner import WorkspaceReasoner
-
-    enriched_campaigns = enrich_campaigns(campaigns, drafts)
-    total_leads = sum(int(c.get("lead_count") or 0) for c in enriched_campaigns)
-    pending_drafts = sum(1 for draft in drafts if str(draft.get("status") or "") == "pending")
-    approved_drafts = sum(1 for draft in drafts if str(draft.get("status") or "") == "approved")
-    prompt_campaigns = [
-        {
-            "id": str(campaign.get("id") or ""),
-            "name": str(campaign.get("name") or ""),
-            "status": str(campaign.get("status") or "planning"),
-            "current_step": str(campaign.get("current_step") or ""),
-            "lead_count": int(campaign.get("lead_count") or 0),
-            "pending_drafts": int(campaign.get("pending_drafts") or 0),
-            "approved_drafts": int(campaign.get("approved_drafts") or 0),
-            "created_at": campaign.get("created_at") or "",
-            "updated_at": campaign.get("updated_at") or "",
-        }
-        for campaign in enriched_campaigns
-    ]
-    snapshot = {
-        "campaigns": prompt_campaigns,
-        "campaign_count": len(prompt_campaigns),
-        "campaigns_ready": sum(1 for campaign in prompt_campaigns if campaign["current_step"] == "sending"),
-        "campaigns_draft_review": sum(1 for campaign in prompt_campaigns if campaign["current_step"] == "review"),
-        "drafts": {"total": len(drafts), "pending": pending_drafts, "approved": approved_drafts},
-        "total_leads": total_leads,
-        "jobs": {"running": [], "recently_completed": []},
-        "memory": {},
-        "timeline": [],
-    }
-    analysis = WorkspaceReasoner(snapshot).analyze().to_dict()
-
-    result = {
-        "snapshot": {
-            "campaigns": snapshot.get("campaigns", []),
-            "campaign_count": snapshot.get("campaign_count", 0),
-            "campaigns_ready": snapshot.get("campaigns_ready", 0),
-            "campaigns_draft_review": snapshot.get("campaigns_draft_review", 0),
-            "drafts": snapshot.get("drafts", {}),
-            "total_leads": snapshot.get("total_leads", 0),
-            "jobs": snapshot.get("jobs", {}),
-            "memory": snapshot.get("memory", {}),
-            "timeline": snapshot.get("timeline", []),
-            "active_workflows": [],
-        },
-        "analysis": {
-            "current_focus": analysis.get("current_focus"),
-            "recommended_next_action": analysis.get("recommended_next_action"),
-            "campaign_priorities": analysis.get("campaign_priorities", []),
-            "workspace_health": analysis.get("workspace_health"),
-            "cross_campaign_insights": analysis.get("cross_campaign_insights", []),
-            "workflow_continuation": analysis.get("workflow_continuation"),
-            "attention_items": analysis.get("attention_items", []),
-        },
-    }
-
-    if current_page == "Draft Review" and page_context:
-        selected_index = page_context.get("selected_index")
-        if selected_index is not None and drafts:
-            try:
-                idx = int(selected_index)
-                if 0 <= idx < len(drafts):
-                    d = drafts[idx]
-                    result["current_draft"] = {
-                        "id": d.get("id"),
-                        "subject": d.get("subject", ""),
-                        "text_preview": d.get("text", "")[:300],
-                        "lead_name": d.get("lead", {}).get("name", ""),
-                        "lead_company": d.get("lead", {}).get("company", ""),
-                        "lead_title": d.get("lead", {}).get("title", ""),
-                        "campaign_name": d.get("campaign_name", ""),
-                        "tone": d.get("tone"),
-                        "length": d.get("length"),
-                        "status": d.get("status"),
-                    }
-                    intel = d.get("draft_intelligence")
-                    if intel:
-                        result["current_draft"]["draft_intelligence"] = intel
-                    draft_text = d.get("text", "")
-                    try:
-                        from services.draft_intelligence import analyze_draft as _analyze
-                        new_intel = _analyze(draft_text, {
-                            "campaign_name": d.get("campaign_name"),
-                            "company": d.get("lead", {}).get("company"),
-                            "contact": d.get("lead", {}).get("name"),
-                            "role": d.get("lead", {}).get("title"),
-                        })
-                        result["current_draft"]["draft_intelligence"] = new_intel.to_dict()
-                    except Exception:
-                        pass
-            except (ValueError, IndexError):
-                pass
-
-    # SaaS-2.5: only surface the authenticated owner's own providers. The
-    # provider records are durable (rehydrated from connected_accounts), so a
-    # cross-tenant read here would leak emails/ids/health across tenants.
-    providers = [
-        p for p in communication_store.list_providers()
-        if not user_id or str(getattr(p, "user_id", "")) == str(user_id)
-    ]
-    if providers:
-        provider_list = []
-        for p in providers:
-            instance = get_provider(p.id)
-            health_val = instance.health().value if instance else p.status.value
-            provider_list.append({
-                "id": p.id,
-                "provider_type": p.provider_type.value,
-                "status": health_val,
-                "email": p.metadata.get("email", ""),
-                "last_sync": p.last_sync,
-            })
-        result["providers"] = provider_list
-        result["provider_summary"] = {
-            "total": len(providers),
-            "healthy": sum(1 for p in provider_list if p["status"] == "healthy"),
-            "offline": sum(1 for p in provider_list if p["status"] == "offline"),
-            "last_sync": max((p["last_sync"] for p in provider_list if p["last_sync"]), default=""),
-        }
-
-    # SaaS-2.5: conversation memory/intelligence is only exposed for a
-    # conversation the caller provably owns. A client-supplied conversation_id
-    # must never read another tenant's memory/timeline.
-    if conversation_id and user_id:
-        from services.conversations.conversation_store import conversation_store
-        convo = conversation_store.get_conversation(conversation_id)
-        if (
-            convo is not None
-            and conversation_owned_by(convo, user_id)
-            and conversation_in_workspace(convo, str(workspace_id or ""))
-        ):
-            mem = memory_store.get(conversation_id)
-            if mem:
-                events = get_conversation_events(conversation_id)
-                sigs = [BuyingSignal(signal=s, strength="medium", confidence=50, reason="") for s in mem.buying_signals] if mem.buying_signals else []
-                obj_sigs = [s.model_dump() for s in sigs] if sigs else []
-                result["conversation_intelligence"] = {
-                    "conversation_id": conversation_id,
-                    "current_stage": mem.current_stage.value,
-                    "summary": mem.summary,
-                    "open_questions": mem.open_questions,
-                    "outstanding_objections": mem.outstanding_objections,
-                    "pain_points": mem.pain_points,
-                    "business_goals": mem.business_goals,
-                    "competitor_mentioned": mem.competitor_mentioned,
-                    "decision_makers": mem.decision_makers,
-                    "buying_signals": mem.buying_signals,
-                    "last_recommendation": mem.last_recommendation,
-                    "last_followup": mem.last_followup,
-                    "key_risks": mem.key_risks,
-                    "key_opportunities": mem.key_opportunities,
-                    "urgency": mem.urgency,
-                    "decision_confidence": mem.decision_confidence,
-                    "top_objection": mem.top_objection,
-                    "timeline_events": [e.model_dump() for e in events],
-                }
-
-    return result
 
 
 _SYNONYM_STRATEGY_TABLE: list[tuple[list[str], str]] = [
@@ -1343,7 +1133,7 @@ async def post_web_session_message(
             len(payload.text or ""),
         )
         workspace_context = await asyncio.to_thread(
-            _build_copilot_workspace_context,
+            workspace_context_service.build_workspace_context,
             session_token,
             current_page=payload.copilot.current_page,
             page_context=payload.copilot.page_context,
@@ -2095,7 +1885,7 @@ async def dev_workspace_context(session_token: str, conversation_id: str = "", r
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
     selected_workspace = await workspace_access.resolve_selected_workspace_context(request, owner_id)
     ctx = await asyncio.to_thread(
-        _build_copilot_workspace_context,
+        workspace_context_service.build_workspace_context,
         session_token,
         current_page="Mission Control",
         conversation_id=conversation_id or None,

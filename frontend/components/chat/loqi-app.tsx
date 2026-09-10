@@ -149,20 +149,16 @@ function MessageBlock({
           {leads.length > 0 ? (
             <div className="mt-4 grid gap-3 md:grid-cols-2">
               {leads.map((lead, index) => (
-                <div
+                <LeadCard
                   key={`${lead.name}-${index}`}
-                  className="rounded-[0.95rem] border border-white/8 bg-black/10 p-3.5"
-                >
-                  <div className="text-[10px] uppercase tracking-[0.24em] text-[#8e98b3]">
-                    Lead {index + 1}
-                  </div>
-                  <div className="mt-2 text-sm font-semibold text-white">
-                    {lead.name || "Unknown"}
-                  </div>
-                  <div className="mt-1 text-xs text-[#bec7dc] sm:text-sm">
-                    {[lead.title, lead.company].filter(Boolean).join(" @ ")}
-                  </div>
-                </div>
+                  lead={lead}
+                  index={index}
+                  selected={selectedLeadId === `card-${index}`}
+                  previewing={previewState.has(index)}
+                  previewData={previewState.get(index) ?? null}
+                  onSelect={onSelectLead}
+                  onPreview={onPreviewLead}
+                />
               ))}
             </div>
           ) : null}

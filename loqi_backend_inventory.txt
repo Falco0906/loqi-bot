@@ -105,7 +105,7 @@ backend/services/communication/provider_registry.py | ACTIVE | Provider Registry
 backend/services/communication/reply_simulator.py | ACTIVE | Development Reply Simulator — pluggable inbound event producer.
 backend/services/company_context.py | ACTIVE | Company context analysis.
 backend/services/platform/config_validation.py | ACTIVE | Centralized environment/configuration validation (PR10.2).
-backend/services/conversation_classifier.py | ACTIVE | Conversation Stage Classification.
+backend/services/conversation_intelligence/stage_classifier.py | ACTIVE | Legacy sales-stage classification.
 backend/services/conversation_engine.py | ACTIVE | Defines ConversationEngine.
 backend/services/conversation_intelligence/__init__.py | ACTIVE | Conversation Intelligence Module.
 backend/services/conversation_intelligence/buying_signal_detector.py | ACTIVE | Buying signal detection.

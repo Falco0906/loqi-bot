@@ -24,7 +24,7 @@ from services.outbound import service as outbound_service
 from services.conversation_intelligence.buying_signal_detector import detect_signals
 from services.conversation_memory import create_or_update_memory, memory_store
 from services.conversation_models import ConversationMessage, ConversationStage
-from services.conversation_classifier import classify_stage
+from services.conversation_intelligence.stage_classifier import classify_stage
 from services.conversation_timeline import get_events as get_conversation_events
 from services.conversations.conversation_store import conversation_owned_by, conversation_store
 from services.followup_reasoner import recommend_followup

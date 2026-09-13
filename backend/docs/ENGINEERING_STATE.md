@@ -315,7 +315,7 @@ backend/
 │   ├── conversation_models.py  # Pydantic models for intelligence
 │   ├── conversation_memory.py  # Structured fact storage per conversation
 │   ├── conversation_timeline.py# Event log per conversation
-│   ├── conversation_classifier.py # Conversation stage classification
+│   ├── conversation_intelligence/stage_classifier.py # Legacy sales-stage classification
 │   ├── conversational_response_generator.py # AI response generation (963 lines)
 │   ├── reply_intelligence.py   # Reply Intelligence aggregator
 │   ├── reply_summary.py        # Executive summaries

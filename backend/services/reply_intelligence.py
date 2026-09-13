@@ -11,7 +11,7 @@ from services.conversation_models import (
 )
 from services.conversation_intelligence.intent_extractor import detect_intents
 from services.conversation_intelligence.buying_signal_detector import detect_signals
-from services.conversation_classifier import classify_stage
+from services.conversation_intelligence.stage_classifier import classify_stage
 from services.conversation_memory import create_or_update_memory
 from services.followup_reasoner import recommend_followup
 from services.reply_summary import generate_summary

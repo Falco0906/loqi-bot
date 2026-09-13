@@ -27,17 +27,11 @@ def test_memory_update_preserves_intelligence_memory_and_event_contract(monkeypa
     monkeypatch.setattr(communication_service, "detect_signals", lambda text: [signal])
     monkeypatch.setattr(communication_service, "classify_stage", lambda history, text: (stage, "interested"))
     monkeypatch.setattr(communication_service, "recommend_followup", lambda *args: recommendation)
-    monkeypatch.setattr(
-        communication_service.memory_store,
-        "get",
-        lambda conversation_id: calls.setdefault("existing", conversation_id),
-    )
-
     def create_memory(**kwargs):
         calls["memory"] = kwargs
         return memory
 
-    monkeypatch.setattr(communication_service, "create_or_update_memory", create_memory)
+    monkeypatch.setattr(communication_service, "build_legacy_memory", create_memory)
     monkeypatch.setattr(
         communication_service,
         "publish",
@@ -53,7 +47,6 @@ def test_memory_update_preserves_intelligence_memory_and_event_contract(monkeypa
     )
 
     assert result == {"ok": True, "memory": {"conversation_id": "generated-message", "stage": "engaged"}}
-    assert calls["existing"] == "generated-message"
     assert calls["memory"] == {
         "conversation_id": "generated-message",
         "message": message,
@@ -62,7 +55,6 @@ def test_memory_update_preserves_intelligence_memory_and_event_contract(monkeypa
         "stage": stage,
         "stage_reasoning": "interested",
         "followup_action": "follow_up",
-        "existing_memory": "generated-message",
     }
     event_args, event_kwargs = calls["event"]
     assert event_args == (

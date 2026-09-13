@@ -13,7 +13,13 @@ from datetime import datetime, timezone
 import os
 from typing import Any
 
-from services.conversation_models import ConversationMemory
+from services.conversation_models import (
+    BuyingSignal,
+    ConversationMemory,
+    ConversationMessage,
+    ConversationStage,
+    IntentPrediction,
+)
 from services.conversations.conversation_store import (
     conversation_in_workspace,
     conversation_owned_by,
@@ -25,6 +31,11 @@ from services.platform.supabase import get_supabase_client
 
 _CATEGORY = "conversation_intelligence_memories"
 _MAX_SOURCE_MESSAGE_IDS = 200
+
+
+def _local_fallback_allowed() -> bool:
+    environment = (os.getenv("ENVIRONMENT") or os.getenv("APP_ENV") or "development").strip().lower()
+    return environment != "production" or os.getenv("LOQI_ALLOW_LOCAL_CONVERSATION_SNAPSHOTS", "").lower() in {"1", "true", "yes"}
 
 
 def _default_state_file() -> str:
@@ -55,6 +66,86 @@ class LegacyConversationMemoryRecord:
     source_message_ids: tuple[str, ...]
     version: int
     updated_at: str
+
+
+def _extract_questions(text: str) -> list[str]:
+    import re
+
+    return [line.strip() for line in re.split(r"[.!?\n]", text) if "?" in line and len(line.strip()) > 5][:5]
+
+
+def _extract_pain_points(text: str) -> list[str]:
+    indicators = (
+        "struggling with", "challenge is", "difficult to", "problem with",
+        "issue we have", "frustrating", "hard to", "not working", "broken",
+        "inefficient", "too slow", "too many", "wasting", "not enough", "can't", "cannot",
+    )
+    lowered = text.lower()
+    return [
+        text[max(0, lowered.index(indicator) - 20):min(len(text), lowered.index(indicator) + len(indicator) + 60)].strip()
+        for indicator in indicators if indicator in lowered
+    ][:3]
+
+
+def build_legacy_memory(
+    *,
+    conversation_id: str,
+    message: ConversationMessage,
+    intents: list[IntentPrediction],
+    buying_signals: list[BuyingSignal],
+    stage: ConversationStage,
+    stage_reasoning: str,
+    followup_action: str = "",
+    existing_memory: ConversationMemory | None = None,
+    decision_confidence: int = 0,
+    urgency: str = "",
+    top_objection: str = "",
+) -> ConversationMemory:
+    """Build the legacy memory projection without choosing a persistence path."""
+    memory = existing_memory.model_copy(deep=True) if existing_memory else ConversationMemory(conversation_id=conversation_id)
+    memory.current_stage = stage
+    memory.summary = f"Message from {message.sender or 'unknown'}: {message.text[:100]}..."
+    for question in _extract_questions(message.text):
+        if question not in memory.open_questions:
+            memory.open_questions.append(question)
+    for pain in _extract_pain_points(message.text):
+        if pain not in memory.pain_points:
+            memory.pain_points.append(pain)
+    for intent in intents:
+        risks = {
+            "budget_concern": "Budget concern raised by lead",
+            "timing_concern": "Timing delay risk",
+            "authority_concern": "Authority concerns — may need multiple stakeholders",
+            "competitor_mention": "Competitor evaluation in progress",
+        }
+        risk = risks.get(intent.intent.value)
+        if risk and risk not in memory.key_risks:
+            memory.key_risks.append(risk)
+    for signal in buying_signals:
+        signal_name = signal.signal.replace("_", " ").title()
+        if signal_name not in memory.buying_signals:
+            memory.buying_signals.append(signal_name)
+    if followup_action and followup_action not in memory.last_followup:
+        memory.last_followup = followup_action
+    signal_names = {signal.signal for signal in buying_signals}
+    for name, opportunity in {
+        "asked_for_pricing": "Pricing discussion",
+        "requested_demo": "Demo opportunity",
+        "requested_meeting": "Meeting opportunity",
+    }.items():
+        if name in signal_names and opportunity not in memory.key_opportunities:
+            memory.key_opportunities.append(opportunity)
+    if buying_signals:
+        strengths = {signal.strength.value for signal in buying_signals}
+        memory.urgency = "high" if strengths & {"very_strong", "strong"} else "medium" if "medium" in strengths else "low"
+    memory.last_recommendation = stage_reasoning
+    if top_objection:
+        memory.top_objection = top_objection
+    if decision_confidence:
+        memory.decision_confidence = decision_confidence
+    if urgency:
+        memory.urgency = urgency
+    return memory
 
 
 def _authorized_conversation(*, conversation_id: str, owner_id: str, workspace_id: str):
@@ -121,19 +212,39 @@ def load_legacy_memory(
     )
     client = get_supabase_client()
     if client is not None:
-        result = client.table("conversation_intelligence_memories").select(
-            "conversation_id, owner_id, workspace_id, memory, processed_source_message_ids, version, updated_at"
-        ).eq("conversation_id", conversation_id).eq("owner_id", owner_id).eq(
-            "workspace_id", workspace_id
-        ).limit(1).execute()
-        rows = getattr(result, "data", None) or []
-        return _record_from_row(rows[0]) if rows else None
+        try:
+            result = client.table("conversation_intelligence_memories").select(
+                "conversation_id, owner_id, workspace_id, memory, processed_source_message_ids, version, updated_at"
+            ).eq("conversation_id", conversation_id).eq("owner_id", owner_id).eq(
+                "workspace_id", workspace_id
+            ).limit(1).execute()
+            rows = getattr(result, "data", None) or []
+            return _record_from_row(rows[0]) if rows else None
+        except Exception:
+            if not _local_fallback_allowed():
+                raise
     row = _load_local_rows().get(conversation_id)
     if row is None:
         return None
     if str(row.get("owner_id") or "") != str(owner_id) or str(row.get("workspace_id") or "") != str(workspace_id):
         raise ConversationMemoryAccessError("Conversation is unavailable")
     return _record_from_row(row)
+
+
+def canonical_memory_scope(conversation_id: str) -> tuple[str, str] | None:
+    """Return server-derived owner/workspace for an Inbox conversation.
+
+    This is intentionally for trusted internal providers such as Gmail sync.
+    HTTP callers must use ``load_legacy_memory``/``persist_legacy_memory``
+    with their authenticated owner and selected workspace.
+    """
+    conversation = conversation_store.get_conversation(conversation_id)
+    if conversation is None:
+        return None
+    metadata = getattr(conversation, "metadata", {}) or {}
+    owner_id = str(getattr(conversation, "owner_id", "") or "")
+    workspace_id = str(metadata.get("workspace_id") or "") if isinstance(metadata, dict) else ""
+    return (owner_id, workspace_id) if owner_id and workspace_id else None
 
 
 def persist_legacy_memory(
@@ -167,17 +278,18 @@ def persist_legacy_memory(
                 "p_source_message_id": source_message_id,
                 "p_expected_version": expected_version,
             }).execute()
+            version = int(getattr(result, "data", 0) or 0)
+            current = load_legacy_memory(
+                conversation_id=conversation_id,
+                owner_id=owner_id,
+                workspace_id=workspace_id,
+            )
+            if current is None or current.version != version:
+                raise RuntimeError("Conversation intelligence memory write could not be verified")
+            return current
         except Exception as error:
-            raise ConversationMemoryVersionConflict from error
-        version = int(getattr(result, "data", 0) or 0)
-        current = load_legacy_memory(
-            conversation_id=conversation_id,
-            owner_id=owner_id,
-            workspace_id=workspace_id,
-        )
-        if current is None or current.version != version:
-            raise RuntimeError("Conversation intelligence memory write could not be verified")
-        return current
+            if not _local_fallback_allowed():
+                raise ConversationMemoryVersionConflict from error
 
     rows = _load_local_rows()
     existing = rows.get(conversation_id)

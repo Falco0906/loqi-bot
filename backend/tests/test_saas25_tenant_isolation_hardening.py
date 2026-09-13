@@ -171,8 +171,13 @@ class TestWorkspaceContextProviderScoping:
             decision_confidence = 0
             top_objection = ""
 
-        # memory store has data for the foreign conversation id.
-        monkeypatch.setattr(context_owner, "memory_store", _MemStore({"conv-9": _Mem()}))
+        # A foreign conversation must be rejected before the durable memory
+        # boundary is consulted.
+        monkeypatch.setattr(
+            context_owner,
+            "load_legacy_memory",
+            lambda **_kwargs: pytest.fail("foreign conversation reached memory read"),
+        )
         class _Convo:
             owner_id = "user-other"
 

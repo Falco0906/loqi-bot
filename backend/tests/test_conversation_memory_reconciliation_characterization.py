@@ -20,7 +20,7 @@ def teardown_function():
     memory_store._store.clear()
 
 
-def test_legacy_memory_is_keyed_by_the_supplied_compatibility_id():
+def test_noncanonical_legacy_analysis_keeps_its_envelope_without_persisting_memory():
     message = ConversationMessage(text="How much does this cost?", sender="lead")
 
     intelligence, memory = project_legacy_reply_intelligence(
@@ -30,10 +30,10 @@ def test_legacy_memory_is_keyed_by_the_supplied_compatibility_id():
 
     assert intelligence.conversation_id == "compatibility-analysis-id"
     assert memory.conversation_id == "compatibility-analysis-id"
-    assert memory_store.get("compatibility-analysis-id") is memory
+    assert memory_store.get("compatibility-analysis-id") is None
 
 
-def test_replaying_the_same_legacy_analysis_does_not_duplicate_memory_values():
+def test_replaying_noncanonical_legacy_analysis_is_transient_but_keeps_memory_values():
     message = ConversationMessage(text="How much does this cost?", sender="lead")
     _, initial_memory = project_legacy_reply_intelligence(message, conversation_id="legacy-replay")
 
@@ -45,18 +45,20 @@ def test_replaying_the_same_legacy_analysis_does_not_duplicate_memory_values():
 
     assert replayed_memory.buying_signals == initial_memory.buying_signals
     assert replayed_memory.key_opportunities == initial_memory.key_opportunities
-    assert memory_store.get("legacy-replay").model_dump(mode="json") == replayed_memory.model_dump(mode="json")
+    assert memory_store.get("legacy-replay") is None
 
 
-def test_legacy_memory_has_no_restart_rehydration_source():
-    project_legacy_reply_intelligence(
+def test_process_local_compatibility_store_is_not_used_by_new_analysis_path():
+    _, memory = project_legacy_reply_intelligence(
         ConversationMessage(text="Can we book a demo?", sender="lead"),
         conversation_id="restart-baseline",
     )
 
-    # A new store models a new process: there is no persistence backend to
-    # reload from today.  The future durable owner must change this explicitly.
+    # The retired compatibility store remains process-local until C5e, but
+    # projection callers no longer write it. A new process has no legacy
+    # state to restore; canonical Gmail analysis writes the durable boundary.
     restarted_store = MemoryStore()
 
-    assert memory_store.get("restart-baseline") is not None
+    assert memory.conversation_id == "restart-baseline"
+    assert memory_store.get("restart-baseline") is None
     assert restarted_store.get("restart-baseline") is None

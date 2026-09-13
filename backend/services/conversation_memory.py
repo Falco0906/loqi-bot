@@ -5,10 +5,8 @@ Memory evolves after each analyzed message.
 """
 
 from typing import Optional
-from services.conversation_models import (
-    ConversationMemory, ConversationMessage, IntentPrediction,
-    BuyingSignal, ConversationStage, FollowupRecommendation,
-)
+from services.conversation_models import ConversationMemory, ConversationMessage, IntentPrediction, BuyingSignal, ConversationStage
+from services.conversations.intelligence_memory import build_legacy_memory
 
 
 class MemoryStore:
@@ -76,69 +74,17 @@ def create_or_update_memory(
     urgency: str = "",
     top_objection: str = "",
 ) -> ConversationMemory:
-    """Create or update conversation memory from an analyzed message."""
-    if existing_memory:
-        mem = existing_memory.model_copy(deep=True)
-    else:
-        mem = ConversationMemory(conversation_id=conversation_id)
+    """Compatibility wrapper that writes the retired process-local store.
 
-    mem.current_stage = stage
-    mem.summary = f"Message from {message.sender or 'unknown'}: {message.text[:100]}..."
-
-    questions = _extract_questions(message.text)
-    for q in questions:
-        if q not in mem.open_questions:
-            mem.open_questions.append(q)
-
-    pains = _extract_pain_points(message.text)
-    for p in pains:
-        if p not in mem.pain_points:
-            mem.pain_points.append(p)
-
-    for intent in intents:
-        if intent.intent.value == "budget_concern" and intent.intent.value not in mem.key_risks:
-            mem.key_risks.append("Budget concern raised by lead")
-        if intent.intent.value == "timing_concern" and "Timing delay risk" not in mem.key_risks:
-            mem.key_risks.append("Timing delay risk")
-        if intent.intent.value == "authority_concern" and "Authority concerns — may need multiple stakeholders" not in mem.key_risks:
-            mem.key_risks.append("Authority concerns — may need multiple stakeholders")
-        if intent.intent.value == "competitor_mention" and "Competitor evaluation in progress" not in mem.key_risks:
-            mem.key_risks.append("Competitor evaluation in progress")
-
-    for signal in buying_signals:
-        sig_text = signal.signal.replace("_", " ").title()
-        if sig_text not in mem.buying_signals:
-            mem.buying_signals.append(sig_text)
-
-    if followup_action and followup_action not in mem.last_followup:
-        mem.last_followup = followup_action
-
-    buying_signal_names = {s.signal for s in buying_signals}
-    if "asked_for_pricing" in buying_signal_names:
-        if "Pricing discussion" not in mem.key_opportunities:
-            mem.key_opportunities.append("Pricing discussion")
-    if "requested_demo" in buying_signal_names:
-        if "Demo opportunity" not in mem.key_opportunities:
-            mem.key_opportunities.append("Demo opportunity")
-    if "requested_meeting" in buying_signal_names:
-        if "Meeting opportunity" not in mem.key_opportunities:
-            mem.key_opportunities.append("Meeting opportunity")
-
-    if buying_signals:
-        strengths = [s.strength.value for s in buying_signals]
-        if "very_strong" in strengths or "strong" in strengths:
-            mem.urgency = "high"
-        elif "medium" in strengths:
-            mem.urgency = "medium"
-        else:
-            mem.urgency = "low"
-
-    mem.last_recommendation = stage_reasoning
-    if top_objection:
-        mem.top_objection = top_objection
-    if decision_confidence:
-        mem.decision_confidence = decision_confidence
-    if urgency:
-        mem.urgency = urgency
+    Production callers migrate to ``services.conversations.intelligence_memory``.
+    This wrapper remains only while C5c test/runtime proof is completed.
+    """
+    mem = build_legacy_memory(
+        conversation_id=conversation_id, message=message, intents=intents,
+        buying_signals=buying_signals, stage=stage, stage_reasoning=stage_reasoning,
+        followup_action=followup_action, existing_memory=existing_memory,
+        decision_confidence=decision_confidence, urgency=urgency,
+        top_objection=top_objection,
+    )
     memory_store.update(conversation_id, mem)
     return mem

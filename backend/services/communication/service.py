@@ -22,7 +22,6 @@ from services.communication.provider_registry import (
 )
 from services.outbound import service as outbound_service
 from services.conversation_intelligence.buying_signal_detector import detect_signals
-from services.conversation_memory import create_or_update_memory, memory_store
 from services.conversation_models import ConversationMessage, ConversationStage
 from services.conversation_intelligence.stage_classifier import classify_stage
 from services.conversations.compatibility import read_legacy_timeline_events
@@ -30,6 +29,7 @@ from services.conversations.conversation_store import conversation_owned_by, con
 from services.followup_reasoner import recommend_followup
 from services.conversation_intelligence.intent_extractor import detect_intents
 from services.conversation_intelligence.legacy_reply_projection import project_legacy_reply_intelligence
+from services.conversations.intelligence_memory import build_legacy_memory
 from services.communication.reply_summary import generate_summary
 from services.world_model.events import EventType as WMEventType
 from services.world_model.publisher import publish
@@ -116,11 +116,9 @@ def analyze_communication_message(
 ) -> dict[str, Any]:
     """Analyze one message and preserve the legacy intelligence envelope."""
     message = ConversationMessage(text=text, sender=sender, subject=subject)
-    existing = memory_store.get(conversation_id) if conversation_id else None
     intelligence, memory = project_legacy_reply_intelligence(
         message=message,
         conversation_id=conversation_id,
-        existing_memory=existing,
     )
     return {"ok": True, "intelligence": intelligence.model_dump(), "memory": memory.model_dump()}
 
@@ -135,7 +133,10 @@ def update_communication_memory(
     signals = detect_signals(message.text)
     stage, reasoning = classify_stage([], message.text)
     recommendation = recommend_followup(intents, signals, stage)
-    memory = create_or_update_memory(
+    # This legacy HTTP payload has neither a trusted canonical conversation
+    # scope nor a stable provider message ID. It remains analysis-only; Gmail
+    # sync owns durable memory writes once it has both values.
+    memory = build_legacy_memory(
         conversation_id=resolved_conversation_id,
         message=message,
         intents=intents,
@@ -143,7 +144,6 @@ def update_communication_memory(
         stage=stage,
         stage_reasoning=reasoning,
         followup_action=recommendation.action.value,
-        existing_memory=memory_store.get(resolved_conversation_id),
     )
     publish(session_token, WMEventType.PREFERENCE_LEARNED, {
         "conversation_id": resolved_conversation_id,

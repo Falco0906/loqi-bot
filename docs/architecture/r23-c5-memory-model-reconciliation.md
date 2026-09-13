@@ -3,8 +3,10 @@
 ## Status
 
 This document records the characterization and identity decision required
-before durable conversation-memory work begins. It does not change the
-current compatibility behavior.
+before durable conversation-memory work begins. C5b added the durable
+record and C5c moved canonical Gmail analysis and workspace reads to it.
+Raw compatibility analysis without a trusted canonical conversation and
+stable source-message ID remains transient by design.
 
 ## Current representations
 

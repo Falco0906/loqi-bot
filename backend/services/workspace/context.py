@@ -7,7 +7,6 @@ from fastapi import HTTPException
 
 from services.communication.communication_store import store as communication_store
 from services.communication.provider_registry import get_provider
-from services.conversation_memory import memory_store
 from services.conversation_models import BuyingSignal
 from services.conversations.compatibility import read_legacy_timeline_events
 from services.conversations.conversation_store import (
@@ -15,6 +14,7 @@ from services.conversations.conversation_store import (
     conversation_owned_by,
     conversation_store,
 )
+from services.conversations.intelligence_memory import load_legacy_memory
 from services.workspace.state import load_workspace_state
 from services.workspace_reasoner import WorkspaceReasoner
 from services.workspace_snapshot import enrich_campaigns
@@ -189,8 +189,13 @@ def build_workspace_context(
             and conversation_owned_by(conversation, user_id)
             and conversation_in_workspace(conversation, str(workspace_id or ""))
         ):
-            memory = memory_store.get(conversation_id)
-            if memory:
+            record = load_legacy_memory(
+                conversation_id=conversation_id,
+                owner_id=user_id,
+                workspace_id=str(workspace_id or ""),
+            )
+            if record:
+                memory = record.memory
                 events = read_legacy_timeline_events(conversation_id)
                 signals = [
                     BuyingSignal(signal=signal, strength="medium", confidence=50, reason="")

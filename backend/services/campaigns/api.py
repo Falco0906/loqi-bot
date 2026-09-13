@@ -62,6 +62,20 @@ class RegenerateStrategyRequest(BaseModel):
     force: bool = False
 
 
+class AnalyzeCampaignsRequest(BaseModel):
+    leads: list[dict]
+    campaign_id: str | None = None
+
+
+@router.post("/api/web/session/{session_token}/analyze-campaigns")
+async def analyze_campaigns_endpoint(session_token: str, payload: AnalyzeCampaignsRequest):
+    """Preserve the legacy campaign-analysis response without adding state."""
+    del session_token
+    from services.campaign_planner import analyze_campaigns
+
+    return analyze_campaigns(payload.leads)
+
+
 @router.post("/api/web/session/{session_token}/campaigns")
 async def save_campaign(session_token: str, payload: SaveCampaignRequest, request: Request):
     del session_token

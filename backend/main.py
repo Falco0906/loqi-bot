@@ -17,7 +17,6 @@ from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, Field
 import services.identity.dependencies as identity_dependencies
 import services.workspace.access as workspace_access
-from services.workspace import context as workspace_context_service
 from services.identity.api import router as auth_router
 from services.onboarding.api import router as onboarding_router
 from services.organizations.api import router as organizations_router, _build_org_deps, register_deps as register_org_deps
@@ -65,7 +64,6 @@ from services.identity.metrics import get_metrics
 from services.identity.schemas import ErrorResponse
 from starlette.responses import JSONResponse
 from services.operations.diagnostics import get_build_metadata
-from services.campaign_planner import analyze_campaigns
 from app import lifespan as app_lifespan
 from services.workspace_memory import record as record_memory, record_draft_review, record_search
 from services.workspace_timeline import (
@@ -550,11 +548,6 @@ class LeadDecisionRequest(BaseModel):
     approved: bool
 
 
-class AnalyzeCampaignsRequest(BaseModel):
-    leads: list[dict]
-    campaign_id: str | None = None
-
-
 class GenerateDraftsRequest(BaseModel):
     campaign_id: str
 
@@ -562,11 +555,6 @@ class GenerateDraftsRequest(BaseModel):
 class SelectLeadRequest(BaseModel):
     index: int
 
-
-@app.post("/api/web/session/{session_token}/analyze-campaigns")
-async def analyze_campaigns_endpoint(session_token: str, payload: AnalyzeCampaignsRequest):
-    result = analyze_campaigns(payload.leads)
-    return result
 
 # ── Communication Intelligence Endpoints ──
 
@@ -691,27 +679,6 @@ async def communication_timeline(session_token: str, conversation_id: str, reque
 
 
 # ── Workspace Context Endpoint (for dev tooling) ──
-
-
-class DevWorkspaceContextRequest(BaseModel):
-    conversation_id: str = ""
-
-
-@app.get("/api/web/session/{session_token}/workspace-context")
-async def dev_workspace_context(session_token: str, conversation_id: str = "", request: Request = None):
-    session_token = identity_dependencies.web_session_token(request)
-    """Returns workspace context with provider info for the dev providers page."""
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    selected_workspace = await workspace_access.resolve_selected_workspace_context(request, owner_id)
-    ctx = await asyncio.to_thread(
-        workspace_context_service.build_workspace_context,
-        session_token,
-        current_page="Mission Control",
-        conversation_id=conversation_id or None,
-        user_id=owner_id,
-        workspace_id=selected_workspace.workspace_id,
-    )
-    return ctx
 
 
 # ── Outbound Endpoints ──

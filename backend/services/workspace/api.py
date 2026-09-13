@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from services.identity import dependencies as identity_dependencies
-from services.workspace import access, service
+from services.workspace import access, context, service
 
 
 router = APIRouter(tags=["Workspace"])
@@ -17,6 +17,26 @@ class CreateWorkspaceRequest(BaseModel):
     organization_id: str = ""
     name: str = "Workspace"
     slug: str = ""
+
+
+@router.get("/api/web/session/{session_token}/workspace-context")
+async def workspace_context(
+    session_token: str,
+    request: Request,
+    conversation_id: str = "",
+):
+    """Return the selected workspace's existing cross-domain read model."""
+    del session_token
+    owner_id, bearer_token = await _authenticated_owner(request)
+    selected_workspace = await access.resolve_selected_workspace_context(request, owner_id)
+    return await asyncio.to_thread(
+        context.build_workspace_context,
+        bearer_token,
+        current_page="Mission Control",
+        conversation_id=conversation_id or None,
+        user_id=owner_id,
+        workspace_id=selected_workspace.workspace_id,
+    )
 
 
 async def _authenticated_owner(request: Request) -> tuple[str, str]:

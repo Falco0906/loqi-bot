@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 import os
 from typing import Any
 
-from services.conversation_models import (
+from services.conversation_intelligence.legacy_models import (
     BuyingSignal,
     ConversationMemory,
     ConversationMessage,

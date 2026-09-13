@@ -3,7 +3,7 @@
 Designed for Mission Control dashboards and Copilot awareness.
 """
 
-from services.conversation_models import (
+from services.conversation_intelligence.legacy_models import (
     IntentPrediction, BuyingSignal, FollowupRecommendation,
     SignalStrength,
 )

@@ -12,7 +12,7 @@ from services.communication.provider_models import (
     NormalizedMessage,
     MessageDirection,
 )
-from services.conversation_models import ConversationMessage
+from services.conversation_intelligence.legacy_models import ConversationMessage
 
 
 def normalize_to_conversation_message(

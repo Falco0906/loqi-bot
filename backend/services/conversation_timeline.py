@@ -6,7 +6,7 @@ They represent conversation-level occurrences.
 
 from datetime import datetime, timezone
 from typing import Optional
-from services.conversation_models import ConversationTimelineEvent, TimelineEventType
+from services.conversation_intelligence.legacy_models import ConversationTimelineEvent, TimelineEventType
 
 
 _timelines: dict[str, list[ConversationTimelineEvent]] = {}

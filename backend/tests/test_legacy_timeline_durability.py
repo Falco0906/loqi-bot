@@ -1,6 +1,6 @@
 """Contracts for projecting legacy intelligence events onto durable timelines."""
 
-from services.conversation_models import (
+from services.conversation_intelligence.legacy_models import (
     ConversationMessage,
     TimelineEventType as LegacyTimelineEventType,
 )

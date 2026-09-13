@@ -7,7 +7,7 @@ from fastapi import HTTPException
 
 from services.communication.communication_store import store as communication_store
 from services.communication.provider_registry import get_provider
-from services.conversation_models import BuyingSignal
+from services.conversation_intelligence.legacy_models import BuyingSignal
 from services.conversations.compatibility import read_legacy_timeline_events
 from services.conversations.conversation_store import (
     conversation_in_workspace,

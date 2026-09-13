@@ -1,7 +1,7 @@
 """Characterization coverage for the legacy ReplyIntelligence projection."""
 
 from services.conversation_intelligence.legacy_reply_projection import project_legacy_reply_intelligence
-from services.conversation_models import ConversationMessage
+from services.conversation_intelligence.legacy_models import ConversationMessage
 
 
 def test_pricing_reply_preserves_legacy_projection_and_memory_contract():

@@ -1,7 +1,7 @@
 """Contract coverage for the legacy sales-stage classification API."""
 
 from services.conversation_intelligence.stage_classifier import classify_stage
-from services.conversation_models import BuyingSignal, ConversationStage, SignalStrength
+from services.conversation_intelligence.legacy_models import BuyingSignal, ConversationStage, SignalStrength
 
 
 def _signal(name: str, strength: SignalStrength = SignalStrength.STRONG) -> BuyingSignal:

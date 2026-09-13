@@ -8,7 +8,7 @@ import secrets
 from datetime import datetime, timezone
 
 from services.platform.supabase import get_or_create_user, get_supabase_client, get_user
-from services.conversation_models import (
+from services.conversation_intelligence.legacy_models import (
     ConversationTimelineEvent as LegacyTimelineEvent,
     TimelineEventType as LegacyTimelineEventType,
 )

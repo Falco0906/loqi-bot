@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from services.conversation_models import ConversationMemory
+from services.conversation_intelligence.legacy_models import ConversationMemory
 from services.conversations.conversation_models import Conversation
 from services.conversations import intelligence_memory
 

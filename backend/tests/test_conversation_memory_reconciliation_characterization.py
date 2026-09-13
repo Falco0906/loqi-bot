@@ -9,7 +9,7 @@ from services.conversation_intelligence.legacy_reply_projection import (
     project_legacy_reply_intelligence,
 )
 from services.conversation_memory import MemoryStore, memory_store
-from services.conversation_models import ConversationMessage
+from services.conversation_intelligence.legacy_models import ConversationMessage
 
 
 def setup_function():

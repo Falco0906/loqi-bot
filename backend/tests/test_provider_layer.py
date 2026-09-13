@@ -30,7 +30,7 @@ from services.communication.provider_events import (
 from services.communication.gmail_provider import GmailProvider
 from services.communication.gmail_sync import sync_all, sync_thread, sync_since_cursor
 from services.communication.gmail_webhooks import handle_notification, register_handler, clear_handlers, _handlers
-from services.conversation_models import ConversationMessage
+from services.conversation_intelligence.legacy_models import ConversationMessage
 
 
 # ═══════════════════════════════════════════════════════════════════

@@ -1,7 +1,7 @@
 """Contract coverage for the legacy communication executive-summary formatter."""
 
 from services.communication.reply_summary import generate_summary
-from services.conversation_models import (
+from services.conversation_intelligence.legacy_models import (
     BuyingSignal,
     FollowupAction,
     FollowupRecommendation,

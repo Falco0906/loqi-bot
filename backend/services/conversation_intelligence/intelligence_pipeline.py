@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from typing import Optional
-from services.conversation_models import ReplyIntelligence
+from services.conversation_intelligence.legacy_models import ReplyIntelligence
 from services.conversation_intelligence.intelligence_models import ConversationIntelligence
 from services.conversation_intelligence.intent_extractor import extract_intents
 from services.conversation_intelligence.entity_extractor import extract_entities

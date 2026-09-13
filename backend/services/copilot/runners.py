@@ -386,7 +386,7 @@ async def run_inbox(
     """Copilot adapter over canonical conversation and reply services."""
     from services.conversation_intelligence.buying_signal_detector import detect_signals
     from services.conversation_intelligence.intelligence_pipeline import IntelligencePipeline
-    from services.conversation_models import ConversationStage
+    from services.conversation_intelligence.legacy_models import ConversationStage
     from services.conversations.conversation_store import conversation_store
     from services.conversations.conversation_store import conversation_in_workspace, conversation_owned_by
     from services.followup_reasoner import recommend_followup

@@ -5,7 +5,7 @@ Memory evolves after each analyzed message.
 """
 
 from typing import Optional
-from services.conversation_models import ConversationMemory, ConversationMessage, IntentPrediction, BuyingSignal, ConversationStage
+from services.conversation_intelligence.legacy_models import ConversationMemory, ConversationMessage, IntentPrediction, BuyingSignal, ConversationStage
 from services.conversations.intelligence_memory import build_legacy_memory
 
 

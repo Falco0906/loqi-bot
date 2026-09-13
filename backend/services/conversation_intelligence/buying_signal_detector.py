@@ -6,7 +6,7 @@ matching algorithm and exposes both the legacy and enhanced result shapes.
 
 from __future__ import annotations
 from datetime import datetime, timezone
-from services.conversation_models import BuyingSignal
+from services.conversation_intelligence.legacy_models import BuyingSignal
 from services.conversation_intelligence.intelligence_models import BuyingSignalResult, SignalStrength
 
 

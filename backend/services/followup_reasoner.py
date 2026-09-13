@@ -3,11 +3,11 @@
 Pure deterministic logic. No AI calls.
 """
 
-from services.conversation_models import (
+from services.conversation_intelligence.legacy_models import (
     IntentPrediction, BuyingSignal, ConversationStage,
     FollowupRecommendation, FollowupAction, SignalStrength,
 )
-from services.conversation_models import IntentCategory
+from services.conversation_intelligence.legacy_models import IntentCategory
 
 
 def recommend_followup(

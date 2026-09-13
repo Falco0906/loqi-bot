@@ -22,7 +22,7 @@ from services.communication.provider_registry import (
 )
 from services.outbound import service as outbound_service
 from services.conversation_intelligence.buying_signal_detector import detect_signals
-from services.conversation_models import ConversationMessage, ConversationStage
+from services.conversation_intelligence.legacy_models import ConversationMessage, ConversationStage
 from services.conversation_intelligence.stage_classifier import classify_stage
 from services.conversations.compatibility import read_legacy_timeline_events
 from services.conversations.conversation_store import conversation_owned_by, conversation_store

@@ -1,7 +1,7 @@
 """Canonical rule-based intent detection and output projections."""
 
 from __future__ import annotations
-from services.conversation_models import IntentCategory, IntentPrediction
+from services.conversation_intelligence.legacy_models import IntentCategory, IntentPrediction
 from services.conversation_intelligence.intelligence_models import IntentLabel, IntentResult
 
 

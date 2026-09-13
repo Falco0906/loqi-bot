@@ -4,7 +4,7 @@ Determines where the lead is in the buying process.
 Uses message content + conversation memory to classify stage.
 """
 
-from services.conversation_models import ConversationStage, BuyingSignal
+from services.conversation_intelligence.legacy_models import ConversationStage, BuyingSignal
 
 
 _STAGE_PATTERNS: list[tuple[ConversationStage, list[str], str]] = [

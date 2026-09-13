@@ -4,7 +4,7 @@ Covers intent detection, buying signals, memory, reply intelligence,
 follow-up reasoner, summary, and timeline.
 """
 
-from services.conversation_models import (
+from services.conversation_intelligence.legacy_models import (
     ConversationMessage, IntentCategory, SignalStrength,
     ConversationStage, FollowupAction, TimelineEventType,
 )
@@ -479,7 +479,7 @@ class TestEndToEnd:
         assert get_events(cid) == []
 
     def test_workflow_objective_mapping(self):
-        from services.conversation_models import FollowupAction
+        from services.conversation_intelligence.legacy_models import FollowupAction
         from services.conversation_intelligence.legacy_reply_projection import _workflow_objective_for_followup
 
         result = _workflow_objective_for_followup(FollowupAction.SEND_PRICING)

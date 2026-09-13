@@ -3,7 +3,7 @@
 No extraction logic. Data only.
 """
 
-from services.conversation_models import SignalStrength
+from services.conversation_intelligence.legacy_models import SignalStrength
 
 
 BUYING_SIGNAL_DEFINITIONS: list[dict] = [

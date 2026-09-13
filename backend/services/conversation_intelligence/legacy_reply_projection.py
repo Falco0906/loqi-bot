@@ -7,7 +7,7 @@ or buying-signal detection rules.
 """
 
 from typing import Optional
-from services.conversation_models import (
+from services.conversation_intelligence.legacy_models import (
     ReplyIntelligence, ConversationMessage, IntentPrediction,
     BuyingSignal, ConversationStage, FollowupAction,
     ConversationMemory, FollowupRecommendation,
@@ -18,7 +18,7 @@ from services.conversation_intelligence.stage_classifier import classify_stage
 from services.conversations.intelligence_memory import build_legacy_memory
 from services.followup_reasoner import recommend_followup
 from services.communication.reply_summary import generate_summary
-from services.conversation_models import TimelineEventType
+from services.conversation_intelligence.legacy_models import TimelineEventType
 from services.conversations.compatibility import record_legacy_analysis_event
 
 

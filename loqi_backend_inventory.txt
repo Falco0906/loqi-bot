@@ -457,7 +457,7 @@ backend/services/reply_generation/style_engine.py | ACTIVE | Style engine — mo
 backend/services/reply_generation/template_library.py | ACTIVE | Defines register_template and select_template.
 backend/services/reply_generation/validation.py | ACTIVE | Defines validate_draft.
 backend/services/reply_intelligence.py | ACTIVE | Reply Intelligence — aggregates all conversation intelligence into one object.
-backend/services/reply_summary.py | ACTIVE | Reply Summary — generates concise executive summaries of conversation analysis.
+backend/services/communication/reply_summary.py | ACTIVE | Legacy executive-summary formatter for communication intelligence.
 backend/services/rewrite_engine.py | ACTIVE | Strategy-aware rewrite engine.
 backend/services/rewrite_history.py | ACTIVE | Rewrite history with multi-level undo support.
 backend/services/discovery/search_expansion.py | ACTIVE | Defines expand_search_intent.

@@ -14,7 +14,7 @@ from services.conversation_intelligence.buying_signal_detector import detect_sig
 from services.conversation_intelligence.stage_classifier import classify_stage
 from services.conversation_memory import create_or_update_memory
 from services.followup_reasoner import recommend_followup
-from services.reply_summary import generate_summary
+from services.communication.reply_summary import generate_summary
 from services.conversation_timeline import create_event
 from services.conversation_models import TimelineEventType
 

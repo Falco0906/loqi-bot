@@ -30,7 +30,7 @@ from services.conversations.conversation_store import conversation_owned_by, con
 from services.followup_reasoner import recommend_followup
 from services.conversation_intelligence.intent_extractor import detect_intents
 from services.reply_intelligence import analyze_message
-from services.reply_summary import generate_summary
+from services.communication.reply_summary import generate_summary
 from services.world_model.events import EventType as WMEventType
 from services.world_model.publisher import publish
 

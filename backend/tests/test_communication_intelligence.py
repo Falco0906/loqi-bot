@@ -13,7 +13,7 @@ from services.conversation_intelligence.buying_signal_detector import detect_sig
 from services.conversation_intelligence.stage_classifier import classify_stage
 from services.conversation_memory import memory_store, create_or_update_memory, MemoryStore
 from services.followup_reasoner import recommend_followup
-from services.reply_summary import generate_summary
+from services.communication.reply_summary import generate_summary
 from services.conversation_timeline import create_event, get_events, clear_events, clear_all
 from services.reply_intelligence import analyze_message
 

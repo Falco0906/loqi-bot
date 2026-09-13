@@ -414,41 +414,6 @@ _execution_adapter_registry = ExecutionAdapterRegistry()
 # for legacy polling until that route family moves to the durable jobs boundary.
 
 
-_SYNONYM_STRATEGY_TABLE: list[tuple[list[str], str]] = [
-    (["short", "concise", "punchy", "tighten", "trim", "cut", "fluff", "reduce"], "shorten"),
-    (["longer", "expand", "more detail", "elaborate", "add more", "extend"], "lengthen"),
-    (["professional", "polish", "formal", "corporate", "executive"], "professional"),
-    (["casual", "conversational", "friendly", "human", "less formal", "natural", "like a founder"], "casual"),
-    (["hiring", "growing", "team", "join us"], "hiring"),
-    (["expansion", "expanding", "office", "new market"], "expansion"),
-    (["cta", "call to action", "ending", "better ending", "ask"], "rewrite_cta"),
-    (["funding", "raised", "series", "investment", "investor"], "mention_funding"),
-    (["personalize", "personal", "customize", "tailor", "specific to"], "personalize"),
-    (["aggressive", "urgent", "direct", "bold", "confident", "sound more confident"], "aggressive"),
-    (["soften", "softer", "gentle", "gentler", "lower pressure", "less pushy"], "softer"),
-    (["growth", "growing", "momentum", "traction"], "mention_growth"),
-    (["launch", "product", "feature", "new"], "mention_product_launch"),
-    (["punchy", "impactful", "stronger", "powerful", "persuasive"], "shorten"),
-    (["robotic", "robot", "stiff", "less salesy", "salesy"], "casual"),
-    (["curiosity", "intriguing", "hook"], "personalize"),
-    (["credibility", "proof", "social proof", "testimonial", "case study"], "mention_growth"),
-    (["opening", "first sentence", "intro", "stronger start", "hook"], "personalize"),
-]
-
-
-def _classify_rewrite_strategy(instruction: str) -> str:
-    """Map a user's edit instruction to a rewrite strategy using synonym matching."""
-    lower = instruction.lower()
-    best_match = None
-    best_count = 0
-    for keywords, strategy in _SYNONYM_STRATEGY_TABLE:
-        match_count = sum(1 for kw in keywords if kw in lower)
-        if match_count > best_count:
-            best_count = match_count
-            best_match = strategy
-    return best_match or "custom"
-
-
 # ── Logging Middleware ──
 
 @app.middleware("http")

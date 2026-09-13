@@ -78,7 +78,7 @@ backend/services/billing/services.py | ACTIVE | Defines CustomerService and Plan
 backend/services/billing/stripe_provider.py | ACTIVE | Defines MockStripeBillingProvider and StripeBillingProvider.
 backend/services/buyer_psychology.py | ACTIVE | Buyer persona analysis.
 backend/services/buying_signal.py | ACTIVE | Buying Signal Detection — analyses messages for purchase intent signals.
-backend/services/campaign_planner.py | ACTIVE | Defines analyze_campaigns.
+backend/services/campaigns/analysis.py | ACTIVE | Defines analyze_campaigns.
 backend/services/capabilities/__init__.py | ACTIVE | Package initializer and public import surface.
 backend/services/capabilities/api.py | ACTIVE | Defines CapabilityDeps and register_deps.
 backend/services/capabilities/config.py | ACTIVE | Defines CapabilityConfig.
@@ -90,7 +90,7 @@ backend/services/capabilities/schemas.py | ACTIVE | Defines CapabilityDefinition
 backend/services/capabilities/services.py | ACTIVE | Defines CapabilityService.
 backend/services/channel_adapters/__init__.py | ACTIVE | Package initializer and public import surface.
 backend/services/channel_adapters/telegram.py | ACTIVE | Defines send_engine_response_to_telegram.
-backend/services/commercial_qualifier.py | ACTIVE | Defines score_lead and qualify_and_rank_leads.
+backend/services/discovery/qualification.py | ACTIVE | Defines score_lead and qualify_and_rank_leads.
 backend/services/communication/communication_store.py | ACTIVE | Communication Store — persists provider state, sync cursors, thread mappings.
 backend/services/communication/gmail_provider.py | ACTIVE | Gmail Provider — first implementation of CommunicationProviderBase.
 backend/services/communication/gmail_sync.py | ACTIVE | Defines sync_all and sync_thread.
@@ -153,8 +153,8 @@ backend/services/copilot_tools.py | ACTIVE | Backend-owned Copilot tool contract
 backend/services/credential_crypto.py | ACTIVE | Authenticated encryption at rest for persisted provider credentials (PR10.7).
 backend/services/cta_strategy.py | ACTIVE | CTA strategy engine.
 backend/services/discovery.py | ACTIVE | Discovery service — first-class, persistent research entities.
-backend/services/discovery_context.py | ACTIVE | Optional workspace context for Discovery and qualification.
-backend/services/discovery_plan.py | ACTIVE | Discovery Plan — the structured intelligence item behind every search.
+backend/services/discovery/context.py | ACTIVE | Optional workspace context for Discovery and qualification.
+backend/services/discovery/plan.py | ACTIVE | Discovery Plan — the structured intelligence item behind every search.
 backend/services/draft_comparison.py | ACTIVE | Structured draft comparison between versions.
 backend/services/draft_intelligence.py | ACTIVE | Structured draft intelligence engine.
 backend/services/email/__init__.py | ACTIVE | Package initializer and public import surface.
@@ -204,7 +204,7 @@ backend/services/framework_selector.py | ACTIVE | Messaging framework selector.
 backend/services/gmail.py | APPARENTLY-UNUSED | Defines send_email.
 backend/services/gmail_auth_failure.py | ACTIVE | Gmail OAuth authentication failure classification (PR10.8.1).
 backend/services/google_auth.py | ACTIVE | Defines get_google_auth_url and exchange_code_for_tokens.
-backend/services/icp_extractor.py | ACTIVE | Defines extract_structured_icp and is_lead_excluded.
+backend/services/discovery/icp.py | ACTIVE | Defines extract_structured_icp and is_lead_excluded.
 backend/services/identity/__init__.py | ACTIVE | Package initializer and public import surface.
 backend/services/identity/account_recovery.py | ACTIVE | Safe operator-only account recovery: provision the durable organization + owner membership that a legacy completed account is missing.
 backend/services/identity/api.py | ACTIVE | Defines get_authenticated_user_id and get_auth_user_service.
@@ -276,7 +276,7 @@ backend/services/job_engine/storage.py | ACTIVE | Defines JobStorage.
 backend/services/knowledge/__init__.py | ACTIVE | Package initializer and public import surface.
 backend/services/knowledge/context_adapter.py | ACTIVE | Knowledge-to-generation context adapter (PR5.1).
 backend/services/knowledge/service.py | ACTIVE | Knowledge service (PR5 — Knowledge Foundation).
-backend/services/lead_provider.py | ACTIVE | Defines get_leads and search_with_expansion.
+backend/services/discovery/providers.py | ACTIVE | Defines get_leads and search_with_expansion.
 backend/services/learning/__init__.py | ACTIVE | Learning Layer — deterministic, event-driven learning from user behavior.
 backend/services/learning/behavior_tracker.py | ACTIVE | BehaviorTracker — records user actions and provides evidence counts.
 backend/services/learning/feedback_interpreter.py | ACTIVE | FeedbackInterpreter — interprets explicit user feedback signals.
@@ -460,7 +460,7 @@ backend/services/reply_intelligence.py | ACTIVE | Reply Intelligence — aggrega
 backend/services/reply_summary.py | ACTIVE | Reply Summary — generates concise executive summaries of conversation analysis.
 backend/services/rewrite_engine.py | ACTIVE | Strategy-aware rewrite engine.
 backend/services/rewrite_history.py | ACTIVE | Rewrite history with multi-level undo support.
-backend/services/search_expansion.py | ACTIVE | Defines expand_search_intent.
+backend/services/discovery/search_expansion.py | ACTIVE | Defines expand_search_intent.
 backend/services/security/__init__.py | ACTIVE | Package initializer and public import surface.
 backend/services/security/crypto/__init__.py | ACTIVE | Package initializer and public import surface.
 backend/services/security/crypto/crypto_service.py | ACTIVE | Defines CryptoService and DefaultCryptoService.

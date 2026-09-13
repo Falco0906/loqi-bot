@@ -78,8 +78,8 @@ def test_search_workflow_passes_provenance_to_discovery_plan_writer(monkeypatch)
         captured.append((discovery_id, plan, context_provenance))
         return True
 
-    monkeypatch.setattr("services.discovery_context.retrieve_discovery_context", fake_context)
-    monkeypatch.setattr("services.discovery_plan.derive_discovery_plan", lambda query, existing_context=None: Plan())
+    monkeypatch.setattr("services.discovery.context.retrieve_discovery_context", fake_context)
+    monkeypatch.setattr("services.discovery.plan.derive_discovery_plan", lambda query, existing_context=None: Plan())
     monkeypatch.setattr("workflow_dispatcher._search_with_progress", fake_search)
     monkeypatch.setattr("services.discovery.service.store_discovery_plan", fake_store)
 

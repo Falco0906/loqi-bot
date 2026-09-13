@@ -441,7 +441,7 @@ def derive_discovery_plan(query: str, existing_context: Optional[dict] = None) -
     if not query:
         return DiscoveryPlan()
 
-    from services.icp_extractor import extract_structured_icp
+    from services.discovery.icp import extract_structured_icp
 
     icp = extract_structured_icp(query, existing_context) or {}
 

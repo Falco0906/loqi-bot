@@ -801,7 +801,7 @@ The legacy synchronous workflow system is being superseded by the Execution Engi
 | File | Purpose |
 |---|---|
 | `services/ai.py` | OpenAI generation/personalization |
-| `services/lead_provider.py` | Lead sourcing |
+| `services/discovery/providers.py` | Lead sourcing |
 | `services/job_engine/` | Background job manager |
 | `services/enrichment/` | Apollo + synthetic enrichers |
 | `services/providers/` | Apollo + synthetic lead providers |

@@ -16,7 +16,7 @@ Currently leads are returned in SerpAPI order with no relevance scoring. Users g
 
 ### Expected Files
 - New: `backend/services/lead_ranker.py` - Scoring logic
-- Update: `backend/services/lead_provider.py` - Integrate ranking
+- Update: `backend/services/discovery/providers.py` - Integrate ranking
 - Update: `backend/services/platform/supabase.py` - Store scores
 
 ### Implementation Notes
@@ -54,7 +54,7 @@ Current leads only have LinkedIn profile URLs. Need company data, verified email
 ### Expected Files
 - New: `backend/services/enrichment.py` - Provider abstraction
 - New: `backend/services/enrichment_providers/` - Provider implementations
-- Update: `backend/services/lead_provider.py` - Call enrichment after search
+- Update: `backend/services/discovery/providers.py` - Call enrichment after search
 - Update: `backend/services/platform/supabase.py` - Add enrichment fields to leads
 
 ### Implementation Notes

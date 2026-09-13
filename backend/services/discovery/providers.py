@@ -11,7 +11,7 @@ def _filter_and_rank_leads(leads: list, icp: dict, context: dict | None = None) 
     Uses commercial_qualifier for multi-dimensional scoring.
     Returns (filtered_and_ranked_leads, filtering_stats)
     """
-    from services.commercial_qualifier import qualify_and_rank_leads
+    from services.discovery.qualification import qualify_and_rank_leads
 
     qualified_leads, qual_stats = qualify_and_rank_leads(leads, icp, context=context)
 
@@ -34,7 +34,7 @@ def _filter_and_rank_leads_soft(leads: list, icp: dict, context: dict | None = N
     Softer filtering — only hard-exclude obvious junk and vendors, keep everything else.
     Used as fallback when strict filtering removes all leads.
     """
-    from services.commercial_qualifier import qualify_and_rank_leads
+    from services.discovery.qualification import qualify_and_rank_leads
 
     soft_icp = dict(icp or {})
     if soft_icp.get("excluded_roles"):
@@ -74,7 +74,7 @@ def get_leads(service: str, target: str) -> dict:
 
     combined_input = f"{service} {target}".strip() if target else service
 
-    from services.icp_extractor import extract_structured_icp
+    from services.discovery.icp import extract_structured_icp
     icp = extract_structured_icp(combined_input)
 
     result = provider.search_leads(icp=icp, search_expansion={}, limit=10)
@@ -127,7 +127,7 @@ def search_with_expansion(service: str, target: str, plan=None, context: dict | 
 
     icp = None
     if plan:
-        from services.discovery_plan import icp_from_plan
+        from services.discovery.plan import icp_from_plan
         icp = icp_from_plan(plan)
         _log(f"ICP from plan: industries={icp['buyer_industries']}, "
              f"roles={icp['buyer_roles'][:3]}...")
@@ -135,7 +135,7 @@ def search_with_expansion(service: str, target: str, plan=None, context: dict | 
         combined_input = f"{service} {target}".strip() if target else service
 
         try:
-            from services.icp_extractor import extract_structured_icp
+            from services.discovery.icp import extract_structured_icp
             icp = extract_structured_icp(combined_input)
             print(f"[TRACE] 6a | ICP EXTRACTION DONE | extract_structured_icp | +{int((time.time()-_t0)*1000)}ms | mode={icp.get('mode')}")
 
@@ -151,7 +151,7 @@ def search_with_expansion(service: str, target: str, plan=None, context: dict | 
     icp = _apply_discovery_context(icp, context)
 
     try:
-        from services.search_expansion import expand_search_intent
+        from services.discovery.search_expansion import expand_search_intent
         expansion = expand_search_intent(service, target, icp)
         print(f"[TRACE] 6b | SEARCH EXPANSION DONE | expand_search_intent | +{int((time.time()-_t0)*1000)}ms | {len(expansion.get('search_queries', []))} queries")
 

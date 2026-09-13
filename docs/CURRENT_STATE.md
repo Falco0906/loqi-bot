@@ -33,7 +33,7 @@ GET  /google/callback                   - Gmail OAuth callback
 
 ### ✅ ICP Extraction - Dual Mode
 
-**Location:** `backend/services/icp_extractor.py`
+**Location:** `backend/services/discovery/icp.py`
 
 **AI Mode (when OPENAI_API_KEY works):**
 - Uses OpenAI GPT-4o-mini via `/v1/responses` endpoint
@@ -62,7 +62,7 @@ GET  /google/callback                   - Gmail OAuth callback
 
 ### ✅ Semantic Search Expansion
 
-**Location:** `backend/services/search_expansion.py`
+**Location:** `backend/services/discovery/search_expansion.py`
 
 - Takes ICP object (or raw service/target strings)
 - Expands into LinkedIn search queries
@@ -71,7 +71,7 @@ GET  /google/callback                   - Gmail OAuth callback
 
 ### ✅ Lead Provider (SerpAPI)
 
-**Location:** `backend/services/lead_provider.py`, `backend/services/free_leads.py`
+**Location:** `backend/services/discovery/providers.py`, `backend/services/free_leads.py`
 
 - Uses SerpAPI package with Client API
 - Searches LinkedIn profiles
@@ -269,7 +269,7 @@ cd frontend && npm run dev
 
 # Test ICP extraction
 source venv/bin/activate
-python3 -c "from services.icp_extractor import extract_structured_icp; print(extract_structured_icp('CRM for startups'))"
+python3 -c "from services.discovery.icp import extract_structured_icp; print(extract_structured_icp('CRM for startups'))"
 
 # Test lead search through API
 curl -X POST http://127.0.0.1:10000/api/web/session -H "Content-Type: application/json" -d '{"message": "test"}'

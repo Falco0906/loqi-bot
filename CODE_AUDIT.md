@@ -236,8 +236,8 @@ n8n workflow export from when Loqi used n8n for orchestration. No longer used �
 - `backend/services/conversation_engine.py` — ~500 lines
 - `backend/services/conversational_response_generator.py` — 646 lines
 - `backend/services/platform/supabase.py` — 609 lines
-- `backend/services/icp_extractor.py` — 690 lines
-- `backend/services/commercial_qualifier.py` — 420+ lines
+- `backend/services/discovery/icp.py` — 690 lines
+- `backend/services/discovery/qualification.py` — 420+ lines
 - `frontend/components/chat/loqi-app.tsx` — ~450 lines
 
 These are the largest files in the project, each doing 3-5 distinct responsibilities.
@@ -479,7 +479,7 @@ Wait, I need to re-examine. Let me check the full flow... Actually, looking at t
 
 ## 28. `icp_extractor.py` Has Duplicate Entries in EXCLUDED_ROLES
 
-**Files:** `backend/services/icp_extractor.py` (lines 223-256)
+**Files:** `backend/services/discovery/icp.py` (lines 223-256)
 
 ```python
 EXCLUDED_ROLES = [
@@ -603,7 +603,7 @@ Zero test files exist in the entire repository. No `test_*.py`, no `__tests__/`,
 
 ## 35. `commercial_qualifier.py` Has Near-Duplicate Keyword Lists
 
-**Files:** `backend/services/commercial_qualifier.py`
+**Files:** `backend/services/discovery/qualification.py`
 
 `EXCLUDED_COMPANY_PATTERNS`, `VENDOR_INDICATORS`, `_check_excluded_company()`, `_check_vendor_title()`, and `_is_service_provider_company()` in `free_leads.py` all overlap:
 

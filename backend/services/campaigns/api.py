@@ -71,7 +71,7 @@ class AnalyzeCampaignsRequest(BaseModel):
 async def analyze_campaigns_endpoint(session_token: str, payload: AnalyzeCampaignsRequest):
     """Preserve the legacy campaign-analysis response without adding state."""
     del session_token
-    from services.campaign_planner import analyze_campaigns
+    from services.campaigns.analysis import analyze_campaigns
 
     return analyze_campaigns(payload.leads)
 

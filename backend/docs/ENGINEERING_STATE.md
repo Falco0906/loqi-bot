@@ -54,7 +54,7 @@ The entire adapter foundation plus three production adapters and the email compo
 
 ### Phase 4 — Lead Sourcing & Enrichment (v0.4–v0.5)
 - **Purpose:** Build provider-agnostic lead sourcing with Apollo integration
-- **Major components built:** `services/providers/` (base_provider, apollo_provider, synthetic_provider, provider_factory), `services/enrichment/` (base_enricher, apollo_enricher, synthetic_enricher, enrichment_factory), `services/lead_provider.py`, `services/search_expansion.py`, `services/icp_extractor.py`, `services/commercial_qualifier.py`
+- **Major components built:** `services/providers/` (base_provider, apollo_provider, synthetic_provider, provider_factory), `services/enrichment/` (base_enricher, apollo_enricher, synthetic_enricher, enrichment_factory), `services/discovery/providers.py`, `services/discovery/search_expansion.py`, `services/discovery/icp.py`, `services/discovery/qualification.py`
 - **Key architectural decisions:** Provider abstraction via factory pattern. Synthetic provider exists for testing. ICP extraction uses AI. Commercial qualifier filters vendors/junk with multi-dimensional scoring. Search expansion uses OpenAI for query broadening.
 - **Status:** Complete.
 

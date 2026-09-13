@@ -600,7 +600,7 @@ Rules:
         if existing_context.get("target"):
             context_info += f"Previous target: {existing_context['target']}\n"
         try:
-            from services.discovery_context import format_discovery_context
+            from backend.services.discovery.discovery_context import format_discovery_context
             context_info += format_discovery_context(existing_context)
         except Exception:
             pass

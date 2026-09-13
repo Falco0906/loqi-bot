@@ -241,9 +241,9 @@ def _run_async(coro):
         ) from None
 
 from services.google_auth import refresh_access_token
-from services.lead_provider import format_leads_message
+from services.discovery.providers import format_leads_message
 from services.ai import generate_outreach_email, rewrite_message, OpenAIError
-from services.lead_provider import get_leads, search_with_expansion
+from services.discovery.providers import get_leads, search_with_expansion
 from services.platform.supabase import get_user, get_google_credentials, is_token_expired, store_leads, update_google_access_token
 from services.conversations.compatibility import record_workflow_event
 from services.enrichment.enrichment_factory import get_enricher
@@ -386,7 +386,7 @@ def generate_leads(input: dict) -> dict:
     discovery_context = {}
     if user_id:
         try:
-            from services.discovery_context import retrieve_discovery_context
+            from services.discovery.context import retrieve_discovery_context
             discovery_context = _run_async(
                 retrieve_discovery_context(user_id, query=f"{service} {target}".strip())
             )

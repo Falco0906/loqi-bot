@@ -425,9 +425,9 @@ class TestDiscoveryPlan:
 
     def test_plan_derivation_is_structured(self, monkeypatch):
         monkeypatch.setattr(
-            "services.icp_extractor.extract_structured_icp", _fake_structured_icp
+            "services.discovery.icp.extract_structured_icp", _fake_structured_icp
         )
-        from services.discovery_plan import derive_discovery_plan
+        from services.discovery.plan import derive_discovery_plan
 
         plan = derive_discovery_plan("AI phone answering software for restaurants")
         d = plan.to_dict()
@@ -443,9 +443,9 @@ class TestDiscoveryPlan:
 
     def test_raw_objective_never_reaches_provider_inputs(self, monkeypatch):
         monkeypatch.setattr(
-            "services.icp_extractor.extract_structured_icp", _fake_structured_icp
+            "services.discovery.icp.extract_structured_icp", _fake_structured_icp
         )
-        from services.discovery_plan import derive_discovery_plan, icp_from_plan
+        from services.discovery.plan import derive_discovery_plan, icp_from_plan
 
         objective = (
             "Take AI phone answering software to restaurants to stop missing calls"
@@ -495,9 +495,9 @@ class TestDiscoveryPlan:
             }
 
         monkeypatch.setattr(
-            "services.icp_extractor.extract_structured_icp", _cafe_icp
+            "services.discovery.icp.extract_structured_icp", _cafe_icp
         )
-        from services.discovery_plan import derive_discovery_plan
+        from services.discovery.plan import derive_discovery_plan
 
         plan = derive_discovery_plan(
             "Sell AI automations and websites to cafe owners in the US"

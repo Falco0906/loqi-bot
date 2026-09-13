@@ -25,7 +25,7 @@ from services.conversation_intelligence.buying_signal_detector import detect_sig
 from services.conversation_memory import create_or_update_memory, memory_store
 from services.conversation_models import ConversationMessage, ConversationStage
 from services.conversation_intelligence.stage_classifier import classify_stage
-from services.conversation_timeline import get_events as get_conversation_events
+from services.conversations.compatibility import read_legacy_timeline_events
 from services.conversations.conversation_store import conversation_owned_by, conversation_store
 from services.followup_reasoner import recommend_followup
 from services.conversation_intelligence.intent_extractor import detect_intents
@@ -182,7 +182,7 @@ def communication_timeline_for_owner(*, owner_id: str, conversation_id: str) -> 
     conversation = conversation_store.get_conversation(conversation_id)
     if conversation is None or not conversation_owned_by(conversation, owner_id):
         raise ConversationNotFoundForOwner
-    events = get_conversation_events(conversation_id)
+    events = read_legacy_timeline_events(conversation_id)
     return {"ok": True, "events": [event.model_dump() for event in events], "total": len(events)}
 
 

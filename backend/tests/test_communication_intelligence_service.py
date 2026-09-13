@@ -67,7 +67,7 @@ def test_timeline_hides_foreign_conversation_and_preserves_event_envelope(monkey
     monkeypatch.setattr(service, "conversation_owned_by", lambda *_args: True)
     monkeypatch.setattr(
         service,
-        "get_conversation_events",
+        "read_legacy_timeline_events",
         lambda _id: [_Dumpable(type="message.received")],
     )
 

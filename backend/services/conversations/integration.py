@@ -18,6 +18,8 @@ from services.conversations.conversation_models import (
 )
 from services.conversations.conversation_store import conversation_store
 from services.conversations.timeline import TimelineEventType, build_timeline_event
+from services.conversations.compatibility import legacy_timeline_metadata
+from services.conversation_models import TimelineEventType as LegacyTimelineEventType
 from services.conversations.state_machine import transition as state_transition
 from services.conversations.classification import classifier_service, ReplyCategory
 from services.outbound.outbound_events import OutboundEventType
@@ -233,6 +235,7 @@ def handle_reply(
         metadata={
             "classification": classification.category.value,
             "confidence": classification.confidence,
+            **legacy_timeline_metadata(LegacyTimelineEventType.LEAD_REPLIED, "Lead replied"),
         },
     ))
 

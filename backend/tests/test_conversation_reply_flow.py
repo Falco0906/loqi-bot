@@ -37,6 +37,7 @@ from services.conversations.conversation_store import conversation_store
 from services.conversations.integration import create_conversation_from_send, handle_reply
 from services.conversations import api as conversation_api
 from services.conversations import service as conversation_service
+from services.conversations.compatibility import read_legacy_timeline_events
 from services.conversations.state_machine import transition as state_transition
 from services.conversations.timeline import TimelineEventType
 
@@ -296,3 +297,7 @@ class TestIngestIntegration:
             ConversationStatus.REPLIED,
             ConversationStatus.CLOSED_LOST,
         }
+        timeline = conversation_store.get_timeline(convo.conversation_id)
+        assert sum(event.event_type == TimelineEventType.REPLY_RECEIVED for event in timeline) == 1
+        legacy_events = read_legacy_timeline_events(convo.conversation_id)
+        assert sum(event.event_type.value == "lead_replied" for event in legacy_events) == 1

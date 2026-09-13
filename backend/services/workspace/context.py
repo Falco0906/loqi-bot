@@ -9,7 +9,7 @@ from services.communication.communication_store import store as communication_st
 from services.communication.provider_registry import get_provider
 from services.conversation_memory import memory_store
 from services.conversation_models import BuyingSignal
-from services.conversation_timeline import get_events as get_conversation_events
+from services.conversations.compatibility import read_legacy_timeline_events
 from services.conversations.conversation_store import (
     conversation_in_workspace,
     conversation_owned_by,
@@ -191,7 +191,7 @@ def build_workspace_context(
         ):
             memory = memory_store.get(conversation_id)
             if memory:
-                events = get_conversation_events(conversation_id)
+                events = read_legacy_timeline_events(conversation_id)
                 signals = [
                     BuyingSignal(signal=signal, strength="medium", confidence=50, reason="")
                     for signal in memory.buying_signals

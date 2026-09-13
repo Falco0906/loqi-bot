@@ -15,8 +15,8 @@ from services.conversation_intelligence.stage_classifier import classify_stage
 from services.conversation_memory import create_or_update_memory
 from services.followup_reasoner import recommend_followup
 from services.communication.reply_summary import generate_summary
-from services.conversation_timeline import create_event
 from services.conversation_models import TimelineEventType
+from services.conversations.compatibility import record_legacy_analysis_event
 
 
 def analyze_message(
@@ -117,32 +117,30 @@ def _create_timeline_events(
     message: ConversationMessage,
 ) -> None:
     """Create timeline events based on detected intents and signals."""
-    create_event(cid, TimelineEventType.LEAD_REPLIED, "Lead replied")
-
     for intent in intents:
         if intent.intent.value == "pricing_request":
-            create_event(cid, TimelineEventType.PRICING_REQUESTED, "Pricing requested")
+            record_legacy_analysis_event(cid, TimelineEventType.PRICING_REQUESTED, "Pricing requested")
         elif intent.intent.value == "meeting_request":
-            create_event(cid, TimelineEventType.MEETING_REQUESTED, "Meeting requested")
+            record_legacy_analysis_event(cid, TimelineEventType.MEETING_REQUESTED, "Meeting requested")
         elif intent.intent.value == "demo_request":
-            create_event(cid, TimelineEventType.DEMO_REQUESTED, "Demo requested")
+            record_legacy_analysis_event(cid, TimelineEventType.DEMO_REQUESTED, "Demo requested")
         elif intent.intent.value == "competitor_mention":
-            create_event(cid, TimelineEventType.COMPETITOR_MENTIONED, "Competitor mentioned")
+            record_legacy_analysis_event(cid, TimelineEventType.COMPETITOR_MENTIONED, "Competitor mentioned")
         elif intent.intent.value in ("budget_concern",):
-            create_event(cid, TimelineEventType.BUDGET_DISCUSSED, "Budget discussed")
+            record_legacy_analysis_event(cid, TimelineEventType.BUDGET_DISCUSSED, "Budget discussed")
         elif intent.intent.value in ("timing_concern",):
-            create_event(cid, TimelineEventType.TIMELINE_DISCUSSED, "Timeline discussed")
+            record_legacy_analysis_event(cid, TimelineEventType.TIMELINE_DISCUSSED, "Timeline discussed")
 
     for signal in buying_signals:
         if signal.strength.value in ("very_strong", "strong"):
-            create_event(cid, TimelineEventType.POSITIVE_BUYING_SIGNAL, signal.reason)
+            record_legacy_analysis_event(cid, TimelineEventType.POSITIVE_BUYING_SIGNAL, signal.reason)
 
     if stage == ConversationStage.LOST:
-        create_event(cid, TimelineEventType.LOST_OPPORTUNITY, "Opportunity lost")
+        record_legacy_analysis_event(cid, TimelineEventType.LOST_OPPORTUNITY, "Opportunity lost")
     elif stage == ConversationStage.WON:
-        create_event(cid, TimelineEventType.WON_DEAL, "Deal won")
+        record_legacy_analysis_event(cid, TimelineEventType.WON_DEAL, "Deal won")
     elif stage == ConversationStage.DORMANT:
-        create_event(cid, TimelineEventType.DORMANT_PERIOD, "Lead went dormant")
+        record_legacy_analysis_event(cid, TimelineEventType.DORMANT_PERIOD, "Lead went dormant")
 
 
 def _compute_decision_confidence(buying_signals: list[BuyingSignal]) -> int:

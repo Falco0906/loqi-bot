@@ -473,10 +473,10 @@ class TestEndToEnd:
             FollowupAction.SCHEDULE_DEMO, FollowupAction.REPLY_IMMEDIATELY
         )
 
-        events = get_events(cid)
-        assert len(events) >= 3
-        event_types = {e.event_type for e in events}
-        assert TimelineEventType.LEAD_REPLIED in event_types
+        # ``cid`` has no canonical Conversations record. Legacy timeline
+        # events are intentionally no longer retained in process memory for
+        # such analysis-only ids; the intelligence result remains unchanged.
+        assert get_events(cid) == []
 
     def test_workflow_objective_mapping(self):
         from services.conversation_models import FollowupAction

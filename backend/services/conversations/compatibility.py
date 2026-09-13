@@ -1,13 +1,118 @@
-"""Legacy web/Telegram workflow-session compatibility facade.
+"""Legacy web-session and timeline compatibility facade.
 
-This module preserves channel-session, workflow-message, and workflow-event
-contracts. Durable Inbox conversations themselves belong to
+This module preserves web-session, workflow-message, workflow-event, and
+legacy timeline contracts. Durable Inbox conversations themselves belong to
 ``conversation_store.py`` in this package.
 """
 import secrets
 from datetime import datetime, timezone
 
 from services.platform.supabase import get_or_create_user, get_supabase_client, get_user
+from services.conversation_models import (
+    ConversationTimelineEvent as LegacyTimelineEvent,
+    TimelineEventType as LegacyTimelineEventType,
+)
+from services.conversations.timeline import TimelineEventType, build_timeline_event
+
+
+_LEGACY_TIMELINE_METADATA_KEY = "legacy_timeline"
+
+_LEGACY_TO_DURABLE_TIMELINE_TYPES = {
+    LegacyTimelineEventType.LEAD_REPLIED: TimelineEventType.REPLY_RECEIVED,
+    LegacyTimelineEventType.PRICING_REQUESTED: TimelineEventType.REPLY_CLASSIFIED,
+    LegacyTimelineEventType.MEETING_REQUESTED: TimelineEventType.REPLY_CLASSIFIED,
+    LegacyTimelineEventType.DEMO_REQUESTED: TimelineEventType.REPLY_CLASSIFIED,
+    LegacyTimelineEventType.COMPETITOR_MENTIONED: TimelineEventType.REPLY_CLASSIFIED,
+    LegacyTimelineEventType.POSITIVE_BUYING_SIGNAL: TimelineEventType.REPLY_CLASSIFIED,
+    LegacyTimelineEventType.STRONG_OBJECTION: TimelineEventType.REPLY_CLASSIFIED,
+    LegacyTimelineEventType.BUDGET_DISCUSSED: TimelineEventType.REPLY_CLASSIFIED,
+    LegacyTimelineEventType.TIMELINE_DISCUSSED: TimelineEventType.REPLY_CLASSIFIED,
+    LegacyTimelineEventType.DECISION_MAKER_MENTIONED: TimelineEventType.REPLY_CLASSIFIED,
+    LegacyTimelineEventType.FOLLOWUP_RECOMMENDED: TimelineEventType.FOLLOW_UP_SUGGESTED,
+    LegacyTimelineEventType.STAGE_CHANGED: TimelineEventType.REPLY_CLASSIFIED,
+    LegacyTimelineEventType.OBJECTION_ANSWERED: TimelineEventType.REPLY_CLASSIFIED,
+    LegacyTimelineEventType.MEETING_SCHEDULED: TimelineEventType.MEETING_BOOKED,
+    LegacyTimelineEventType.PROPOSAL_REQUESTED: TimelineEventType.REPLY_CLASSIFIED,
+    LegacyTimelineEventType.CASE_STUDY_REQUESTED: TimelineEventType.REPLY_CLASSIFIED,
+    LegacyTimelineEventType.COMPETITIVE_SITUATION: TimelineEventType.REPLY_CLASSIFIED,
+    LegacyTimelineEventType.LOST_OPPORTUNITY: TimelineEventType.CLOSED_LOST,
+    LegacyTimelineEventType.WON_DEAL: TimelineEventType.CLOSED_WON,
+    LegacyTimelineEventType.DORMANT_PERIOD: TimelineEventType.REPLY_CLASSIFIED,
+}
+
+
+def durable_timeline_type_for_legacy_event(
+    event_type: LegacyTimelineEventType,
+) -> TimelineEventType:
+    """Return the canonical timeline type for one legacy analytical event."""
+    return _LEGACY_TO_DURABLE_TIMELINE_TYPES[event_type]
+
+
+def legacy_timeline_metadata(
+    event_type: LegacyTimelineEventType,
+    message: str,
+    metadata: dict | None = None,
+) -> dict:
+    """Embed the legacy envelope so compatibility reads can round-trip it."""
+    return {
+        _LEGACY_TIMELINE_METADATA_KEY: {
+            "event_type": event_type.value,
+            "message": message,
+            "metadata": dict(metadata or {}),
+        }
+    }
+
+
+def record_legacy_analysis_event(
+    conversation_id: str,
+    event_type: LegacyTimelineEventType,
+    message: str,
+    metadata: dict | None = None,
+) -> bool:
+    """Persist one legacy analytical event for a canonical conversation.
+
+    ``REPLY_RECEIVED`` remains owned by ``conversations.integration.handle_reply``.
+    The old process-local store accepted arbitrary ids; non-canonical ids are now
+    deliberately skipped because they have no durable conversation to own them.
+    """
+    if event_type is LegacyTimelineEventType.LEAD_REPLIED:
+        return False
+
+    from services.conversations.conversation_store import conversation_store
+
+    if conversation_store.get_conversation(conversation_id) is None:
+        return False
+
+    conversation_store.add_timeline_event(build_timeline_event(
+        conversation_id=conversation_id,
+        event_type=durable_timeline_type_for_legacy_event(event_type),
+        title=message,
+        actor="system",
+        metadata=legacy_timeline_metadata(event_type, message, metadata),
+    ))
+    return True
+
+
+def read_legacy_timeline_events(conversation_id: str) -> list[LegacyTimelineEvent]:
+    """Return the old timeline envelope projected from canonical timeline events."""
+    from services.conversations.conversation_store import conversation_store
+
+    legacy_events: list[LegacyTimelineEvent] = []
+    for event in conversation_store.get_timeline(conversation_id):
+        payload = (event.metadata or {}).get(_LEGACY_TIMELINE_METADATA_KEY)
+        if not isinstance(payload, dict):
+            continue
+        try:
+            event_type = LegacyTimelineEventType(str(payload.get("event_type") or ""))
+        except ValueError:
+            continue
+        legacy_events.append(LegacyTimelineEvent(
+            event_type=event_type,
+            message=str(payload.get("message") or ""),
+            timestamp=event.timestamp.isoformat(),
+            metadata=dict(payload.get("metadata") or {}),
+        ))
+    return legacy_events
 
 
 def _utc_now() -> str:

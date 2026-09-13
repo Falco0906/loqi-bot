@@ -21,7 +21,7 @@ from services.communication.provider_registry import (
     list_registered_types,
 )
 from services.outbound import service as outbound_service
-from services.buying_signal import detect_signals
+from services.conversation_intelligence.buying_signal_detector import detect_signals
 from services.conversation_memory import create_or_update_memory, memory_store
 from services.conversation_models import ConversationMessage, ConversationStage
 from services.conversation_classifier import classify_stage

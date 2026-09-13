@@ -188,9 +188,9 @@ The knowledge modules import only from:
 No knowledge module imports from:
 - Any analyzer module
 - `services.conversation_intelligence.__init__`
-- `services.buying_signal`
+- `services.conversation_intelligence.buying_signal_detector`
 
-Existing services (like `buying_signal.py`) that need knowledge use **lazy imports** inside function scope to avoid circular dependency with the `conversation_intelligence` package init.
+The canonical buying-signal detector uses a **lazy import** for definitions to avoid circular dependency with the `conversation_intelligence` package init.
 
 ## Migration Guide
 

@@ -384,7 +384,7 @@ async def run_inbox(
     request: Request | None = None,
 ) -> dict[str, Any]:
     """Copilot adapter over canonical conversation and reply services."""
-    from services.buying_signal import detect_signals
+    from services.conversation_intelligence.buying_signal_detector import detect_signals
     from services.conversation_intelligence.intelligence_pipeline import IntelligencePipeline
     from services.conversation_models import ConversationStage
     from services.conversations.conversation_store import conversation_store

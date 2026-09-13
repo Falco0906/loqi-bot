@@ -77,7 +77,7 @@ backend/services/billing/schemas.py | ACTIVE | Defines PlanResponse and PlansLis
 backend/services/billing/services.py | ACTIVE | Defines CustomerService and PlanService.
 backend/services/billing/stripe_provider.py | ACTIVE | Defines MockStripeBillingProvider and StripeBillingProvider.
 backend/services/buyer_psychology.py | ACTIVE | Buyer persona analysis.
-backend/services/buying_signal.py | ACTIVE | Buying Signal Detection — analyses messages for purchase intent signals.
+backend/services/conversation_intelligence/buying_signal_detector.py | ACTIVE | Canonical buying-signal detection with legacy and enhanced result projections.
 backend/services/campaigns/analysis.py | ACTIVE | Defines analyze_campaigns.
 backend/services/capabilities/__init__.py | ACTIVE | Package initializer and public import surface.
 backend/services/capabilities/api.py | ACTIVE | Defines CapabilityDeps and register_deps.

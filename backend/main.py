@@ -69,14 +69,10 @@ from services.draft_intelligence import analyze_draft as analyze_draft_intellige
 from services.strategic_intelligence_api import router as strategic_intelligence_router
 from services.rewrite_engine import execute_rewrite
 from services.draft_comparison import compare_versions
-from services.conversation_models import ConversationMessage
 from services.communication import provider_startup
 from services.communication.reply_simulator import maybe_schedule as simulate_reply
 from services.events_bus import publish_draft_event
-from services.conversation_memory import memory_store, create_or_update_memory
-from services.followup_reasoner import recommend_followup
 from services.conversation_models import FollowupAction, BuyingSignal, SignalStrength
-from services.buying_signal import detect_signals
 from services.execution import AdapterRegistry as ExecutionAdapterRegistry
 from services.operations import (
     RequestLoggingMiddleware,
@@ -87,7 +83,6 @@ from services.operations import (
     redact_session_path,
     request_id_var,
 )
-from services.world_model import EventType as WMEventType, publish
 
 _feedback_interpreter: _FeedbackInterpreter | None = None
 
@@ -501,55 +496,6 @@ class LeadDecisionRequest(BaseModel):
 
 class GenerateDraftsRequest(BaseModel):
     campaign_id: str
-
-
-class CommunicationMemoryUpdateRequest(BaseModel):
-    """Request shape retained with the not-yet-migrated memory update route."""
-
-    text: str
-    conversation_id: str = ""
-    sender: str = "lead"
-    subject: str = ""
-
-
-@app.post("/api/web/session/{session_token}/communication/memory/update")
-async def communication_memory_update(
-    session_token: str,
-    payload: CommunicationMemoryUpdateRequest,
-    request: Request = None,
-):
-    session_token = identity_dependencies.web_session_token(request)
-    msg = ConversationMessage(text=payload.text, sender=payload.sender, subject=payload.subject)
-    cid = payload.conversation_id or msg.id
-    from services.intent_detector import detect_intents
-    from services.conversation_classifier import classify_stage
-    from services.followup_reasoner import recommend_followup
-    intents = detect_intents(msg.text)
-    signals = detect_signals(msg.text)
-    stage, reasoning = classify_stage([], msg.text)
-    recommendation = recommend_followup(intents, signals, stage)
-    existing = memory_store.get(cid)
-    memory = create_or_update_memory(
-        conversation_id=cid,
-        message=msg,
-        intents=intents,
-        buying_signals=signals,
-        stage=stage,
-        stage_reasoning=reasoning,
-        followup_action=recommendation.action.value,
-        existing_memory=existing,
-    )
-    publish(session_token, WMEventType.PREFERENCE_LEARNED, {
-        "conversation_id": cid,
-        "intents": [i.value for i in intents] if intents else [],
-        "signals": [s.signal.value for s in signals] if signals else [],
-        "stage": stage.value if stage else "",
-        "followup_action": recommendation.action.value,
-    }, actor="system")
-    return {
-        "ok": True,
-        "memory": memory.model_dump(),
-    }
 
 
 if __name__ == "__main__":

@@ -22,8 +22,9 @@ from services.communication.provider_registry import (
 )
 from services.outbound import service as outbound_service
 from services.buying_signal import detect_signals
-from services.conversation_memory import memory_store
+from services.conversation_memory import create_or_update_memory, memory_store
 from services.conversation_models import ConversationMessage, ConversationStage
+from services.conversation_classifier import classify_stage
 from services.conversation_timeline import get_events as get_conversation_events
 from services.conversations.conversation_store import conversation_owned_by, conversation_store
 from services.followup_reasoner import recommend_followup
@@ -122,6 +123,36 @@ def analyze_communication_message(
         existing_memory=existing,
     )
     return {"ok": True, "intelligence": intelligence.model_dump(), "memory": memory.model_dump()}
+
+
+def update_communication_memory(
+    *, session_token: str, text: str, conversation_id: str, sender: str, subject: str,
+) -> dict[str, Any]:
+    """Persist communication intelligence and publish the legacy preference event."""
+    message = ConversationMessage(text=text, sender=sender, subject=subject)
+    resolved_conversation_id = conversation_id or message.id
+    intents = detect_intents(message.text)
+    signals = detect_signals(message.text)
+    stage, reasoning = classify_stage([], message.text)
+    recommendation = recommend_followup(intents, signals, stage)
+    memory = create_or_update_memory(
+        conversation_id=resolved_conversation_id,
+        message=message,
+        intents=intents,
+        buying_signals=signals,
+        stage=stage,
+        stage_reasoning=reasoning,
+        followup_action=recommendation.action.value,
+        existing_memory=memory_store.get(resolved_conversation_id),
+    )
+    publish(session_token, WMEventType.PREFERENCE_LEARNED, {
+        "conversation_id": resolved_conversation_id,
+        "intents": [intent.value for intent in intents] if intents else [],
+        "signals": [signal.signal.value for signal in signals] if signals else [],
+        "stage": stage.value if stage else "",
+        "followup_action": recommendation.action.value,
+    }, actor="system")
+    return {"ok": True, "memory": memory.model_dump()}
 
 
 def recommend_communication_follow_up(*, text: str) -> dict[str, Any]:

@@ -64,6 +64,21 @@ async def communication_analyze(session_token: str, payload: AnalyzeMessageReque
     return service.analyze_communication_message(**payload.model_dump())
 
 
+@router.post("/api/web/session/{session_token}/communication/memory/update")
+async def communication_memory_update(
+    session_token: str,
+    payload: AnalyzeMessageRequest,
+    request: Request = None,
+):
+    """Update legacy communication memory through the canonical use case."""
+    del session_token
+    resolved_token = identity_dependencies.web_session_token(request)
+    return service.update_communication_memory(
+        session_token=resolved_token,
+        **payload.model_dump(),
+    )
+
+
 @router.post("/api/web/session/{session_token}/communication/recommend")
 async def communication_recommend(session_token: str, payload: RecommendRequest):
     del session_token

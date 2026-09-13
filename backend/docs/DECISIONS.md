@@ -415,10 +415,10 @@ Key design rules (enforced by tests in `test_adapter_sdk.py`):
 
 ### Context
 
-The original AI processing path was a single monolithic function (`reply_intelligence.py`) that ran 14 sequential steps:
+The original AI processing path was a single monolithic compatibility function, now located in `conversation_intelligence/legacy_reply_projection.py`, that runs 14 sequential steps:
 
 ```
-analyze_message():
+project_legacy_reply_intelligence():
   1. intent detection
   2. buying signal detection
   3. stage classification
@@ -481,7 +481,7 @@ Key design properties:
 
 **Negative:**
 - No tests for Reasoning or Reply Generation pipelines
-- Legacy `reply_intelligence.py` still exists and is used by `conversation_engine.py`
+- A legacy `ReplyIntelligence` projection remains for communication compatibility callers; it reuses canonical analysis primitives rather than owning detection rules.
 - The three pipelines are only partially wired — no orchestration layer connects them in production
 - Knowledge layer is Python files, not externalized to YAML/JSON/DB
 
@@ -490,7 +490,7 @@ Key design properties:
 - Intelligence: `services/conversation_intelligence/` (11 files + 13 knowledge files)
 - Reasoning: `services/reasoning/` (7 files)
 - Generation: `services/reply_generation/` (10 files + 5 provider files)
-- Legacy: `services/reply_intelligence.py` (198 lines)
+- Legacy compatibility projection: `services/conversation_intelligence/legacy_reply_projection.py`
 
 ---
 

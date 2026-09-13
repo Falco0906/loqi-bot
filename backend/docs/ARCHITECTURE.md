@@ -465,7 +465,7 @@ ExecutionEngine
 
 | Component | Path | Lines | Purpose |
 |---|---|---|---|
-| `reply_intelligence.py` | Legacy | 198 | 14-step monolithic function — being superseded by pipeline |
+| `conversation_intelligence/legacy_reply_projection.py` | Compatibility | — | Legacy ReplyIntelligence projection over canonical primitives |
 | `buying_signal.py` | Legacy | 39 | Thin wrapper delegating to knowledge layer |
 | `lead_intelligence.py` | `services/intelligence/` | 337 | Fit score, buying stage, urgency, objection risk |
 | `account_intelligence.py` | `services/intelligence/` | — | Account tier classification, buying intent |

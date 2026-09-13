@@ -1,6 +1,9 @@
-"""Reply Intelligence — aggregates all conversation intelligence into one object.
+"""Compatibility projection from shared analysis primitives to ``ReplyIntelligence``.
 
-This is the single source of truth consumed by the rest of Loqi (Copilot, Planner, etc.).
+The enhanced ``IntelligencePipeline`` owns the richer raw-analysis result.
+This module preserves the older ``ReplyIntelligence`` and memory/timeline
+contract for communication compatibility callers without duplicating intent
+or buying-signal detection rules.
 """
 
 from typing import Optional
@@ -19,15 +22,12 @@ from services.conversation_models import TimelineEventType
 from services.conversations.compatibility import record_legacy_analysis_event
 
 
-def analyze_message(
+def project_legacy_reply_intelligence(
     message: ConversationMessage,
     conversation_id: str = "",
     existing_memory: Optional[ConversationMemory] = None,
 ) -> tuple[ReplyIntelligence, ConversationMemory]:
-    """Analyze a single message and produce full Reply Intelligence.
-
-    Returns (reply_intelligence, updated_memory).
-    """
+    """Build and publish the legacy reply-intelligence compatibility projection."""
     cid = conversation_id or message.id
 
     # 1. Intent detection
@@ -74,7 +74,7 @@ def analyze_message(
     )
 
     # 10. Timeline event creation
-    _create_timeline_events(cid, intents, buying_signals, stage, message)
+    _publish_legacy_analysis_events(cid, intents, buying_signals, stage)
 
     # 11. Key risks
     key_risks = memory.key_risks[:]
@@ -83,7 +83,7 @@ def analyze_message(
     key_opportunities = memory.key_opportunities[:]
 
     # 13. Suggested workflow objective
-    suggested = _map_to_workflow_objective(recommendation.action, intents)
+    suggested = _workflow_objective_for_followup(recommendation.action)
 
     # 14. Human approval
     human_approval = recommendation.approval_required
@@ -109,14 +109,13 @@ def analyze_message(
     return intelligence, memory
 
 
-def _create_timeline_events(
+def _publish_legacy_analysis_events(
     cid: str,
     intents: list[IntentPrediction],
     buying_signals: list[BuyingSignal],
     stage: ConversationStage,
-    message: ConversationMessage,
 ) -> None:
-    """Create timeline events based on detected intents and signals."""
+    """Publish the legacy analytical timeline projection for a canonical conversation."""
     for intent in intents:
         if intent.intent.value == "pricing_request":
             record_legacy_analysis_event(cid, TimelineEventType.PRICING_REQUESTED, "Pricing requested")
@@ -178,7 +177,7 @@ def _compute_urgency(intents: list[IntentPrediction], buying_signals: list[Buyin
     return "medium"
 
 
-def _map_to_workflow_objective(action: FollowupAction, intents: list[IntentPrediction]) -> str:
+def _workflow_objective_for_followup(action: FollowupAction) -> str:
     """Map follow-up action to a workflow objective the Planner can consume."""
     mapping = {
         FollowupAction.SEND_PRICING: "Generate Pricing Email",

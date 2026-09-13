@@ -23,7 +23,7 @@ from services.communication.provider_normalizer import normalize_to_conversation
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from services.communication.gmail_provider import GmailProvider
-from services.reply_intelligence import analyze_message
+from services.conversation_intelligence.legacy_reply_projection import project_legacy_reply_intelligence
 from services.conversation_memory import memory_store as conversation_memory
 
 logger = logging.getLogger(__name__)
@@ -237,7 +237,7 @@ def _process_provider_message(
     )
 
     try:
-        intelligence, memory = analyze_message(
+        intelligence, memory = project_legacy_reply_intelligence(
             message=conversation_msg,
             conversation_id=conversation_id,
             existing_memory=existing_memory,

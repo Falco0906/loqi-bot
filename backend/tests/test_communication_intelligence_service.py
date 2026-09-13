@@ -19,7 +19,7 @@ def test_analyze_communication_message_preserves_envelope(monkeypatch):
     monkeypatch.setattr(service.memory_store, "get", lambda conversation_id: {"id": conversation_id})
     monkeypatch.setattr(
         service,
-        "analyze_message",
+        "project_legacy_reply_intelligence",
         lambda **_kwargs: (_Dumpable(score="high"), _Dumpable(stage="engaged")),
     )
 

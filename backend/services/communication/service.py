@@ -29,7 +29,7 @@ from services.conversations.compatibility import read_legacy_timeline_events
 from services.conversations.conversation_store import conversation_owned_by, conversation_store
 from services.followup_reasoner import recommend_followup
 from services.conversation_intelligence.intent_extractor import detect_intents
-from services.reply_intelligence import analyze_message
+from services.conversation_intelligence.legacy_reply_projection import project_legacy_reply_intelligence
 from services.communication.reply_summary import generate_summary
 from services.world_model.events import EventType as WMEventType
 from services.world_model.publisher import publish
@@ -117,7 +117,7 @@ def analyze_communication_message(
     """Analyze one message and preserve the legacy intelligence envelope."""
     message = ConversationMessage(text=text, sender=sender, subject=subject)
     existing = memory_store.get(conversation_id) if conversation_id else None
-    intelligence, memory = analyze_message(
+    intelligence, memory = project_legacy_reply_intelligence(
         message=message,
         conversation_id=conversation_id,
         existing_memory=existing,

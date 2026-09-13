@@ -15,7 +15,7 @@ from services.conversation_memory import memory_store, create_or_update_memory, 
 from services.followup_reasoner import recommend_followup
 from services.communication.reply_summary import generate_summary
 from services.conversation_timeline import create_event, get_events, clear_events, clear_all
-from services.reply_intelligence import analyze_message
+from services.conversation_intelligence.legacy_reply_projection import project_legacy_reply_intelligence
 
 
 # ── Fixtures ──
@@ -236,7 +236,7 @@ class TestReplyIntelligence:
 
     def test_aggregation(self):
         msg = _msg("How much does this cost? I'd like a demo too")
-        intel, mem = analyze_message(msg, conversation_id="ri-1")
+        intel, mem = project_legacy_reply_intelligence(msg, conversation_id="ri-1")
         assert intel.conversation_id == "ri-1"
         assert len(intel.intents) >= 2
         assert len(intel.buying_signals) >= 1
@@ -246,29 +246,29 @@ class TestReplyIntelligence:
 
     def test_missing_fields(self):
         msg = _msg("")
-        intel, mem = analyze_message(msg, conversation_id="ri-empty")
+        intel, mem = project_legacy_reply_intelligence(msg, conversation_id="ri-empty")
         assert intel.intents == []
         assert intel.buying_signals == []
         assert intel.executive_summary
 
     def test_empty_conversation(self):
         msg = _msg("Hi there")
-        intel, mem = analyze_message(msg, conversation_id="ri-hi")
+        intel, mem = project_legacy_reply_intelligence(msg, conversation_id="ri-hi")
         assert intel is not None
         assert mem is not None
 
     def test_multiple_messages(self):
         msg1 = _msg("Tell me more about your product")
-        intel1, mem1 = analyze_message(msg1, conversation_id="ri-multi")
+        intel1, mem1 = project_legacy_reply_intelligence(msg1, conversation_id="ri-multi")
 
         msg2 = _msg("How does pricing work?")
-        intel2, mem2 = analyze_message(msg2, conversation_id="ri-multi", existing_memory=mem1)
+        intel2, mem2 = project_legacy_reply_intelligence(msg2, conversation_id="ri-multi", existing_memory=mem1)
         assert len(intel2.intents) >= 1
         assert intel2.conversation_stage
 
     def test_urgency_computed(self):
         msg = _msg("Can we schedule a meeting for next week?")
-        intel, mem = analyze_message(msg, conversation_id="ri-urgent")
+        intel, mem = project_legacy_reply_intelligence(msg, conversation_id="ri-urgent")
         assert intel.urgency == "high"
 
 
@@ -457,18 +457,18 @@ class TestEndToEnd:
         cid = "e2e-1"
 
         msg1 = _msg("Your product looks interesting")
-        intel1, mem1 = analyze_message(msg1, conversation_id=cid)
+        intel1, mem1 = project_legacy_reply_intelligence(msg1, conversation_id=cid)
         assert intel1.decision_confidence >= 0
         assert intel1.urgency
         assert intel1.suggested_workflow_objective
 
         msg2 = _msg("How much does it cost? I need to understand pricing")
-        intel2, mem2 = analyze_message(msg2, conversation_id=cid, existing_memory=mem1)
+        intel2, mem2 = project_legacy_reply_intelligence(msg2, conversation_id=cid, existing_memory=mem1)
         assert len(intel2.intents) >= 1
         assert len(mem2.buying_signals) > 0
 
         msg3 = _msg("Can you walk me through a demo?")
-        intel3, mem3 = analyze_message(msg3, conversation_id=cid, existing_memory=mem2)
+        intel3, mem3 = project_legacy_reply_intelligence(msg3, conversation_id=cid, existing_memory=mem2)
         assert intel3.recommended_next_step in (
             FollowupAction.SCHEDULE_DEMO, FollowupAction.REPLY_IMMEDIATELY
         )
@@ -480,17 +480,10 @@ class TestEndToEnd:
 
     def test_workflow_objective_mapping(self):
         from services.conversation_models import FollowupAction
-        from services.reply_intelligence import _map_to_workflow_objective
-        from services.conversation_models import IntentCategory, IntentPrediction
+        from services.conversation_intelligence.legacy_reply_projection import _workflow_objective_for_followup
 
-        result = _map_to_workflow_objective(
-            FollowupAction.SEND_PRICING,
-            [IntentPrediction(intent=IntentCategory.PRICING_REQUEST, confidence=80, reason="test")]
-        )
+        result = _workflow_objective_for_followup(FollowupAction.SEND_PRICING)
         assert result == "Generate Pricing Email"
 
-        result = _map_to_workflow_objective(
-            FollowupAction.SCHEDULE_DEMO,
-            []
-        )
+        result = _workflow_objective_for_followup(FollowupAction.SCHEDULE_DEMO)
         assert result == "Schedule Demo"

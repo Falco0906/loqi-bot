@@ -7,7 +7,7 @@ from services.conversation_models import (
 from services.conversations import compatibility
 from services.conversations.conversation_store import conversation_store
 from services.conversations.timeline import TimelineEventType
-from services.reply_intelligence import analyze_message
+from services.conversation_intelligence.legacy_reply_projection import project_legacy_reply_intelligence
 
 
 def test_legacy_event_mapping_table_is_explicit_and_complete():
@@ -68,7 +68,7 @@ def test_noncanonical_analysis_keeps_results_but_skips_timeline_persistence(monk
     monkeypatch.setattr(conversation_store, "get_conversation", lambda _id: None)
     monkeypatch.setattr(conversation_store, "add_timeline_event", writes.append)
 
-    intelligence, memory = analyze_message(
+    intelligence, memory = project_legacy_reply_intelligence(
         ConversationMessage(text="How much does this cost?", sender="lead"),
         conversation_id="analysis-only-id",
     )

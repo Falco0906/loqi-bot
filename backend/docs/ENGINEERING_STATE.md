@@ -317,7 +317,7 @@ backend/
 │   ├── conversation_timeline.py# Event log per conversation
 │   ├── conversation_intelligence/stage_classifier.py # Legacy sales-stage classification
 │   ├── conversational_response_generator.py # AI response generation (963 lines)
-│   ├── reply_intelligence.py   # Reply Intelligence aggregator
+│   ├── conversation_intelligence/legacy_reply_projection.py # Legacy ReplyIntelligence projection
 │   ├── communication/reply_summary.py # Legacy executive-summary formatter
 │   ├── intent_detector.py      # Intent classification
 │   ├── buying_signal.py        # Purchase intent detection

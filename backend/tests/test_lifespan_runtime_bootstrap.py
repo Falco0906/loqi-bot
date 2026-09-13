@@ -25,7 +25,7 @@ def test_lifespan_warns_for_migration_failure_but_registers_runtime_dependencies
     monkeypatch.setattr(main.app_lifespan, "begin_startup", lambda app: 0.0)
     monkeypatch.setattr(main.app_lifespan, "validate_startup_configuration", lambda: None)
     monkeypatch.setattr(
-        "services.migration.apply_migrations",
+        "services.platform.migration.apply_migrations",
         lambda: (_ for _ in ()).throw(RuntimeError("migration unavailable")),
     )
     monkeypatch.setattr(main.app_lifespan, "register_outbound_providers", lambda: calls.append("outbound"))
@@ -224,8 +224,8 @@ async def test_shutdown_runtime_stops_integrations_before_cancelling_tasks(monke
     async def wait_forever():
         await asyncio.Event().wait()
 
-    monkeypatch.setattr("services.lifecycle.set_shutting_down", lambda: events.append("state"))
-    monkeypatch.setattr("services.redis_client.close", close_redis)
+    monkeypatch.setattr("services.platform.lifecycle.set_shutting_down", lambda: events.append("state"))
+    monkeypatch.setattr("services.platform.redis_client.close", close_redis)
     monkeypatch.setenv("SHUTDOWN_TIMEOUT_SECONDS", "0.1")
     background_task = asyncio.create_task(wait_forever())
     simulator_task = asyncio.create_task(wait_forever())

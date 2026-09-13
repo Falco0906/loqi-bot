@@ -52,7 +52,7 @@ def _clean_runtime_state(monkeypatch):
             for record in comm_store.get_user_providers(user_id)
         ]
 
-    monkeypatch.setattr("services.supabase.get_durable_providers_for_user", durable_rows)
+    monkeypatch.setattr("services.platform.supabase.get_durable_providers_for_user", durable_rows)
     yield
 
 
@@ -156,7 +156,7 @@ class TestSettingsApiCanonical:
         from services.communication import api as provider_api, service as provider_service
         monkeypatch.setattr(provider_service, "get_provider", _fake_get)
         monkeypatch.setattr(
-            "services.supabase.get_durable_providers_for_user",
+            "services.platform.supabase.get_durable_providers_for_user",
             lambda *_args: [{
                 "row_id": "durable-p-new",
                 "communication_provider_id": "p-new",
@@ -289,8 +289,8 @@ class TestStartupRestoreSurfacesStatus:
             "token_expiry": "",
             "status": "auth_failed",
         }
-        monkeypatch.setattr("services.supabase.load_all_provider_credentials", lambda: [row])
-        monkeypatch.setattr("services.supabase.reconcile_connected_account_duplicates", lambda *a, **k: 0)
+        monkeypatch.setattr("services.platform.supabase.load_all_provider_credentials", lambda: [row])
+        monkeypatch.setattr("services.platform.supabase.reconcile_connected_account_duplicates", lambda *a, **k: 0)
         provider_startup.restore_gmail_providers()
 
         providers = store.get_user_providers("7de769b4-0000-0000-0000-000000000000")
@@ -300,7 +300,7 @@ class TestStartupRestoreSurfacesStatus:
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id",
                             AsyncMock(return_value="7de769b4-0000-0000-0000-000000000000"))
         monkeypatch.setattr(
-            "services.supabase.get_durable_providers_for_user",
+            "services.platform.supabase.get_durable_providers_for_user",
             lambda *_args: [{
                 "communication_provider_id": providers[0].id,
                 "status": "auth_failed",
@@ -465,10 +465,10 @@ class TestForcedDuplicatePrevention:
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-1"))
         from services.communication import api as provider_api, service as provider_service
         monkeypatch.setattr(provider_service, "get_provider", lambda pid: _fake_instance("healthy"))
-        monkeypatch.setattr("services.supabase.is_connected_account_reauth_required",
+        monkeypatch.setattr("services.platform.supabase.is_connected_account_reauth_required",
                             lambda *a, **k: True)
         monkeypatch.setattr(
-            "services.supabase.get_durable_providers_for_user",
+            "services.platform.supabase.get_durable_providers_for_user",
             lambda *_args: [{
                 "row_id": "durable-p-h",
                 "communication_provider_id": "p-h",

@@ -63,7 +63,7 @@ def _client():
     file fallback. Once a client exists, read/write failures are surfaced to
     callers instead of silently falling back to container-local storage.
     """
-    from services.supabase import get_supabase_client
+    from services.platform.supabase import get_supabase_client
     return get_supabase_client()
 
 

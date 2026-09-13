@@ -153,7 +153,7 @@ class TestReauthState:
         post_mock = MagicMock()
         _mock_refresh(post_mock, 400, {"error": "invalid_grant", "error_description": "revoked"})
         monkeypatch.setattr(requests, "post", post_mock)
-        monkeypatch.setattr("services.supabase.mark_connected_account_auth_failed", lambda *a, **k: True)
+        monkeypatch.setattr("services.platform.supabase.mark_connected_account_auth_failed", lambda *a, **k: True)
         provider = GmailProvider()
         provider.connect(
             auth_token="tok", user_id="user-1", email="a@b.com",
@@ -168,7 +168,7 @@ class TestReauthState:
     def test_reauth_required_persisted_to_account_row(self, monkeypatch):
         from services.communication.gmail_provider import GmailProvider
         marked = {}
-        monkeypatch.setattr("services.supabase.mark_connected_account_auth_failed",
+        monkeypatch.setattr("services.platform.supabase.mark_connected_account_auth_failed",
                             lambda uid, provider="google": marked.update(uid=uid) or True)
         provider = GmailProvider()
         provider.connect(auth_token="t", user_id="user-1", email="a@b.com",
@@ -186,7 +186,7 @@ class TestReauthState:
         post_mock = MagicMock()
         _mock_refresh(post_mock, 400, {"error": "invalid_grant", "error_description": "revoked"})
         monkeypatch.setattr(requests, "post", post_mock)
-        monkeypatch.setattr("services.supabase.mark_connected_account_auth_failed", lambda *a, **k: True)
+        monkeypatch.setattr("services.platform.supabase.mark_connected_account_auth_failed", lambda *a, **k: True)
 
         provider = GmailProvider()
         record = provider.connect(auth_token="tok", user_id="user-1", email="a@b.com",
@@ -288,7 +288,7 @@ class TestTransientIsolation:
         assert result["results"][0].provider_id == "good-1"
 
     def test_application_remains_ready_when_provider_disconnected(self):
-        from services import lifecycle
+        from services.platform import lifecycle
         lifecycle.set_ready()
         # Simulate the failure path; readiness state must be untouched.
         from services.communication.gmail_provider import GmailProvider
@@ -308,7 +308,7 @@ class TestReauthentication:
     def test_reauth_clears_failure_state(self, monkeypatch):
         """Reconnect (sync_connected_account) returns the row to active."""
         from services.persistence.launch import ConnectedAccount
-        from services.supabase import sync_connected_account, is_connected_account_reauth_required
+        from services.platform.supabase import sync_connected_account, is_connected_account_reauth_required
 
         class FakeRepo:
             def __init__(self):
@@ -334,7 +334,7 @@ class TestReauthentication:
         assert is_connected_account_reauth_required("user-1", "google") is False
 
     def test_new_credentials_encrypted_on_persistence(self, monkeypatch):
-        from services.supabase import sync_connected_account
+        from services.platform.supabase import sync_connected_account
         from services.credential_crypto import is_encrypted
         from services.persistence.launch import ConnectedAccount
 
@@ -394,7 +394,7 @@ class TestReauthentication:
         assert len(gmail_for_user) == 1
 
     def test_upsert_reuses_existing_account_row(self, monkeypatch):
-        from services.supabase import sync_connected_account
+        from services.platform.supabase import sync_connected_account
         from services.persistence.launch import ConnectedAccount
 
         class FakeRepo:
@@ -437,7 +437,7 @@ class TestLoggingSanitization:
             "error_description": RAW_BODY_MARKER,
         })
         monkeypatch.setattr(requests, "post", post_mock)
-        monkeypatch.setattr("services.supabase.mark_connected_account_auth_failed", lambda *a, **k: True)
+        monkeypatch.setattr("services.platform.supabase.mark_connected_account_auth_failed", lambda *a, **k: True)
         provider = GmailProvider()
         provider.connect(auth_token=SENTINEL_TOKEN, user_id="user-1", email="a@b.com",
                          refresh_token=SENTINEL_REFRESH, client_secret=SENTINEL_SECRET)

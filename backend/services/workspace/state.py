@@ -41,7 +41,7 @@ from services.persistence.launch import (
     WorkspaceMemberRepository,
     WorkspaceRepository,
 )
-from services.supabase import get_supabase_client
+from services.platform.supabase import get_supabase_client
 
 
 def _utc_iso(dt: datetime | None = None) -> str:
@@ -420,7 +420,7 @@ async def _write_campaign_row(user_id: str, campaign: dict[str, Any],
 
 
 def redis_get_client():
-    from services.redis_client import get_client as _gc
+    from services.platform.redis_client import get_client as _gc
     return _gc()
 
 
@@ -441,7 +441,7 @@ _ws_epoch_local = {"v": 0}
 
 def _ws_cache_key(owner_id: str, requested: str) -> str:
     """Stable cache key: sha256(salt:owner|requested)[:32]."""
-    from services.redis_client import hash_token
+    from services.platform.redis_client import hash_token
     return hash_token(f"{owner_id}|{requested}")
 
 
@@ -449,7 +449,7 @@ async def _ws_cache_get(owner_id: str, requested: str) -> str:
     """Read cached default-workspace id. Redis-only: when Redis is
     unconfigured/unreachable this returns "" and the caller resolves via the
     repository as before (hermetic tests, no cross-request pollution)."""
-    from services.redis_client import k_session_binding, hash_token, OPERATION_TIMEOUT
+    from services.platform.redis_client import k_session_binding, hash_token, OPERATION_TIMEOUT
     client = await redis_get_client()
     if client is None:
         return ""
@@ -467,7 +467,7 @@ async def _ws_cache_get(owner_id: str, requested: str) -> str:
 async def _ws_cache_set(owner_id: str, requested: str, ws_id: str) -> None:
     if not ws_id:
         return
-    from services.redis_client import k_session_binding, hash_token, OPERATION_TIMEOUT
+    from services.platform.redis_client import k_session_binding, hash_token, OPERATION_TIMEOUT
     client = await redis_get_client()
     if client is None:
         return

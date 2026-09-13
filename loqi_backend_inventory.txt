@@ -104,7 +104,7 @@ backend/services/communication/provider_normalizer.py | ACTIVE | Provider Normal
 backend/services/communication/provider_registry.py | ACTIVE | Provider Registry — manages provider lifecycle.
 backend/services/communication/reply_simulator.py | ACTIVE | Development Reply Simulator — pluggable inbound event producer.
 backend/services/company_context.py | ACTIVE | Company context analysis.
-backend/services/config_validation.py | ACTIVE | Centralized environment/configuration validation (PR10.2).
+backend/services/platform/config_validation.py | ACTIVE | Centralized environment/configuration validation (PR10.2).
 backend/services/conversation_classifier.py | ACTIVE | Conversation Stage Classification.
 backend/services/conversation_engine.py | ACTIVE | Defines ConversationEngine.
 backend/services/conversation_intelligence/__init__.py | ACTIVE | Conversation Intelligence Module.
@@ -286,8 +286,8 @@ backend/services/learning/models.py | ACTIVE | PreferenceModel — typed, struct
 backend/services/learning/pattern_detector.py | ACTIVE | PatternDetector — detects recurring temporal and behavioral patterns.
 backend/services/learning/preference_learner.py | ACTIVE | PreferenceLearner — decides when repeated behavior warrants a learned preference.
 backend/services/learning/preference_store.py | ACTIVE | PreferenceStore — thin wrapper around World Model preferences.
-backend/services/lifecycle.py | ACTIVE | Minimal application lifecycle state (PR10.6).
-backend/services/logging_setup.py | ACTIVE | Centralized logging configuration (PR10.4).
+backend/services/platform/lifecycle.py | ACTIVE | Minimal application lifecycle state (PR10.6).
+backend/services/platform/logging_setup.py | ACTIVE | Centralized logging configuration (PR10.4).
 backend/services/memory/__init__.py | ACTIVE | Package initializer and public import surface.
 backend/services/memory/consolidation.py | ACTIVE | Defines consolidate_memories.
 backend/services/memory/explainability.py | TEST-ONLY | Defines explain_decision and audit_plan_influences.
@@ -295,7 +295,7 @@ backend/services/memory/memory_store.py | ACTIVE | Defines MemoryProvider and In
 backend/services/memory/models.py | ACTIVE | Defines MemoryType and MemoryRelationship.
 backend/services/memory/subscriber.py | ACTIVE | Defines MemorySubscriber.
 backend/services/messaging_strategy.py | ACTIVE | Messaging angle selection.
-backend/services/migration.py | ACTIVE | Defines apply_migrations.
+backend/services/platform/migration.py | ACTIVE | Defines apply_migrations.
 backend/services/mission_control/__init__.py | ACTIVE | Package initializer and public import surface.
 backend/services/mission_control/api.py | ACTIVE | Mission Control API endpoint handlers.
 backend/services/mission_control/briefing.py | ACTIVE | Defines MissionControlService and get_service.
@@ -421,7 +421,7 @@ backend/services/providers/people_data_labs/provider.py | APPARENTLY-UNUSED | De
 backend/services/providers/provider_factory.py | ACTIVE | Defines get_provider and get_provider_capabilities.
 backend/services/providers/registry.py | APPARENTLY-UNUSED | Defines ProviderRegistry and get_registry.
 backend/services/providers/synthetic_provider.py | DYNAMIC | Defines SyntheticProvider.
-backend/services/rate_limit.py | ACTIVE | Rate limiting (PR10.5 → PR-3A).
+backend/services/platform/rate_limit.py | ACTIVE | Rate limiting (PR10.5 → PR-3A).
 backend/services/reasoning/__init__.py | ACTIVE | Modular reasoning pipeline for workspace analysis.
 backend/services/reasoning/_shared.py | ACTIVE | Shared utilities for deterministic reasoners.
 backend/services/reasoning/attention_reasoner.py | ACTIVE | AttentionReasoner — determines what needs the user's attention.
@@ -440,7 +440,7 @@ backend/services/reasoning/recommendation_reasoner.py | ACTIVE | RecommendationR
 backend/services/reasoning/risk_assessor.py | ACTIVE | Risk Assessor — evaluates conversation risk from intelligence signals.
 backend/services/reasoning/risk_reasoner.py | ACTIVE | RiskReasoner — identifies risks from workspace state and delta.
 backend/services/recommendation_engine.py | ACTIVE | Recommendation engine — thin adapter between Reasoning Layer and Narrative Engine.
-backend/services/redis_client.py | ACTIVE | PR-3A — Centralized Redis infrastructure.
+backend/services/platform/redis_client.py | ACTIVE | PR-3A — Centralized Redis infrastructure.
 backend/services/reply_generation/__init__.py | ACTIVE | Reply Generation Engine.
 backend/services/reply_generation/generation_context.py | ACTIVE | Defines build_context.
 backend/services/reply_generation/generation_models.py | ACTIVE | Defines GenerationStyle and GenerationTemplate.
@@ -474,7 +474,7 @@ backend/services/strategic/service.py | ACTIVE | Strategic Intelligence refresh,
 backend/services/strategic_intelligence.py | ACTIVE | Strategic Intelligence Service for generating organization profiles from onboarding data.
 backend/services/strategic_intelligence_api.py | ACTIVE | Strategic Intelligence API endpoints.
 backend/services/strategy_comparison.py | APPARENTLY-UNUSED | Strategy comparison engine.
-backend/services/supabase.py | ACTIVE | Defines get_supabase_client and test_supabase_connection.
+backend/services/platform/supabase.py | ACTIVE | Defines get_supabase_client and test_supabase_connection.
 backend/services/telegram.py | ACTIVE | Defines send_message.
 backend/services/trust_builder.py | ACTIVE | Trust builder engine.
 backend/services/web_session_binding.py | ACTIVE | Web-session → canonical identity binding (SaaS-1.6).

@@ -81,7 +81,7 @@ class _LegacyUserTable:
 
 
 def test_ensure_legacy_user_bridge_uses_authenticated_identity_uuid(monkeypatch):
-    from services import supabase
+    from services.platform import supabase
 
     table = _LegacyUserTable([])
     client = MagicMock()
@@ -108,7 +108,7 @@ def test_ensure_legacy_user_bridge_uses_authenticated_identity_uuid(monkeypatch)
 
 def test_authenticated_bridge_is_memoized_after_successful_verification(monkeypatch):
     """Repeated session resolution must not add Supabase reads to one request."""
-    from services import supabase
+    from services.platform import supabase
 
     class _IdentityUser:
         display_name = "Ada"

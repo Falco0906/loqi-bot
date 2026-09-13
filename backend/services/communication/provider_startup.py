@@ -86,7 +86,7 @@ def restore_gmail_providers() -> None:
     from services.communication.provider_registry import register_instance
     from services.gmail_auth_failure import GmailReauthRequired
     from services.google_auth import refresh_access_token
-    from services.supabase import (
+    from services.platform.supabase import (
         load_all_provider_credentials,
         reconcile_connected_account_duplicates,
         update_google_access_token,

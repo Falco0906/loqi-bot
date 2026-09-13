@@ -166,7 +166,7 @@ These print request payloads, full API response bodies, database query inputs, e
 
 ## 10. Session Context Reconstructed from Full Conversation History
 
-**Files:** `backend/services/supabase.py` (lines 300-371, `get_session_context()`)
+**Files:** `backend/services/platform/supabase.py` (lines 300-371, `get_session_context()`)
 
 On every message, the system:
 1. Fetches ALL conversation rows for the user
@@ -235,7 +235,7 @@ n8n workflow export from when Loqi used n8n for orchestration. No longer used �
 **Files:**
 - `backend/services/conversation_engine.py` — ~500 lines
 - `backend/services/conversational_response_generator.py` — 646 lines
-- `backend/services/supabase.py` — 609 lines
+- `backend/services/platform/supabase.py` — 609 lines
 - `backend/services/icp_extractor.py` — 690 lines
 - `backend/services/commercial_qualifier.py` — 420+ lines
 - `frontend/components/chat/loqi-app.tsx` — ~450 lines
@@ -273,7 +273,7 @@ Callers must handle all four patterns inconsistently. `workflows.py` catches `Op
 
 ## 17. `conversation_store.py` and `supabase.py` Have Blurred Boundaries
 
-**Files:** `backend/services/supabase.py`, `backend/services/conversation_store.py`
+**Files:** `backend/services/platform/supabase.py`, `backend/services/conversation_store.py`
 
 `supabase.py` handles: user CRUD, lead CRUD, conversation logging, session context reconstruction, Google token management, user preferences
 `conversation_store.py` handles: channel user mapping, web session creation, workflow session CRUD, message recording, event recording
@@ -380,7 +380,7 @@ During a single `handle_message()` call, the engine may make 2-3 sequential AI c
 
 ## 24. `get_session_context()` Scans All Messages on Every Request
 
-**Files:** `backend/services/supabase.py` (lines 300-371)
+**Files:** `backend/services/platform/supabase.py` (lines 300-371)
 
 ```python
 result = (
@@ -503,7 +503,7 @@ EXCLUDED_ROLES = [
 
 ## 29. TERMINAL_MESSAGES Set Probably Outdated
 
-**Files:** `backend/services/supabase.py` (lines 12-15)
+**Files:** `backend/services/platform/supabase.py` (lines 12-15)
 
 ```python
 TERMINAL_MESSAGES = {
@@ -622,7 +622,7 @@ These are 80% the same list, written twice. Changes to one won't propagate to th
 
 ## 36. `leads` Table Status Values Are Not Enforced
 
-**Files:** `backend/supabase/multi_client_mvp.sql`, `backend/services/supabase.py`
+**Files:** `backend/supabase/multi_client_mvp.sql`, `backend/services/platform/supabase.py`
 
 The `leads` table uses `status` text field. The code sets it to:
 - `"pending"` (on store)
@@ -640,7 +640,7 @@ But `send_outreach()` in `workflows.py` does NOT update lead status after sendin
 
 ## 37. Inconsistent Naming of the Telegram User ID Field
 
-**Files:** `backend/services/supabase.py`, `backend/services/conversation_store.py`
+**Files:** `backend/services/platform/supabase.py`, `backend/services/conversation_store.py`
 
 The `users` table column is called `telegram_id` but stores both Telegram user IDs AND web session tokens (as `"web:{session_token}"`). The field name is misleading for web users.
 
@@ -660,7 +660,7 @@ For web users, `telegram_id` = `"web:{token}"`. For Telegram users, `telegram_id
 
 ## 38. Global `_client` Variable in `supabase.py` Is Not Thread-Safe
 
-**Files:** `backend/services/supabase.py` (line 17)
+**Files:** `backend/services/platform/supabase.py` (line 17)
 
 ```python
 _client: Client | None = None
@@ -683,7 +683,7 @@ has a TOCTOU race condition under thread concurrency (two threads could both pas
 
 ## 39. The `user_preferences` Table Tracks Only Tone/Length/Style
 
-**Files:** `backend/services/supabase.py` (lines 561-608)
+**Files:** `backend/services/platform/supabase.py` (lines 561-608)
 
 The table has columns for `tone`, `length`, `style`, `industry_focus`. But:
 - `detect_preferences_from_refinement()` only extracts `length`, `tone`, and `style`

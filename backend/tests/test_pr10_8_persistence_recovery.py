@@ -482,7 +482,7 @@ class TestBoundedRetry:
         assert secret not in caplog.text
 
     def test_sync_connected_account_no_false_success_on_permanent_failure(self, monkeypatch):
-        from services.supabase import sync_connected_account
+        from services.platform.supabase import sync_connected_account
 
         class FakeRepo:
             def __init__(self):
@@ -502,7 +502,7 @@ class TestBoundedRetry:
         assert ok is False
 
     def test_sync_connected_account_transient_then_success(self, monkeypatch):
-        from services.supabase import sync_connected_account
+        from services.platform.supabase import sync_connected_account
         calls = {"n": 0}
 
         class FakeRepo:
@@ -683,7 +683,7 @@ class TestRehydration:
         asyncio.run(_run())
 
     def test_lifecycle_ready_only_after_startup_completes(self):
-        from services import lifecycle
+        from services.platform import lifecycle
         lifecycle.set_starting()
         assert lifecycle.is_ready() is False
         lifecycle.set_ready()

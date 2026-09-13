@@ -38,7 +38,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from services.supabase import get_supabase_client
+from services.platform.supabase import get_supabase_client
 
 # Workspace-owned product resources carrying a workspace_id column (FK NOT NULL
 # to workspaces.id). These are remapped when the workspace tenant identity is

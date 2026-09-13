@@ -31,7 +31,7 @@ class EventBus:
     """Publish-side abstraction. Subscribe-side helper for future gateways."""
 
     def __init__(self) -> None:
-        from services import redis_client
+        from services.platform import redis_client
         self._rc = redis_client
 
     async def publish_user_event(
@@ -51,7 +51,7 @@ class EventBus:
         """
         if not user_id:
             return False
-        from services.redis_client import k_event_channel, hash_token
+        from services.platform.redis_client import k_event_channel, hash_token
 
         payload: dict[str, Any] = {"type": event_type}
         if job_id:
@@ -92,7 +92,7 @@ class EventBus:
         client = await self._rc.get_client()
         if client is None:
             return None
-        from services.redis_client import k_event_channel, hash_token
+        from services.platform.redis_client import k_event_channel, hash_token
         channel = k_event_channel("user", hash_token(user_id))
         pubsub = client.pubsub()
         await pubsub.subscribe(channel)

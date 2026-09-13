@@ -19,13 +19,15 @@ import json
 
 import pytest
 
+from services.platform import redis_client as rc
+
 fakeredis = pytest.importorskip("fakeredis")
 import fakeredis.aioredis  # noqa: E402
 
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from services import redis_client as rc, events_bus  # noqa: E402
+from services import events_bus  # noqa: E402
 from services.events import api as events_api  # noqa: E402
 
 USER_A = "sse-user-aaaaaaaa"
@@ -121,7 +123,7 @@ def test_c_event_forwarding_shape(app, fake_redis):
 
     # The route generator forwards whatever lands on the channel; validate the
     # framing contract directly against the producer output.
-    from services.redis_client import k_event_channel, hash_token
+    from services.platform.redis_client import k_event_channel, hash_token
     async def inspect():
         client = await rc.get_client()
         # Channel name derivation is opaque (hashed) but deterministic.
@@ -195,7 +197,7 @@ def test_e_identity_loss_closes_stream(fake_redis, monkeypatch):
 def test_f_malformed_channel_payload_does_not_crash(fake_redis):
     async def run():
         client = fake_redis  # hermetic: injected fakeredis client
-        from services.redis_client import k_event_channel, hash_token
+        from services.platform.redis_client import k_event_channel, hash_token
         channel = k_event_channel("user", hash_token(USER_A))
         pubsub = client.pubsub()
         await pubsub.subscribe(channel)

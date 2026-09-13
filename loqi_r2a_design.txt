@@ -10,7 +10,7 @@ OWNERSHIP
 2. Legacy web-session validation — `services.identity.dependencies`
    Add the existing main.py logic as an explicit `resolve_web_access(request)` operation: bearer may be an identity access session or a bound legacy web-session bearer; output is typed `(user_id, bearer_token)`. It owns canonical-session touch/revocation checks and must fail closed.
 3. Redis/session binding — `services.web_session_binding` remains persistence lookup owner; `services.session_cache` remains cache owner; `identity.dependencies.resolve_web_access` is their only HTTP-facing consumer. Redis is not an identity owner.
-4. Legacy `users` FK bridge — retain `services.supabase.ensure_legacy_user_bridge` as persistence owner; invoke it only from `resolve_web_access` after authenticated identity resolution. Its bounded verification cache moves with the access operation; no route may provision it directly.
+4. Legacy `users` FK bridge — retain `services.platform.supabase.ensure_legacy_user_bridge` as persistence owner; invoke it only from `resolve_web_access` after authenticated identity resolution. Its bounded verification cache moves with the access operation; no route may provision it directly.
 5. Selected workspace/membership/role — `services.workspace_context`
    Retains `resolve_workspace_context`, membership lookup, organization/workspace validation, and `WorkspaceContext`.
 6. Compatibility default — a small `resolve_legacy_workspace(request, user_id)` function belongs in `workspace_context.py`, beside `resolve_workspace_context`. It first performs strict selected resolution; only NoWorkspaceAvailable falls back to the existing owner-single-workspace lookup for legacy/fixture accounts. Ambiguous selection remains 409. This is the sole temporary compatibility boundary.
@@ -28,7 +28,7 @@ D. Migrate tests: patch `services.identity.dependencies.resolve_web_access` and 
 E. Delete `_resolve_session_context`, `_resolve_web_user_id`, `_workspace_owner`, `_workspace_owner_and_summary`, `_session_token_from_request`, `_workspace_id_from_request`, `_resolve_selected_workspace_context`, `_selected_workspace_id`, `_resolved_workspace_id_or_default`, `_web_session_binding`, `_cached_session_identity`, bridge cache/helper from main.py in the SAME patch. No delegating wrappers remain.
 
 EXISTING FILES TO REUSE
-KEEP/EXTEND: services/identity/dependencies.py; services/workspace_context.py; services/session_cache.py; services/web_session_binding.py; services/supabase.py.
+KEEP/EXTEND: services/identity/dependencies.py; services/workspace_context.py; services/session_cache.py; services/web_session_binding.py; services/platform/supabase.py.
 DO NOT CREATE: generic access manager/context/util module; a second workspace repository; a second session cache.
 
 CALLER MIGRATION

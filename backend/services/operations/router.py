@@ -27,7 +27,7 @@ async def ready():
     integration is required for readiness — the existing architecture
     intentionally supports degraded-mode operation.
     """
-    from services.lifecycle import get_state
+    from services.platform.lifecycle import get_state
     state = get_state()
     if state == "ready":
         return {"status": "ready"}

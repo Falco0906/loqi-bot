@@ -98,7 +98,7 @@ async def _resolve_user_id(request: Request, requested_user_id: str) -> str:
     a production deployment that sets ``ENVIRONMENT=production`` cannot fall
     back to the unauthenticated development contract.
     """
-    from services.config_validation import is_production
+    from services.platform.config_validation import is_production
     if is_production():
         authenticated_user_id = await get_authenticated_user_id(request)
         if requested_user_id and requested_user_id != authenticated_user_id:

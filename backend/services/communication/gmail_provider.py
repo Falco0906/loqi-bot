@@ -153,7 +153,7 @@ class GmailProvider(CommunicationProviderBase):
         self._connected = False
         store.update_provider_status(self._provider_id, ProviderStatus.AUTH_FAILED)
         try:
-            from services.supabase import mark_connected_account_auth_failed
+            from services.platform.supabase import mark_connected_account_auth_failed
             mark_connected_account_auth_failed(self._user_id, "google")
         except Exception as e:
             logger.warning(

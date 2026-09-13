@@ -15,7 +15,7 @@ from services.conversations.compatibility import (
     touch_workflow_session,
 )
 from services.google_auth import get_google_auth_url
-from services.supabase import (
+from services.platform.supabase import (
     clear_session_context,
     get_lead_by_id,
     get_pending_leads,
@@ -280,7 +280,7 @@ class ConversationEngine:
         # derives ownership from the state — never from a client-constructed
         # user_id (SaaS-1.5).
         from services.oauth_state import issue_state
-        from services.supabase import _run_blocking
+        from services.platform.supabase import _run_blocking
         state = _run_blocking(issue_state(
             str(user["id"]),
             {"channel": channel, "transport_id": str(external_user_id)},

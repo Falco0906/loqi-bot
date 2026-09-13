@@ -17,7 +17,7 @@ contract:
   G. Different users connect concurrently without blocking each other.
   H. Callback postMessage payload reflects the true persistence outcome.
 
-Supabase is faked at the ``services.supabase`` seam; everything above that
+Supabase is faked at the ``services.platform.supabase`` seam; everything above that
 seam (orchestration, locking, rollback, verification, /providers read path)
 is the real production code.
 """
@@ -33,7 +33,7 @@ from fastapi.testclient import TestClient
 import main as main_module
 from services.communication import api as provider_api
 from services.communication import service as provider_service
-import services.supabase as supabase_module
+import services.platform.supabase as supabase_module
 
 USER_A = "2a-user-aaaaaaaa"
 USER_B = "2a-user-bbbbbbbb"
@@ -121,7 +121,7 @@ class FakeDurableStore:
 
 @pytest.fixture()
 def durable(monkeypatch):
-    """Fresh fake store wired into the services.supabase seam each test."""
+    """Fresh fake store wired into the services.platform.supabase seam each test."""
     fake = FakeDurableStore()
     monkeypatch.setattr(supabase_module, "sync_connected_account", fake.sync_connected_account)
     monkeypatch.setattr(

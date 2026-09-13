@@ -62,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
     print("         identity_users, passwords, email verification, or billing.")
     print("=" * 70)
 
-    from services.supabase import get_supabase_client
+    from services.platform.supabase import get_supabase_client
     client = get_supabase_client()
     if client is None:
         print("FATAL: Supabase client unavailable (check SUPABASE_URL/SUPABASE_KEY)")

@@ -176,7 +176,7 @@ class TestLeadRoundTrip:
     async def test_discovery_companies_carry_provenance(self, client, authenticated_session):
         """Provider provenance must survive finalize: discovery_companies and
         companies carry the search provider (PR3.1 Part F)."""
-        from services.supabase import get_supabase_client
+        from services.platform.supabase import get_supabase_client
 
         detail, discovery_id, job_id = await _run_completed_discovery(
             client, authenticated_session)
@@ -332,7 +332,7 @@ class TestLeadRoundTrip:
         )
         assert len(stored.get("leads") or []) == len(leads)
 
-        from services.supabase import get_supabase_client
+        from services.platform.supabase import get_supabase_client
 
         db = get_supabase_client()
         result = (

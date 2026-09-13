@@ -806,10 +806,10 @@ The legacy synchronous workflow system is being superseded by the Execution Engi
 | `services/enrichment/` | Apollo + synthetic enrichers |
 | `services/providers/` | Apollo + synthetic lead providers |
 | `services/security/crypto/` | Encryption/hashing utilities |
-| `services/supabase.py` | Supabase client (legacy — connection test only) |
+| `services/platform/supabase.py` | Supabase client (legacy — connection test only) |
 | `services/persistence/` | Production persistence layer (M2.1 — Identity only) |
 | `services/google_auth.py` | Google OAuth token exchange |
-| `services/migration.py` | Data migration runner |
+| `services/platform/migration.py` | Data migration runner |
 
 ---
 

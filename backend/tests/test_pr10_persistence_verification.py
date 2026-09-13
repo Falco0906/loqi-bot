@@ -27,7 +27,7 @@ SENTINEL = "PR10_PERSIST_SENTINEL_DO_NOT_LEAK"
 
 class TestProductionNotDegraded:
     def test_production_requires_supabase_url_and_key(self):
-        from services import config_validation as cv
+        from services.platform import config_validation as cv
         errors, _ = cv.validate_config({
             "ENVIRONMENT": "production",
             "OPENAI_API_KEY": "k",
@@ -39,7 +39,7 @@ class TestProductionNotDegraded:
         assert any("SUPABASE_KEY" in e for e in errors)
 
     def test_production_startup_fails_when_supabase_missing(self, monkeypatch):
-        from services import config_validation as cv
+        from services.platform import config_validation as cv
         monkeypatch.setattr(cv, "validate_config", lambda env=None: (
             ["SUPABASE_URL is required in production and is not set",
              "SUPABASE_KEY is required in production and is not set"], []))
@@ -73,7 +73,7 @@ class TestSupabaseConnectionConfig:
         assert SupabaseConnectionManager().is_connected is True
 
     def test_get_supabase_client_returns_none_without_env(self, monkeypatch):
-        import services.supabase as sb
+        import services.platform.supabase as sb
         monkeypatch.setattr(sb, "SUPABASE_URL", "")
         monkeypatch.setattr(sb, "SUPABASE_KEY", "")
         monkeypatch.setattr(sb, "_client", None)
@@ -83,7 +83,7 @@ class TestSupabaseConnectionConfig:
 class TestNoFalseSuccessWrites:
     def test_sync_connected_account_reports_failure_when_db_raises(self, monkeypatch):
         """A persistence failure must never be reported as success."""
-        from services.supabase import sync_connected_account
+        from services.platform.supabase import sync_connected_account
 
         class _FailingRepo:
             async def find_for_user(self, user_id, provider):
@@ -100,7 +100,7 @@ class TestNoFalseSuccessWrites:
 
     def test_load_all_provider_credentials_fails_closed_to_empty(self, monkeypatch):
         from types import SimpleNamespace
-        from services import supabase as sb
+        from services.platform import supabase as sb
 
         class _BrokenClient:
             def table(self, name):

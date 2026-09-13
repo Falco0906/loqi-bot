@@ -62,7 +62,7 @@ class CopilotMemoryRepository:
     def _client(self):
         if self._client_provider is not None:
             return self._client_provider()
-        from services.supabase import get_supabase_client
+        from services.platform.supabase import get_supabase_client
         return get_supabase_client()
 
     async def get(self, *, user_id: str, workspace_id: str, conversation_key: str) -> dict[str, Any] | None:

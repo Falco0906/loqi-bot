@@ -201,7 +201,7 @@ def test_refresh_persists_token_when_user_id_set(monkeypatch):
         return FakeResp(200, {"access_token": "at-new", "expires_in": 3600})
 
     monkeypatch.setattr(real_requests, "post", fake_token_post)
-    monkeypatch.setattr("services.supabase.update_google_access_token", fake_update)
+    monkeypatch.setattr("services.platform.supabase.update_google_access_token", fake_update)
 
     provider._refresh_auth()
 
@@ -221,7 +221,7 @@ def test_refresh_no_user_id_skips_persist(monkeypatch):
         return FakeResp(200, {"access_token": "at-new", "expires_in": 3600})
 
     monkeypatch.setattr(real_requests, "post", fake_token_post)
-    monkeypatch.setattr("services.supabase.update_google_access_token", fake_update)
+    monkeypatch.setattr("services.platform.supabase.update_google_access_token", fake_update)
 
     provider._refresh_auth()
 

@@ -120,7 +120,7 @@ class TestRegistrationLifecycle:
     ):
         """Email signup must bridge its identity before workspace/session use."""
         from services.persistence.config import RepositoryProvider
-        from services import supabase
+        from services.platform import supabase
         from services.workspace import state as workspace_state
 
         svc = _fresh_service()
@@ -164,7 +164,7 @@ class TestRegistrationLifecycle:
         self, monkeypatch,
     ):
         from services.persistence.config import RepositoryProvider
-        from services import supabase
+        from services.platform import supabase
 
         svc = _fresh_service()
         deleted_ids: list[str] = []

@@ -1051,13 +1051,13 @@ class TestConcurrentCredentialRefresh:
                 with results_lock:
                     errors.append(e)
 
-        monkeypatch.setattr("services.supabase.get_google_credentials", fake_get_google_credentials)
-        monkeypatch.setattr("services.supabase.update_google_access_token", fake_update_google_access_token)
+        monkeypatch.setattr("services.platform.supabase.get_google_credentials", fake_get_google_credentials)
+        monkeypatch.setattr("services.platform.supabase.update_google_access_token", fake_update_google_access_token)
         monkeypatch.setattr("services.google_auth.refresh_access_token", fake_refresh_access_token)
 
         # Use guarded check so that after the first thread refreshes,
         # subsequent threads see the new expiry and skip the lock path.
-        monkeypatch.setattr("services.supabase.is_token_expired", guarded_is_token_expired)
+        monkeypatch.setattr("services.platform.supabase.is_token_expired", guarded_is_token_expired)
 
         threads = [threading.Thread(target=call_factory, args=(i,)) for i in range(3)]
         for t in threads:
@@ -1149,10 +1149,10 @@ class TestConcurrentCredentialRefresh:
         task_b = ExecutionTask(id="b1", plan_task=plan_b, max_attempts=1)
         ctx_b = ExecutionContext(session_id="s_b")
 
-        monkeypatch.setattr("services.supabase.get_google_credentials", fake_get_google_credentials)
-        monkeypatch.setattr("services.supabase.is_token_expired", fake_is_token_expired)
+        monkeypatch.setattr("services.platform.supabase.get_google_credentials", fake_get_google_credentials)
+        monkeypatch.setattr("services.platform.supabase.is_token_expired", fake_is_token_expired)
         monkeypatch.setattr("services.google_auth.refresh_access_token", counting_refresh)
-        monkeypatch.setattr("services.supabase.update_google_access_token", fake_update)
+        monkeypatch.setattr("services.platform.supabase.update_google_access_token", fake_update)
 
         results: list[dict | None] = [None, None]
         errors: list[Exception] = []
@@ -1220,8 +1220,8 @@ class TestConcurrentCredentialRefresh:
             refresh_called = True
             return {}
 
-        monkeypatch.setattr("services.supabase.get_google_credentials", fake_get_google_credentials)
-        monkeypatch.setattr("services.supabase.is_token_expired", fake_is_token_expired)
+        monkeypatch.setattr("services.platform.supabase.get_google_credentials", fake_get_google_credentials)
+        monkeypatch.setattr("services.platform.supabase.is_token_expired", fake_is_token_expired)
         monkeypatch.setattr("services.google_auth.refresh_access_token", fake_refresh)
 
         plan_task = Task(type=TaskType.SEND_EMAIL, label="t")

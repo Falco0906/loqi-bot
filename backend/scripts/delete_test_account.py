@@ -278,7 +278,7 @@ def apply_cleanup_plan(plan: CleanupPlan, *, dry_run: bool = True) -> dict[str, 
     summary = plan.summarize()
     if dry_run:
         return summary
-    from services.supabase import get_supabase_client
+    from services.platform.supabase import get_supabase_client
     client = get_supabase_client()
     if client is None:
         raise RuntimeError("Supabase client unavailable")
@@ -300,7 +300,7 @@ def apply_cleanup_plan(plan: CleanupPlan, *, dry_run: bool = True) -> dict[str, 
 
 
 def _load_snapshot():
-    from services.supabase import get_supabase_client
+    from services.platform.supabase import get_supabase_client
     client = get_supabase_client()
     if client is None:
         raise RuntimeError("Supabase client unavailable")

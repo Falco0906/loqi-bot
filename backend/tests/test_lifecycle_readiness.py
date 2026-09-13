@@ -9,7 +9,7 @@ sys.path.insert(0, ".")
 
 import pytest
 
-from services import lifecycle
+from services.platform import lifecycle
 import main as main_module  # noqa: E402
 
 
@@ -25,7 +25,7 @@ class TestLiveness:
         from fastapi.testclient import TestClient
 
         calls = []
-        import services.supabase as supabase_module
+        import services.platform.supabase as supabase_module
         monkeypatch.setattr(supabase_module, "get_supabase_client", lambda: calls.append("client") or object())
         client = TestClient(main_module.app)
         response = client.get("/health")
@@ -102,7 +102,7 @@ class TestLifecycleState:
 
 class TestHealthReadinessBypassRateLimit:
     def test_health_and_ready_bypass_rate_limiter(self):
-        from services.rate_limit import classify_rate_limit
+        from services.platform.rate_limit import classify_rate_limit
         assert classify_rate_limit("/health") == "health"
         assert classify_rate_limit("/ready") == "health"
 

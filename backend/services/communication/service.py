@@ -188,7 +188,7 @@ def communication_timeline_for_owner(*, owner_id: str, conversation_id: str) -> 
 
 async def list_provider_summaries(owner_id: str) -> list[dict[str, Any]]:
     """Return durable connected accounts enriched with live runtime state."""
-    from services.supabase import get_durable_providers_for_user
+    from services.platform.supabase import get_durable_providers_for_user
 
     try:
         durable_rows = await asyncio.to_thread(
@@ -297,7 +297,7 @@ async def provider_health(owner_id: str, provider_id: str) -> dict[str, Any] | N
     provider = communication_store.get_provider(provider_id)
     if provider is not None and provider.provider_type == ProviderType.GMAIL:
         try:
-            from services.supabase import is_connected_account_reauth_required
+            from services.platform.supabase import is_connected_account_reauth_required
 
             if await asyncio.to_thread(
                 is_connected_account_reauth_required,
@@ -508,7 +508,7 @@ async def connect_gmail_oauth_provider(
     from services.communication import provider_startup
     from services.communication.provider_registry import register_instance, remove_instance
     from services.google_auth import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
-    from services.supabase import get_durable_providers_for_user, sync_connected_account
+    from services.platform.supabase import get_durable_providers_for_user, sync_connected_account
 
     async with gmail_connect_lock(user_id):
         log.info(
@@ -685,7 +685,7 @@ async def resolve_oauth_state_user(state: str) -> str:
     user_id, _context = await consume_state(state)
     if not user_id or user_id == "gmail_user":
         return ""
-    from services.supabase import get_user
+    from services.platform.supabase import get_user
 
     if await asyncio.to_thread(get_user, user_id):
         return user_id
@@ -696,7 +696,7 @@ async def complete_legacy_google_callback(code: str, state: str) -> str:
     """Complete the legacy web Gmail callback and publish its historic event."""
     from services.google_auth import exchange_code_for_tokens
     from services.oauth_state import consume_state
-    from services.supabase import save_google_tokens
+    from services.platform.supabase import save_google_tokens
     from services.world_model import EventType as WMEventType, publish
 
     user_id, _context = await consume_state(state)

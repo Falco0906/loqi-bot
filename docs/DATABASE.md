@@ -217,7 +217,7 @@ No dedicated analytics tables. Future: metrics tables.
 
 1. Add SQL to `backend/supabase/multi_client_mvp.sql`
 2. Run in Supabase
-3. Update `backend/services/supabase.py` to use new table
+3. Update `backend/services/platform/supabase.py` to use new table
 
 ### Schema Changes
 

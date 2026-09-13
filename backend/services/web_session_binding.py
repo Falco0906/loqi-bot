@@ -59,7 +59,7 @@ class _SupabaseBindingStore:
     _table = "web_session_bindings"
 
     async def save(self, binding: WebSessionBinding) -> WebSessionBinding:
-        from services.supabase import get_supabase_client
+        from services.platform.supabase import get_supabase_client
         client = get_supabase_client()
         if client is None:
             return binding
@@ -75,7 +75,7 @@ class _SupabaseBindingStore:
         return binding
 
     async def find_by_session_key(self, session_key: str) -> WebSessionBinding | None:
-        from services.supabase import get_supabase_client
+        from services.platform.supabase import get_supabase_client
         client = get_supabase_client()
         if client is None:
             return None

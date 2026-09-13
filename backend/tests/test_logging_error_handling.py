@@ -14,8 +14,8 @@ sys.path.insert(0, ".")
 
 import pytest
 
-from services.config_validation import validate_config
-from services.logging_setup import (
+from services.platform.config_validation import validate_config
+from services.platform.logging_setup import (
     JsonFormatter,
     configure_logging,
     log_level_from_env,

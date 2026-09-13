@@ -13,7 +13,7 @@ sys.path.insert(0, ".")
 
 import pytest
 
-from services.config_validation import validate_config
+from services.platform.config_validation import validate_config
 from services import credential_crypto
 from services import oauth_state
 
@@ -104,7 +104,7 @@ class TestCredentialCrypto:
 class TestFieldHelpers:
     def test_encrypt_field_stores_ciphertext(self, monkeypatch):
         monkeypatch.setenv("LOQI_CREDENTIAL_ENCRYPTION_KEY", _key())
-        import services.supabase as supabase_module
+        import services.platform.supabase as supabase_module
         cipher = supabase_module._encrypt_credential_field(SENTINEL)
         assert credential_crypto.is_encrypted(cipher)
         assert SENTINEL not in cipher
@@ -112,7 +112,7 @@ class TestFieldHelpers:
 
     def test_no_key_plaintext_dev_only(self, monkeypatch):
         monkeypatch.delenv("LOQI_CREDENTIAL_ENCRYPTION_KEY", raising=False)
-        import services.supabase as supabase_module
+        import services.platform.supabase as supabase_module
         assert supabase_module._encrypt_credential_field(SENTINEL) == SENTINEL
 
 
@@ -140,7 +140,7 @@ class TestPersistenceIntegration:
         from services.persistence.launch import ConnectedAccount
         repo = self._install_repo(monkeypatch)
         monkeypatch.setenv("LOQI_CREDENTIAL_ENCRYPTION_KEY", _key())
-        import services.supabase as supabase_module
+        import services.platform.supabase as supabase_module
 
         ok = supabase_module.sync_connected_account(
             "user-1", provider="google", email="a@b.com",
@@ -161,7 +161,7 @@ class TestPersistenceIntegration:
             access_token=credential_crypto.encrypt_token(SENTINEL),
             refresh_token=credential_crypto.encrypt_token(SENTINEL),
         )
-        import services.supabase as supabase_module
+        import services.platform.supabase as supabase_module
         creds = supabase_module.get_google_credentials("user-1")
         assert creds is not None
         assert creds["access_token"] == SENTINEL
@@ -177,7 +177,7 @@ class TestPersistenceIntegration:
             user_id="user-1", provider="google", email="a@b.com",
             access_token=SENTINEL, refresh_token=SENTINEL,
         )
-        import services.supabase as supabase_module
+        import services.platform.supabase as supabase_module
         creds = supabase_module.get_google_credentials("user-1")
         assert creds["access_token"] == SENTINEL
         entity = repo.accounts[("user-1", "google")]
@@ -193,7 +193,7 @@ class TestPersistenceIntegration:
             access_token=credential_crypto.encrypt_token(SENTINEL),
             refresh_token=credential_crypto.encrypt_token(SENTINEL),
         )
-        import services.supabase as supabase_module
+        import services.platform.supabase as supabase_module
         # Fresh read (simulates restart/reload) resolves the encrypted value.
         creds = supabase_module.get_google_credentials("user-1")
         assert creds["refresh_token"] == SENTINEL
@@ -233,7 +233,7 @@ class TestNoSecretLeakage:
     def test_encryption_logs_contain_no_sentinel(self, monkeypatch, caplog):
         import logging
         monkeypatch.setenv("LOQI_CREDENTIAL_ENCRYPTION_KEY", _key())
-        import services.supabase as supabase_module
+        import services.platform.supabase as supabase_module
         with caplog.at_level(logging.WARNING):
             cipher = supabase_module._encrypt_credential_field(SENTINEL)
             supabase_module._decrypt_credential_field(cipher)
@@ -242,7 +242,7 @@ class TestNoSecretLeakage:
     def test_decrypt_failure_logs_no_token(self, monkeypatch, caplog):
         import logging
         monkeypatch.setenv("LOQI_CREDENTIAL_ENCRYPTION_KEY", _key())
-        import services.supabase as supabase_module
+        import services.platform.supabase as supabase_module
         with caplog.at_level(logging.WARNING):
             # Tampered ciphertext -> decryption failure path (generic message).
             supabase_module._decrypt_credential_field("encv1.aaaa.bbbbbbbbbbbb")

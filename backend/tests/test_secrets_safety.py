@@ -16,7 +16,7 @@ sys.path.insert(0, ".")
 
 import pytest
 
-from services.config_validation import validate_config
+from services.platform.config_validation import validate_config
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SENTINEL = "PR10_3_SUPER_SECRET_SENTINEL_VALUE"

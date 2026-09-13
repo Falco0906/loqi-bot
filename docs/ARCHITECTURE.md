@@ -188,7 +188,7 @@ Responsibilities:
 
 ---
 
-## services/supabase.py
+## services/platform/supabase.py
 
 Persistence layer.
 

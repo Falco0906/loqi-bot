@@ -61,7 +61,7 @@ def _clean_runtime_state(monkeypatch):
             for record in comm_store.get_user_providers(user_id)
         ]
 
-    monkeypatch.setattr("services.supabase.get_durable_providers_for_user", durable_rows)
+    monkeypatch.setattr("services.platform.supabase.get_durable_providers_for_user", durable_rows)
     from services.communication import provider_registry
     from services.communication.gmail_provider import GmailProvider
     provider_registry.register_provider(GmailProvider)
@@ -74,7 +74,7 @@ def _clean_runtime_state(monkeypatch):
 
 class TestMigrationConstraint:
     def test_migration_allows_auth_failed_and_preserves_existing(self):
-        import services.migration as m
+        import services.platform.migration as m
         sql = m.CONNECTED_ACCOUNTS_AUTH_FAILED_SQL
         assert "auth_failed" in sql
         # Every pre-existing valid status is preserved.
@@ -138,7 +138,7 @@ class TestReauthState:
 
         post_mock.side_effect = fake_post
         monkeypatch.setattr(requests, "post", post_mock)
-        monkeypatch.setattr("services.supabase.mark_connected_account_auth_failed",
+        monkeypatch.setattr("services.platform.supabase.mark_connected_account_auth_failed",
                             lambda *a, **k: True)
         provider = GmailProvider()
         provider.connect(auth_token="t", user_id="user-1", email="a@b.com",
@@ -150,7 +150,7 @@ class TestReauthState:
         assert store.get_provider(provider._provider_id).status is ProviderStatus.AUTH_FAILED
 
     def test_auth_failed_persisted_via_mark(self, monkeypatch):
-        from services.supabase import mark_connected_account_auth_failed
+        from services.platform.supabase import mark_connected_account_auth_failed
         from services.persistence.launch import ConnectedAccount
 
         class FakeRepo:
@@ -216,7 +216,7 @@ class TestReauthState:
         assert len(token_calls) == 1
 
     def test_app_stays_ready(self):
-        from services import lifecycle
+        from services.platform import lifecycle
         from services.communication.gmail_provider import GmailProvider
         lifecycle.set_ready()
         provider = GmailProvider()
@@ -233,7 +233,7 @@ class TestReauthState:
 
 class TestIdempotentReconnect:
     def test_reconnect_updates_auth_failed_account(self, monkeypatch):
-        from services.supabase import sync_connected_account, is_connected_account_reauth_required
+        from services.platform.supabase import sync_connected_account, is_connected_account_reauth_required
         from services.persistence.launch import ConnectedAccount
 
         class FakeRepo:
@@ -265,7 +265,7 @@ class TestIdempotentReconnect:
         assert repo.saves == 1  # update in place — no duplicate row
 
     def test_reconnect_no_duplicate_row(self, monkeypatch):
-        from services.supabase import sync_connected_account
+        from services.platform.supabase import sync_connected_account
         from services.persistence.launch import ConnectedAccount
 
         class FakeRepo:
@@ -314,7 +314,7 @@ class TestIdempotentReconnect:
         assert len(gmail) == 1
 
     def test_same_google_account_cannot_appear_twice(self, monkeypatch):
-        from services.supabase import sync_connected_account
+        from services.platform.supabase import sync_connected_account
         from services.persistence.launch import ConnectedAccount
 
         class FakeRepo:
@@ -341,7 +341,7 @@ class TestIdempotentReconnect:
 
     def test_different_users_with_same_email_stay_independent(self, monkeypatch):
         """Two distinct users connecting the same Gmail address remain independent."""
-        from services.supabase import sync_connected_account
+        from services.platform.supabase import sync_connected_account
         from services.persistence.launch import ConnectedAccount
 
         class FakeRepo:
@@ -367,7 +367,7 @@ class TestIdempotentReconnect:
         assert repo.rows[("user-b", "google")].email == "same@x.com"
 
     def test_existing_credentials_remain_encrypted(self, monkeypatch):
-        from services.supabase import sync_connected_account
+        from services.platform.supabase import sync_connected_account
         from services.credential_crypto import is_encrypted
         from services.persistence.launch import ConnectedAccount
 
@@ -475,7 +475,7 @@ class SimpleNamespaceStatus:
 
 class TestReconciliation:
     def test_duplicate_rows_reconciled_deterministically(self, monkeypatch):
-        from services.supabase import reconcile_connected_account_duplicates
+        from services.platform.supabase import reconcile_connected_account_duplicates
         from services.persistence.launch import ConnectedAccount
         from datetime import datetime, timezone
 

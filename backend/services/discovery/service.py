@@ -29,7 +29,7 @@ from typing import Any, Optional
 from uuid import uuid4
 
 from services.job_engine import job_manager
-from services.supabase import get_supabase_client
+from services.platform.supabase import get_supabase_client
 
 _DISCOVERY_SELECT = (
     "id, workspace_id, query, status, title, description, favorite, "

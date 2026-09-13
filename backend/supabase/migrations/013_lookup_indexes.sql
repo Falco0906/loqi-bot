@@ -9,7 +9,7 @@
 --
 -- All guarded / idempotent: safe on both the legacy users schema and fresh
 -- installs. Apply via Supabase SQL Editor (or the startup migration in
--- services/migration.py when DATABASE_URL is set).
+-- services/platform/migration.py when DATABASE_URL is set).
 
 do $$
 begin

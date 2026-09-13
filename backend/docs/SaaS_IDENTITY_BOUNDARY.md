@@ -262,7 +262,7 @@ identity boundary.
   expiry/revocation are enforced against the sessions table.
 - `IDENTITY_PEPPER` / `IDENTITY_SIGNING_KEY_*` default to development values
   when unset; production must set real values (see
-  `services/config_validation.py`).
+  `services/platform/config_validation.py`).
 
 ---
 

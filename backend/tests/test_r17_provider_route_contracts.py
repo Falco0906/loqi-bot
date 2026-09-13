@@ -18,7 +18,7 @@ from fastapi import HTTPException
 import main as main_module
 from services.communication import api as provider_api
 from services.communication import service as provider_service
-import services.supabase as supabase_module
+import services.platform.supabase as supabase_module
 from services.communication.communication_store import store as communication_store
 from services.communication.provider_models import (
     CommunicationProvider,
@@ -441,7 +441,7 @@ def test_legacy_google_callback_preserves_popup_and_provider_event(monkeypatch):
             "token_expiry": "2030-01-01T00:00:00+00:00",
         },
     )
-    monkeypatch.setattr("services.supabase.save_google_tokens", lambda *_args, **_kwargs: {"id": OWNER_ID})
+    monkeypatch.setattr("services.platform.supabase.save_google_tokens", lambda *_args, **_kwargs: {"id": OWNER_ID})
     monkeypatch.setattr(
         "services.world_model.publish",
         lambda session_id, event_type, payload, actor: events.append(

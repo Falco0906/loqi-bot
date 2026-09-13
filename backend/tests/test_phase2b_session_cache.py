@@ -129,7 +129,7 @@ def test_resolver_uses_cached_identity_not_full_summary(monkeypatch):
         lambda _token: {"id": USER_A, "username": "u"},
     )
     monkeypatch.setattr(
-        "services.supabase.has_connected_account",
+        "services.platform.supabase.has_connected_account",
         lambda _user_id: calls.__setitem__("identity", calls["identity"] + 1) or False,
     )
     monkeypatch.setattr(main_module.engine, "get_web_session_summary", fake_summary_full)
@@ -176,7 +176,7 @@ def test_authenticated_user_id_uses_canonical_session_resolution(monkeypatch):
         "services.conversations.compatibility.get_web_session",
         lambda _token: fake_identity(_token) and {"id": USER_A, "username": "u"},
     )
-    monkeypatch.setattr("services.supabase.has_connected_account", lambda _user_id: False)
+    monkeypatch.setattr("services.platform.supabase.has_connected_account", lambda _user_id: False)
     monkeypatch.setattr(main_module.engine, "get_web_session_summary", fake_full)
 
     from services.session_cache import session_cache

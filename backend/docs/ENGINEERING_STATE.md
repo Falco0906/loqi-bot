@@ -29,7 +29,7 @@ The entire adapter foundation plus three production adapters and the email compo
 - **Purpose:** Establish initial project structure, FastAPI app, Supabase integration, Telegram bot
 - **Major components built:** `main.py`, Telegram webhook, basic Gmail send, Supabase client, conversation engine
 - **Key architectural decisions:** FastAPI as web framework, Supabase as persistence layer, OpenAI for AI generation
-- **Created:** `main.py`, `services/agent.py`, `services/ai.py`, `services/gmail.py`, `services/google_auth.py`, `services/supabase.py`, `services/telegram.py`, `services/conversation_engine.py`
+- **Created:** `main.py`, `services/agent.py`, `services/ai.py`, `services/gmail.py`, `services/google_auth.py`, `services/platform/supabase.py`, `services/telegram.py`, `services/conversation_engine.py`
 - **Status:** Complete. Replaced by later iterations.
 
 ### Phase 2 — Workflow System (v0.3–v0.4)
@@ -815,9 +815,9 @@ None implemented. The web chat uses polling (`batch-status`) for async job resul
 |---|---|
 | **Engine** | Supabase (PostgreSQL) |
 | **ORM** | None — raw SQL via `supabase-py` client |
-| **Client** | `services/supabase.py` — wraps Supabase client |
+| **Client** | `services/platform/supabase.py` — wraps Supabase client |
 | **Migrations** | Manual SQL files in `supabase/` |
-| **Runtime migrations** | `services/migration.py` creates `jobs` and `search_results` tables on startup |
+| **Runtime migrations** | `services/platform/migration.py` creates `jobs` and `search_results` tables on startup |
 
 ### Existing Tables
 
@@ -862,7 +862,7 @@ Additional tables from schema:
 | **OAuth Provider** | Google OAuth 2.0 only |
 | **Flow** | `services/google_auth.py` — generate auth URL → user authorizes → exchange code for tokens → refresh as needed |
 | **Endpoints** | `/api/auth/gmail/url` (GET URL), `/api/auth/gmail/callback` (OAuth callback) |
-| **Token Storage** | `services/supabase.py` — `save_google_tokens()`, `update_google_access_token()` |
+| **Token Storage** | `services/platform/supabase.py` — `save_google_tokens()`, `update_google_access_token()` |
 | **Provider Credentials** | `save_provider_credentials()`, `load_all_provider_credentials()` — persisted for startup recovery |
 | **Adapter Credentials** | `services/adapters/credentials.py` — credential models; `credential_resolver.py` injects tokens at execution time |
 | **HTTP Auth** | `services/adapters/http/auth.py` — Bearer token, Basic Auth, API Key header handlers |
@@ -1055,7 +1055,7 @@ Implementation stopped after **Phase 5.5 — Email Composition Engine v1.0** was
 12. **AI Generation** (`services/ai.py`) — OpenAI integration
 13. **Legacy Gmail** (`services/gmail.py`) — pre-adapter Gmail send (should eventually be replaced)
 14. **Google Auth** (`services/google_auth.py`) — OAuth flow (should eventually use credential framework)
-15. **Supabase Client** (`services/supabase.py`) — all DB operations
+15. **Supabase Client** (`services/platform/supabase.py`) — all DB operations
 16. **Conversation Intelligence** (`services/conversation_intelligence/`) — knowledge registry, detection pipelines
 17. **Reply Generation** (`services/reply_generation/`) — multi-provider AI replies (OpenAI, Anthropic, Gemini, DeepSeek)
 18. **Lead Sourcing** (`services/providers/`, `services/enrichment/`) — Apollo provider + factory pattern

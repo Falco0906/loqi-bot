@@ -18,8 +18,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import main as main_module
-from services import rate_limit as rate_limit_module
-from services.rate_limit import rate_limiter
+from services.platform import rate_limit as rate_limit_module
+from services.platform.rate_limit import rate_limiter
 
 TOKEN_A = "rl-token-a"
 TOKEN_B = "rl-token-b"
@@ -37,7 +37,7 @@ def _isolated_limiter(monkeypatch):
     # client bound to another event loop) cannot make buckets nondeterministic.
     monkeypatch.setenv("RATE_LIMIT_FORCE_LOCAL", "1")
     monkeypatch.delenv("REDIS_URL", raising=False)
-    from services import redis_client as _rc
+    from services.platform import redis_client as _rc
     monkeypatch.setattr(_rc, "_client", None)
     import time as _t
     monkeypatch.setattr(_rc, "_unavailable_until", 0.0)

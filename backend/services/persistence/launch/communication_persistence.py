@@ -121,7 +121,7 @@ def list_outbound_history(workspace_id: str, provider_id: str = "", limit: int =
         return []
     try:
         from services.persistence.launch.repositories import OutboundMessageRepository
-        from services.supabase import _run_blocking
+        from services.platform.supabase import _run_blocking
         return _run_blocking(
             OutboundMessageRepository().list_for_workspace(workspace_id, provider_id, limit=limit)
         )
@@ -135,7 +135,7 @@ def list_provider_events(workspace_id: str, provider_id: str = "", limit: int = 
         return []
     try:
         from services.persistence.launch.repositories import ProviderEventRepository
-        from services.supabase import _run_blocking
+        from services.platform.supabase import _run_blocking
         return _run_blocking(
             ProviderEventRepository().list_for_workspace(workspace_id, provider_id, limit=limit)
         )

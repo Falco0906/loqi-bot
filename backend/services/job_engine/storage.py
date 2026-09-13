@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from services.job_engine.models import BatchItem, BatchItemStatus, Job, JobStatus
-from services.supabase import get_supabase_client
+from services.platform.supabase import get_supabase_client
 
 
 def _log(msg: str) -> None:

@@ -22,11 +22,11 @@ def test_lifespan_logs_configuration_warnings_then_allows_startup(monkeypatch, c
     calls: list[str] = []
     monkeypatch.setattr(main.app_lifespan, "begin_startup", lambda app: 0.0)
     monkeypatch.setattr(
-        "services.config_validation.validate_config",
+        "services.platform.config_validation.validate_config",
         lambda: ([], ["OPTIONAL_PROVIDER is not configured"]),
     )
     monkeypatch.setattr(
-        "services.config_validation.assert_valid_startup_config",
+        "services.platform.config_validation.assert_valid_startup_config",
         lambda: calls.append("asserted"),
     )
     monkeypatch.setattr(
@@ -48,14 +48,14 @@ def test_lifespan_marks_failed_and_reraises_invalid_configuration(monkeypatch, c
     failures: list[str] = []
     monkeypatch.setattr(main.app_lifespan, "begin_startup", lambda app: 0.0)
     monkeypatch.setattr(
-        "services.config_validation.validate_config",
+        "services.platform.config_validation.validate_config",
         lambda: ([], ["OPTIONAL_PROVIDER is not configured"]),
     )
     monkeypatch.setattr(
-        "services.config_validation.assert_valid_startup_config",
+        "services.platform.config_validation.assert_valid_startup_config",
         lambda: (_ for _ in ()).throw(RuntimeError("INVALID_CONFIGURATION")),
     )
-    monkeypatch.setattr("services.lifecycle.set_failed", lambda: failures.append("failed"))
+    monkeypatch.setattr("services.platform.lifecycle.set_failed", lambda: failures.append("failed"))
 
     with caplog.at_level("WARNING", logger="loqi"):
         with pytest.raises(RuntimeError, match="INVALID_CONFIGURATION"):

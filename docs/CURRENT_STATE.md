@@ -85,7 +85,7 @@ SERPAPI_KEY=bb8c10c3ff5a32ce538c86c4f53334531c1003c974395380407eec4907f9ca63
 
 ### ✅ Supabase Persistence
 
-**Location:** `backend/services/supabase.py`
+**Location:** `backend/services/platform/supabase.py`
 
 **Tables used:**
 - `users` - User accounts (telegram_id, username)

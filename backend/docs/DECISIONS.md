@@ -805,7 +805,7 @@ Key design rules:
 
 ADR-0019 established the Repository pattern with dependency inversion. All platform modules use in-memory repositories (ADR-0023). To move toward production readiness, in-memory repositories must be replaced with persistent storage. The production target is Supabase PostgreSQL.
 
-The existing `services/supabase.py` provides a thin wrapper around the Supabase Python SDK (`supabase.Client`) but is tightly coupled to the Telegram bot user/lead/conversation schema, not the platform domain models.
+The existing `services/platform/supabase.py` provides a thin wrapper around the Supabase Python SDK (`supabase.Client`) but is tightly coupled to the Telegram bot user/lead/conversation schema, not the platform domain models.
 
 ### Decision
 

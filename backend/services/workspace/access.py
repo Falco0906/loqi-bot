@@ -26,7 +26,7 @@ from dataclasses import dataclass
 
 from fastapi import HTTPException, Request
 
-from services.supabase import get_supabase_client
+from services.platform.supabase import get_supabase_client
 
 
 class WorkspaceAccessDenied(Exception):

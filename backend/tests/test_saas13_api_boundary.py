@@ -133,7 +133,7 @@ def _headers(token: str) -> dict[str, str]:
 class TestOnboardingProductionGate:
 
     def test_production_requires_auth(self, client, monkeypatch):
-        from services import config_validation
+        from services.platform import config_validation
 
         monkeypatch.setattr(config_validation, "is_production", lambda env=None: True)
         svc, _ = _build_service()
@@ -158,7 +158,7 @@ class TestOnboardingProductionGate:
         assert resp.status_code == 200
 
     def test_development_keeps_legacy_contract(self, client, monkeypatch):
-        from services import config_validation
+        from services.platform import config_validation
 
         monkeypatch.setattr(config_validation, "is_production", lambda env=None: False)
         resp = client.get("/api/v1/onboarding?user_id=legacy-user")

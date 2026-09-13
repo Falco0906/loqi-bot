@@ -174,8 +174,8 @@ class RateLimiter:
 
     async def _allow_redis(self, key: str, limit: int) -> tuple[bool, int | None] | None:
         """Distributed attempt. Returns None when Redis is unusable."""
-        from services import redis_client
-        from services.redis_client import k_rate, hash_token
+        from services.platform import redis_client
+        from services.platform.redis_client import k_rate, hash_token
 
         if self.force_local or not redis_client.is_configured():
             return None

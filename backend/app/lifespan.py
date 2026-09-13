@@ -13,7 +13,7 @@ log = logging.getLogger("loqi")
 
 def begin_startup(app: Any) -> float:
     """Mark startup and register workflows that must exist before requests."""
-    from services.lifecycle import set_starting
+    from services.platform.lifecycle import set_starting
     from services.operations import log_config_warnings, set_startup_time, startup_diagnostics
     from services.outbound import service as outbound_service
     from workflow_dispatcher import register_workflows
@@ -31,8 +31,8 @@ def begin_startup(app: Any) -> float:
 
 def validate_startup_configuration() -> None:
     """Fail startup when required runtime configuration is invalid."""
-    from services.config_validation import assert_valid_startup_config, validate_config
-    from services.lifecycle import set_failed
+    from services.platform.config_validation import assert_valid_startup_config, validate_config
+    from services.platform.lifecycle import set_failed
 
     try:
         _errors, warnings = validate_config()
@@ -49,7 +49,7 @@ def validate_startup_configuration() -> None:
 def initialize_runtime_services(adapter_registry: Any) -> None:
     """Check migrations and register the application's runtime integrations."""
     from services.execution.adapter_registry_resolver import init_planner_registry
-    from services.migration import apply_migrations
+    from services.platform.migration import apply_migrations
 
     try:
         apply_migrations()
@@ -415,12 +415,12 @@ async def shutdown_runtime(
     simulator_task: asyncio.Task[Any] | None,
 ) -> None:
     """Stop runtime integrations and retained background tasks in startup-safe order."""
-    from services.lifecycle import set_shutting_down
+    from services.platform.lifecycle import set_shutting_down
 
     set_shutting_down()
     log.info("application_shutdown_started")
     try:
-        from services import redis_client
+        from services.platform import redis_client
 
         await redis_client.close()
     except Exception as error:

@@ -13,7 +13,7 @@ sys.path.insert(0, ".")
 
 import pytest
 
-from services.config_validation import (
+from services.platform.config_validation import (
     is_production,
     validate_config,
     assert_valid_startup_config,
@@ -197,6 +197,6 @@ class TestEnvironmentIndicator:
 
 class TestStartupGate:
     def test_assert_raises_on_invalid(self, monkeypatch):
-        monkeypatch.setattr("services.config_validation.validate_config", lambda env=None: (["SUPABASE_URL is required in production and is not set"], []))
+        monkeypatch.setattr("services.platform.config_validation.validate_config", lambda env=None: (["SUPABASE_URL is required in production and is not set"], []))
         with pytest.raises(RuntimeError, match="SUPABASE_URL"):
             assert_valid_startup_config()

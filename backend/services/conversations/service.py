@@ -25,7 +25,7 @@ from services.outbound.service import resolve_provider_for_conversation
 from services.planner.exceptions import PlanningValidationError
 from services.planner.planning_pipeline import get_pipeline as get_planning_pipeline
 from services.reasoning.reasoning_pipeline import get_pipeline as get_reasoning_pipeline
-from services.supabase import (
+from services.platform.supabase import (
     get_pending_leads,
     get_session_context,
     get_user_preferences,

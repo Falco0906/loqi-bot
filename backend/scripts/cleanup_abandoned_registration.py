@@ -49,7 +49,7 @@ __all__ = ["AbandonedPlan", "apply_abandoned_plan", "build_abandoned_plan", "nor
 
 
 def _load_snapshot():
-    from services.supabase import get_supabase_client
+    from services.platform.supabase import get_supabase_client
     client = get_supabase_client()
     if client is None:
         raise RuntimeError("Supabase client unavailable")

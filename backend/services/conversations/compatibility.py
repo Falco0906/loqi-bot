@@ -7,7 +7,7 @@ contracts. Durable Inbox conversations themselves belong to
 import secrets
 from datetime import datetime, timezone
 
-from services.supabase import get_or_create_user, get_supabase_client, get_user
+from services.platform.supabase import get_or_create_user, get_supabase_client, get_user
 
 
 def _utc_now() -> str:

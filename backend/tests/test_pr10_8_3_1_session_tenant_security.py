@@ -159,7 +159,7 @@ class TestSessionAuth:
 
     def test_authenticated_request_succeeds_via_header(self, monkeypatch):
         import main as main_module
-        import services.supabase as supabase_module
+        import services.platform.supabase as supabase_module
         from services.communication.communication_store import store
         from tests.conftest import REAL_RESOLVE_WEB_SESSION
         main_module.identity_dependencies.resolve_web_session = REAL_RESOLVE_WEB_SESSION

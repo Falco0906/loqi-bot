@@ -27,7 +27,7 @@ import services.copilot.runners as copilot_runners
 from services.copilot_orchestrator import execute_copilot_plan, has_multi_step_plan
 from services.conversation_engine import _message
 from services.conversational_response_generator import generate_copilot_response
-from services.supabase import get_user_preferences
+from services.platform.supabase import get_user_preferences
 
 
 log = logging.getLogger("loqi")

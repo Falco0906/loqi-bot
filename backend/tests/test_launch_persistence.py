@@ -182,7 +182,7 @@ class TestLaunchRepoUpsertJsonb:
     @pytest.mark.asyncio
     async def test_sync_connected_account_upsert(self, mock_cm):
         _, client = mock_cm
-        from services.supabase import sync_connected_account
+        from services.platform.supabase import sync_connected_account
         # First save (no existing) → repo.save inserts.
         ok = sync_connected_account(
             "u1", provider="google", email="me@gmail.com",

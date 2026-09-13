@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from services.identity.services.organization_service import OrganizationService
-from services.supabase import _run_blocking
+from services.platform.supabase import _run_blocking
 
 
 @dataclass
@@ -105,7 +105,7 @@ def build_recovery_plan(
     Uses the supplied PostgREST-like client (FakeClient in tests, the real
     Supabase client in the operator CLI). Never writes.
     """
-    from services.supabase import get_supabase_client
+    from services.platform.supabase import get_supabase_client
 
     client = client or get_supabase_client()
     if client is None:

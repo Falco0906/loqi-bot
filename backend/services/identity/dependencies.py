@@ -61,7 +61,7 @@ async def ensure_legacy_user_bridge(user_id: str) -> None:
             user_id,
             type(error).__name__,
         )
-    from services.supabase import ensure_legacy_user_bridge
+    from services.platform.supabase import ensure_legacy_user_bridge
     row = await asyncio.to_thread(ensure_legacy_user_bridge, user_id, display_name)
     if row is None or str(row.get("id") or "") != user_id:
         raise HTTPException(status_code=503, detail="Authenticated user provisioning is temporarily unavailable")
@@ -75,7 +75,7 @@ async def cached_web_session_identity(token: str) -> dict | None:
         return cached
     try:
         from services.conversations.compatibility import get_web_session
-        from services.supabase import has_connected_account
+        from services.platform.supabase import has_connected_account
 
         def _read_identity() -> dict | None:
             user = get_web_session(token)
@@ -100,7 +100,7 @@ async def cached_web_session_identity(token: str) -> dict | None:
 
 
 async def web_session_binding(token: str):
-    from services import redis_client
+    from services.platform import redis_client
     from services.session_cache import _token_hash
     key = redis_client.k_session_binding(_token_hash(token))
     now = time.monotonic()

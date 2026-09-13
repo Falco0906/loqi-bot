@@ -191,7 +191,7 @@ def apply_reconciliation_plan(plan: ReconciliationPlan, *, dry_run: bool = True)
     summary = plan.summarize()
     if dry_run:
         return summary
-    from services.supabase import get_supabase_client
+    from services.platform.supabase import get_supabase_client
 
     client = get_supabase_client()
     if client is None:
@@ -213,7 +213,7 @@ def apply_reconciliation_plan(plan: ReconciliationPlan, *, dry_run: bool = True)
 
 
 def _load_snapshot():
-    from services.supabase import get_supabase_client
+    from services.platform.supabase import get_supabase_client
     client = get_supabase_client()
     if client is None:
         raise RuntimeError("Supabase client unavailable")

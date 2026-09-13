@@ -62,7 +62,7 @@ def _ensure_shared_test_identity(client) -> str:
 @pytest.fixture(scope="session")
 def durable_test_identity():
     """One reusable live-Supabase identity, reset without changing its ID."""
-    from services.supabase import get_supabase_client
+    from services.platform.supabase import get_supabase_client
 
     client = get_supabase_client()
     if client is None:
@@ -76,7 +76,7 @@ def durable_test_identity():
 @pytest.fixture()
 def shared_test_identity(durable_test_identity):
     """Provide an empty owned-data graph for one live integration test."""
-    from services.supabase import get_supabase_client
+    from services.platform.supabase import get_supabase_client
 
     client = get_supabase_client()
     assert client is not None

@@ -156,7 +156,7 @@ that it works. Live dependency health is verified separately (section 3/6).
   - Numbered, additive SQL files in `backend/supabase/migrations/`
     (`003_...` → `021_identity_sessions.sql`), applied by hand via the
     Supabase **SQL Editor** (or `psql`/`DATABASE_URL`).
-  - `services/migration.py::apply_migrations()` runs at startup only when
+  - `services/platform/migration.py::apply_migrations()` runs at startup only when
     `DATABASE_URL` is set and applies a separate embedded core bundle
     (`jobs`, `search_results`, `discoveries`, ... plus additive guards).
     When the core tables already exist and `DATABASE_URL` is absent it is a
@@ -216,7 +216,7 @@ restore runbook, a migration-status/version table check, and a DR plan.
 
 ### 4.1 What happens when an env var or secret is wrong/missing
 
-Startup validation (`services/config_validation.py` + `services/operations/
+Startup validation (`services/platform/config_validation.py` + `services/operations/
 diagnostics.py`) is fail-fast **and redundant** at startup:
 
 - **Required in production** (missing → startup error → crash loop):

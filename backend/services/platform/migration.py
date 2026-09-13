@@ -279,7 +279,7 @@ def _log(msg: str) -> None:
 
 def _check_table_exists() -> bool:
     """Check if jobs table exists via Supabase REST API."""
-    from services.supabase import get_supabase_client
+    from services.platform.supabase import get_supabase_client
     client = get_supabase_client()
     if not client:
         return False

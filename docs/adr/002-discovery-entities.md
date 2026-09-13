@@ -128,7 +128,7 @@ per-run rank/score/provenance — the same pattern as `campaign_leads`.
   idempotent migration (CREATE IF NOT EXISTS + guarded ALTER/INDEX blocks,
   mirroring 007). Requires 003 + 006 + 007 first; the `campaigns`
   `discovery_id` link is self-guarding via `to_regclass`.
-- `services/migration.py` embeds the identical additive SQL as
+- `services/platform/migration.py` embeds the identical additive SQL as
   `DISCOVERIES_SQL`, executed in **both** `DATABASE_URL` branches
   (existing-jobs and fresh) of `apply_migrations()`. No follow-up SQL is
   required; existing completed search jobs are left as-is (they predate

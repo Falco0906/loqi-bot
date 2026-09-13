@@ -9,7 +9,7 @@ conversations, provider secrets. Supabase remains the authoritative source;
 this cache only removes repeated identity lookups and is shared across all
 backend workers via Redis.
 
-Key design (see services/redis_client.py):
+Key design (see services/platform/redis_client.py):
     loqi:v1:session:identity:<sha256(salt:token)[:32]>   ← raw tokens never stored
     loqi:v1:session:user_tokens:<sha256(user_id)>        ← reverse index (set)
 
@@ -67,7 +67,7 @@ class RedisIdentityBackend:
     """Async Redis storage. All failures degrade via UNAVAILABLE."""
 
     def __init__(self) -> None:
-        from services import redis_client
+        from services.platform import redis_client
         self._rc = redis_client
 
     async def get(self, key: str):
@@ -171,7 +171,7 @@ class SessionCache:
 
     @staticmethod
     def _identity_key(token: str) -> str:
-        from services.redis_client import k_session_identity
+        from services.platform.redis_client import k_session_identity
         return k_session_identity(_token_hash(token))
 
     @staticmethod

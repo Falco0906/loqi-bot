@@ -365,7 +365,7 @@ class TestDiscoveryEntity:
         campaign_id = campaign.get("id")
         assert campaign_id, "campaign must be created"
 
-        from services.supabase import get_supabase_client
+        from services.platform.supabase import get_supabase_client
 
         client_db = get_supabase_client()
         assert client_db is not None

@@ -98,7 +98,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s %(message)s",
 )
-from services.logging_setup import configure_logging
+from services.platform.logging_setup import configure_logging
 configure_logging()
 log = logging.getLogger("loqi")
 
@@ -133,7 +133,7 @@ async def lifespan(app: FastAPI):
 
     app_lifespan.start_abandoned_registration_cleanup(background_tasks)
 
-    from services.lifecycle import set_ready
+    from services.platform.lifecycle import set_ready
 
     set_ready()
     try:
@@ -424,7 +424,7 @@ async def rate_limit_middleware(request: Request, call_next):
     summary. Only the owning user id is needed here; it is resolved with the
     minimal lookup off the event loop and short-cached.
     """
-    from services.rate_limit import classify_rate_limit, rate_limiter, resolve_rate_limit_identity
+    from services.platform.rate_limit import classify_rate_limit, rate_limiter, resolve_rate_limit_identity
 
     category = classify_rate_limit(request.url.path)
     if category == "health":

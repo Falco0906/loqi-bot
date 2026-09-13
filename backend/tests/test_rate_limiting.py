@@ -11,8 +11,8 @@ sys.path.insert(0, ".")
 
 import pytest
 
-from services.rate_limit import RateLimiter, classify_rate_limit
-from services.config_validation import validate_config
+from services.platform.rate_limit import RateLimiter, classify_rate_limit
+from services.platform.config_validation import validate_config
 
 import main as main_module  # noqa: E402
 
@@ -84,7 +84,7 @@ class TestRateLimiter:
         assert "stale:key" not in limiter._buckets
 
     def test_bounded_memory(self, monkeypatch):
-        monkeypatch.setattr("services.rate_limit.MAX_BUCKETS", 5)
+        monkeypatch.setattr("services.platform.rate_limit.MAX_BUCKETS", 5)
         limiter = RateLimiter(enabled=True, limits={"default": 1}, window_seconds=60)
         async def run():
             for i in range(20):
@@ -145,7 +145,7 @@ class TestConfigValidation:
 class TestMiddleware:
     @pytest.fixture(autouse=True)
     def _reset_limiter(self):
-        from services.rate_limit import rate_limiter as shared_limiter
+        from services.platform.rate_limit import rate_limiter as shared_limiter
         shared_limiter.enabled = True
         shared_limiter.limits["default"] = 2
         shared_limiter.limits["ai"] = 2

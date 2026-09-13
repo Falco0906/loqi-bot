@@ -29,6 +29,8 @@ import services.discovery.api as discovery_api
 import services.drafts.service as draft_service
 import services.identity.dependencies as identity_dependencies
 import services.outbound.service as outbound_service
+import services.communication.api as provider_api
+import services.workflows.api as workflow_api
 from services.outbound import outbound_registry
 from services.outbound.outbound_models import DraftMessage, Recipient
 from services.communication.communication_store import store as comm_store
@@ -313,30 +315,36 @@ class TestWorkflowIdor:
     def test_get_victim_workflow_denied(self):
         wf_id = self._victim_workflow()
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.get_workflow_status("_", wf_id, _req(TOKEN_A)))
+            asyncio.run(workflow_api.get_workflow_status("_", wf_id, _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_approve_victim_workflow_denied(self):
         wf_id = self._victim_workflow()
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.approve_workflow_step("_", wf_id, _req(TOKEN_A)))
+            asyncio.run(workflow_api.approve_workflow_step("_", wf_id, _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_pause_victim_workflow_denied(self):
         wf_id = self._victim_workflow()
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.pause_workflow_endpoint("_", wf_id, _req(TOKEN_A)))
+            asyncio.run(workflow_api.pause_workflow_endpoint("_", wf_id, _req(TOKEN_A)))
+        assert exc.value.status_code == 404
+
+    def test_resume_victim_workflow_denied(self):
+        wf_id = self._victim_workflow()
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(workflow_api.resume_workflow_endpoint("_", wf_id, _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_cancel_victim_workflow_denied(self):
         wf_id = self._victim_workflow()
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.cancel_workflow_endpoint("_", wf_id, _req(TOKEN_A)))
+            asyncio.run(workflow_api.cancel_workflow_endpoint("_", wf_id, _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_owner_can_read_own_workflow(self):
         wf_id = self._victim_workflow()
-        result = asyncio.run(main_module.get_workflow_status("_", wf_id, _req(TOKEN_B)))
+        result = asyncio.run(workflow_api.get_workflow_status("_", wf_id, _req(TOKEN_B)))
         assert result["ok"] is True
 
     def test_status_route_returns_status_envelope(self, client):
@@ -364,18 +372,18 @@ class TestProviderDataIdor:
     def test_victim_provider_threads_denied(self):
         _provider("prov-b", OWNER_B)
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.provider_threads("_", "prov-b", _req(TOKEN_A)))
+            asyncio.run(provider_api.provider_threads("_", "prov-b", _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_victim_provider_messages_denied(self):
         _provider("prov-b", OWNER_B)
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.provider_messages("_", "prov-b", _req(TOKEN_A)))
+            asyncio.run(provider_api.provider_messages("_", "prov-b", _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_owner_provider_threads_allowed(self):
         _provider("prov-a", OWNER_A)
-        result = asyncio.run(main_module.provider_threads("_", "prov-a", _req(TOKEN_A)))
+        result = asyncio.run(provider_api.provider_threads("_", "prov-a", _req(TOKEN_A)))
         assert result["ok"] is True
 
 

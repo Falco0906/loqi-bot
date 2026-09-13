@@ -138,26 +138,30 @@ class TestProviderRouteOwnership:
         return main_module
 
     def test_health_denied_for_another_users_provider(self, monkeypatch):
-        m = self._setup(monkeypatch)
+        self._setup(monkeypatch)
+        from services.communication import api as provider_api
         with pytest.raises(Exception) as exc:
-            asyncio.run(m.provider_health("tok", "prov-b", MagicMock()))
+            asyncio.run(provider_api.provider_health("tok", "prov-b", MagicMock()))
         assert exc.value.status_code == 404
     def test_disconnect_denied_for_another_users_provider(self, monkeypatch):
-        m = self._setup(monkeypatch)
+        self._setup(monkeypatch)
+        from services.communication import api as provider_api
         with pytest.raises(Exception) as exc:
-            asyncio.run(m.provider_disconnect("tok", "prov-b", MagicMock()))
+            asyncio.run(provider_api.provider_disconnect("tok", "prov-b", MagicMock()))
         assert exc.value.status_code == 404
 
     def test_sync_denied_for_another_users_provider(self, monkeypatch):
-        m = self._setup(monkeypatch)
+        self._setup(monkeypatch)
+        from services.communication import api as provider_api
         with pytest.raises(Exception) as exc:
-            asyncio.run(m.provider_sync("tok", "prov-b", MagicMock()))
+            asyncio.run(provider_api.provider_sync("tok", "prov-b", MagicMock()))
         assert exc.value.status_code == 404
 
     def test_status_denied_for_another_users_provider(self, monkeypatch):
-        m = self._setup(monkeypatch)
+        self._setup(monkeypatch)
+        from services.communication import api as provider_api
         with pytest.raises(Exception) as exc:
-            asyncio.run(m.provider_status("tok", "prov-b", MagicMock()))
+            asyncio.run(provider_api.provider_status("tok", "prov-b", MagicMock()))
         assert exc.value.status_code == 404
 
     def test_owner_can_access_own_provider(self, monkeypatch):
@@ -167,8 +171,9 @@ class TestProviderRouteOwnership:
         store._providers["prov-a"] = _provider_record("prov-a", "a@a.com", user_id="owner-a")
         store._user_providers["owner-a"] = ["prov-a"]
         monkeypatch.setattr(m.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-a"))
-        monkeypatch.setattr(m, "get_provider", lambda pid: _fake_instance("healthy"))
-        result = asyncio.run(m.provider_health("tok", "prov-a", MagicMock()))
+        from services.communication import api as provider_api, service as provider_service
+        monkeypatch.setattr(provider_service, "get_provider", lambda pid: _fake_instance("healthy"))
+        result = asyncio.run(provider_api.provider_health("tok", "prov-a", MagicMock()))
         assert result["ok"] is True
 
 
@@ -178,7 +183,7 @@ class TestProviderRouteOwnership:
 
 class TestLegacyConnectProductionGuard:
     def test_provider_connect_rejected_in_production(self, monkeypatch):
-        import main as main_module
+        from services.communication import api as provider_api
         monkeypatch.setenv("ENVIRONMENT", "production")
         payload = MagicMock()
         payload.provider_type = "gmail"
@@ -186,11 +191,12 @@ class TestLegacyConnectProductionGuard:
         payload.email = "a@a.com"
         payload.scope = ""
         with pytest.raises(Exception) as exc:
-            asyncio.run(main_module.provider_connect("tok", payload))
+            asyncio.run(provider_api.connect_legacy_raw_token_provider("tok", payload, MagicMock()))
         assert exc.value.status_code == 403
 
     def test_provider_connect_allowed_in_development(self, monkeypatch):
         import main as main_module
+        from services.communication import api as provider_api
         from services.communication.communication_store import store
         from services.communication import provider_registry
         from services.communication.gmail_provider import GmailProvider
@@ -204,7 +210,7 @@ class TestLegacyConnectProductionGuard:
         request = MagicMock()
         request.headers.get = lambda k, d="": "Bearer tok" if k == "authorization" else d
         # GmailProvider.connect stores a provider record; no network calls.
-        result = asyncio.run(main_module.provider_connect("_", payload, request))
+        result = asyncio.run(provider_api.connect_legacy_raw_token_provider("_", payload, request))
         assert result["ok"] is True
         assert len(store.get_user_providers("tok")) == 1
 

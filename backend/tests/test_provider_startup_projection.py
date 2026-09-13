@@ -57,10 +57,9 @@ def test_register_outbound_gmail_instance_skips_provider_without_credentials(mon
 
 def test_initialize_gmail_runtime_keeps_startup_order(monkeypatch):
     calls: list[str] = []
-    registry = object()
 
     def register_descriptors(received_registry):
-        assert received_registry is registry
+        assert received_registry is provider_startup.credential_registry
         calls.append("descriptors")
 
     monkeypatch.setattr(provider_startup, "register_gmail_provider", lambda: calls.append("provider"))
@@ -72,7 +71,7 @@ def test_initialize_gmail_runtime_keeps_startup_order(monkeypatch):
     monkeypatch.setattr(provider_startup, "restore_gmail_providers", lambda: calls.append("restore"))
     monkeypatch.setattr(provider_startup, "reconcile_runtime_providers", lambda: calls.append("reconcile"))
 
-    provider_startup.initialize_gmail_runtime(registry)
+    provider_startup.initialize_gmail_runtime()
 
     assert calls == ["provider", "descriptors", "restore", "reconcile"]
 
@@ -93,7 +92,7 @@ def test_initialize_gmail_runtime_continues_after_a_registration_failure(monkeyp
     monkeypatch.setattr(provider_startup, "reconcile_runtime_providers", lambda: calls.append("reconcile"))
 
     with caplog.at_level("WARNING", logger="loqi"):
-        provider_startup.initialize_gmail_runtime(object())
+        provider_startup.initialize_gmail_runtime()
 
     assert calls == ["descriptors", "restore", "reconcile"]
     assert "Gmail provider registration failed: registration failed" in caplog.text

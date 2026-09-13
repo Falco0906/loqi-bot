@@ -9,11 +9,35 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from services.adapters.credential_registry import CredentialRegistry
+from services.adapters.credentials import CredentialInstance
 from services.communication.provider_registry import get_provider
 from services.outbound.outbound_registry import register_instance as register_outbound_instance
 
 
 log = logging.getLogger("loqi")
+
+# Compatibility projection only. Durable connected-account credentials remain
+# authoritative; this registry supplies the legacy execution bridge.
+credential_registry = CredentialRegistry()
+
+
+def register_google_oauth_credential_instance(
+    access_token: str,
+    refresh_token: str,
+    email: str,
+) -> None:
+    """Expose a connected Gmail account to the legacy execution bridge."""
+    instance = CredentialInstance(
+        credential_id=f"google_oauth2::{email}",
+        descriptor_name="google_oauth2",
+        values={
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "email": email,
+        },
+    )
+    log.info("Credential instance registered: %s", instance.credential_id)
 
 
 def register_outbound_gmail_instance(
@@ -287,7 +311,7 @@ def reconcile_runtime_providers() -> None:
         log.info("runtime_provider_reconcile removed=%d duplicate provider record(s)", removed)
 
 
-def initialize_gmail_runtime(credential_registry: Any) -> None:
+def initialize_gmail_runtime() -> None:
     """Restore the Gmail runtime before workers consume communication providers."""
     try:
         register_gmail_provider()

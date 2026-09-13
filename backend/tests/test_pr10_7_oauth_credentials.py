@@ -219,14 +219,14 @@ class TestOAuthState:
         assert asyncio_run(oauth_state.consume_state(token)) == (None, None)
 
     def test_resolve_requires_issued_state(self):
-        import main as main_module
-        assert asyncio_run(main_module._resolve_oauth_state_user("dev_providers:user-1")) == ""
-        assert asyncio_run(main_module._resolve_oauth_state_user("")) == ""
+        from services.communication import service as communication_service
+        assert asyncio_run(communication_service.resolve_oauth_state_user("dev_providers:user-1")) == ""
+        assert asyncio_run(communication_service.resolve_oauth_state_user("")) == ""
 
     def test_callback_state_flow(self):
         token = asyncio_run(oauth_state.issue_state("user-1"))
-        import main as main_module
-        assert asyncio_run(main_module._resolve_oauth_state_user(token)) == "user-1"
+        from services.communication import service as communication_service
+        assert asyncio_run(communication_service.resolve_oauth_state_user(token)) == "user-1"
 
 
 class TestNoSecretLeakage:

@@ -84,7 +84,8 @@ def harness(monkeypatch):
     # Reset provider registries. Durable workspace drafts are supplied below.
     comm_registry._instances.clear()
     outbound_registry._instances.clear()
-    main_module._gmail_connect_locks.clear()
+    from services.communication import service as communication_service
+    communication_service._gmail_connect_locks.clear()
 
     state = {
         "durable": [],            # durable drafts returned by workspace_state

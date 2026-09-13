@@ -158,32 +158,35 @@ class TestTenantIsolationFinal:
         return _resolve, _owner, _workspace
 
     def _provider(self, pid, user_id):
+        from services.communication.communication_store import store as communication_store
         from services.communication.provider_models import (
             CommunicationProvider, ProviderType, ProviderStatus,
         )
-        main_module.communication_store._providers[pid] = CommunicationProvider(
+        communication_store._providers[pid] = CommunicationProvider(
             id=pid, provider_type=ProviderType.GMAIL, user_id=user_id,
             status=ProviderStatus.HEALTHY, metadata={"email": f"{user_id}@x.com"},
         )
 
     def test_cross_tenant_provider_sync_denied(self, monkeypatch):
+        from services.communication import api as provider_api
         resolve, owner, workspace = self._two_user_resolver()
         monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", resolve)
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner)
         monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", workspace)
         self._provider("prov-b", "owner-b")
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.provider_sync("_", "prov-b", _req("token-a")))
+            asyncio.run(provider_api.provider_sync("_", "prov-b", _req("token-a")))
         assert exc.value.status_code == 404
 
     def test_cross_tenant_provider_disconnect_denied(self, monkeypatch):
+        from services.communication import api as provider_api
         resolve, owner, workspace = self._two_user_resolver()
         monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", resolve)
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner)
         monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", workspace)
         self._provider("prov-b", "owner-b")
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.provider_disconnect("_", "prov-b", _req("token-a")))
+            asyncio.run(provider_api.provider_disconnect("_", "prov-b", _req("token-a")))
         assert exc.value.status_code == 404
 
     def test_unattributable_conversation_denied(self, monkeypatch):
@@ -273,6 +276,7 @@ class TestLeakageFinal:
         assert "openapi_url=None if _production_env else \"/openapi.json\"" in src
 
     def test_legacy_connect_gated_in_production(self, monkeypatch):
+        from services.communication import api as provider_api
         monkeypatch.setenv("ENVIRONMENT", "production")
         payload = MagicMock()
         payload.provider_type = "gmail"
@@ -280,5 +284,5 @@ class TestLeakageFinal:
         payload.email = "a@a.com"
         payload.scope = ""
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.provider_connect("_", payload, _req(SENTINEL)))
+            asyncio.run(provider_api.connect_legacy_raw_token_provider("_", payload, _req(SENTINEL)))
         assert exc.value.status_code == 403

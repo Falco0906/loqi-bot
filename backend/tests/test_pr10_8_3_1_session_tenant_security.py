@@ -31,6 +31,7 @@ import pytest
 from fastapi import HTTPException
 import services.conversations.api as conversation_api
 import services.conversations.service as conversation_service
+import services.communication.api as provider_api
 
 SENTINEL = "PR10831_SESSION_SENTINEL_DO_NOT_LEAK"
 
@@ -183,7 +184,7 @@ class TestSessionAuth:
                 "last_synced_at": "",
             }] if user_id == "test-owner" else [],
         )
-        result = asyncio.run(main_module.provider_list("_", _request_with_header()))
+        result = asyncio.run(provider_api.provider_list("_", _request_with_header()))
         assert result["ok"] is True
         assert len(result["providers"]) >= 1
 

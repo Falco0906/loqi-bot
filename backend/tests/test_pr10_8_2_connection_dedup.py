@@ -30,7 +30,7 @@ SENTINEL = "PR1082_SENTINEL_SECRET_DO_NOT_LEAK"
 
 
 @pytest.fixture(autouse=True)
-def _clean_runtime_state():
+def _clean_runtime_state(monkeypatch):
     from services.communication import provider_registry as pr
     from services.communication.communication_store import store as comm_store
     from services.outbound import outbound_registry as or_reg
@@ -46,6 +46,22 @@ def _clean_runtime_state():
     comm_store._seen_message_ids.clear()
     comm_store._user_providers.clear()
     comm_store._sequence = 0
+
+    def durable_rows(user_id, provider="google"):
+        assert provider == "google"
+        return [
+            {
+                "row_id": f"test-{record.id}",
+                "communication_provider_id": record.id,
+                "email": record.metadata.get("email", ""),
+                "status": record.status.value,
+                "created_at": record.created_at,
+                "last_synced_at": record.last_sync,
+            }
+            for record in comm_store.get_user_providers(user_id)
+        ]
+
+    monkeypatch.setattr("services.supabase.get_durable_providers_for_user", durable_rows)
     from services.communication import provider_registry
     from services.communication.gmail_provider import GmailProvider
     provider_registry.register_provider(GmailProvider)
@@ -277,7 +293,7 @@ class TestIdempotentReconnect:
         assert repo.rows[("user-1", "google")].access_token != "t1"
 
     def test_reconnect_no_duplicate_runtime_providers(self, monkeypatch):
-        import main as main_module
+        from services.communication import service as communication_service
         from services.communication.gmail_provider import GmailProvider
         from services.communication import provider_registry
 
@@ -287,7 +303,7 @@ class TestIdempotentReconnect:
         provider_registry.register_instance(old_record.id, old)
         old.mark_reauth_required()
         assert len(provider_registry.list_providers()) == 1
-        main_module._remove_existing_gmail_provider("user-1")
+        communication_service.remove_existing_gmail_provider("user-1")
         assert len(provider_registry.list_providers()) == 0
         new = GmailProvider()
         new_record = new.connect(auth_token="new", user_id="user-1", email="a@b.com",
@@ -376,7 +392,7 @@ class TestIdempotentReconnect:
         assert is_encrypted(repo.saved.refresh_token)
 
     def test_unrelated_providers_untouched(self, monkeypatch):
-        import main as main_module
+        from services.communication import service as communication_service
         from services.communication.gmail_provider import GmailProvider
         from services.communication import provider_registry
 
@@ -396,7 +412,7 @@ class TestIdempotentReconnect:
         other = OtherProvider()
         provider_registry.register_instance("other-1", other)
 
-        main_module._remove_existing_gmail_provider("user-1")
+        communication_service.remove_existing_gmail_provider("user-1")
         remaining = provider_registry.list_providers()
         # user-1's gmail removed; the unrelated provider untouched.
         assert rec1.id not in remaining
@@ -433,9 +449,11 @@ class TestSettingsApiDedup:
             inst.health = lambda: healthy
             return inst
 
-        monkeypatch.setattr(main_module, "get_provider", _fake_get_provider)
+        from services.communication import service as provider_service
+        monkeypatch.setattr(provider_service, "get_provider", _fake_get_provider)
         import asyncio
-        result = asyncio.run(main_module.provider_list("token", MagicMock()))
+        from services.communication import api as provider_api
+        result = asyncio.run(provider_api.provider_list("token", MagicMock()))
         assert result["ok"] is True
         providers = result["providers"]
         assert len(providers) == 1

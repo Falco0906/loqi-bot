@@ -370,7 +370,7 @@ class TestReauthentication:
 
     def test_no_duplicate_provider_on_reconnect(self, monkeypatch):
         """Reconnecting replaces the existing provider instance for the user."""
-        import main as main_module
+        from services.communication import service as communication_service
         from services.communication.gmail_provider import GmailProvider
         from services.communication import provider_registry
         # First (reauth-required) provider for user-1.
@@ -381,7 +381,7 @@ class TestReauthentication:
         old.mark_reauth_required()
         assert len(provider_registry.list_providers()) == 1
         # Reconnect.
-        main_module._remove_existing_gmail_provider("user-1")
+        communication_service.remove_existing_gmail_provider("user-1")
         assert len(provider_registry.list_providers()) == 0
         new = GmailProvider()
         new_record = new.connect(auth_token="NEW", user_id="user-1", email="a@b.com",

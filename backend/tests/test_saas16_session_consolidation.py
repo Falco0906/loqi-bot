@@ -179,7 +179,7 @@ class TestBootstrapBinding:
         complete = asyncio.run(_register_user(svc, "bind@example.com"))
         session_id = complete.session.id
 
-        import main as main_module
+        from services.conversations import api as conversations_api
 
         def fake_engine_create(display_name=None, *, user_id=None):
             return {
@@ -191,7 +191,7 @@ class TestBootstrapBinding:
                 "initial_messages": [],
             }
 
-        monkeypatch.setattr(main_module, "engine", type("E", (), {
+        monkeypatch.setattr(conversations_api, "engine", type("E", (), {
             "create_web_session": fake_engine_create,
             "get_web_session_summary": lambda t: None,
         }))
@@ -200,6 +200,13 @@ class TestBootstrapBinding:
             return AuthContext(user_id=complete.user.id, session_id=session_id, organization_id="")
 
         monkeypatch.setattr("services.identity.dependencies.get_current_auth", fake_current_auth)
+        async def fake_bridge(_user_id):
+            return {"id": complete.user.id}
+
+        monkeypatch.setattr(
+            "services.identity.dependencies.ensure_legacy_user_bridge",
+            fake_bridge,
+        )
 
         resp = client.post(
             "/api/web/session",
@@ -213,8 +220,20 @@ class TestBootstrapBinding:
         assert binding.canonical_user_id == complete.user.id
         assert binding.canonical_session_id == session_id
 
-    def test_unauthenticated_bootstrap_no_binding(self, client):
+    def test_unauthenticated_bootstrap_no_binding(self, client, monkeypatch):
         from services import web_session_binding
+        from services.conversations import api as conversations_api
+
+        monkeypatch.setattr(conversations_api, "engine", type("E", (), {
+            "create_web_session": lambda **_kwargs: {
+                "ok": True,
+                "session_token": "web-tok-anon",
+                "user_id": "web:anon",
+                "display_name": "Anon",
+                "gmail_connected": False,
+                "initial_messages": [],
+            },
+        }))
         resp = client.post("/api/web/session", json={"display_name": "Anon"})
         assert resp.status_code == 200
         # No canonical session was involved; nothing can be bound.

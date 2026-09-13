@@ -11,6 +11,7 @@ workspace); the client never supplies tenant authority.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import threading
 
 
@@ -83,7 +84,10 @@ def persist_outbound_message(item) -> bool:
     raw_id = getattr(item, "id", "") or ""
     if raw_id:
         entity.id = raw_id
-    result = OutboundMessageRepository().save(entity)
+    # OutboundExecutor invokes this synchronous boundary from ``to_thread``.
+    # Complete the repository coroutine here so a successful send is never
+    # reported before its durable history row exists.
+    result = asyncio.run(OutboundMessageRepository().save(entity))
     if result is None:
         raise RuntimeError("Outbound message persistence failed")
     return True

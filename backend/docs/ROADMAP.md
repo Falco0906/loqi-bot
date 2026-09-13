@@ -283,7 +283,7 @@ Replace all `InMemory*Repository` implementations with Supabase-backed repositor
 |---|---|
 | Deprecate `workflow_*` (15 files) | All workloads migrated to ExecutionEngine |
 | Retire legacy reply projection | Only after communication compatibility callers no longer require `ReplyIntelligence` |
-| Deprecate legacy `conversation_memory.py` | Replaced by `services/memory/` |
+| Retire legacy `conversation_memory.py` | Replaced by `services/conversations/intelligence_memory.py` |
 | Remove `main.py` redundancy | 3400-line file needs decomposition into routers |
 
 ### M2.7 — AI Testing & Hardening

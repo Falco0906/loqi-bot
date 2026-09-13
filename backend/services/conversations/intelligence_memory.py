@@ -2,8 +2,8 @@
 
 This is deliberately separate from Inbox snapshots: intelligence updates have
 their own idempotency and compare-and-swap lifecycle. The active legacy
-``services.conversation_memory`` store is not cut over here; C5c migrates its
-callers after this boundary is proven.
+This boundary is the canonical owner after R23-C-5. Raw compatibility
+analysis without canonical scope remains transient by design.
 """
 
 from __future__ import annotations

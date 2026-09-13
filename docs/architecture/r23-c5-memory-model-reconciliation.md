@@ -12,7 +12,7 @@ stable source-message ID remains transient by design.
 
 | Representation | Current owner | Identity | Durability | Purpose |
 | --- | --- | --- | --- | --- |
-| Legacy `ConversationMemory` | `services.conversation_memory` | caller-supplied `conversation_id` | process-local | communication compatibility projection |
+| Legacy `ConversationMemory` projection | `services.conversations.intelligence_memory` | canonical Inbox `conversation_id` | durable | communication compatibility projection |
 | Enhanced facts | `services.conversation_intelligence.conversation_memory` | `lead_id` + fact key | process-local | raw fact extraction for `IntelligencePipeline` |
 | Generic memory | `services.memory` | generic memory record identity | provider-dependent; in-memory by default | organization/agent memory |
 | Inbox conversation | `services.conversations` | canonical `conversation_id` | durable `conversation_snapshots` | Inbox messages, threads, and timeline |
@@ -53,8 +53,8 @@ rehydration; it must not imply that the current stores already provide it.
 3. Migrate communication, Gmail sync, workspace context, and the legacy reply
    projection to that operation.
 4. Prove restart, replay, cross-workspace, and non-canonical-ID behavior.
-5. Delete the process-local legacy memory store only after runtime proof that
-   no caller depends on it.
+5. Retire the process-local legacy memory store after runtime proof that no
+   caller depends on it. Completed in R23-C-5e.
 
 The enhanced fact extractor and generic organizational-memory provider stay
 separate unless a later design proves a shared durable contract is correct.

@@ -664,8 +664,6 @@ class TestIntegration:
         self.store._by_conversation.clear()
         self.store._seen_message_ids.clear()
         self.store._user_providers.clear()
-        from services.conversation_memory import memory_store
-        memory_store._store.clear()
         from services.conversations import intelligence_memory
         import os
         if os.path.exists(intelligence_memory.STATE_FILE):

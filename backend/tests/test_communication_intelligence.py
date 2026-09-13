@@ -11,7 +11,7 @@ from services.conversation_intelligence.legacy_models import (
 from services.conversation_intelligence.intent_extractor import detect_intents
 from services.conversation_intelligence.buying_signal_detector import detect_signals
 from services.conversation_intelligence.stage_classifier import classify_stage
-from services.conversation_memory import memory_store, create_or_update_memory, MemoryStore
+from services.conversations.intelligence_memory import build_legacy_memory
 from services.followup_reasoner import recommend_followup
 from services.communication.reply_summary import generate_summary
 from services.conversation_timeline import create_event, get_events, clear_events, clear_all
@@ -25,7 +25,6 @@ def _msg(text: str, sender: str = "lead") -> ConversationMessage:
 
 
 def _cleanup():
-    memory_store._store.clear()
     clear_all()
 
 
@@ -156,7 +155,7 @@ class TestConversationMemory:
         msg = _msg("How much does this cost?")
         intents = detect_intents(msg.text)
         signals = detect_signals(msg.text)
-        mem = create_or_update_memory(
+        mem = build_legacy_memory(
             conversation_id="test-1",
             message=msg,
             intents=intents,
@@ -171,7 +170,7 @@ class TestConversationMemory:
         msg1 = _msg("How much does this cost?")
         intents1 = detect_intents(msg1.text)
         sigs1 = detect_signals(msg1.text)
-        mem = create_or_update_memory(
+        mem = build_legacy_memory(
             conversation_id="test-2", message=msg1,
             intents=intents1, buying_signals=sigs1,
             stage=ConversationStage.ENGAGED, stage_reasoning="Test",
@@ -181,7 +180,7 @@ class TestConversationMemory:
         msg2 = _msg("Can you tell me about implementation?")
         intents2 = detect_intents(msg2.text)
         sigs2 = detect_signals(msg2.text)
-        mem2 = create_or_update_memory(
+        mem2 = build_legacy_memory(
             conversation_id="test-2", message=msg2,
             intents=intents2, buying_signals=sigs2,
             stage=ConversationStage.EVALUATION, stage_reasoning="Test 2",
@@ -193,31 +192,29 @@ class TestConversationMemory:
         msg1 = _msg("We are struggling with scaling our infrastructure")
         intents = detect_intents(msg1.text)
         sigs = detect_signals(msg1.text)
-        mem = create_or_update_memory(
+        mem = build_legacy_memory(
             conversation_id="test-3", message=msg1,
             intents=intents, buying_signals=sigs,
             stage=ConversationStage.DISCOVERY, stage_reasoning="Test",
         )
         assert len(mem.pain_points) > 0
 
-    def test_memory_store(self):
+    def test_memory_projection(self):
         msg = _msg("Hello")
         intents = detect_intents(msg.text)
         sigs = detect_signals(msg.text)
-        mem = create_or_update_memory(
+        mem = build_legacy_memory(
             conversation_id="store-1", message=msg,
             intents=intents, buying_signals=sigs,
             stage=ConversationStage.ENGAGED, stage_reasoning="Test",
         )
-        stored = memory_store.get("store-1")
-        assert stored is not None
-        assert stored.conversation_id == "store-1"
+        assert mem.conversation_id == "store-1"
 
     def test_key_risks_populated(self):
         msg = _msg("This is too expensive and not in our budget")
         intents = detect_intents(msg.text)
         sigs = detect_signals(msg.text)
-        mem = create_or_update_memory(
+        mem = build_legacy_memory(
             conversation_id="test-risks", message=msg,
             intents=intents, buying_signals=sigs,
             stage=ConversationStage.EVALUATION, stage_reasoning="Test",

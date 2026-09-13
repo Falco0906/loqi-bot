@@ -214,7 +214,6 @@ class TestTenantIsolationFinal:
         monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", resolve)
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner)
         monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", workspace)
-        monkeypatch.setattr(main_module, "_workspace_drafts", lambda *args, **kwargs: [])
         self._provider("prov-b", "owner-b")
         with pytest.raises(HTTPException) as exc:
             asyncio.run(outbound_approve_draft("_", "draft-b", False, _req("token-a")))

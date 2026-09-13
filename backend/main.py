@@ -687,11 +687,6 @@ async def communication_timeline(session_token: str, conversation_id: str, reque
 # ── Campaign Endpoints ──
 
 
-def _workspace_drafts(user_id: str, session_token: str = "", workspace_id: str = "") -> list[dict[str, Any]]:
-    from services.workspace.state import load_drafts_only
-    return load_drafts_only(user_id, workspace_id=workspace_id)
-
-
 async def _launch_initial_research(
     user_id: str,
     wizard: dict[str, object],

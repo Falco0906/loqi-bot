@@ -233,7 +233,6 @@ class TestSendDraftOwnership:
             return "workspace-owner-a"
 
         monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", workspace)
-        monkeypatch.setattr(main_module, "_workspace_drafts", lambda *args, **kwargs: [])
         request = MagicMock()
         with pytest.raises(Exception) as exc:
             asyncio.run(send_draft("tok", "draft-b-1", request))

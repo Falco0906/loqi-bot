@@ -304,8 +304,9 @@ class TestSendDraftGuard:
         """A durable-row sent draft is caught before projection hydration."""
         monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         monkeypatch.setattr(
-            main_module, "_workspace_drafts",
-            lambda uid, tok="", **_kwargs: [{"id": "d-durable-sent", "status": "sent"}],
+            workspace_state,
+            "load_drafts_only",
+            lambda uid, **_kwargs: [{"id": "d-durable-sent", "status": "sent"}],
         )
         outbound = _sent_outbound_draft(DraftStatus.SENT)
         self._canonical_guard(monkeypatch, outbound)

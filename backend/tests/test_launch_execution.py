@@ -97,7 +97,6 @@ def env(monkeypatch):
 
     monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", fake_owner)
     monkeypatch.setattr(campaign_api.service, "load_campaigns", fake_campaigns)
-    monkeypatch.setattr(main_module, "_workspace_drafts", fake_drafts)
     monkeypatch.setattr(workspace_state, "load_drafts_only", lambda owner_id, workspace_id="": fake_drafts(owner_id, workspace_id=workspace_id))
     monkeypatch.setattr(workspace_state, "persist_campaign_update_awaited", fake_persist_campaign)
     monkeypatch.setattr(workspace_state, "persist_draft_update_awaited", fake_persist_draft)

@@ -8,6 +8,7 @@ from services.conversation_engine import ConversationEngine
 from services.copilot import service as copilot_service
 from services.conversations.conversation_store import conversation_owned_by, conversation_store
 from services.conversations import service as conversation_service
+from services.conversations import compatibility
 from services.identity import dependencies as identity_dependencies
 
 
@@ -42,6 +43,14 @@ class SendConversationReplyRequest(BaseModel):
     to_email: str = ""
     test_recipient: str = ""
     test_recipient_name: str = ""
+
+
+class SelectLeadRequest(BaseModel):
+    index: int
+
+
+class PreviewLeadRequest(BaseModel):
+    index: int
 
 
 async def _authenticated_owner(request: Request | None) -> str:
@@ -116,6 +125,58 @@ async def post_web_session_message(
         request_id=payload.copilot.request_id,
         request=request,
     )
+
+
+@router.post("/api/web/session/{session_token}/select-lead")
+async def select_lead_endpoint(
+    session_token: str,
+    payload: SelectLeadRequest,
+    request: Request = None,
+):
+    """Adapt legacy lead-card selection to the canonical conversations use case."""
+    del session_token
+    resolved_token = identity_dependencies.web_session_token(request)
+    user = compatibility.get_web_session(resolved_token)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    workflow_session_id = compatibility.ensure_workflow_session(
+        user_id=user["id"],
+        channel="web",
+        session_key=resolved_token,
+    )
+    result = conversation_service.select_legacy_workflow_lead_and_draft(
+        user_id=user["id"],
+        lead_index=payload.index,
+        workflow_session_id=workflow_session_id,
+        session_token=resolved_token,
+    )
+    if not result.get("ok"):
+        raise HTTPException(
+            status_code=400,
+            detail=result.get("messages", [{}])[0].get("text", "Selection failed"),
+        )
+    return {"ok": True, "messages": result.get("messages", [])}
+
+
+@router.post("/api/web/session/{session_token}/preview-lead")
+async def preview_lead_endpoint(
+    session_token: str,
+    payload: PreviewLeadRequest,
+    request: Request = None,
+):
+    """Adapt legacy lead-card preview to the canonical conversations use case."""
+    del session_token
+    resolved_token = identity_dependencies.web_session_token(request)
+    user = compatibility.get_web_session(resolved_token)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    result = conversation_service.preview_legacy_workflow_lead_intelligence(
+        user_id=user["id"],
+        lead_index=payload.index,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Preview failed"))
+    return {"ok": True, "lead_intelligence": result.get("lead_intelligence")}
 
 
 def _owned_conversation(conversation_id: str, owner_id: str):

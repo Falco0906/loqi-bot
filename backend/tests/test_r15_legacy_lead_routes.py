@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-import main as main_module
+from services.conversations import api as conversations_api
 from services.conversations import service as conversation_service
 from services.world_model import EventType, get_store, publish
 
@@ -135,7 +135,13 @@ def test_select_route_uses_bearer_session_and_translates_invalid_selection(monke
     monkeypatch.setattr(conversation_service, "select_legacy_workflow_lead_and_draft", fake_select_legacy_workflow_lead_and_draft)
 
     with pytest.raises(HTTPException) as error:
-        asyncio.run(main_module.select_lead_endpoint("path-token", main_module.SelectLeadRequest(index=8), _request("bearer-token")))
+        asyncio.run(
+            conversations_api.select_lead_endpoint(
+                "path-token",
+                conversations_api.SelectLeadRequest(index=8),
+                _request("bearer-token"),
+            )
+        )
 
     assert error.value.status_code == 400
     assert error.value.detail == "Could not find that lead. Try searching again."

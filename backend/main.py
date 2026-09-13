@@ -37,9 +37,7 @@ from services.export.api import router as export_router
 from services.workspace.api import router as workspace_router
 from services.workflows.api import router as workflows_router
 import services.outbound.service as outbound_service
-import services.conversations.service as conversation_service
 from services.conversations.api import engine, router as conversations_router
-from services.conversations.conversation_store import conversation_in_workspace
 from services.capabilities.config import CapabilityConfig
 from services.capabilities.services import CapabilityService
 from services.capabilities.repositories import (
@@ -549,10 +547,6 @@ class GenerateDraftsRequest(BaseModel):
     campaign_id: str
 
 
-class SelectLeadRequest(BaseModel):
-    index: int
-
-
 class CommunicationMemoryUpdateRequest(BaseModel):
     """Request shape retained with the not-yet-migrated memory update route."""
 
@@ -684,55 +678,6 @@ async def _launch_initial_research(
 
 
 set_onboarding_completion_handler(_launch_initial_research)
-
-
-@app.post("/api/web/session/{session_token}/select-lead")
-async def select_lead_endpoint(session_token: str, payload: SelectLeadRequest, request: Request = None):
-    session_token = identity_dependencies.web_session_token(request)
-    from services.conversations.compatibility import ensure_workflow_session, get_web_session
-
-    user = get_web_session(session_token)
-    if user is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    workflow_session_id = ensure_workflow_session(
-        user_id=user["id"],
-        channel="web",
-        session_key=session_token,
-    )
-    result = conversation_service.select_legacy_workflow_lead_and_draft(
-        user_id=user["id"],
-        lead_index=payload.index,
-        workflow_session_id=workflow_session_id,
-        session_token=session_token,
-    )
-    if not result.get("ok"):
-        raise HTTPException(status_code=400, detail=result.get("messages", [{}])[0].get("text", "Selection failed"))
-
-    return {"ok": True, "messages": result.get("messages", [])}
-
-
-class PreviewLeadRequest(BaseModel):
-    index: int
-
-
-@app.post("/api/web/session/{session_token}/preview-lead")
-async def preview_lead_endpoint(session_token: str, payload: PreviewLeadRequest, request: Request = None):
-    session_token = identity_dependencies.web_session_token(request)
-    from services.conversations.compatibility import get_web_session
-
-    user = get_web_session(session_token)
-    if user is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    result = conversation_service.preview_legacy_workflow_lead_intelligence(
-        user_id=user["id"],
-        lead_index=payload.index,
-    )
-    if not result.get("ok"):
-        raise HTTPException(status_code=400, detail=result.get("error", "Preview failed"))
-
-    return {"ok": True, "lead_intelligence": result.get("lead_intelligence")}
 
 
 if __name__ == "__main__":

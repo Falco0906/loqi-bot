@@ -39,7 +39,7 @@ from services.workflows.api import router as workflows_router
 import services.outbound.service as outbound_service
 import services.conversations.service as conversation_service
 from services.conversations.api import engine, router as conversations_router
-from services.conversations.conversation_store import conversation_in_workspace, conversation_owned_by
+from services.conversations.conversation_store import conversation_in_workspace
 from services.capabilities.config import CapabilityConfig
 from services.capabilities.services import CapabilityService
 from services.capabilities.repositories import (
@@ -84,12 +84,9 @@ from services.conversation_models import ConversationMessage
 from services.communication import provider_startup
 from services.communication.reply_simulator import maybe_schedule as simulate_reply
 from services.events_bus import publish_draft_event
-from services.reply_intelligence import analyze_message
 from services.conversation_memory import memory_store, create_or_update_memory
 from services.followup_reasoner import recommend_followup
-from services.reply_summary import generate_summary
-from services.conversation_timeline import get_events as get_conversation_events
-from services.conversation_models import FollowupAction, BuyingSignal, SignalStrength, ConversationStage
+from services.conversation_models import FollowupAction, BuyingSignal, SignalStrength
 from services.buying_signal import detect_signals
 from services.execution import AdapterRegistry as ExecutionAdapterRegistry
 from services.operations import (
@@ -556,38 +553,21 @@ class SelectLeadRequest(BaseModel):
     index: int
 
 
-# ── Communication Intelligence Endpoints ──
+class CommunicationMemoryUpdateRequest(BaseModel):
+    """Request shape retained with the not-yet-migrated memory update route."""
 
-
-class AnalyzeMessageRequest(BaseModel):
     text: str
     conversation_id: str = ""
     sender: str = "lead"
     subject: str = ""
 
 
-@app.post("/api/web/session/{session_token}/communication/analyze")
-async def communication_analyze(session_token: str, payload: AnalyzeMessageRequest):
-    msg = ConversationMessage(
-        text=payload.text,
-        sender=payload.sender,
-        subject=payload.subject,
-    )
-    existing = memory_store.get(payload.conversation_id) if payload.conversation_id else None
-    intelligence, memory = analyze_message(
-        message=msg,
-        conversation_id=payload.conversation_id,
-        existing_memory=existing,
-    )
-    return {
-        "ok": True,
-        "intelligence": intelligence.model_dump(),
-        "memory": memory.model_dump(),
-    }
-
-
 @app.post("/api/web/session/{session_token}/communication/memory/update")
-async def communication_memory_update(session_token: str, payload: AnalyzeMessageRequest, request: Request = None):
+async def communication_memory_update(
+    session_token: str,
+    payload: CommunicationMemoryUpdateRequest,
+    request: Request = None,
+):
     session_token = identity_dependencies.web_session_token(request)
     msg = ConversationMessage(text=payload.text, sender=payload.sender, subject=payload.subject)
     cid = payload.conversation_id or msg.id
@@ -619,62 +599,6 @@ async def communication_memory_update(session_token: str, payload: AnalyzeMessag
     return {
         "ok": True,
         "memory": memory.model_dump(),
-    }
-
-
-class RecommendRequest(BaseModel):
-    text: str
-    conversation_id: str = ""
-
-
-@app.post("/api/web/session/{session_token}/communication/recommend")
-async def communication_recommend(session_token: str, payload: RecommendRequest):
-    from services.intent_detector import detect_intents
-    intents = detect_intents(payload.text)
-    signals = detect_signals(payload.text)
-    stage = ConversationStage.ENGAGED
-    recommendation = recommend_followup(intents, signals, stage)
-    return {
-        "ok": True,
-        "recommendation": recommendation.model_dump(),
-    }
-
-
-class SummaryRequest(BaseModel):
-    text: str
-    conversation_id: str = ""
-
-
-@app.post("/api/web/session/{session_token}/communication/summary")
-async def communication_summary(session_token: str, payload: SummaryRequest):
-    from services.intent_detector import detect_intents
-    intents = detect_intents(payload.text)
-    signals = detect_signals(payload.text)
-    stage = ConversationStage.ENGAGED
-    from services.followup_reasoner import recommend_followup
-    recommendation = recommend_followup(intents, signals, stage)
-    summary = generate_summary(intents, signals, recommendation)
-    return {
-        "ok": True,
-        "summary": summary,
-    }
-
-
-@app.get("/api/web/session/{session_token}/communication/{conversation_id}/timeline")
-async def communication_timeline(session_token: str, conversation_id: str, request: Request):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    from services.conversations.conversation_store import conversation_store
-    convo = conversation_store.get_conversation(conversation_id)
-    if convo is None or not conversation_owned_by(convo, owner_id):
-        # Safe not-found: foreign-but-existing and nonexistent conversations are
-        # indistinguishable (no existence leak, no foreign memory/timeline).
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    events = get_conversation_events(conversation_id)
-    return {
-        "ok": True,
-        "events": [e.model_dump() for e in events],
-        "total": len(events),
     }
 
 

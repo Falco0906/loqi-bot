@@ -293,11 +293,15 @@ class TestConversationSendOwnership:
         assert exc.value.status_code == 404
 
     def test_timeline_denied_for_another_users_conversation(self, monkeypatch):
-        import main as main_module
+        from services.communication import api as communication_api
         convo = self._convo()
-        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-a"))
+        monkeypatch.setattr(
+            communication_api.identity_dependencies,
+            "authenticated_user_id",
+            AsyncMock(return_value="owner-a"),
+        )
         request = MagicMock()
         with pytest.raises(Exception) as exc:
-            asyncio.run(main_module.communication_timeline("tok", convo.conversation_id, request))
+            asyncio.run(communication_api.communication_timeline("tok", convo.conversation_id, request))
         # Safe not-found (no existence leak): foreign conversation is 404.
         assert exc.value.status_code == 404

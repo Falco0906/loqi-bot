@@ -28,6 +28,23 @@ class LegacyProviderConnectRequest(BaseModel):
     scope: str = ""
 
 
+class AnalyzeMessageRequest(BaseModel):
+    text: str
+    conversation_id: str = ""
+    sender: str = "lead"
+    subject: str = ""
+
+
+class RecommendRequest(BaseModel):
+    text: str
+    conversation_id: str = ""
+
+
+class SummaryRequest(BaseModel):
+    text: str
+    conversation_id: str = ""
+
+
 async def _authorized_session_owner(request: Request) -> tuple[str, str]:
     """Resolve the bearer-bound session token and its authenticated owner."""
     token = identity_dependencies.web_session_token(request)
@@ -39,6 +56,35 @@ async def _authorized_owner(request: Request, session_token: str) -> str:
     del session_token
     _, owner_id = await _authorized_session_owner(request)
     return owner_id
+
+
+@router.post("/api/web/session/{session_token}/communication/analyze")
+async def communication_analyze(session_token: str, payload: AnalyzeMessageRequest):
+    del session_token
+    return service.analyze_communication_message(**payload.model_dump())
+
+
+@router.post("/api/web/session/{session_token}/communication/recommend")
+async def communication_recommend(session_token: str, payload: RecommendRequest):
+    del session_token
+    return service.recommend_communication_follow_up(text=payload.text)
+
+
+@router.post("/api/web/session/{session_token}/communication/summary")
+async def communication_summary(session_token: str, payload: SummaryRequest):
+    del session_token
+    return service.summarize_communication_message(text=payload.text)
+
+
+@router.get("/api/web/session/{session_token}/communication/{conversation_id}/timeline")
+async def communication_timeline(session_token: str, conversation_id: str, request: Request):
+    del session_token
+    token, owner_id = await _authorized_session_owner(request)
+    del token
+    try:
+        return service.communication_timeline_for_owner(owner_id=owner_id, conversation_id=conversation_id)
+    except service.ConversationNotFoundForOwner as error:
+        raise HTTPException(status_code=404, detail="Conversation not found") from error
 
 
 @router.get("/api/auth/gmail/url")

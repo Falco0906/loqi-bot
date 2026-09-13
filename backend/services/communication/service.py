@@ -21,6 +21,15 @@ from services.communication.provider_registry import (
     list_registered_types,
 )
 from services.outbound import service as outbound_service
+from services.buying_signal import detect_signals
+from services.conversation_memory import memory_store
+from services.conversation_models import ConversationMessage, ConversationStage
+from services.conversation_timeline import get_events as get_conversation_events
+from services.conversations.conversation_store import conversation_owned_by, conversation_store
+from services.followup_reasoner import recommend_followup
+from services.intent_detector import detect_intents
+from services.reply_intelligence import analyze_message
+from services.reply_summary import generate_summary
 from services.world_model.events import EventType as WMEventType
 from services.world_model.publisher import publish
 
@@ -99,6 +108,51 @@ def remove_existing_gmail_provider(user_id: str) -> None:
 def _provider_is_owned_by(provider_id: str, owner_id: str) -> bool:
     """Use the established provider-record ownership rule during this cutover."""
     return outbound_service.provider_record_owned_by(provider_id, owner_id)
+
+
+def analyze_communication_message(
+    *, text: str, sender: str, subject: str, conversation_id: str,
+) -> dict[str, Any]:
+    """Analyze one message and preserve the legacy intelligence envelope."""
+    message = ConversationMessage(text=text, sender=sender, subject=subject)
+    existing = memory_store.get(conversation_id) if conversation_id else None
+    intelligence, memory = analyze_message(
+        message=message,
+        conversation_id=conversation_id,
+        existing_memory=existing,
+    )
+    return {"ok": True, "intelligence": intelligence.model_dump(), "memory": memory.model_dump()}
+
+
+def recommend_communication_follow_up(*, text: str) -> dict[str, Any]:
+    """Return the existing deterministic follow-up recommendation."""
+    recommendation = recommend_followup(
+        detect_intents(text),
+        detect_signals(text),
+        ConversationStage.ENGAGED,
+    )
+    return {"ok": True, "recommendation": recommendation.model_dump()}
+
+
+def summarize_communication_message(*, text: str) -> dict[str, Any]:
+    """Return the existing communication-summary envelope."""
+    intents = detect_intents(text)
+    signals = detect_signals(text)
+    recommendation = recommend_followup(intents, signals, ConversationStage.ENGAGED)
+    return {"ok": True, "summary": generate_summary(intents, signals, recommendation)}
+
+
+class ConversationNotFoundForOwner(Exception):
+    """A conversation is absent or belongs to another user."""
+
+
+def communication_timeline_for_owner(*, owner_id: str, conversation_id: str) -> dict[str, Any]:
+    """Return timeline events without exposing foreign conversation existence."""
+    conversation = conversation_store.get_conversation(conversation_id)
+    if conversation is None or not conversation_owned_by(conversation, owner_id):
+        raise ConversationNotFoundForOwner
+    events = get_conversation_events(conversation_id)
+    return {"ok": True, "events": [event.model_dump() for event in events], "total": len(events)}
 
 
 async def list_provider_summaries(owner_id: str) -> list[dict[str, Any]]:

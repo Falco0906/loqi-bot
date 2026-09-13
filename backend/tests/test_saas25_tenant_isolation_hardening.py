@@ -121,7 +121,6 @@ class TestWorkspaceContextProviderScoping:
         )
 
     def test_only_own_providers_surfaced(self, monkeypatch):
-        import main as main_module
         from services.workspace import context as context_owner
         from enum import Enum
 
@@ -134,16 +133,6 @@ class TestWorkspaceContextProviderScoping:
 
         prov_a = self._prov("p-A", "user-A", "a@loqi.ai")
         prov_b = self._prov("p-B", "user-B", "b@loqi.ai")
-
-        # Stub the heavy workspace helpers to empty, and the provider store to
-        # two tenants' providers.
-        monkeypatch.setattr(main_module, "build_snapshot",
-                            lambda *a, **k: {"campaigns": [], "campaign_count": 0,
-                                             "campaigns_ready": 0, "campaigns_draft_review": 0,
-                                             "drafts": {}, "total_leads": 0, "jobs": {},
-                                             "memory": {}, "timeline": []})
-        monkeypatch.setattr(main_module, "get_active_runtimes", lambda *a, **k: [])
-        monkeypatch.setattr(main_module, "calculate_progress", lambda *a, **k: 0)
 
         class _Store:
             def list_providers(self):
@@ -161,16 +150,8 @@ class TestWorkspaceContextProviderScoping:
         assert all(p["email"] == "a@loqi.ai" for p in ctx["providers"])
 
     def test_conversation_intelligence_gated_by_ownership(self, monkeypatch):
-        import main as main_module
         from services.workspace import context as context_owner
-        monkeypatch.setattr(main_module, "build_snapshot",
-                            lambda *a, **k: {"campaigns": [], "campaign_count": 0,
-                                             "campaigns_ready": 0, "campaigns_draft_review": 0,
-                                             "drafts": {}, "total_leads": 0, "jobs": {},
-                                             "memory": {}, "timeline": []})
-        monkeypatch.setattr(main_module, "get_active_runtimes", lambda *a, **k: [])
-        monkeypatch.setattr(main_module, "calculate_progress", lambda *a, **k: 0)
-        monkeypatch.setattr(main_module, "communication_store", _StubStore([]))
+        monkeypatch.setattr(context_owner, "communication_store", _StubStore([]))
 
         class _Mem:
             buying_signals = []
@@ -192,8 +173,6 @@ class TestWorkspaceContextProviderScoping:
 
         # memory store has data for the foreign conversation id.
         monkeypatch.setattr(context_owner, "memory_store", _MemStore({"conv-9": _Mem()}))
-        monkeypatch.setattr(context_owner, "get_conversation_events", lambda cid: [])
-
         class _Convo:
             owner_id = "user-other"
 

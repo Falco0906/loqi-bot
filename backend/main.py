@@ -63,15 +63,6 @@ from services.identity.schemas import ErrorResponse
 from starlette.responses import JSONResponse
 from services.operations.diagnostics import get_build_metadata
 from app import lifespan as app_lifespan
-from services.workspace_memory import record as record_memory, record_draft_review, record_search
-from services.workspace_timeline import (
-    add_event as add_timeline_event,
-    record_search_started,
-    record_search_completed,
-    record_campaign_created,
-    record_draft_approved,
-    record_campaign_launched,
-)
 from services.learning.behavior_tracker import get_tracker as _get_behavior_tracker
 from services.learning.feedback_interpreter import FeedbackInterpreter as _FeedbackInterpreter
 from services.draft_intelligence import analyze_draft as analyze_draft_intelligence
@@ -216,7 +207,7 @@ register_org_deps(_org_deps)
 
 # ── Wire Organization Service into Onboarding ──
 from services.identity.api import get_auth_user_service
-from services.onboarding.api import set_onboarding_service, set_onboarding_completion_handler
+from services.onboarding.api import set_onboarding_service
 from services.onboarding.services import LifecycleService, OnboardingService as OnboardingServiceCls
 from services.onboarding.repositories import InMemoryLifecycleRepository, InMemoryOnboardingSessionRepository
 _onboarding_lifecycle_repo = InMemoryLifecycleRepository()
@@ -594,90 +585,6 @@ async def communication_memory_update(
         "ok": True,
         "memory": memory.model_dump(),
     }
-
-
-# ── Workspace Context Endpoint (for dev tooling) ──
-
-
-# ── Outbound Endpoints ──
-
-
-# ── Campaign Endpoints ──
-
-
-async def _launch_initial_research(
-    user_id: str,
-    wizard: dict[str, object],
-    session_token: str,
-) -> None:
-    """Start first research immediately after onboarding finalization.
-
-    The durable onboarding user owns the job. The optional web session is used
-    only as the event stream consumed by Mission Control.
-    """
-    if wizard.get("initial_research_launched"):
-        return
-
-    offering = str(wizard.get("companyDescription") or wizard.get("description") or "").strip()
-    icp = str(wizard.get("idealCustomer") or wizard.get("target_market") or "").strip()
-    if not offering and not icp:
-        raise ValueError("Onboarding did not contain research inputs")
-    query = f"{offering} for {icp}".strip() if offering and icp else (offering or icp)
-    if session_token:
-        record_memory(session_token, "company_description", offering)
-        record_memory(session_token, "ideal_customer", icp)
-
-    def publish_job_update(update: dict[str, object]) -> None:
-        if not session_token:
-            return
-        status = update.get("status")
-        event_type = (
-            WMEventType.RESEARCH_COMPLETED if status == "completed"
-            else WMEventType.WORKFLOW_FAILED if status == "failed"
-            else WMEventType.WORKFLOW_PROGRESS
-        )
-        publish(session_token, event_type, {
-            "workflow_type": "research",
-            "query": query,
-            **update,
-        }, actor="loqi")
-
-    # Persist the launch marker before scheduling to make completion retries
-    # idempotent. If scheduling fails, reset it so a retry can start work.
-    await _onboarding_svc.save_wizard_data(user_id, {"initial_research_launched": True})
-    from services.discovery.service import DiscoveryJobLifecycleError, create_search_run
-
-    try:
-        result = await create_search_run(
-            user_id,
-            query,
-            on_update=publish_job_update,
-        )
-    except DiscoveryJobLifecycleError:
-        result = None
-    if not result:
-        await _onboarding_svc.save_wizard_data(user_id, {"initial_research_launched": False})
-        if session_token:
-            publish(session_token, WMEventType.WORKFLOW_FAILED, {
-                "workflow_type": "research", "query": query,
-                "error": "Unable to create the initial research job",
-            }, actor="loqi")
-        return
-
-    job_id = str(result.get("job_id", ""))
-    await _onboarding_svc.save_wizard_data(user_id, {
-        "initial_research_job_id": job_id,
-        "initial_research_session_token": session_token,
-    })
-    if session_token:
-        record_search_started(session_token, query)
-        publish(session_token, WMEventType.WORKFLOW_STARTED, {
-            "workflow_type": "research", "job_id": job_id,
-            "query": query, "status": "queued",
-        }, actor="loqi")
-
-
-set_onboarding_completion_handler(_launch_initial_research)
 
 
 if __name__ == "__main__":

@@ -593,6 +593,81 @@ class OnboardingService:
             "organization_slug": org.slug,
         }
 
+    async def launch_initial_research(
+        self,
+        user_id: str,
+        wizard: dict[str, object],
+        session_token: str,
+    ) -> None:
+        """Create the first durable Discovery job after onboarding completion.
+
+        Onboarding owns the completion marker and optional legacy-session
+        projections. Discovery remains the sole owner of durable Discovery
+        and job creation through ``create_search_run``.
+        """
+        if wizard.get("initial_research_launched"):
+            return
+
+        offering = str(wizard.get("companyDescription") or wizard.get("description") or "").strip()
+        icp = str(wizard.get("idealCustomer") or wizard.get("target_market") or "").strip()
+        if not offering and not icp:
+            raise ValueError("Onboarding did not contain research inputs")
+        query = f"{offering} for {icp}".strip() if offering and icp else (offering or icp)
+
+        from services.workspace_memory import record as record_memory
+        from services.workspace_timeline import record_search_started
+        from services.world_model import EventType as WorldModelEventType, publish
+
+        if session_token:
+            record_memory(session_token, "company_description", offering)
+            record_memory(session_token, "ideal_customer", icp)
+
+        def publish_job_update(update: dict[str, object]) -> None:
+            if not session_token:
+                return
+            status = update.get("status")
+            event_type = (
+                WorldModelEventType.RESEARCH_COMPLETED if status == "completed"
+                else WorldModelEventType.WORKFLOW_FAILED if status == "failed"
+                else WorldModelEventType.WORKFLOW_PROGRESS
+            )
+            publish(session_token, event_type, {
+                "workflow_type": "research",
+                "query": query,
+                **update,
+            }, actor="loqi")
+
+        await self.save_wizard_data(user_id, {"initial_research_launched": True})
+        from services.discovery.service import DiscoveryJobLifecycleError, create_search_run
+
+        try:
+            result = await create_search_run(user_id, query, on_update=publish_job_update)
+        except DiscoveryJobLifecycleError:
+            result = None
+        if not result:
+            await self.save_wizard_data(user_id, {"initial_research_launched": False})
+            if session_token:
+                publish(session_token, WorldModelEventType.WORKFLOW_FAILED, {
+                    "workflow_type": "research",
+                    "query": query,
+                    "error": "Unable to create the initial research job",
+                }, actor="loqi")
+            return
+
+        job_id = str(result.get("job_id", ""))
+        await self.save_wizard_data(user_id, {
+            "initial_research_job_id": job_id,
+            "initial_research_session_token": session_token,
+        })
+        if session_token:
+            record_search_started(session_token, query)
+            publish(session_token, WorldModelEventType.WORKFLOW_STARTED, {
+                "workflow_type": "research",
+                "job_id": job_id,
+                "query": query,
+                "status": "queued",
+            }, actor="loqi")
+
     def _is_onboarding_complete(self, session: OnboardingSession) -> bool:
         all_steps = {s.value for s in STEP_ORDER}
         completed = {s.step_id for s in session.completed_steps}

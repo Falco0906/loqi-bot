@@ -9,6 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import HTTPException
+from services.conversation_engine import ConversationEngine
 from services.conversation_intelligence.intelligence_pipeline import IntelligencePipeline
 from services.conversations.conversation_models import ConversationMessage, ConversationStatus
 from services.conversations.conversation_store import conversation_owned_by, conversation_store
@@ -36,6 +37,169 @@ from services.world_model import EventType as WorldModelEventType, publish
 
 
 log = logging.getLogger("loqi")
+
+
+async def _optional_web_session_auth(request) -> tuple[str | None, str]:
+    """Resolve optional bootstrap auth without changing anonymous fallback behavior."""
+    from services.identity import dependencies as identity_dependencies
+
+    if not request.headers.get("authorization", ""):
+        return None, ""
+    try:
+        auth = await identity_dependencies.get_current_auth(request)
+        return auth.user_id, auth.session_id
+    except HTTPException:
+        return None, ""
+
+
+async def _bind_authenticated_web_session(
+    *,
+    session_token: str,
+    user_id: str | None,
+    canonical_session_id: str,
+) -> None:
+    """Bind a newly-created legacy web session only when canonical auth exists."""
+    if not user_id or not canonical_session_id:
+        return
+    from services.web_session_binding import bind_web_session
+
+    await bind_web_session(session_token, user_id, canonical_session_id)
+
+
+async def create_legacy_web_session(
+    *,
+    request,
+    display_name: str | None,
+    engine: ConversationEngine,
+) -> dict[str, Any]:
+    """Create a web compatibility session, optionally bound to canonical auth."""
+    from services.identity import dependencies as identity_dependencies
+    from services.workspace.state import ensure_workspace
+
+    user_id, canonical_session_id = await _optional_web_session_auth(request)
+    if user_id:
+        await identity_dependencies.ensure_legacy_user_bridge(user_id)
+
+    result = await asyncio.to_thread(
+        engine.create_web_session,
+        display_name=display_name,
+        user_id=user_id,
+    )
+    if user_id and canonical_session_id:
+        await _bind_authenticated_web_session(
+            session_token=result.get("session_token", ""),
+            user_id=user_id,
+            canonical_session_id=canonical_session_id,
+        )
+        await asyncio.to_thread(ensure_workspace, user_id)
+    return result
+
+
+async def read_legacy_web_session(*, request, engine: ConversationEngine) -> dict[str, Any]:
+    """Return the request-bound web-session summary or its frozen 404 error."""
+    from services.identity import dependencies as identity_dependencies
+
+    session_token = identity_dependencies.web_session_token(request)
+    data = await asyncio.to_thread(engine.get_web_session_summary, session_token)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return data
+
+
+async def read_legacy_web_session_messages(*, request, engine: ConversationEngine) -> dict[str, Any]:
+    """Return legacy web messages for the request-bound web-session token."""
+    from services.identity import dependencies as identity_dependencies
+
+    session_token = identity_dependencies.web_session_token(request)
+    return {
+        "ok": True,
+        "messages": engine.list_messages(channel="web", external_user_id=session_token),
+    }
+
+
+async def resolve_legacy_web_message_session(
+    *,
+    request,
+    engine: ConversationEngine,
+) -> tuple[str, dict[str, Any], bool]:
+    """Resolve or implicitly create the legacy web session for one message.
+
+    The boolean reports whether this request created the session. The legacy
+    message path uses it to preserve its historical no-outer-event behavior
+    for a bootstrap message; Copilot uses the same authenticated bridge and
+    canonical session binding before it prepares a turn.
+    """
+    from services.identity import dependencies as identity_dependencies
+
+    session_token = identity_dependencies.web_session_token(request)
+    summary = await asyncio.to_thread(engine.get_web_session_summary, session_token)
+    if summary is not None:
+        return session_token, summary, False
+
+    user_id, canonical_session_id = await _optional_web_session_auth(request)
+    if user_id:
+        await identity_dependencies.ensure_legacy_user_bridge(user_id)
+    created = await asyncio.to_thread(
+        engine.create_web_session,
+        display_name="web-user",
+        user_id=user_id,
+    )
+    if created is None:
+        raise HTTPException(status_code=500, detail="Unable to create session")
+    await _bind_authenticated_web_session(
+        session_token=created["session_token"],
+        user_id=user_id,
+        canonical_session_id=canonical_session_id,
+    )
+    summary = await asyncio.to_thread(engine.get_web_session_summary, created["session_token"])
+    if summary is None:
+        raise HTTPException(status_code=500, detail="Session creation failed")
+    return created["session_token"], summary, True
+
+
+async def handle_legacy_web_message(
+    *,
+    request,
+    text: str,
+    engine: ConversationEngine,
+) -> dict[str, Any]:
+    """Handle the non-Copilot web message path through ConversationEngine.
+
+    This retains the legacy implicit-session bootstrap and its intentional
+    early-return behavior: a bootstrap message is not followed by the outer
+    MESSAGE_RECEIVED publication, while a message to an existing session is.
+    """
+    session_token, summary, created = await resolve_legacy_web_message_session(
+        request=request,
+        engine=engine,
+    )
+    if created:
+        return await asyncio.to_thread(
+            engine.handle_message,
+            channel="web",
+            external_user_id=session_token,
+            text=text,
+            username=summary.get("display_name"),
+        )
+
+    result = await asyncio.to_thread(
+        engine.handle_message,
+        channel="web",
+        external_user_id=session_token,
+        text=text,
+        username=summary.get("display_name"),
+    )
+    publish(
+        session_token,
+        WorldModelEventType.MESSAGE_RECEIVED,
+        {
+            "from": summary.get("display_name", "web-user"),
+            "text_preview": text[:200],
+            "channel": "web",
+        },
+        actor="user",
+    )
+    return result
 
 
 def _legacy_message(*, message_type: str, text: str, data: dict[str, Any] | None = None) -> dict[str, Any]:

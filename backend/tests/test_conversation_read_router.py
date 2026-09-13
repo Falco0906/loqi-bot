@@ -56,6 +56,10 @@ def _configure_store(monkeypatch, conversations: list[object]) -> None:
 
 async def test_conversation_read_router_preserves_routes_and_top_level_shapes(monkeypatch):
     expected_paths = [
+        "/api/web/session",
+        "/api/web/session/{session_token}",
+        "/api/web/session/{session_token}/messages",
+        "/api/web/session/{session_token}/messages",
         "/api/web/session/{session_token}/conversations",
         "/api/web/session/{session_token}/conversations/{conversation_id}",
         "/api/web/session/{session_token}/conversations/{conversation_id}/timeline",

@@ -4,12 +4,34 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from services.conversation_engine import ConversationEngine
+from services.copilot import service as copilot_service
 from services.conversations.conversation_store import conversation_owned_by, conversation_store
 from services.conversations import service as conversation_service
 from services.identity import dependencies as identity_dependencies
 
 
 router = APIRouter(tags=["Conversations"])
+engine = ConversationEngine()
+
+
+class CreateWebSessionRequest(BaseModel):
+    display_name: str | None = None
+
+
+class CopilotContextModel(BaseModel):
+    current_page: str | None = None
+    page_context: dict | None = None
+    available_actions: list[str] | None = None
+    message_history: list[dict] | None = None
+    conversation_id: str | None = None
+    request_id: str | None = None
+    active_search: dict | None = None
+
+
+class SendWebMessageRequest(BaseModel):
+    text: str
+    copilot: CopilotContextModel | None = None
 
 
 class SendConversationReplyRequest(BaseModel):
@@ -28,6 +50,72 @@ async def _authenticated_owner(request: Request | None) -> str:
         return ""
     owner_id, _ = await identity_dependencies.resolve_web_session(request)
     return owner_id
+
+
+@router.post("/api/web/session")
+async def create_web_session_route(payload: CreateWebSessionRequest, request: Request):
+    """Create a legacy web session through the canonical compatibility use case."""
+    try:
+        return await conversation_service.create_legacy_web_session(
+            request=request,
+            display_name=payload.display_name,
+            engine=engine,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+
+@router.get("/api/web/session/{session_token}")
+async def get_web_session_route(session_token: str, request: Request = None):
+    """Read a request-bound web session; the URL token is not authority."""
+    del session_token
+    return await conversation_service.read_legacy_web_session(request=request, engine=engine)
+
+
+@router.get("/api/web/session/{session_token}/messages")
+async def get_web_session_messages_route(session_token: str, request: Request = None):
+    """Read messages for the request-bound legacy web session."""
+    del session_token
+    return await conversation_service.read_legacy_web_session_messages(request=request, engine=engine)
+
+
+@router.post("/api/web/session/{session_token}/messages")
+async def post_web_session_message(
+    session_token: str,
+    payload: SendWebMessageRequest,
+    request: Request,
+):
+    """Dispatch one web message to the legacy or canonical Copilot boundary."""
+    del session_token
+    if payload.copilot is None:
+        return await conversation_service.handle_legacy_web_message(
+            request=request,
+            text=payload.text,
+            engine=engine,
+        )
+
+    resolved_token, summary, _created = await conversation_service.resolve_legacy_web_message_session(
+        request=request,
+        engine=engine,
+    )
+    prepared_turn = await copilot_service.prepare_copilot_turn(
+        request=request,
+        session_token=resolved_token,
+        text=payload.text,
+        current_page=payload.copilot.current_page,
+        page_context=payload.copilot.page_context,
+        message_history=payload.copilot.message_history,
+        conversation_id=payload.copilot.conversation_id,
+        active_search=payload.copilot.active_search,
+    )
+    return await copilot_service.execute_prepared_copilot_turn(
+        prepared=prepared_turn,
+        user_text=payload.text,
+        copilot_context=payload.copilot.model_dump(),
+        legacy_user_id=summary.get("user_id"),
+        request_id=payload.copilot.request_id,
+        request=request,
+    )
 
 
 def _owned_conversation(conversation_id: str, owner_id: str):

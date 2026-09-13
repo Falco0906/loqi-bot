@@ -7,6 +7,8 @@ Fixtures are in conftest.py.
 
 import pytest
 import main as main_module
+from services.copilot import service as copilot_service
+from services.conversations import api as conversations_api
 from types import SimpleNamespace
 
 
@@ -17,6 +19,12 @@ def _selected_copilot_workspace(monkeypatch):
         return SimpleNamespace(workspace_id="workspace-1")
 
     monkeypatch.setattr(main_module.workspace_access, "resolve_selected_workspace_context", resolve)
+    # Endpoint tests below pin model decisions explicitly. Keep the local
+    # classifier out of those fixtures so each tests its stated tool boundary.
+    monkeypatch.setattr(
+        "services.copilot.service.classify_copilot_read_question",
+        lambda *_args, **_kwargs: None,
+    )
 
     # Route tests exercise the authenticated tool boundary, not the live
     # Supabase schema. The dedicated Phase 6 ledger tests cover durable
@@ -27,7 +35,7 @@ def _selected_copilot_workspace(monkeypatch):
             return await operation()
 
     monkeypatch.setattr(
-        "services.copilot.executions.CopilotExecutionService",
+        "services.copilot.service.CopilotExecutionService",
         PassthroughExecutionService,
     )
 
@@ -71,22 +79,22 @@ class TestCopilotOperationBoundary:
         monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", fake_resolve_session)
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
         monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
-        monkeypatch.setattr("services.copilot.memory.CopilotMemoryService", lambda: FakeMemory())
-        monkeypatch.setattr("services.supabase.get_user_preferences", lambda _user_id: {"tone": "concise"})
-        monkeypatch.setattr("services.conversational_response_generator.classify_copilot_read_question", lambda *_args, **_kwargs: None)
-        monkeypatch.setattr("services.conversational_response_generator.decide_copilot_intent", fake_decide)
+        monkeypatch.setattr("services.copilot.service.CopilotMemoryService", lambda: FakeMemory())
+        monkeypatch.setattr("services.copilot.service.get_user_preferences", lambda _user_id: {"tone": "concise"})
+        monkeypatch.setattr("services.copilot.service.classify_copilot_read_question", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr("services.copilot.service.decide_copilot_intent", fake_decide)
         monkeypatch.setattr("services.conversational_response_generator.generate_copilot_response", lambda **_kwargs: "Grounded response.")
 
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
-        payload = main_module.SendWebMessageRequest(
+        payload = conversations_api.SendWebMessageRequest(
             text="What should I do next?",
-            copilot=main_module.CopilotContextModel(
+            copilot=conversations_api.CopilotContextModel(
                 current_page="Mission Control",
                 conversation_id="chat-a",
                 message_history=[{"role": "assistant", "text": "I can help."}],
             ),
         )
-        result = await main_module.post_web_session_message("session-1", payload, request)
+        result = await conversations_api.post_web_session_message("session-1", payload, request)
 
         assert result["ok"] is True
         assert captured["retrieve"] == {
@@ -121,9 +129,9 @@ class TestCopilotOperationBoundary:
         monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", fake_resolve_session)
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
         monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
-        monkeypatch.setattr("services.conversational_response_generator.classify_copilot_read_question", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr("services.copilot.service.classify_copilot_read_question", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(
-            "services.conversational_response_generator.decide_copilot_intent",
+            "services.copilot.service.decide_copilot_intent",
             lambda *_args, **_kwargs: {
                 "intent": "read",
                 "action": "campaign.read",
@@ -134,14 +142,14 @@ class TestCopilotOperationBoundary:
                 "search_context": {},
             },
         )
-        monkeypatch.setattr("services.copilot.tools.execute_copilot_tool", fake_execute)
+        monkeypatch.setattr("services.copilot.service.execute_copilot_tool", fake_execute)
 
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
-        payload = main_module.SendWebMessageRequest(
+        payload = conversations_api.SendWebMessageRequest(
             text="Show this campaign and its drafts",
-            copilot=main_module.CopilotContextModel(current_page="Campaigns", message_history=[]),
+            copilot=conversations_api.CopilotContextModel(current_page="Campaigns", message_history=[]),
         )
-        result = await main_module.post_web_session_message("session-1", payload, request)
+        result = await conversations_api.post_web_session_message("session-1", payload, request)
 
         assert result["ok"] is True
         assert result["messages"][0]["data"]["tool"] == "copilot.orchestration"
@@ -160,23 +168,9 @@ class TestCopilotOperationBoundary:
 
         monkeypatch.setattr("services.workspace.context.load_workspace_state", load_state)
         monkeypatch.setattr(
-            main_module,
-            "build_snapshot",
-            lambda *_args, **_kwargs: {
-                "campaigns": [{"id": "campaign-a", "name": "Workspace A campaign"}],
-                "campaign_count": 1,
-                "campaigns_ready": 0,
-                "campaigns_draft_review": 0,
-                "drafts": {},
-                "total_leads": 3,
-                "jobs": {},
-                "memory": {},
-                "timeline": [],
-                "analysis": {},
-            },
+            "services.workspace.context.communication_store",
+            SimpleNamespace(list_providers=lambda: []),
         )
-        monkeypatch.setattr(main_module, "get_active_runtimes", lambda *_args: [])
-        monkeypatch.setattr(main_module, "communication_store", SimpleNamespace(list_providers=lambda: []))
 
         from services.workspace.context import build_workspace_context
         context = build_workspace_context(
@@ -200,7 +194,7 @@ class TestCopilotOperationBoundary:
             metadata={"workspace_id": "workspace-b"},
         )
         monkeypatch.setattr(conversation_store, "get_conversation", lambda _cid: foreign)
-        result = await main_module.copilot_runners.run_inbox(
+        result = await copilot_service.copilot_runners.run_inbox(
             "inbox.conversation.read",
             "owner-1",
             "workspace-a",
@@ -227,7 +221,7 @@ class TestCopilotOperationBoundary:
             "services.workspace_snapshot.build_snapshot",
             lambda *_args, **_kwargs: {"total_leads": 12, "campaign_count": 1, "drafts": {"total": 0, "pending": 0, "approved": 0}, "campaigns_ready": 0, "campaigns_draft_review": 0, "campaigns": [{"id": "c-1", "name": "Outbound", "lead_count": 12}], "analysis": {}},
         )
-        result = await main_module.copilot_runners.run_analytics(
+        result = await copilot_service.copilot_runners.run_analytics(
             "analytics.workspace.summary", "owner-1", "workspace-1", "session-1", {"page_context": {}},
         )
         assert result["ok"] is True
@@ -240,7 +234,7 @@ class TestCopilotOperationBoundary:
             "services.workspace.state.load_workspace_state",
             lambda *_args, **_kwargs: {"campaigns": [], "drafts": []},
         )
-        result = await main_module.copilot_runners.run_analytics(
+        result = await copilot_service.copilot_runners.run_analytics(
             "analytics.campaign.summary", "owner-1", "workspace-1", "session-1", {"page_context": {}},
         )
         assert result["ok"] is False
@@ -268,7 +262,7 @@ class TestCopilotOperationBoundary:
             )
 
         monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", fake_retrieve)
-        result = await main_module.copilot_runners.run_knowledge(
+        result = await copilot_service.copilot_runners.run_knowledge(
             "knowledge.search", "owner-1", "workspace-1", "session-1",
             {"user_message": "what is our ICP?", "knowledge_categories": ["icp"], "page_context": {}},
         )
@@ -284,7 +278,7 @@ class TestCopilotOperationBoundary:
             return KnowledgePromptContext(query="unknown", items=[], sources=[])
 
         monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", fake_retrieve)
-        result = await main_module.copilot_runners.run_knowledge(
+        result = await copilot_service.copilot_runners.run_knowledge(
             "knowledge.search", "owner-1", "workspace-1", "session-1",
             {"user_message": "what do we know about unknown?", "page_context": {}},
         )
@@ -314,7 +308,7 @@ class TestCopilotOperationBoundary:
         )
         monkeypatch.setattr(conversation_store, "get_conversation", lambda _cid: convo)
         monkeypatch.setattr(conversation_store, "get_messages_for_conversation", lambda _cid: [])
-        result = await main_module.copilot_runners.run_inbox(
+        result = await copilot_service.copilot_runners.run_inbox(
             "inbox.conversation.read", "owner-1", "workspace-1", "session-1",
             {"conversation_id": "conversation-1", "page_context": {}},
         )
@@ -341,7 +335,7 @@ class TestCopilotOperationBoundary:
             called = True
 
         monkeypatch.setattr(conversation_service, "send_reply", must_not_send)
-        result = await main_module.copilot_runners.run_inbox(
+        result = await copilot_service.copilot_runners.run_inbox(
             "inbox.reply.send", "owner-1", "workspace-1", "session-1",
             {"conversation_id": "conversation-1", "reply_body": "Thanks"},
         )
@@ -362,7 +356,7 @@ class TestCopilotOperationBoundary:
             "services.workspace.state.load_drafts_only",
             lambda _user, _workspace: [{"id": "draft-1", "campaign_id": "campaign-1", "subject": "Hello", "text": "Hi there", "status": "pending"}],
         )
-        result = await main_module.copilot_runners.run_outreach(
+        result = await copilot_service.copilot_runners.run_outreach(
             "outreach.drafts.read", "owner-1", "workspace-1", "session-1",
             {"page_context": {"campaign_id": "campaign-1"}},
         )
@@ -376,7 +370,7 @@ class TestCopilotOperationBoundary:
             lambda _user, _workspace: [{"id": "draft-1", "subject": "Hello", "text": "Hi", "status": "pending"}],
         )
         for tool in ("outreach.draft.send", "outreach.draft.schedule"):
-            result = await main_module.copilot_runners.run_outreach(
+            result = await copilot_service.copilot_runners.run_outreach(
                 tool, "owner-1", "workspace-1", "session-1", {"draft_id": "draft-1"},
             )
             assert result["ok"] is False
@@ -385,7 +379,7 @@ class TestCopilotOperationBoundary:
     @pytest.mark.asyncio
     async def test_outreach_endpoint_returns_authoritative_draft_result(self, monkeypatch):
         monkeypatch.setattr(
-            "services.conversational_response_generator.decide_copilot_intent",
+            "services.copilot.service.decide_copilot_intent",
             lambda *_args, **_kwargs: {"intent": "read", "action": "outreach.drafts.read", "search_context": {}, "reason": "read drafts"},
         )
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
@@ -399,20 +393,20 @@ class TestCopilotOperationBoundary:
         async def fake_outreach_runner(*_args, **_kwargs):
             return {"ok": True, "status": "completed", "tool": "outreach.drafts.read", "result": {"drafts": [{"id": "draft-1", "subject": "Hello"}]}}
 
-        monkeypatch.setattr(main_module.copilot_runners, "run_outreach", fake_outreach_runner)
+        monkeypatch.setattr(copilot_service.copilot_runners, "run_outreach", fake_outreach_runner)
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
-        payload = main_module.SendWebMessageRequest(
+        payload = conversations_api.SendWebMessageRequest(
             text="show my drafts",
-            copilot=main_module.CopilotContextModel(current_page="Outreach", page_context={"campaign_id": "campaign-1"}, message_history=[]),
+            copilot=conversations_api.CopilotContextModel(current_page="Outreach", page_context={"campaign_id": "campaign-1"}, message_history=[]),
         )
-        result = await main_module.post_web_session_message("session-1", payload, request)
+        result = await conversations_api.post_web_session_message("session-1", payload, request)
         assert result["messages"][0]["data"]["tool"] == "outreach.drafts.read"
         assert result["messages"][0]["data"]["result"]["drafts"][0]["id"] == "draft-1"
 
     @pytest.mark.asyncio
     async def test_read_tool_uses_its_canonical_result_without_broad_knowledge_prefetch(self, monkeypatch):
         monkeypatch.setattr(
-            "services.conversational_response_generator.decide_copilot_intent",
+            "services.copilot.service.decide_copilot_intent",
             lambda *_args, **_kwargs: {"intent": "read", "action": "analytics.workspace.summary", "search_context": {}},
         )
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
@@ -425,14 +419,14 @@ class TestCopilotOperationBoundary:
             return {"ok": True, "status": "completed", "tool": "analytics.workspace.summary", "result": {"metrics": {"campaign_count": 0}}}
 
         monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", must_not_prefetch)
-        monkeypatch.setattr(main_module.copilot_runners, "run_analytics", analytics_runner)
+        monkeypatch.setattr(copilot_service.copilot_runners, "run_analytics", analytics_runner)
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
-        payload = main_module.SendWebMessageRequest(
+        payload = conversations_api.SendWebMessageRequest(
             text="How is my workspace performing?",
-            copilot=main_module.CopilotContextModel(current_page="Campaign Intelligence", message_history=[]),
+            copilot=conversations_api.CopilotContextModel(current_page="Campaign Intelligence", message_history=[]),
         )
 
-        result = await main_module.post_web_session_message("session-1", payload, request)
+        result = await conversations_api.post_web_session_message("session-1", payload, request)
         assert result["messages"][0]["data"]["tool"] == "analytics.workspace.summary"
 
     def test_discovery_title_is_natural_and_separate_from_provider_query(self):
@@ -580,7 +574,7 @@ class TestCopilotOperationBoundary:
         import services.conversations.conversation_store as conversation_module
         monkeypatch.setattr(conversation_module, "conversation_store", Store())
         monkeypatch.setattr(conversation_module, "conversation_owned_by", lambda *_args: True)
-        result = await main_module.copilot_runners.run_inbox(
+        result = await copilot_service.copilot_runners.run_inbox(
             "inbox.conversation.recommend", "owner-1", "workspace-1", "session-1", {},
         )
         assert result["ok"] is True
@@ -589,8 +583,9 @@ class TestCopilotOperationBoundary:
 
     @pytest.mark.asyncio
     async def test_unverified_mutating_tool_remains_unavailable(self, monkeypatch):
+        monkeypatch.setattr(copilot_service, "classify_copilot_read_question", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(
-            "services.conversational_response_generator.decide_copilot_intent",
+            "services.copilot.service.decide_copilot_intent",
             lambda *_args, **_kwargs: {
                 "intent": "action", "action": "campaign.create", "search_context": {},
             },
@@ -601,13 +596,13 @@ class TestCopilotOperationBoundary:
             "services.knowledge.context_adapter.retrieve_knowledge_context",
             lambda *_args, **_kwargs: SimpleNamespace(to_dict=lambda: {"items": [], "sources": []}),
         )
-        monkeypatch.setattr(main_module.copilot_runners, "run_campaign", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("mutation must not execute")))
+        monkeypatch.setattr(copilot_service.copilot_runners, "run_campaign", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("mutation must not execute")))
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
-        payload = main_module.SendWebMessageRequest(
+        payload = conversations_api.SendWebMessageRequest(
             text="create a campaign for these leads",
-            copilot=main_module.CopilotContextModel(current_page="Campaigns", message_history=[]),
+            copilot=conversations_api.CopilotContextModel(current_page="Campaigns", message_history=[]),
         )
-        result = await main_module.post_web_session_message("session-1", payload, request)
+        result = await conversations_api.post_web_session_message("session-1", payload, request)
         assert result["ok"] is False
         assert result["messages"][0]["data"]["status"] == "unavailable"
 
@@ -622,30 +617,30 @@ class TestCopilotOperationBoundary:
     @pytest.mark.asyncio
     async def test_enabled_mutation_requires_explicit_confirmation_before_runner(self, monkeypatch):
         monkeypatch.setattr(
-            "services.conversational_response_generator.decide_copilot_intent",
+            "services.copilot.service.decide_copilot_intent",
             lambda *_args, **_kwargs: {"intent": "action", "action": "campaign.refine", "campaign_id": "campaign-1", "campaign_updates": {"objective": "New objective"}, "search_context": {}},
         )
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
         monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *_args, **_kwargs: {"snapshot": {}, "analysis": {}})
         monkeypatch.setattr(
-            main_module.copilot_runners,
+            copilot_service.copilot_runners,
             "run_campaign",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("runner must not execute before confirmation")),
         )
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
-        payload = main_module.SendWebMessageRequest(
+        payload = conversations_api.SendWebMessageRequest(
             text="Could you change this campaign objective?",
-            copilot=main_module.CopilotContextModel(current_page="Campaigns", page_context={"campaign_id": "campaign-1"}, message_history=[]),
+            copilot=conversations_api.CopilotContextModel(current_page="Campaigns", page_context={"campaign_id": "campaign-1"}, message_history=[]),
         )
 
-        result = await main_module.post_web_session_message("session-1", payload, request)
+        result = await conversations_api.post_web_session_message("session-1", payload, request)
         assert result["ok"] is False
         assert result["operation"]["status"] == "confirmation_required"
 
     @pytest.mark.asyncio
     async def test_confirmed_mutation_returns_verified_authoritative_result(self, monkeypatch):
         monkeypatch.setattr(
-            "services.conversational_response_generator.decide_copilot_intent",
+            "services.copilot.service.decide_copilot_intent",
             lambda *_args, **_kwargs: {"intent": "action", "action": "campaign.refine", "campaign_id": "campaign-1", "campaign_updates": {"objective": "New objective"}, "search_context": {}},
         )
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
@@ -661,14 +656,14 @@ class TestCopilotOperationBoundary:
                 "result": {"campaign": {"id": "campaign-1", "name": "Campaign A", "objective": "New objective"}},
             }
 
-        monkeypatch.setattr(main_module.copilot_runners, "run_campaign", campaign_runner)
+        monkeypatch.setattr(copilot_service.copilot_runners, "run_campaign", campaign_runner)
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
-        payload = main_module.SendWebMessageRequest(
+        payload = conversations_api.SendWebMessageRequest(
             text="I confirm: update this campaign objective to New objective",
-            copilot=main_module.CopilotContextModel(current_page="Campaigns", page_context={"campaign_id": "campaign-1"}, message_history=[]),
+            copilot=conversations_api.CopilotContextModel(current_page="Campaigns", page_context={"campaign_id": "campaign-1"}, message_history=[]),
         )
 
-        result = await main_module.post_web_session_message("session-1", payload, request)
+        result = await conversations_api.post_web_session_message("session-1", payload, request)
         assert result["ok"] is True
         assert result["messages"][0]["data"]["result"]["campaign"]["objective"] == "New objective"
         assert calls == [("campaign.refine", "test-owner", "workspace-1", True)]
@@ -676,7 +671,7 @@ class TestCopilotOperationBoundary:
     @pytest.mark.asyncio
     async def test_mutation_failure_or_verification_failure_is_never_success(self, monkeypatch):
         monkeypatch.setattr(
-            "services.conversational_response_generator.decide_copilot_intent",
+            "services.copilot.service.decide_copilot_intent",
             lambda *_args, **_kwargs: {"intent": "action", "action": "campaign.refine", "campaign_id": "campaign-1", "campaign_updates": {"name": "Changed"}, "search_context": {}},
         )
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
@@ -685,14 +680,14 @@ class TestCopilotOperationBoundary:
         async def failed_runner(*_args, **_kwargs):
             return {"ok": False, "status": "verification_failed", "tool": "campaign.refine", "reason": "Campaign changes could not be verified in this workspace."}
 
-        monkeypatch.setattr(main_module.copilot_runners, "run_campaign", failed_runner)
+        monkeypatch.setattr(copilot_service.copilot_runners, "run_campaign", failed_runner)
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
-        payload = main_module.SendWebMessageRequest(
+        payload = conversations_api.SendWebMessageRequest(
             text="I confirm: rename this campaign to Changed",
-            copilot=main_module.CopilotContextModel(current_page="Campaigns", page_context={"campaign_id": "campaign-1"}, message_history=[]),
+            copilot=conversations_api.CopilotContextModel(current_page="Campaigns", page_context={"campaign_id": "campaign-1"}, message_history=[]),
         )
 
-        result = await main_module.post_web_session_message("session-1", payload, request)
+        result = await conversations_api.post_web_session_message("session-1", payload, request)
         assert result["ok"] is False
         assert result["operation"]["status"] == "verification_failed"
 
@@ -701,7 +696,7 @@ class TestCopilotOperationBoundary:
         from fastapi import HTTPException
 
         monkeypatch.setattr(
-            "services.conversational_response_generator.decide_copilot_intent",
+            "services.copilot.service.decide_copilot_intent",
             lambda *_args, **_kwargs: {"intent": "action", "action": "campaign.refine", "campaign_id": "campaign-1", "campaign_updates": {"name": "Changed"}, "search_context": {}},
         )
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
@@ -710,15 +705,15 @@ class TestCopilotOperationBoundary:
             raise HTTPException(status_code=404, detail="Workspace not found")
 
         monkeypatch.setattr(main_module.workspace_access, "resolve_selected_workspace_context", unavailable)
-        monkeypatch.setattr(main_module.copilot_runners, "run_campaign", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("runner must not execute outside workspace")))
+        monkeypatch.setattr(copilot_service.copilot_runners, "run_campaign", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("runner must not execute outside workspace")))
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
-        payload = main_module.SendWebMessageRequest(
+        payload = conversations_api.SendWebMessageRequest(
             text="Rename this campaign to Changed",
-            copilot=main_module.CopilotContextModel(current_page="Campaigns", page_context={"campaign_id": "campaign-1"}, message_history=[]),
+            copilot=conversations_api.CopilotContextModel(current_page="Campaigns", page_context={"campaign_id": "campaign-1"}, message_history=[]),
         )
 
         with pytest.raises(HTTPException, match="Workspace not found"):
-            await main_module.post_web_session_message("session-1", payload, request)
+            await conversations_api.post_web_session_message("session-1", payload, request)
 
     @pytest.mark.asyncio
     async def test_tool_boundary_does_not_execute_for_conversation_or_read(self, monkeypatch):
@@ -810,7 +805,7 @@ class TestCopilotOperationBoundary:
     @pytest.mark.asyncio
     async def test_campaign_operation_returns_authoritative_result(self, monkeypatch):
         monkeypatch.setattr(
-            "services.conversational_response_generator.decide_copilot_intent",
+            "services.copilot.service.decide_copilot_intent",
             lambda *_args, **_kwargs: {"intent": "read", "action": "campaign.list", "search_context": {}, "reason": "list campaigns"},
         )
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
@@ -829,13 +824,13 @@ class TestCopilotOperationBoundary:
                 "result": {"campaigns": [{"id": "c-1", "name": "Restaurant outreach", "status": "planning", "lead_count": 5}]},
             }
 
-        monkeypatch.setattr(main_module.copilot_runners, "run_campaign", fake_campaign_runner)
+        monkeypatch.setattr(copilot_service.copilot_runners, "run_campaign", fake_campaign_runner)
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
-        payload = main_module.SendWebMessageRequest(
+        payload = conversations_api.SendWebMessageRequest(
             text="show my campaigns",
-            copilot=main_module.CopilotContextModel(current_page="Campaigns", message_history=[]),
+            copilot=conversations_api.CopilotContextModel(current_page="Campaigns", message_history=[]),
         )
-        result = await main_module.post_web_session_message("session-1", payload, request)
+        result = await conversations_api.post_web_session_message("session-1", payload, request)
         assert result["intent"] == "read"
         assert result["messages"][0]["data"]["tool"] == "campaign.list"
         assert result["messages"][0]["data"]["result"]["campaigns"][0]["id"] == "c-1"
@@ -916,7 +911,7 @@ class TestCopilotOperationBoundary:
     @pytest.mark.asyncio
     async def test_endpoint_lead_rank_returns_authoritative_visible_result(self, monkeypatch):
         monkeypatch.setattr(
-            "services.conversational_response_generator.decide_copilot_intent",
+            "services.copilot.service.decide_copilot_intent",
             lambda *_args, **_kwargs: {
                 "intent": "read", "action": "lead.rank", "sort": "best", "limit": 1,
                 "search_context": {}, "reason": "rank active Discovery",
@@ -942,15 +937,15 @@ class TestCopilotOperationBoundary:
             },
         )
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
-        payload = main_module.SendWebMessageRequest(
+        payload = conversations_api.SendWebMessageRequest(
             text="find the best 5",
-            copilot=main_module.CopilotContextModel(
+            copilot=conversations_api.CopilotContextModel(
                 current_page="Discovery",
                 active_search={"discovery_id": "d-1"},
                 message_history=[],
             ),
         )
-        result = await main_module.post_web_session_message("session-1", payload, request)
+        result = await conversations_api.post_web_session_message("session-1", payload, request)
         message = result["messages"][0]
         assert result["intent"] == "read"
         assert message["data"]["tool"] == "lead.rank"
@@ -964,7 +959,7 @@ class TestCopilotOperationBoundary:
             {"intent": "read", "mode": "new", "search_context": {}, "reason": "read results"},
         ])
         monkeypatch.setattr(
-            "services.conversational_response_generator.decide_copilot_intent",
+            "services.copilot.service.decide_copilot_intent",
             lambda *_args, **_kwargs: next(decisions),
         )
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
@@ -974,8 +969,8 @@ class TestCopilotOperationBoundary:
         monkeypatch.setattr("services.discovery.service.create_search_run", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("read/conversation must not create Discovery")))
         monkeypatch.setattr("services.discovery.service.get_discovery", lambda *_args: {"id": "d-1", "status": "completed", "title": "Restaurant leads", "discovery_leads": [], "discovery_companies": [], "summary": {}})
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
-        payload = main_module.SendWebMessageRequest(text="hi", copilot=main_module.CopilotContextModel(current_page="Mission Control", message_history=[]))
-        conversation = await main_module.post_web_session_message("session-1", payload, request)
+        payload = conversations_api.SendWebMessageRequest(text="hi", copilot=conversations_api.CopilotContextModel(current_page="Mission Control", message_history=[]))
+        conversation = await conversations_api.post_web_session_message("session-1", payload, request)
         assert conversation["intent"] == "conversation"
         assert "operation" not in conversation
         conversation_text = conversation["messages"][0]["text"]
@@ -983,14 +978,14 @@ class TestCopilotOperationBoundary:
         assert "<<action:" not in conversation_text
         payload.text = "what did you find?"
         payload.copilot.active_search = {"discovery_id": "d-1"}
-        read = await main_module.post_web_session_message("session-1", payload, request)
+        read = await conversations_api.post_web_session_message("session-1", payload, request)
         assert read["intent"] == "read"
         assert read["read_result"]["discovery_id"] == "d-1"
 
     @pytest.mark.asyncio
     async def test_discovery_tool_failure_is_structured(self, monkeypatch):
         monkeypatch.setattr(
-            "services.conversational_response_generator.decide_copilot_intent",
+            "services.copilot.service.decide_copilot_intent",
             lambda *_args, **_kwargs: {"intent": "discovery", "mode": "new", "search_context": {"industry": ["restaurants"]}},
         )
         monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
@@ -1001,8 +996,8 @@ class TestCopilotOperationBoundary:
             raise RuntimeError("provider unavailable")
         monkeypatch.setattr("services.copilot.runners.run_discovery", fail_runner)
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
-        payload = main_module.SendWebMessageRequest(text="I need restaurant leads", copilot=main_module.CopilotContextModel(current_page="Mission Control", message_history=[]))
-        result = await main_module.post_web_session_message("session-1", payload, request)
+        payload = conversations_api.SendWebMessageRequest(text="I need restaurant leads", copilot=conversations_api.CopilotContextModel(current_page="Mission Control", message_history=[]))
+        result = await conversations_api.post_web_session_message("session-1", payload, request)
         assert result["ok"] is False
         assert result["operation"]["status"] == "failed"
 
@@ -1040,7 +1035,7 @@ class TestCopilotOperationBoundary:
             return {"discovery_id": "discovery-1", "job_id": "job-1", "status": "queued"}
 
         monkeypatch.setattr(
-            "services.conversational_response_generator.decide_copilot_intent",
+            "services.copilot.service.decide_copilot_intent",
             lambda *_args, **_kwargs: {
                 "intent": "discovery",
                 "mode": "new",
@@ -1060,11 +1055,11 @@ class TestCopilotOperationBoundary:
         monkeypatch.setattr("services.discovery.service.create_search_run", fake_create_search_run)
 
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
-        payload = main_module.SendWebMessageRequest(
+        payload = conversations_api.SendWebMessageRequest(
             text="I need new restaurant leads",
-            copilot=main_module.CopilotContextModel(current_page="Mission Control", message_history=[]),
+            copilot=conversations_api.CopilotContextModel(current_page="Mission Control", message_history=[]),
         )
-        result = await main_module.post_web_session_message("session-1", payload, request)
+        result = await conversations_api.post_web_session_message("session-1", payload, request)
 
         assert result["operation"]["kind"] == "search_discovery"
         assert result["operation"]["discovery_id"] == "discovery-1"
@@ -1085,7 +1080,7 @@ class TestCopilotOperationBoundary:
             lambda **_kwargs: (_ for _ in ()).throw(AssertionError("legacy engine must not receive Copilot bootstrap")),
         )
         monkeypatch.setattr(
-            "services.conversational_response_generator.decide_copilot_intent",
+            "services.copilot.service.decide_copilot_intent",
             lambda *_args, **_kwargs: {"intent": "discovery", "mode": "new", "search_context": {"industry": ["restaurants"], "location": [], "decision_makers": [], "quantity": None}, "reason": "explicit operation"},
         )
         async def empty_knowledge(*_args, **_kwargs):
@@ -1100,11 +1095,11 @@ class TestCopilotOperationBoundary:
                 get=lambda key, default="": "Bearer session-1" if key == "authorization" else default,
             ),
         )
-        payload = main_module.SendWebMessageRequest(
+        payload = conversations_api.SendWebMessageRequest(
             text="I need restaurant leads",
-            copilot=main_module.CopilotContextModel(current_page="Mission Control", message_history=[]),
+            copilot=conversations_api.CopilotContextModel(current_page="Mission Control", message_history=[]),
         )
-        result = await main_module.post_web_session_message("missing-session", payload, request)
+        result = await conversations_api.post_web_session_message("missing-session", payload, request)
         assert result["operation"]["job_id"] == "job-2"
 
 
@@ -1254,7 +1249,7 @@ class TestStructuredContext:
             return {"discovery_id": "discovery-1", "job_id": "job-1", "status": "queued"}
 
         monkeypatch.setattr(
-            "services.conversational_response_generator.decide_copilot_intent",
+            "services.copilot.service.decide_copilot_intent",
             lambda *_args, **_kwargs: {
                 "intent": "discovery",
                 "mode": "new",
@@ -1382,7 +1377,7 @@ def _schema_responses(client, session_token, monkeypatch):
     # Discovery persistence. Keep its otherwise generic payloads on the safe
     # conversational path so a schema regression cannot create a real job.
     monkeypatch.setattr(
-        "services.conversational_response_generator.decide_copilot_intent",
+        "services.copilot.service.decide_copilot_intent",
         lambda *_args, **_kwargs: {
             "intent": "conversation",
             "mode": "new",

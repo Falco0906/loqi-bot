@@ -3,6 +3,9 @@
 from types import SimpleNamespace
 
 import pytest
+import main as main_module
+from services.copilot import service as copilot_service
+from services.conversations import api as conversations_api
 
 
 @pytest.mark.asyncio
@@ -172,8 +175,6 @@ def test_campaign_create_uses_selected_ranked_leads_not_entire_discovery():
 
 @pytest.mark.asyncio
 async def test_endpoint_rank_then_campaign_stays_read_only_in_mvp(monkeypatch):
-    import main as main_module
-
     discovery = {
         "id": "discovery-1",
         "status": "completed",
@@ -191,10 +192,19 @@ async def test_endpoint_rank_then_campaign_stays_read_only_in_mvp(monkeypatch):
     ])
 
     monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1", "display_name": "Owner"})
+    async def resolve_session(_request):
+        return "owner-1", "canonical-session-1"
+
+    async def resolve_workspace(_request, _user_id):
+        return SimpleNamespace(workspace_id="workspace-1")
+
+    monkeypatch.setattr(copilot_service.identity_dependencies, "resolve_web_session", resolve_session)
+    monkeypatch.setattr(copilot_service.workspace_access, "resolve_selected_workspace_context", resolve_workspace)
     monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *_args, **_kwargs: {"snapshot": {}, "analysis": {}})
-    monkeypatch.setattr(main_module, "_copilot_tool_failure_reason", lambda tool: f"{tool} failed")
+    monkeypatch.setattr(copilot_service, "_tool_failure_reason", lambda tool: f"{tool} failed")
+    monkeypatch.setattr(copilot_service, "classify_copilot_read_question", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        "services.conversational_response_generator.decide_copilot_intent",
+        "services.copilot.service.decide_copilot_intent",
         lambda *_args, **_kwargs: next(decisions),
     )
     async def knowledge_context(*_args, **_kwargs):
@@ -217,17 +227,17 @@ async def test_endpoint_rank_then_campaign_stays_read_only_in_mvp(monkeypatch):
     monkeypatch.setattr("services.campaigns.service.maybe_auto_strategy", _noop_async)
 
     request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
-    rank_payload = main_module.SendWebMessageRequest(
+    rank_payload = conversations_api.SendWebMessageRequest(
         text="Pick the best 5",
-        copilot=main_module.CopilotContextModel(current_page="Discovery", page_context={"discovery_id": "discovery-1"}, message_history=[]),
+        copilot=conversations_api.CopilotContextModel(current_page="Discovery", page_context={"discovery_id": "discovery-1"}, message_history=[]),
     )
-    rank_response = await main_module.post_web_session_message("_", rank_payload, request)
+    rank_response = await conversations_api.post_web_session_message("_", rank_payload, request)
     ranked_ids = [lead["id"] for lead in rank_response["messages"][0]["data"]["result"]["leads"]]
     assert ranked_ids == [f"lead-{index}" for index in range(1, 5)]
 
-    campaign_payload = main_module.SendWebMessageRequest(
+    campaign_payload = conversations_api.SendWebMessageRequest(
         text="Create a campaign for them",
-        copilot=main_module.CopilotContextModel(
+        copilot=conversations_api.CopilotContextModel(
             current_page="Discovery",
             page_context={
                 "discovery_id": "discovery-1",
@@ -237,18 +247,16 @@ async def test_endpoint_rank_then_campaign_stays_read_only_in_mvp(monkeypatch):
             message_history=[],
         ),
     )
-    campaign_response = await main_module.post_web_session_message("_", campaign_payload, request)
+    campaign_response = await conversations_api.post_web_session_message("_", campaign_payload, request)
     assert campaign_response["messages"][0]["role"] == "assistant"
     assert campaign_response["messages"][0]["text"]
     assert attached == []
-    assert campaign_response["messages"][0]["data"]["status"] == "read_only_mvp"
+    assert campaign_response["messages"][0]["data"]["status"] == "unavailable"
 
 
 def test_database_failures_are_not_formatted_into_copilot_text():
-    import main as main_module
-
     raw = "PostgREST 23514: new row violates workspace_leads_lead_status_check"
-    safe = main_module._copilot_tool_failure_reason("campaign.create")
+    safe = copilot_service._tool_failure_reason("campaign.create")
     assert raw not in safe
     assert safe == "campaign.create could not be completed. Please try again."
 

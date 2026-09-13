@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 import services.conversations.compatibility as store
+import services.conversations.api as conversations_api
 import services.conversation_engine as engine_module
 import main as main_module
 
@@ -320,9 +321,8 @@ def test_create_web_session_endpoint_binds_authenticated_identity(monkeypatch, c
             "initial_messages": [],
         }
 
-    monkeypatch.setattr(main_module, "engine", MagicMock())
     monkeypatch.setattr(
-        main_module.engine, "create_web_session", fake_engine_create
+        conversations_api.engine, "create_web_session", fake_engine_create
     )
 
     async def fake_current_auth(request):
@@ -360,7 +360,7 @@ def test_create_web_session_fails_closed_when_legacy_user_bridge_cannot_be_provi
         created = True
         return {"ok": True, "session_token": "must-not-exist"}
 
-    monkeypatch.setattr(main_module.engine, "create_web_session", fake_engine_create)
+    monkeypatch.setattr(conversations_api.engine, "create_web_session", fake_engine_create)
 
     async def fake_current_auth(_request):
         from services.identity.dependencies import AuthContext
@@ -427,9 +427,8 @@ def test_create_web_session_endpoint_anonymous_without_header(monkeypatch, clien
             "initial_messages": [],
         }
 
-    monkeypatch.setattr(main_module, "engine", MagicMock())
     monkeypatch.setattr(
-        main_module.engine, "create_web_session", fake_engine_create
+        conversations_api.engine, "create_web_session", fake_engine_create
     )
 
     resp = client.post("/api/web/session", json={"display_name": "Guest"})

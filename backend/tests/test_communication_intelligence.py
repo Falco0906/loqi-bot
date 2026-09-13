@@ -8,7 +8,7 @@ from services.conversation_models import (
     ConversationMessage, IntentCategory, SignalStrength,
     ConversationStage, FollowupAction, TimelineEventType,
 )
-from services.intent_detector import detect_intents
+from services.conversation_intelligence.intent_extractor import detect_intents
 from services.conversation_intelligence.buying_signal_detector import detect_signals
 from services.conversation_classifier import classify_stage
 from services.conversation_memory import memory_store, create_or_update_memory, MemoryStore

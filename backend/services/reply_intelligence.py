@@ -9,7 +9,7 @@ from services.conversation_models import (
     BuyingSignal, ConversationStage, FollowupAction,
     ConversationMemory, FollowupRecommendation,
 )
-from services.intent_detector import detect_intents
+from services.conversation_intelligence.intent_extractor import detect_intents
 from services.conversation_intelligence.buying_signal_detector import detect_signals
 from services.conversation_classifier import classify_stage
 from services.conversation_memory import create_or_update_memory

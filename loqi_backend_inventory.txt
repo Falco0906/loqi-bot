@@ -258,7 +258,7 @@ backend/services/intelligence/lead_signals.py | ACTIVE | LeadSignals — determi
 backend/services/intelligence/provider_signals.py | ACTIVE | ProviderSignals — deterministic extraction of provider/connection facts.
 backend/services/intelligence/signal_factory.py | ACTIVE | SignalFactory — builds all intelligence signals from raw snapshot + delta.
 backend/services/intelligence/workspace_signals.py | ACTIVE | WorkspaceSignals — deterministic extraction of workspace-wide metrics.
-backend/services/intent_detector.py | ACTIVE | Intent Detection — structured classification of message intent.
+backend/services/conversation_intelligence/intent_extractor.py | ACTIVE | Canonical intent detection with legacy and enhanced result projections.
 backend/services/intentions/__init__.py | ACTIVE | Package initializer and public import surface.
 backend/services/intentions/engine.py | ACTIVE | Defines IntentionEngine.
 backend/services/intentions/helpers.py | ACTIVE | Defines build_intention and deduplicate.

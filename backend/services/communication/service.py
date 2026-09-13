@@ -28,7 +28,7 @@ from services.conversation_classifier import classify_stage
 from services.conversation_timeline import get_events as get_conversation_events
 from services.conversations.conversation_store import conversation_owned_by, conversation_store
 from services.followup_reasoner import recommend_followup
-from services.intent_detector import detect_intents
+from services.conversation_intelligence.intent_extractor import detect_intents
 from services.reply_intelligence import analyze_message
 from services.reply_summary import generate_summary
 from services.world_model.events import EventType as WMEventType

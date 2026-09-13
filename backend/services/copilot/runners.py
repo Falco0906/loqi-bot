@@ -390,7 +390,7 @@ async def run_inbox(
     from services.conversations.conversation_store import conversation_store
     from services.conversations.conversation_store import conversation_in_workspace, conversation_owned_by
     from services.followup_reasoner import recommend_followup
-    from services.intent_detector import detect_intents
+    from services.conversation_intelligence.intent_extractor import detect_intents
     from services.reasoning.reasoning_pipeline import get_pipeline as get_reasoning_pipeline
 
     page = decision.get("page_context") or {}

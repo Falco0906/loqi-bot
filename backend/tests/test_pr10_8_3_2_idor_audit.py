@@ -150,13 +150,9 @@ def _clean_runtime_state(monkeypatch):
         assert workspace_id == f"workspace-{owner_id}"
         return list(_CANONICAL_DRAFTS.get(owner_id, []))
 
-    def _legacy_workspace_drafts(owner_id, _session_token="", workspace_id=""):
-        return _load_drafts(owner_id, workspace_id)
-
     monkeypatch.setattr(outbound_service.workspace_access, "resolve_legacy_workspace_id", _workspace)
     monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", _workspace)
     monkeypatch.setattr(outbound_service.workspace_state, "load_drafts_only", _load_drafts)
-    monkeypatch.setattr(main_module, "_workspace_drafts", _legacy_workspace_drafts)
     yield
 
 

@@ -36,6 +36,7 @@ from services.communication.api import router as communication_router
 from services.events.api import router as events_router
 from services.export.api import router as export_router
 from services.workspace.api import router as workspace_router
+from services.workflows.api import router as workflows_router
 import services.outbound.service as outbound_service
 import services.conversations.service as conversation_service
 from services.conversations.api import engine, router as conversations_router
@@ -81,13 +82,6 @@ from services.draft_intelligence import analyze_draft as analyze_draft_intellige
 from services.strategic_intelligence_api import router as strategic_intelligence_router
 from services.rewrite_engine import execute_rewrite
 from services.draft_comparison import compare_versions
-from services.workflows.planner import plan_workflow
-from services.workflows.models import PlanningInput
-from services.workflows.executor import execute as execute_workflow, approve as approve_workflow, pause as pause_workflow, resume as resume_workflow, cancel as cancel_workflow
-from services.workflows.runtime import get_runtime, get_active_runtimes, get_all_runtimes, get_history as get_workflow_history
-from services.workflows.progress import calculate_progress
-from services.workflows.events import get_events as get_workflow_events, get_latest_sequence
-from services.workflows.models import WorkflowPlan
 from services.conversation_models import ConversationMessage
 from services.communication import provider_startup
 from services.communication.reply_simulator import maybe_schedule as simulate_reply
@@ -221,6 +215,7 @@ app.include_router(events_router)
 app.include_router(export_router)
 app.include_router(workspace_router)
 app.include_router(conversations_router)
+app.include_router(workflows_router)
 
 # ── Wire Organization Platform services ──
 _org_deps = _build_org_deps()
@@ -852,224 +847,6 @@ async def preview_lead_endpoint(session_token: str, payload: PreviewLeadRequest,
         raise HTTPException(status_code=400, detail=result.get("error", "Preview failed"))
 
     return {"ok": True, "lead_intelligence": result.get("lead_intelligence")}
-
-
-@app.post("/api/web/session/{session_token}/plan")
-async def plan_workflow_endpoint(session_token: str, payload: PlanningInput, request: Request = None):
-    session_token = identity_dependencies.web_session_token(request)
-    owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    selected_workspace = await workspace_access.resolve_selected_workspace_context(request, owner_id)
-    workspace_id = selected_workspace.workspace_id
-    from services.workspace.state import load_drafts_only
-    campaigns, drafts = await asyncio.gather(
-        asyncio.to_thread(load_campaigns, owner_id, workspace_id=workspace_id),
-        asyncio.to_thread(load_drafts_only, owner_id, workspace_id=workspace_id),
-    )
-    total_leads = sum(c.get("lead_count", 0) or 0 for c in campaigns)
-    snapshot = await asyncio.to_thread(
-        build_snapshot, session_token, campaigns, drafts, total_leads, user_id=owner_id,
-    )
-    result = plan_workflow(
-        objective=payload.objective,
-        snapshot=snapshot,
-        current_page=payload.current_page,
-    )
-    return {
-        "ok": True,
-        "plan": result.primary_plan.model_dump(),
-        "alternative_plan": result.alternative_plan.model_dump(),
-        "recommendation": result.recommendation,
-        "confidence": result.confidence,
-    }
-
-
-class ExecuteWorkflowRequest(BaseModel):
-    plan_id: str
-    goal: str
-    reasoning: str = ""
-    estimated_duration: str = ""
-    risk_level: str = "low"
-    requires_approval: bool = False
-    steps: list[dict]
-
-
-@app.post("/api/web/session/{session_token}/workflows/execute")
-async def execute_workflow_endpoint(session_token: str, payload: ExecuteWorkflowRequest, request: Request = None):
-    session_token = identity_dependencies.web_session_token(request)
-    plan = WorkflowPlan(
-        id=payload.plan_id,
-        goal=payload.goal,
-        reasoning=payload.reasoning,
-        estimated_duration=payload.estimated_duration,
-        risk_level=payload.risk_level,
-        requires_approval=payload.requires_approval,
-        steps=payload.steps,
-    )
-    runtime = execute_workflow(plan, session_token)
-    progress = calculate_progress(runtime)
-    publish(session_token, WMEventType.WORKFLOW_STARTED, {
-        "workflow_id": runtime.workflow_id,
-        "goal": payload.goal,
-        "step_count": len(payload.steps),
-        "risk_level": payload.risk_level,
-        "requires_approval": payload.requires_approval,
-    }, actor="user")
-    return {
-        "ok": True,
-        "workflow_id": runtime.workflow_id,
-        "status": runtime.status.value,
-        "progress": progress,
-        "runtime": runtime.summary(),
-    }
-
-
-def _require_workflow_owned(workflow_id: str, request: Request, session_token: str = ""):
-    """Return the workflow runtime only when it belongs to the caller's session.
-
-    Fail-closed (PR10.8.3.2): workflows are session-scoped (RuntimeEntry holds
-    the creating session_token). A user may only read/mutate their own workflow.
-    """
-    from services.workflows.runtime import get_runtime
-    runtime = get_runtime(workflow_id)
-    if runtime is None:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-    caller_token = identity_dependencies.web_session_token(request) if request is not None else session_token
-    if not caller_token or runtime.session_token != caller_token:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-    return runtime
-
-
-@app.get("/api/web/session/{session_token}/workflows/{workflow_id}")
-async def get_workflow_status(session_token: str, workflow_id: str, request: Request = None):
-    runtime = _require_workflow_owned(workflow_id, request, session_token)
-    progress = calculate_progress(runtime)
-    return {
-        "ok": True,
-        "runtime": runtime.to_dict(),
-        "progress": progress,
-    }
-
-
-@app.get("/api/web/session/{session_token}/workflows/{workflow_id}/events")
-async def get_workflow_events_endpoint(session_token: str, workflow_id: str, request: Request = None):
-    _require_workflow_owned(workflow_id, request, session_token)
-    return {
-        "ok": True,
-        "events": get_workflow_events(workflow_id),
-    }
-
-
-@app.post("/api/web/session/{session_token}/workflows/{workflow_id}/approve")
-async def approve_workflow_step(session_token: str, workflow_id: str, request: Request = None):
-    session_token = identity_dependencies.web_session_token(request)
-    _require_workflow_owned(workflow_id, request, session_token)
-    try:
-        runtime = approve_workflow(workflow_id)
-        progress = calculate_progress(runtime)
-        publish(session_token, WMEventType.WORKFLOW_APPROVED, {
-            "workflow_id": workflow_id,
-            "status": runtime.status.value,
-        }, actor="user")
-        return {
-            "ok": True,
-            "workflow_id": runtime.workflow_id,
-            "status": runtime.status.value,
-            "progress": progress,
-            "runtime": runtime.summary(),
-        }
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.get("/api/web/session/{session_token}/workflows")
-async def list_workflows(session_token: str, request: Request = None):
-    session_token = identity_dependencies.web_session_token(request)
-    workflows = get_all_runtimes(session_token)
-    return {
-        "ok": True,
-        "workflows": [wf.summary() for wf in workflows],
-        "active": [calculate_progress(wf) for wf in get_active_runtimes(session_token)],
-    }
-
-
-@app.get("/api/web/session/{session_token}/workflows/history")
-async def workflow_history(session_token: str, status: str | None = None, limit: int = 50, request: Request = None):
-    session_token = identity_dependencies.web_session_token(request)
-    return {
-        "ok": True,
-        "history": get_workflow_history(session_token, status_filter=status, limit=limit),
-    }
-
-
-@app.get("/api/web/session/{session_token}/workflows/{workflow_id}/events/stream")
-async def workflow_events_after(session_token: str, workflow_id: str, after: int = 0, request: Request = None):
-    _require_workflow_owned(workflow_id, request, session_token)
-    return {
-        "ok": True,
-        "events": get_workflow_events(workflow_id, after_sequence=after),
-        "latest_sequence": get_latest_sequence(workflow_id),
-    }
-
-
-@app.post("/api/web/session/{session_token}/workflows/{workflow_id}/pause")
-async def pause_workflow_endpoint(session_token: str, workflow_id: str, request: Request = None):
-    session_token = identity_dependencies.web_session_token(request)
-    _require_workflow_owned(workflow_id, request, session_token)
-    try:
-        runtime = pause_workflow(workflow_id)
-        progress = calculate_progress(runtime)
-        publish(session_token, WMEventType.WORKFLOW_PAUSED, {
-            "workflow_id": workflow_id,
-            "status": runtime.status.value,
-        }, actor="user")
-        return {
-            "ok": True,
-            "workflow_id": runtime.workflow_id,
-            "status": runtime.status.value,
-            "progress": progress,
-        }
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.post("/api/web/session/{session_token}/workflows/{workflow_id}/resume")
-async def resume_workflow_endpoint(session_token: str, workflow_id: str, request: Request = None):
-    session_token = identity_dependencies.web_session_token(request)
-    _require_workflow_owned(workflow_id, request, session_token)
-    try:
-        runtime = resume_workflow(workflow_id)
-        progress = calculate_progress(runtime)
-        publish(session_token, WMEventType.WORKFLOW_RESUMED, {
-            "workflow_id": workflow_id,
-            "status": runtime.status.value,
-        }, actor="user")
-        return {
-            "ok": True,
-            "workflow_id": runtime.workflow_id,
-            "status": runtime.status.value,
-            "progress": progress,
-        }
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.post("/api/web/session/{session_token}/workflows/{workflow_id}/cancel")
-async def cancel_workflow_endpoint(session_token: str, workflow_id: str, request: Request = None):
-    session_token = identity_dependencies.web_session_token(request)
-    _require_workflow_owned(workflow_id, request, session_token)
-    try:
-        runtime = cancel_workflow(workflow_id)
-        publish(session_token, WMEventType.WORKFLOW_CANCELLED, {
-            "workflow_id": workflow_id,
-            "status": runtime.status.value,
-        }, actor="user")
-        return {
-            "ok": True,
-            "workflow_id": runtime.workflow_id,
-            "status": runtime.status.value,
-        }
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
 
 if __name__ == "__main__":

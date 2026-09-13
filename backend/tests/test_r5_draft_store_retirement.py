@@ -9,7 +9,8 @@ from fastapi import HTTPException
 import main as main_module
 import services.export.api as export_api
 import services.export.service as export_service
-import services.workspace.state as workspace_state
+import services.workflows.api as workflow_api
+import services.workflows.service as workflow_service
 from services.workflows.models import PlanningInput
 
 
@@ -61,14 +62,14 @@ async def test_workflow_plan_reads_authorized_workspace_state(monkeypatch):
         seen["snapshot"] = (session_token, campaigns, drafts, total_leads, kwargs)
         return {"campaigns": campaigns, "drafts": {"pending": len(drafts)}}
 
-    monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda _request: "test-token")
-    monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", _owner)
-    monkeypatch.setattr(main_module.workspace_access, "resolve_selected_workspace_context", _workspace)
-    monkeypatch.setattr(main_module, "load_campaigns", load_campaigns)
-    monkeypatch.setattr(workspace_state, "load_drafts_only", load_drafts)
-    monkeypatch.setattr(main_module, "build_snapshot", build_snapshot)
+    monkeypatch.setattr(workflow_api.identity_dependencies, "web_session_token", lambda _request: "test-token")
+    monkeypatch.setattr(workflow_api.identity_dependencies, "authenticated_user_id", _owner)
+    monkeypatch.setattr(workflow_api.workspace_access, "resolve_selected_workspace_context", _workspace)
+    monkeypatch.setattr(workflow_service, "load_campaigns", load_campaigns)
+    monkeypatch.setattr(workflow_service, "load_drafts_only", load_drafts)
+    monkeypatch.setattr(workflow_service, "build_snapshot", build_snapshot)
 
-    result = await main_module.plan_workflow_endpoint(
+    result = await workflow_api.plan_workflow_endpoint(
         "ignored-url-token",
         PlanningInput(objective="Review my drafts", current_page="Draft Review"),
         _request(),
@@ -83,7 +84,10 @@ async def test_workflow_plan_reads_authorized_workspace_state(monkeypatch):
         3,
         {"user_id": "owner-1"},
     )
+    assert set(result) == {"ok", "plan", "alternative_plan", "recommendation", "confidence"}
     assert result["ok"] is True
+    assert isinstance(result["plan"], dict)
+    assert isinstance(result["alternative_plan"], dict)
 
 
 def test_copilot_context_fails_closed_without_authorized_context():

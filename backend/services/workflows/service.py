@@ -3,6 +3,22 @@ import concurrent.futures
 import os
 import time
 
+from services.workflows.runtime import RuntimeEntry, get_runtime
+from services.campaigns.service import load_campaigns
+from services.workspace.state import load_drafts_only
+from services.workspace_snapshot import build_snapshot
+from services.workflows.executor import (
+    approve as approve_runtime,
+    cancel as cancel_runtime,
+    execute as execute_runtime,
+    pause as pause_runtime,
+    resume as resume_runtime,
+)
+from services.workflows.models import WorkflowPlan
+from services.workflows.planner import plan_workflow
+from services.workflows.progress import calculate_progress
+from services.world_model import EventType as WMEventType, publish
+
 # TEMPORARY: shared executor for bridging sync→async.
 # Remove once handle_message() and the workflow execution path
 # become async-native and can directly await GmailAdapter.
@@ -21,6 +37,167 @@ _ASYNC_BRIDGE_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
     thread_name_prefix="async_bridge",
 )
 _ASYNC_BRIDGE_TIMEOUT_SECONDS = float(os.getenv("ASYNC_BRIDGE_TIMEOUT_SECONDS", "120"))
+
+
+def owned_runtime(workflow_id: str, session_token: str) -> RuntimeEntry | None:
+    """Return a legacy workflow runtime only for its creating web session."""
+    runtime = get_runtime(workflow_id)
+    if runtime is None or not session_token or runtime.session_token != session_token:
+        return None
+    return runtime
+
+
+class WorkflowNotFoundError(Exception):
+    """Raised when a legacy session does not own the requested runtime."""
+
+
+def _owned_runtime_or_raise(workflow_id: str, session_token: str) -> RuntimeEntry:
+    runtime = owned_runtime(workflow_id, session_token)
+    if runtime is None:
+        raise WorkflowNotFoundError(workflow_id)
+    return runtime
+
+
+def start_workflow(
+    *,
+    session_token: str,
+    plan_id: str,
+    goal: str,
+    reasoning: str = "",
+    estimated_duration: str = "",
+    risk_level: str = "low",
+    requires_approval: bool = False,
+    steps: list[dict],
+) -> dict:
+    """Start one legacy runtime and publish its established world-model event."""
+    plan = WorkflowPlan(
+        id=plan_id,
+        goal=goal,
+        reasoning=reasoning,
+        estimated_duration=estimated_duration,
+        risk_level=risk_level,
+        requires_approval=requires_approval,
+        steps=steps,
+    )
+    runtime = execute_runtime(plan, session_token)
+    progress = calculate_progress(runtime)
+    publish(session_token, WMEventType.WORKFLOW_STARTED, {
+        "workflow_id": runtime.workflow_id,
+        "goal": goal,
+        "step_count": len(steps),
+        "risk_level": risk_level,
+        "requires_approval": requires_approval,
+    }, actor="user")
+    return {
+        "ok": True,
+        "workflow_id": runtime.workflow_id,
+        "status": runtime.status.value,
+        "progress": progress,
+        "runtime": runtime.summary(),
+    }
+
+
+def approve_workflow_for_session(workflow_id: str, session_token: str) -> dict:
+    """Approve one owned workflow step and publish the established event."""
+    _owned_runtime_or_raise(workflow_id, session_token)
+    runtime = approve_runtime(workflow_id)
+    progress = calculate_progress(runtime)
+    publish(session_token, WMEventType.WORKFLOW_APPROVED, {
+        "workflow_id": workflow_id,
+        "status": runtime.status.value,
+    }, actor="user")
+    return {
+        "ok": True,
+        "workflow_id": runtime.workflow_id,
+        "status": runtime.status.value,
+        "progress": progress,
+        "runtime": runtime.summary(),
+    }
+
+
+def pause_workflow_for_session(workflow_id: str, session_token: str) -> dict:
+    """Pause one owned workflow and publish the established event."""
+    _owned_runtime_or_raise(workflow_id, session_token)
+    runtime = pause_runtime(workflow_id)
+    progress = calculate_progress(runtime)
+    publish(session_token, WMEventType.WORKFLOW_PAUSED, {
+        "workflow_id": workflow_id,
+        "status": runtime.status.value,
+    }, actor="user")
+    return {
+        "ok": True,
+        "workflow_id": runtime.workflow_id,
+        "status": runtime.status.value,
+        "progress": progress,
+    }
+
+
+def resume_workflow_for_session(workflow_id: str, session_token: str) -> dict:
+    """Resume one owned workflow and publish the established event."""
+    _owned_runtime_or_raise(workflow_id, session_token)
+    runtime = resume_runtime(workflow_id)
+    progress = calculate_progress(runtime)
+    publish(session_token, WMEventType.WORKFLOW_RESUMED, {
+        "workflow_id": workflow_id,
+        "status": runtime.status.value,
+    }, actor="user")
+    return {
+        "ok": True,
+        "workflow_id": runtime.workflow_id,
+        "status": runtime.status.value,
+        "progress": progress,
+    }
+
+
+def cancel_workflow_for_session(workflow_id: str, session_token: str) -> dict:
+    """Cancel one owned workflow and publish the established event."""
+    _owned_runtime_or_raise(workflow_id, session_token)
+    runtime = cancel_runtime(workflow_id)
+    publish(session_token, WMEventType.WORKFLOW_CANCELLED, {
+        "workflow_id": workflow_id,
+        "status": runtime.status.value,
+    }, actor="user")
+    return {
+        "ok": True,
+        "workflow_id": runtime.workflow_id,
+        "status": runtime.status.value,
+    }
+
+
+async def plan_workspace_workflow(
+    *,
+    user_id: str,
+    workspace_id: str,
+    session_token: str,
+    objective: str,
+    current_page: str = "unknown",
+) -> dict:
+    """Build one authorized workspace snapshot and return workflow alternatives."""
+    campaigns, drafts = await asyncio.gather(
+        asyncio.to_thread(load_campaigns, user_id, workspace_id=workspace_id),
+        asyncio.to_thread(load_drafts_only, user_id, workspace_id=workspace_id),
+    )
+    total_leads = sum(campaign.get("lead_count", 0) or 0 for campaign in campaigns)
+    snapshot = await asyncio.to_thread(
+        build_snapshot,
+        session_token,
+        campaigns,
+        drafts,
+        total_leads,
+        user_id=user_id,
+    )
+    result = plan_workflow(
+        objective=objective,
+        snapshot=snapshot,
+        current_page=current_page,
+    )
+    return {
+        "ok": True,
+        "plan": result.primary_plan.model_dump(),
+        "alternative_plan": result.alternative_plan.model_dump(),
+        "recommendation": result.recommendation,
+        "confidence": result.confidence,
+    }
 
 
 def _bridge_active_workers() -> int:

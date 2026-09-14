@@ -314,7 +314,7 @@ backend/
 │   ├── conversation_store.py   # Supabase CRUD for sessions/messages
 │   ├── conversation_models.py  # Pydantic models for intelligence
 │   ├── conversation_memory.py  # Structured fact storage per conversation
-│   ├── conversation_timeline.py# Event log per conversation
+│   ├── conversations/timeline.py # Durable event log per conversation
 │   ├── conversation_intelligence/stage_classifier.py # Legacy sales-stage classification
 │   ├── conversational_response_generator.py # AI response generation (963 lines)
 │   ├── conversation_intelligence/legacy_reply_projection.py # Legacy ReplyIntelligence projection

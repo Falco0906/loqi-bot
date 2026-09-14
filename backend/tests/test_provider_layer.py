@@ -668,8 +668,6 @@ class TestIntegration:
         import os
         if os.path.exists(intelligence_memory.STATE_FILE):
             os.unlink(intelligence_memory.STATE_FILE)
-        from services.conversation_timeline import clear_all
-        clear_all()
 
     def _establish_loqi_relationship(self, provider, thread_id: str, ext_id: str = "out_1"):
         """Create a trusted Loqi conversation for the thread, as the outbound

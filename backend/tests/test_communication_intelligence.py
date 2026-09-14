@@ -14,7 +14,7 @@ from services.conversation_intelligence.stage_classifier import classify_stage
 from services.conversations.intelligence_memory import build_legacy_memory
 from services.followup_reasoner import recommend_followup
 from services.communication.reply_summary import generate_summary
-from services.conversation_timeline import create_event, get_events, clear_events, clear_all
+from services.conversations.compatibility import read_legacy_timeline_events
 from services.conversation_intelligence.legacy_reply_projection import project_legacy_reply_intelligence
 
 
@@ -22,11 +22,6 @@ from services.conversation_intelligence.legacy_reply_projection import project_l
 
 def _msg(text: str, sender: str = "lead") -> ConversationMessage:
     return ConversationMessage(text=text, sender=sender)
-
-
-def _cleanup():
-    clear_all()
-
 
 # ═══════════════════════════════════════════════════════════════════
 # 1. Intent Detection
@@ -148,9 +143,6 @@ class TestBuyingSignals:
 # ═══════════════════════════════════════════════════════════════════
 
 class TestConversationMemory:
-    def setup_method(self):
-        _cleanup()
-
     def test_memory_creation(self):
         msg = _msg("How much does this cost?")
         intents = detect_intents(msg.text)
@@ -228,9 +220,6 @@ class TestConversationMemory:
 # ═══════════════════════════════════════════════════════════════════
 
 class TestReplyIntelligence:
-    def setup_method(self):
-        _cleanup()
-
     def test_aggregation(self):
         msg = _msg("How much does this cost? I'd like a demo too")
         intel, mem = project_legacy_reply_intelligence(msg, conversation_id="ri-1")
@@ -342,45 +331,7 @@ class TestFollowupReasoner:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 6. Timeline
-# ═══════════════════════════════════════════════════════════════════
-
-class TestTimeline:
-    def setup_method(self):
-        clear_all()
-
-    def test_correct_event_creation(self):
-        ev = create_event("conv-1", TimelineEventType.LEAD_REPLIED, "Lead replied")
-        assert ev.event_type == TimelineEventType.LEAD_REPLIED
-        assert ev.message == "Lead replied"
-        assert ev.timestamp
-
-    def test_correct_ordering(self):
-        from datetime import datetime, timezone, timedelta
-        import time
-        e1 = create_event("conv-2", TimelineEventType.LEAD_REPLIED, "First")
-        time.sleep(0.01)
-        e2 = create_event("conv-2", TimelineEventType.PRICING_REQUESTED, "Second")
-        events = get_events("conv-2")
-        assert len(events) == 2
-        assert events[0].message == "First"
-        assert events[1].message == "Second"
-
-    def test_multiple_conversations(self):
-        create_event("conv-a", TimelineEventType.LEAD_REPLIED, "A1")
-        create_event("conv-b", TimelineEventType.PRICING_REQUESTED, "B1")
-        create_event("conv-a", TimelineEventType.DEMO_REQUESTED, "A2")
-        assert len(get_events("conv-a")) == 2
-        assert len(get_events("conv-b")) == 1
-
-    def test_clear_events(self):
-        create_event("conv-c", TimelineEventType.LEAD_REPLIED, "Test")
-        clear_events("conv-c")
-        assert get_events("conv-c") == []
-
-
-# ═══════════════════════════════════════════════════════════════════
-# 7. Classification / Stage
+# 6. Classification / Stage
 # ═══════════════════════════════════════════════════════════════════
 
 class TestStageClassification:
@@ -414,7 +365,7 @@ class TestStageClassification:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 8. Summary
+# 7. Summary
 # ═══════════════════════════════════════════════════════════════════
 
 class TestSummary:
@@ -443,13 +394,10 @@ class TestSummary:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 9. Integration: End-to-end flow
+# 8. Integration: End-to-end flow
 # ═══════════════════════════════════════════════════════════════════
 
 class TestEndToEnd:
-    def setup_method(self):
-        _cleanup()
-
     def test_full_flow(self):
         cid = "e2e-1"
 
@@ -473,7 +421,7 @@ class TestEndToEnd:
         # ``cid`` has no canonical Conversations record. Legacy timeline
         # events are intentionally no longer retained in process memory for
         # such analysis-only ids; the intelligence result remains unchanged.
-        assert get_events(cid) == []
+        assert read_legacy_timeline_events(cid) == []
 
     def test_workflow_objective_mapping(self):
         from services.conversation_intelligence.legacy_models import FollowupAction

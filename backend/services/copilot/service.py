@@ -10,7 +10,7 @@ from typing import Any
 import services.identity.dependencies as identity_dependencies
 import services.workspace.access as workspace_access
 from services.workspace import context as workspace_context_service
-from services.conversational_response_generator import (
+from services.copilot.decision import (
     classify_copilot_read_question,
     decide_copilot_intent,
 )
@@ -26,7 +26,7 @@ from services.copilot.tools import (
 import services.copilot.runners as copilot_runners
 from services.copilot_orchestrator import execute_copilot_plan, has_multi_step_plan
 from services.conversation_engine import _message
-from services.conversational_response_generator import generate_copilot_response
+from services.copilot.response import generate_copilot_response
 from services.platform.supabase import get_user_preferences
 
 

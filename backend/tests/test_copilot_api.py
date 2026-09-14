@@ -83,7 +83,7 @@ class TestCopilotOperationBoundary:
         monkeypatch.setattr("services.copilot.service.get_user_preferences", lambda _user_id: {"tone": "concise"})
         monkeypatch.setattr("services.copilot.service.classify_copilot_read_question", lambda *_args, **_kwargs: None)
         monkeypatch.setattr("services.copilot.service.decide_copilot_intent", fake_decide)
-        monkeypatch.setattr("services.conversational_response_generator.generate_copilot_response", lambda **_kwargs: "Grounded response.")
+        monkeypatch.setattr("services.copilot.service.generate_copilot_response", lambda **_kwargs: "Grounded response.")
 
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
         payload = conversations_api.SendWebMessageRequest(
@@ -439,7 +439,7 @@ class TestCopilotOperationBoundary:
         assert title({"industry": ["cafe"], "decision_makers": ["cafe_owner"], "location": ["Hyderabad"], "quantity": 100}) == "100 cafe owners in Hyderabad"
 
     def test_intent_contract_supports_conversation_read_and_unsupported_action(self, monkeypatch):
-        from services.conversational_response_generator import decide_copilot_intent
+        from services.copilot.decision import decide_copilot_intent
 
         decisions = iter([
             '{"intent":"conversation","mode":"new","search_context":{},"reason":"greeting"}',
@@ -457,7 +457,7 @@ class TestCopilotOperationBoundary:
         assert action["action"] == "campaign.create"
 
     def test_conversation_response_ignores_active_workspace_operations(self):
-        from services.conversational_response_generator import generate_copilot_response
+        from services.copilot.response import generate_copilot_response
 
         response = generate_copilot_response(
             "hi",
@@ -475,7 +475,7 @@ class TestCopilotOperationBoundary:
         assert "campaign" not in response.lower()
 
     def test_read_response_is_grounded_in_authoritative_result(self, monkeypatch):
-        from services.conversational_response_generator import generate_copilot_response
+        from services.copilot.response import generate_copilot_response
 
         captured = {}
 
@@ -517,7 +517,7 @@ class TestCopilotOperationBoundary:
         ],
     )
     def test_strategic_questions_select_read_capabilities(self, monkeypatch, question, action):
-        from services.conversational_response_generator import decide_copilot_intent
+        from services.copilot.decision import decide_copilot_intent
 
         monkeypatch.setattr(
             "services.ai.try_send_openai_request",
@@ -530,7 +530,7 @@ class TestCopilotOperationBoundary:
         assert decision["action"] == action
 
     def test_clear_strategic_questions_use_bounded_local_classification(self):
-        from services.conversational_response_generator import classify_copilot_read_question
+        from services.copilot.decision import classify_copilot_read_question
 
         ctx = {"campaign_id": "campaign-1", "draft_id": "draft-1", "conversation_id": "conversation-1"}
         active = {"discovery_id": "discovery-1"}
@@ -769,7 +769,7 @@ class TestCopilotOperationBoundary:
         assert select_copilot_tool({"intent": "action", "action": "campaign.launch"}) is None
 
     def test_active_discovery_followups_route_to_lead_capabilities(self, monkeypatch):
-        from services.conversational_response_generator import decide_copilot_intent
+        from services.copilot.decision import decide_copilot_intent
         from services.copilot.tools import select_copilot_tool
 
         decisions = iter([
@@ -1002,7 +1002,7 @@ class TestCopilotOperationBoundary:
         assert result["operation"]["status"] == "failed"
 
     def test_agent_intent_router_distinguishes_action_and_refinements(self, monkeypatch):
-        from services.conversational_response_generator import decide_copilot_intent
+        from services.copilot.decision import decide_copilot_intent
 
         decisions = iter([
             '{"intent":"lead_discovery","mode":"new","search_context":{"industry":["restaurants"],"location":[],"decision_makers":[],"quantity":null}}',

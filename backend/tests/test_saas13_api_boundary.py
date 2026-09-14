@@ -226,6 +226,90 @@ class TestStrategicIntelligenceBoundary:
         # Persistence targeted the authenticated actor, not the payload user.
         assert stub.saved_user_ids == [complete.user.id]
 
+    def test_generate_preserves_profile_envelope_and_input_mapping(self, client, monkeypatch):
+        stub = self._stub_onboarding(client)
+        calls: list[dict] = []
+
+        class _Generator:
+            async def generate_profile(self, **kwargs):
+                calls.append(kwargs)
+                return {"COMPANY_SUMMARY": "Acme sells widgets"}
+
+        monkeypatch.setattr(
+            "services.strategic_intelligence_api.get_profile_generator",
+            lambda: _Generator(),
+        )
+        svc, _ = _build_service()
+        complete = asyncio.run(_register_user(svc, "strategic-envelope@example.com"))
+
+        response = client.post(
+            "/api/v1/strategic-intelligence/generate",
+            json={
+                "company_description": "Widgets",
+                "ideal_customer": "Operators",
+                "differentiation": "Fast setup",
+                "annual_goal": "Grow",
+                "biggest_obstacle": "Awareness",
+                "website": "https://acme.example",
+            },
+            headers=_headers(complete.session.id),
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body) == {"profile", "generated_at"}
+        assert body["profile"] == {"COMPANY_SUMMARY": "Acme sells widgets"}
+        assert isinstance(body["generated_at"], str) and body["generated_at"]
+        assert calls == [{
+            "company_description": "Widgets",
+            "ideal_customer": "Operators",
+            "differentiation": "Fast setup",
+            "annual_goal": "Grow",
+            "biggest_obstacle": "Awareness",
+            "website": "https://acme.example",
+        }]
+        assert stub.saved_data == [{
+            "strategicProfile": body["profile"],
+            "strategicProfileGeneratedAt": body["generated_at"],
+        }]
+
+    def test_generate_keeps_success_when_profile_persistence_fails(self, client, monkeypatch):
+        from services.onboarding import api as onboarding_api
+
+        class _FailingOnboarding:
+            async def save_wizard_data(self, _user_id, _data):
+                raise RuntimeError("onboarding persistence unavailable")
+
+        class _Generator:
+            async def generate_profile(self, **_kwargs):
+                return {"COMPANY_SUMMARY": "Generated despite persistence failure"}
+
+        onboarding_api.set_onboarding_service(_FailingOnboarding())
+        monkeypatch.setattr(
+            "services.strategic_intelligence_api.get_profile_generator",
+            lambda: _Generator(),
+        )
+        svc, _ = _build_service()
+        complete = asyncio.run(_register_user(svc, "strategic-persistence@example.com"))
+
+        response = client.post(
+            "/api/v1/strategic-intelligence/generate",
+            json={
+                "company_description": "d",
+                "ideal_customer": "i",
+                "differentiation": "x",
+                "annual_goal": "g",
+                "biggest_obstacle": "o",
+            },
+            headers=_headers(complete.session.id),
+        )
+
+        assert response.status_code == 200
+        assert response.json()["profile"] == {
+            "COMPANY_SUMMARY": "Generated despite persistence failure",
+        }
+        assert isinstance(response.json()["generated_at"], str)
+
     def test_profile_requires_auth(self, client):
         resp = client.get("/api/v1/strategic-intelligence/profile/someone")
         assert resp.status_code == 401
@@ -240,6 +324,36 @@ class TestStrategicIntelligenceBoundary:
         )
         assert resp.status_code == 200
         assert resp.json()["profile"]["name"] == "Acme"
+
+    def test_profile_returns_empty_envelope_when_absent_or_unreadable(self, client):
+        from services.onboarding import api as onboarding_api
+
+        class _Onboarding:
+            async def get_wizard_data(self, _user_id):
+                return {}
+
+        onboarding_api.set_onboarding_service(_Onboarding())
+        svc, _ = _build_service()
+        complete = asyncio.run(_register_user(svc, "strategic-empty@example.com"))
+
+        absent = client.get(
+            "/api/v1/strategic-intelligence/profile/ignored",
+            headers=_headers(complete.session.id),
+        )
+        assert absent.status_code == 200
+        assert absent.json() == {"profile": None, "generated_at": None}
+
+        class _UnreadableOnboarding:
+            async def get_wizard_data(self, _user_id):
+                raise RuntimeError("onboarding persistence unavailable")
+
+        onboarding_api.set_onboarding_service(_UnreadableOnboarding())
+        unreadable = client.get(
+            "/api/v1/strategic-intelligence/profile/ignored",
+            headers=_headers(complete.session.id),
+        )
+        assert unreadable.status_code == 200
+        assert unreadable.json() == {"profile": None, "generated_at": None}
 
 
 # ─── 3. Billing canonical actor resolution ────────────────────────────

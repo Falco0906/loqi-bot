@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from services.identity.dependencies import AuthContext, get_current_auth
-from services.strategic_intelligence import get_profile_generator
+from services.strategic.profile.generator import get_profile_generator
 
 router = APIRouter(prefix="/api/v1/strategic-intelligence", tags=["Strategic Intelligence"])
 

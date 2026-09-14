@@ -65,10 +65,10 @@ from services.operations.diagnostics import get_build_metadata
 from app import lifespan as app_lifespan
 from services.learning.behavior_tracker import get_tracker as _get_behavior_tracker
 from services.learning.feedback_interpreter import FeedbackInterpreter as _FeedbackInterpreter
-from services.draft_intelligence import analyze_draft as analyze_draft_intelligence
+from services.drafts.intelligence import analyze_draft as analyze_draft_intelligence
 from services.strategic.profile.api import router as strategic_intelligence_router
-from services.rewrite_engine import execute_rewrite
-from services.draft_comparison import compare_versions
+from services.drafts.rewrite import execute_rewrite
+from services.drafts.comparison import compare_versions
 from services.communication import provider_startup
 from services.communication.reply_simulator import maybe_schedule as simulate_reply
 from services.events_bus import publish_draft_event

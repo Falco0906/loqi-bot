@@ -16,13 +16,13 @@ from services.ai import (
     generate_outreach_email,
     rewrite_message,
 )
-from services.draft_comparison import compare_versions
-from services.draft_intelligence import analyze_draft as analyze_draft_intelligence
+from services.drafts.comparison import compare_versions
+from services.drafts.intelligence import analyze_draft as analyze_draft_intelligence
 from services.events_bus import publish_draft_event
 from services.enrichment.enrichment_factory import get_enricher
 from services.intelligence.lead_intelligence import generate_lead_intelligence
 from services.outbound import service as outbound_service
-from services.rewrite_engine import execute_rewrite
+from services.drafts.rewrite import execute_rewrite
 from services.world_model import EventType as WMEventType, publish
 from services.workspace_timeline import record_drafts_generated
 

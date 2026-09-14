@@ -335,9 +335,9 @@ backend/
 │   ├── objection_predictor.py  # Objection prediction
 │   ├── company_context.py      # Company maturity/context analysis
 │   ├── strategy_comparison.py  # Messaging comparison engine
-│   ├── draft_intelligence.py   # Cold email quality scoring (399 lines)
-│   ├── draft_comparison.py     # Draft version diff
-│   ├── rewrite_engine.py       # Strategy-aware rewrite (177 lines)
+│   ├── drafts/intelligence.py  # Cold email quality scoring (399 lines)
+│   ├── drafts/comparison.py    # Draft version diff
+│   ├── drafts/rewrite.py       # Strategy-aware rewrite (177 lines)
 │   ├── rewrite_history.py      # Multi-level undo for rewrites
 │   ├── executive_brief.py      # Workspace AI summary
 │   ├── recommendation_engine.py# Next-action recommendations

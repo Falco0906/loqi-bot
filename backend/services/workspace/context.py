@@ -146,7 +146,7 @@ def build_workspace_context(
                         result["current_draft"]["draft_intelligence"] = intelligence
                     draft_text = draft.get("text", "")
                     try:
-                        from services.draft_intelligence import analyze_draft
+                        from services.drafts.intelligence import analyze_draft
                         result["current_draft"]["draft_intelligence"] = analyze_draft(draft_text, {
                             "campaign_name": draft.get("campaign_name"),
                             "company": draft.get("lead", {}).get("company"),

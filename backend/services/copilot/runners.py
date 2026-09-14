@@ -19,7 +19,7 @@ import services.drafts.service as draft_service
 import services.outbound.service as outbound_service
 from services.events_bus import publish_draft_event
 from services.outbound.outbound_executor import executor as outbound_executor
-from services.rewrite_engine import execute_rewrite
+from services.drafts.rewrite import execute_rewrite
 
 
 log = logging.getLogger(__name__)

@@ -155,8 +155,8 @@ backend/services/cta_strategy.py | ACTIVE | CTA strategy engine.
 backend/services/discovery.py | ACTIVE | Discovery service — first-class, persistent research entities.
 backend/services/discovery/context.py | ACTIVE | Optional workspace context for Discovery and qualification.
 backend/services/discovery/plan.py | ACTIVE | Discovery Plan — the structured intelligence item behind every search.
-backend/services/draft_comparison.py | ACTIVE | Structured draft comparison between versions.
-backend/services/draft_intelligence.py | ACTIVE | Structured draft intelligence engine.
+backend/services/drafts/comparison.py | ACTIVE | Structured draft comparison between versions.
+backend/services/drafts/intelligence.py | ACTIVE | Structured draft intelligence engine.
 backend/services/email/__init__.py | ACTIVE | Package initializer and public import surface.
 backend/services/email/attachments.py | ACTIVE | Defines AttachmentProcessor.
 backend/services/email/branding.py | ACTIVE | Defines BrandingManager.
@@ -458,7 +458,7 @@ backend/services/reply_generation/template_library.py | ACTIVE | Defines registe
 backend/services/reply_generation/validation.py | ACTIVE | Defines validate_draft.
 backend/services/conversation_intelligence/legacy_reply_projection.py | ACTIVE | Legacy ReplyIntelligence compatibility projection.
 backend/services/communication/reply_summary.py | ACTIVE | Legacy executive-summary formatter for communication intelligence.
-backend/services/rewrite_engine.py | ACTIVE | Strategy-aware rewrite engine.
+backend/services/drafts/rewrite.py | ACTIVE | Strategy-aware rewrite engine.
 backend/services/rewrite_history.py | ACTIVE | Rewrite history with multi-level undo support.
 backend/services/discovery/search_expansion.py | ACTIVE | Defines expand_search_intent.
 backend/services/security/__init__.py | ACTIVE | Package initializer and public import surface.

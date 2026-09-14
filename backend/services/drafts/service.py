@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from services.ai import (
+from services.intelligence.ai import (
     OpenAIError,
     analyze_draft as analyze_draft_with_ai,
     answer_draft_question,

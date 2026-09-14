@@ -12,7 +12,7 @@ how to rank recommendations.
 import json
 from typing import Optional
 
-from services.ai import _send_openai_request, OpenAIError
+from services.intelligence.ai import _send_openai_request, OpenAIError
 from services.narrative_engine import BriefingContext, get_engine
 
 

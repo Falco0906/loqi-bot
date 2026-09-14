@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-import services.ai as ai_service
+import services.intelligence.ai as ai_service
 
 
 def generate_copilot_response(

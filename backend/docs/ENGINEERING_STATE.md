@@ -29,7 +29,7 @@ The entire adapter foundation plus three production adapters and the email compo
 - **Purpose:** Establish initial project structure, FastAPI app, Supabase integration, Telegram bot
 - **Major components built:** `main.py`, Telegram webhook, basic Gmail send, Supabase client, conversation engine
 - **Key architectural decisions:** FastAPI as web framework, Supabase as persistence layer, OpenAI for AI generation
-- **Created:** `main.py`, `services/agent.py`, `services/ai.py`, `services/gmail.py`, `services/communication/google_auth.py`, `services/platform/supabase.py`, `services/telegram.py`, `services/conversation_engine.py`
+- **Created:** `main.py`, `services/agent.py`, `services/intelligence/ai.py`, `services/gmail.py`, `services/communication/google_auth.py`, `services/platform/supabase.py`, `services/telegram.py`, `services/conversation_engine.py`
 - **Status:** Complete. Replaced by later iterations.
 
 ### Phase 2 — Workflow System (v0.3–v0.4)
@@ -1052,7 +1052,7 @@ Implementation stopped after **Phase 5.5 — Email Composition Engine v1.0** was
 
 10. **Conversation Engine** (`services/conversation_engine.py`) — multi-client orchestrator (1161 lines)
 11. **Workflow System** (`services/workflow_*.py`, 14 files) — deterministic plan execution
-12. **AI Generation** (`services/ai.py`) — OpenAI integration
+12. **AI Generation** (`services/intelligence/ai.py`) — OpenAI integration
 13. **Legacy Gmail** (`services/gmail.py`) — pre-adapter Gmail send (should eventually be replaced)
 14. **Google Auth** (`services/communication/google_auth.py`) — OAuth flow (should eventually use credential framework)
 15. **Supabase Client** (`services/platform/supabase.py`) — all DB operations

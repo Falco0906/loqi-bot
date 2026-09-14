@@ -46,7 +46,7 @@ def _auth_request(token="session"):
     return request
 
 
-import services.ai as ai_module  # noqa: E402
+import services.intelligence.ai as ai_module  # noqa: E402
 import services.workflows.service as workflows_module  # noqa: E402
 
 

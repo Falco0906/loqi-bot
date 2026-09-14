@@ -7,7 +7,7 @@ Full restaurant-style campaign loop against the real durable stack:
   generate drafts (playbook grounding + evidence tracing) →
   re-kickoff (no duplicates) → approve → state transitions
 
-Every OpenAI interaction is stubbed at ``services.ai._send_openai_request``
+Every OpenAI interaction is stubbed at ``services.intelligence.ai._send_openai_request``
 so the assertions target the *pipeline*, not the model.
 """
 
@@ -22,7 +22,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-import services.ai as ai_module
+import services.intelligence.ai as ai_module
 import main as main_module
 from main import app
 from services.job_engine.storage import JobStorage

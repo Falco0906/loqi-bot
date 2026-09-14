@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import main as main_module
-import services.ai as ai_module
+import services.intelligence.ai as ai_module
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()

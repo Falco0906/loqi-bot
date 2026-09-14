@@ -892,7 +892,7 @@ class ConversationEngine:
             return self._finish_response(user_id=user["id"], messages=outputs, events=events)
 
         try:
-            from services.ai import classify_intent, OpenAIError
+            from services.intelligence.ai import classify_intent, OpenAIError
 
             enriched_context = build_classification_context(
                 user_message=normalized_text,

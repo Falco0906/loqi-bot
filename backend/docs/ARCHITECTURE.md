@@ -800,7 +800,7 @@ The legacy synchronous workflow system is being superseded by the Execution Engi
 
 | File | Purpose |
 |---|---|
-| `services/ai.py` | OpenAI generation/personalization |
+| `services/intelligence/ai.py` | OpenAI generation/personalization |
 | `services/discovery/providers.py` | Lead sourcing |
 | `services/job_engine/` | Background job manager |
 | `services/enrichment/` | Apollo + synthetic enrichers |
@@ -824,7 +824,7 @@ main.py
   ├── Capability Platform (wired via register_deps)
   ├── ConversationEngine
   │     └── workflows.run_workflow (sync via ThreadPoolExecutor)
-  │           ├── services.ai (OpenAI)
+  │           ├── services.intelligence.ai (OpenAI)
   │           ├── services.conversational_response_generator
   │           └── services.outbound.*
   ├── ExecutionEngine

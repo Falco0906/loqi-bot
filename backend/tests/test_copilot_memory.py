@@ -160,7 +160,7 @@ async def test_unfinished_task_and_completed_history_are_derived_from_actual_out
 
 def test_generated_response_labels_memory_as_context_not_workspace_authority(monkeypatch):
     from services.copilot import response as generator
-    from services import ai as ai_service
+    from services.intelligence import ai as ai_service
 
     captured: dict[str, str] = {}
 

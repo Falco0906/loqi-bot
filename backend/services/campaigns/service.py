@@ -500,11 +500,11 @@ async def run_strategy_job(job, _on_progress) -> dict[str, Any]:
         from services.knowledge.context_adapter import retrieve_knowledge_context
         query = " ".join(str(item).strip() for item in (objective, target.get("search_query"), target.get("name")) if str(item or "").strip())
         context["knowledge_context"] = (await retrieve_knowledge_context(job.user_id, query=query, categories=["company", "icp", "messaging", "sales_offer"], limit=8)).to_dict()
-        from services.ai import OpenAIError, generate_campaign_strategy
+        from services.intelligence.ai import OpenAIError, generate_campaign_strategy
         try:
             strategy = await asyncio.to_thread(generate_campaign_strategy, objective, context)
         except OpenAIError:
-            from services.ai import _fallback_playbook
+            from services.intelligence.ai import _fallback_playbook
             strategy = _fallback_playbook(objective, context)
         strategy.update({"objective": objective, "generated_at": datetime.now(timezone.utc).isoformat()})
         from services.workspace.state import persist_campaign_update_awaited

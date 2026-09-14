@@ -184,7 +184,7 @@ def _mock_openai(monkeypatch):
     Returns context-aware responses so integration tests can verify
     that workspace data actually reaches the LLM prompt.
     """
-    import services.ai as ai_mod
+    import services.intelligence.ai as ai_mod
 
     _call_count: int = 0
 

@@ -154,7 +154,7 @@ class Test4xxBehaviorPreserved:
 
 class TestSecretSafetyInLogging:
     def test_ai_source_does_not_log_full_payloads(self):
-        path = os.path.join(os.path.dirname(__file__), "..", "services", "ai.py")
+        path = os.path.join(os.path.dirname(__file__), "..", "services", "intelligence", "ai.py")
         with open(path, "r", encoding="utf-8") as fh:
             text = fh.read()
         assert "exact response body" not in text

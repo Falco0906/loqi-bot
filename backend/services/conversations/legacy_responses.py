@@ -4,7 +4,7 @@ from __future__ import annotations
 import random
 from typing import Optional
 
-import services.ai as ai_service
+import services.intelligence.ai as ai_service
 
 
 RESPONSE_VARIATIONS = {

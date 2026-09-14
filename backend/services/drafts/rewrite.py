@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from services.ai import _send_openai_request, OpenAIError
+from services.intelligence.ai import _send_openai_request, OpenAIError
 
 
 REWRITE_STRATEGIES = {

@@ -15,7 +15,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from services.ai import _send_openai_request, OpenAIError
+from services.intelligence.ai import _send_openai_request, OpenAIError
 
 
 # ── Human-friendly score labels ──────────────────────────────────────────
@@ -365,13 +365,13 @@ def _wire_buyer_psychology() -> None:
     Called on import to wire the modular services into the
     Draft Intelligence analysis pipeline.
     """
-    from services.buyer_psychology import analyze_buyer
+    from services.intelligence.messaging.buyer_psychology import analyze_buyer
     from services.company_context import analyze_company
-    from services.messaging_strategy import select_strategy
-    from services.objection_predictor import predict_objections
-    from services.trust_builder import suggest_trust_builders
-    from services.cta_strategy import recommend_cta
-    from services.framework_selector import select_framework
+    from services.intelligence.messaging.messaging_strategy import select_strategy
+    from services.intelligence.messaging.objection_predictor import predict_objections
+    from services.intelligence.messaging.trust_builder import suggest_trust_builders
+    from services.intelligence.messaging.cta_strategy import recommend_cta
+    from services.intelligence.messaging.framework_selector import select_framework
 
     def persona_hook(draft_text: str, context: dict | None) -> dict | None:
         persona = analyze_buyer(context)

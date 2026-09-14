@@ -5,7 +5,7 @@ import importlib
 
 import pytest
 
-from services import ai
+from services.intelligence import ai
 
 
 class _Response:

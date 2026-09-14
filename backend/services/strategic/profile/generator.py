@@ -6,7 +6,7 @@ import asyncio
 import json
 from typing import Any
 
-from services.ai import OpenAIError, _send_openai_request
+from services.intelligence.ai import OpenAIError, _send_openai_request
 
 
 class StrategicProfileGenerator:

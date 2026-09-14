@@ -447,7 +447,7 @@ class TestCopilotOperationBoundary:
             '{"intent":"action","mode":"new","search_context":{},"action":"campaign.create","reason":"create campaign"}',
         ])
         monkeypatch.setattr(
-            "services.ai.try_send_openai_request",
+            "services.intelligence.ai.try_send_openai_request",
             lambda *_args, **_kwargs: next(decisions),
         )
         assert decide_copilot_intent("hi")["intent"] == "conversation"
@@ -484,7 +484,7 @@ class TestCopilotOperationBoundary:
             return "Fact: Campaign Alpha has 12 leads and 3 drafts pending review. Recommendation: review the oldest draft first."
 
         monkeypatch.setattr(
-            "services.ai.try_send_openai_request",
+            "services.intelligence.ai.try_send_openai_request",
             fake_openai,
         )
         response = generate_copilot_response(
@@ -520,7 +520,7 @@ class TestCopilotOperationBoundary:
         from services.copilot.decision import decide_copilot_intent
 
         monkeypatch.setattr(
-            "services.ai.try_send_openai_request",
+            "services.intelligence.ai.try_send_openai_request",
             lambda *_args, **_kwargs: (
                 '{"intent":"read","action":"%s","search_context":{}}' % action
             ),
@@ -778,7 +778,7 @@ class TestCopilotOperationBoundary:
             '{"intent":"read","action":"lead.filter","filters":{"title":"restaurant owner"},"search_context":{},"reason":"filter existing leads"}',
         ])
         monkeypatch.setattr(
-            "services.ai.try_send_openai_request",
+            "services.intelligence.ai.try_send_openai_request",
             lambda *_args, **_kwargs: next(decisions),
         )
         active = {"discovery_id": "d-1", "search_context": {"industry": ["restaurants"]}}
@@ -1010,7 +1010,7 @@ class TestCopilotOperationBoundary:
             '{"intent":"lead_discovery","mode":"refine","search_context":{"industry":["restaurants"],"location":["Hyderabad"],"decision_makers":[],"quantity":100}}',
         ])
         monkeypatch.setattr(
-            "services.ai.try_send_openai_request",
+            "services.intelligence.ai.try_send_openai_request",
             lambda *_args, **_kwargs: next(decisions),
         )
         history = [{"role": "user", "text": "I need restaurant leads"}]

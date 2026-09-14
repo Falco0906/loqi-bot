@@ -590,8 +590,8 @@ class TestDiscoveryPlan:
                 "offer": {"type": "call", "detail": "15-min"},
             })
 
-        monkeypatch.setattr("services.ai._send_openai_request", _fake_openai)
-        from services.ai import generate_campaign_strategy
+        monkeypatch.setattr("services.intelligence.ai._send_openai_request", _fake_openai)
+        from services.intelligence.ai import generate_campaign_strategy
 
         strategy = generate_campaign_strategy("Sell AI automations to cafe owners", {
             "discovery_plan": {
@@ -658,8 +658,8 @@ class TestDiscoveryPlan:
                 "offer": {},
             })
 
-        monkeypatch.setattr("services.ai._send_openai_request", _fake_openai)
-        from services.ai import generate_campaign_strategy
+        monkeypatch.setattr("services.intelligence.ai._send_openai_request", _fake_openai)
+        from services.intelligence.ai import generate_campaign_strategy
 
         strategy = generate_campaign_strategy("Open conversations with HR platforms")
         assert "Discovery plan" not in captured["user"], "no plan → no plan block"

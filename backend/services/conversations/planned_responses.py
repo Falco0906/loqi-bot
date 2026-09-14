@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-import services.ai as ai_service
+import services.intelligence.ai as ai_service
 from services.conversations.legacy_responses import _extract_single_message_fields
 
 

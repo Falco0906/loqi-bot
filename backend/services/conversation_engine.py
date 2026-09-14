@@ -31,7 +31,7 @@ from services.platform.supabase import (
 from services.enrichment.enrichment_factory import get_enricher
 from services.intelligence.lead_intelligence import generate_lead_intelligence
 from services.workflows.service import run_workflow
-from services.conversational_response_generator import (
+from services.conversations.legacy_responses import (
     RESPONSE_VARIATIONS,
     generate_conversational_response,
     detect_preferences_from_refinement,

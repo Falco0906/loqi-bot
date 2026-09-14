@@ -14,7 +14,7 @@ from services.conversation_intelligence.intelligence_pipeline import Intelligenc
 from services.conversations.conversation_models import ConversationMessage, ConversationStatus
 from services.conversations.conversation_store import conversation_owned_by, conversation_store
 from services.conversations.compatibility import record_workflow_message
-from services.conversational_response_generator import _get_after_draft_variation
+from services.conversations.legacy_responses import _get_after_draft_variation
 from services.enrichment.enrichment_factory import get_enricher
 from services.intelligence.lead_intelligence import generate_lead_intelligence
 from services.conversations.state_machine import transition as state_transition

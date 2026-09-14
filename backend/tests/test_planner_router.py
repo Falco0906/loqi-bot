@@ -430,7 +430,7 @@ class TestBookingStrategyViaRouter:
 
         # The rendering check uses workflow_type for dispatching
         # _render_workflow_result checks: result["type"] == "planner_result"
-        from services.conversational_response_generator import RESPONSE_VARIATIONS
+        from services.conversations.legacy_responses import RESPONSE_VARIATIONS
 
         assert result["ok"] is True
 

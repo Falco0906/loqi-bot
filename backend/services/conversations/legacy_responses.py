@@ -1,0 +1,600 @@
+"""Legacy web conversation response policy and copy variations."""
+from __future__ import annotations
+
+import random
+from typing import Optional
+
+import services.ai as ai_service
+
+
+RESPONSE_VARIATIONS = {
+    "greeting": [
+        "Hey — what are you looking to promote today?",
+        "Hi! Who are you trying to reach?",
+        "Hey, tell me a bit about what you're selling.",
+        "Hey there — what kind of outreach are you running?",
+        "Hi! What are you looking to sell or promote?",
+        "Hey — who are we trying to connect with?",
+        "Hello! What does your outbound look like?",
+        "Hey — what's the target for today?",
+    ],
+    "onboarding": [
+        "What are you looking to promote?",
+        "Who are you trying to reach?",
+        "What does your ideal customer look like?",
+        "What kind of outreach are you running?",
+        "What's the target for today?",
+        "What are you selling?",
+    ],
+    "ask_service": [
+        "What are you offering? Describe it however feels natural.",
+        "What does your product or service do?",
+        "Tell me what you're bringing to market.",
+        "What are you looking to promote?",
+        "What do you offer? Give me a quick description.",
+    ],
+    "ask_target": [
+        "Who would your ideal buyer be?",
+        "What kind of businesses or roles are you targeting?",
+        "Who do you want me to find for you?",
+        "Describe your ideal customer — industry, role, or company type.",
+        "What does the right buyer look like for this?",
+    ],
+    "after_lead_list": [
+        "These are ranked by buying potential. Pick a lead and I'll draft a personalized message, or tell me to draft for multiple.",
+        "I've scored these by fit and buying signals. Which one should we focus on first?",
+        "Here are the strongest matches. Reply with the number you want to start with.",
+        "These are sorted by relevance. Which lead stands out to you?",
+        "I've ranked these by who's most likely to engage. Pick one to begin outreach.",
+    ],
+    "after_draft": [
+        "I've drafted something personalized based on what I know about the company. Take a look.\n\nIf you'd like, I can:\n• make it shorter\n• sound more casual\n• make it more direct\n• regenerate it\n\nOr just tell me to send it as-is.",
+        "Here's what I'd send to this contact. It's grounded in their business profile.\n\nOptions if you want changes:\n• shorter or longer\n• more casual or formal\n• different angle\n\nOr say 'send it' and I'll fire it off.",
+        "I've tailored this message to their specific situation. Let me know what you think.\n\nI can:\n• tighten it up\n• make it friendlier\n• make it more direct\n• start over\n\nOr just say 'go ahead' and I'll send it.",
+        "Take a look at the draft. It's written with their company context in mind.\n\nWant me to:\n• shorten it\n• make it less salesy\n• use a stronger tone\n• try something different\n\nOr tell me to send as-is.",
+    ],
+    "confirming_send": [
+        "Ready to send this?",
+        "Want me to go ahead and send it?",
+        "Should I fire this off?",
+        "All set to send?",
+        "Ready when you are.",
+    ],
+    "select_lead_confirm": [
+        "I'm putting together a personalized first message based on their profile...",
+        "I'm tailoring this specifically for their business context...",
+        "Let me draft something grounded in what I know about them...",
+        "Perfect — I'm writing a message that fits their situation...",
+        "Working on a custom outreach for this lead...",
+    ],
+    "session_start": [
+        "Hey! I'm Loqi — I help you find the right buyers and craft outreach that actually sounds like you.\n\nTo get started, just tell me what you're offering and who you want to reach. Something like:\n• \"I sell AI sales tools for SaaS companies\"\n• \"My agency builds websites for dental clinics\"\n• \"I offer bookkeeping for restaurant groups\"",
+        "Hi there! I'm Loqi. I find promising leads and help you reach out with messages that feel personal, not templated.\n\nTo start, tell me what you do and who you're after. For example:\n• \"We provide HR software for construction firms\"\n• \"I do lead generation for real estate agents\"\n• \"My product automates hiring for healthcare\"",
+        "Welcome to Loqi. Think of me as your SDR — I find the right people and help you start real conversations.\n\nJust describe what you're selling and who you're targeting:\n• \"CRM for boutique real estate agencies\"\n• \"Safety training for manufacturing plants\"\n• \"Dev tools for growing SaaS teams\"",
+    ],
+    "refine_options": [
+        "Want me to try a different angle?",
+        "I can adjust the length, tone, or make it more casual.",
+        "What would you like to change?",
+        "Tell me what to tweak — shorter, longer, different tone?",
+    ],
+}
+
+NEGATIVE_RESPONSES = [
+    "no", "nope", "nah", "not yet", "not really", "wait", "hold on",
+    "actually", "maybe later", "skip", "never mind", "cancel",
+]
+
+REFINE_KEYWORDS = [
+    "longer", "shorter", "more", "less", "casual", "formal",
+    "aggressive", "softer", "friendly", "professional", "breezier",
+    "salesy", "personal", "quick", "concise", "detailed",
+    "different", "another", "try", "change", "tweak", "adjust",
+    "rewrite", "rephrase", "tone", "style",
+]
+
+SEND_KEYWORDS = [
+    "send", "go", "go ahead", "send it", "do it", "yes", "yeah", "yep", "sure", "ok",
+    "fire", "fire it", "ship it", "hit it", "send it", "dispatch", "launch",
+    "go for it", "let's go", "send it out", "email", "mail it", "drop it",
+]
+
+SELECT_KEYWORDS = [
+    "that one", "this one", "first", "second", "third", "pick", "select", "choose",
+    "number", "option", "lead", "them", "him", "her", "that person", "this person",
+]
+
+SELECT_NUMBER_WORDS = {
+    "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+    "first": "1", "second": "2", "third": "3", "fourth": "4", "fifth": "5",
+    "a": "1", "the": "1",
+}
+
+REFINE_SHORT_PHRASES = [
+    "shorter", "make it shorter", "keep it short", "more concise",
+    "less", "make it less", "cut it down",
+    "longer", "make it longer", "expand it", "more detail",
+    "casual", "more casual", "less formal", "friendlier",
+    "formal", "more formal", "professional",
+    "salesy", "less salesy", "not so salesy", "softer",
+    "breezy", "less intense", "lighter tone",
+]
+
+SEND_SHORT_PHRASES = [
+    "send it", "go ahead", "send", "go", "do it", "yes", "yeah",
+    "fire", "ship", "drop it", "hit send", "send now",
+]
+
+REFINE_SEND_PHRASES = [
+    ("send", "send"),
+    ("send it", "send"),
+    ("send as is", "send"),
+    ("looks good", "send"),
+    ("this works", "send"),
+    ("good enough", "send"),
+    ("that works", "send"),
+    ("perfect", "send"),
+    ("works for me", "send"),
+    ("shorter", "refine_shorter"),
+    ("make it shorter", "refine_shorter"),
+    ("longer", "refine_longer"),
+    ("more casual", "refine_casual"),
+    ("less salesy", "refine_casual"),
+    ("try again", "refine_another"),
+    ("different", "refine_another"),
+    ("another version", "refine_another"),
+]
+
+LEAD_INDICATORS = {
+    "service_verbs": ["sell", "selling", "offer", "offering", "provide", "providing",
+                      "build", "building", "make", "making", "create", "creating",
+                      "have", "do", "help", "for"],
+    "target_verbs": ["for", "targeting", "to", "helping", "serving"],
+    "target_nouns": ["restaurants", "restaurant", "hotels", "hotel", "businesses",
+                     "companies", "firms", "teams", "ops", "owners", "operators",
+                     "managers", "franchise", "chains", "groups", "practices",
+                     "clinics", "spas", "salons", "gyms", "retail", "stores"],
+}
+
+
+def _extract_single_message_fields(user_message: str) -> tuple[str | None, str | None, list[str]]:
+    """
+    Parse a single user message to extract service and target.
+    Returns (service, target, signals).
+    """
+    msg = (user_message or "").strip()
+    if not msg:
+        return None, None, []
+
+    msg_lower = msg.lower()
+    signals = []
+
+    has_service_verb = any(verb in msg_lower for verb in LEAD_INDICATORS["service_verbs"])
+    has_target_verb = any(verb in msg_lower for verb in LEAD_INDICATORS["target_verbs"])
+    has_target_noun = any(noun in msg_lower for noun in LEAD_INDICATORS["target_nouns"])
+
+    if has_service_verb and has_target_noun:
+        signals.append("combined_message")
+
+    separators = [" for ", " to ", " targeting ", " helping ", " serving "]
+
+    for sep in separators:
+        if sep in msg_lower:
+            parts = msg.split(sep, 1)
+            if len(parts) == 2:
+                service_candidate = parts[0].strip()
+                target_candidate = parts[1].strip()
+
+                service_clean = service_candidate.strip(".,!?")
+                target_clean = target_candidate.strip(".,!?")
+
+                if len(service_clean) > 2 and len(target_clean) > 2:
+                    return service_clean, target_clean, ["separated_format"]
+
+    service_fragments = ["we ", "i ", "my ", "our "]
+    for frag in service_fragments:
+        if msg_lower.startswith(frag):
+            potential = msg[len(frag):].strip()
+            if potential and len(potential) > 3:
+                first_word = potential.split()[0] if potential.split() else ""
+                if first_word and first_word not in ["sell", "offer", "provide", "build", "help"]:
+                    return potential, None, ["starts_with_service"]
+
+    if "?" not in msg and len(msg.split()) > 2:
+        return msg, None, ["freeform_message"]
+
+    return None, None, []
+
+
+def _classify_natural_action(user_message: str, context: dict) -> tuple[str, Optional[str]]:
+    """
+    Classify natural language into workflow actions with nuance.
+    Returns (action, detail).
+    """
+    msg = user_message.strip()
+    msg_lower = msg.lower()
+
+    for phrase, action in REFINE_SEND_PHRASES:
+        if phrase in msg_lower:
+            return action, phrase
+
+    if msg_lower in ["shorter", "make it shorter", "keep it short", "more concise", "cut it"]:
+        return "refine_shorter", None
+    if msg_lower in ["longer", "make it longer", "expand it", "more detail", "more content"]:
+        return "refine_longer", None
+    if any(phrase in msg_lower for phrase in ["more casual", "less formal", "friendlier", "breezy"]):
+        return "refine_casual", None
+    if any(phrase in msg_lower for phrase in ["more formal", "less casual", "professional"]):
+        return "refine_formal", None
+    if any(phrase in msg_lower for phrase in ["less salesy", "not so salesy", "softer", "subtle"]):
+        return "refine_casual", None
+    if any(phrase in msg_lower for phrase in ["different", "another", "try again", "rethink"]):
+        return "refine_another", None
+
+    if any(word in msg_lower for word in SEND_KEYWORDS):
+        return "send", None
+
+    for number_word, number_str in SELECT_NUMBER_WORDS.items():
+        if number_word in msg_lower:
+            return "select_number", number_str
+
+    if "that one" in msg_lower or "this one" in msg_lower or "pick" in msg_lower:
+        return "select_recent", None
+
+    if any(word in msg_lower for word in NEGATIVE_RESPONSES):
+        return "defer", None
+
+    if any(kw in msg_lower for kw in REFINE_KEYWORDS):
+        return "refine", msg
+
+    if "new" in msg_lower and ("search" in msg_lower or "look" in msg_lower):
+        return "new_search", None
+
+    return "unknown", None
+
+
+def get_context_aware_prompt(
+    stage: str,
+    context: dict,
+    recent_assistant_messages: list[str],
+) -> str:
+    """
+    Generate context-aware system prompt for response generation.
+    """
+    service = context.get("service", "")
+    target = context.get("target", "")
+    selected_lead = context.get("selected_lead")
+    has_draft = context.get("has_draft", False)
+    lead_count = context.get("lead_count", 0)
+    user_preferences = context.get("user_preferences", {})
+
+    system = (
+        "You are Loqi, an AI SDR assistant that sounds like a smart, friendly colleague.\n"
+        "You are NOT a chatbot. You are NOT a form. You think and adapt.\n\n"
+        "Rules:\n"
+        "- NEVER repeat the same phrasing the assistant just used\n"
+        "- If there's already a lead list shown, don't say 'here are leads' again\n"
+        "- If the user already provided service and target, don't ask redundant questions\n"
+        "- Keep responses short, natural, and conversational\n"
+        "- Never be overly formal or robotic\n"
+        "- Ask ONE question at a time max\n"
+        "- Be direct when there's no ambiguity\n\n"
+    )
+
+    if stage == "initial":
+        system += (
+            "The user just started. Respond with a brief welcome and ask ONE natural question.\n"
+            "Do NOT say 'What do you sell?' in the same way twice.\n"
+        )
+    elif stage == "need_service":
+        system += (
+            "Missing service. Ask naturally in ONE way only.\n"
+            f"Recent assistant messages to avoid repeating: {recent_assistant_messages[-3:]}\n"
+        )
+    elif stage == "need_target":
+        system += (
+            "Service is known but target is missing. Ask ONE question about who they want to reach.\n"
+            f"Service known: {service}\n"
+            f"Recent phrases to avoid: {recent_assistant_messages[-3:]}\n"
+        )
+    elif stage == "after_leads":
+        system += (
+            "Lead list was just shown. Help the user decide what to do next.\n"
+            f"Lead count: {lead_count}\n"
+            f"Recent phrasing to avoid: {recent_assistant_messages[-2:]}\n"
+        )
+    elif stage == "after_draft":
+        system += (
+            "A draft was just created. Give the user one clear option to send, refine, or move on.\n"
+            f"Lead: {selected_lead.get('name', 'unknown') if selected_lead else 'unknown'}\n"
+            f"User preferences: {user_preferences}\n"
+            f"Recent phrasing to avoid: {recent_assistant_messages[-2:]}\n"
+        )
+    elif stage == "after_send":
+        system += (
+            "Email was just sent. Offer a natural next step — more leads, refinement, or close.\n"
+        )
+    elif stage == "refining":
+        system += (
+            "User wants to refine. Acknowledge and apply their feedback naturally.\n"
+        )
+    else:
+        system += "Respond naturally based on the context."
+
+    return system
+
+
+def generate_conversational_response(
+    user_message: str,
+    stage: str,
+    context: dict,
+    recent_assistant_messages: list[str],
+) -> str:
+    """
+    Generate AI-powered conversational response.
+    Falls back to variation pools if AI fails.
+    """
+    system_prompt = get_context_aware_prompt(stage, context, recent_assistant_messages)
+
+    user_text = (
+        f"User said: {user_message}\n"
+        f"Current stage: {stage}\n"
+        f"Service known: {context.get('service', 'unknown')}\n"
+        f"Target known: {context.get('target', 'unknown')}\n"
+        f"Has draft: {context.get('has_draft', False)}\n"
+        f"Lead count: {context.get('lead_count', 0)}\n"
+        f"User message count: {context.get('user_message_count', 0)}\n\n"
+        "Generate ONE short response (1-2 sentences max). No formalities."
+    )
+
+    response = ai_service.try_send_openai_request(system_prompt, user_text, timeout=20)
+
+    if response and len(response.strip()) > 0:
+        ai_service._log(f"AI response generated: {response[:80]}")
+        return response.strip()
+
+    return _get_fallback_variation(stage, recent_assistant_messages)
+
+
+def _get_fallback_variation(stage: str, recent_messages: list[str]) -> str:
+    """Get a variation from pools, avoiding recent repetitions."""
+    pool = RESPONSE_VARIATIONS.get(stage, ["What would you like to do next?"])
+
+    recent_lower = [m.lower() for m in (recent_messages or [])]
+    available = [p for p in pool if p.lower() not in recent_lower]
+
+    if not available:
+        available = pool
+
+    return random.choice(available)
+
+
+def _get_service_prompt_variation(recent_messages: list[str]) -> str:
+    """Get a fresh 'what do you sell' variant."""
+    pool = RESPONSE_VARIATIONS["ask_service"]
+    recent_lower = [m.lower() for m in (recent_messages or [])]
+    available = [p for p in pool if p.lower() not in recent_lower]
+    if not available:
+        available = pool
+    return random.choice(available)
+
+
+def _get_target_prompt_variation(recent_messages: list[str], service: str) -> str:
+    """Get a fresh 'who do you want to reach' variant."""
+    pool = RESPONSE_VARIATIONS["ask_target"]
+    recent_lower = [m.lower() for m in (recent_messages or [])]
+    available = [p for p in pool if p.lower() not in recent_lower]
+
+    if not available:
+        available = pool
+
+    if available and random.random() > 0.5:
+        return random.choice(available)
+
+    short_variants = [
+        f"Who should I look for?",
+        f"Nice. Who would you like to reach with {service}?",
+        f"Great. What kind of businesses are you targeting with {service}?",
+        f"Perfect. Who's the right audience for {service}?",
+        f"Who makes sense to contact for {service}?",
+    ]
+    return random.choice(short_variants)
+
+
+def _get_after_leads_variation(recent_messages: list[str], lead_count: int) -> str:
+    """Get a fresh 'after lead list' variant with ranking context."""
+    if lead_count > 0:
+        intro = random.choice([
+            f"I found **{lead_count} promising matches** sorted by buying potential.",
+            f"I've ranked **{lead_count} leads** by fit and engagement signals.",
+            f"Here are **{lead_count} potential buyers** — ranked by relevance.",
+        ])
+    else:
+        intro = ""
+
+    pool = RESPONSE_VARIATIONS["after_lead_list"]
+    recent_lower = [m.lower() for m in (recent_messages or [])]
+    available = [p for p in pool if p.lower() not in recent_lower]
+
+    if not available:
+        available = pool
+
+    prompt = random.choice(available)
+    if intro:
+        return f"{intro}\n\n{prompt}"
+    return prompt
+
+
+def _get_after_draft_variation(recent_messages: list[str], lead_name: str, preferences: dict) -> str:
+    """Get a fresh 'after draft' variant with awareness of user preferences."""
+    pool = RESPONSE_VARIATIONS["after_draft"]
+    recent_lower = [m.lower() for m in (recent_messages or [])]
+    available = [p for p in pool if p.lower() not in recent_lower]
+
+    if not available:
+        available = pool
+
+    base = random.choice(available)
+
+    if preferences.get("tone") == "casual":
+        base = base.replace("Sound good", "Sound good?").replace("Should I", "Want me to")
+
+    return base
+
+
+def _get_pre_lead_search_transition() -> str:
+    """Transition message before searching for leads."""
+    return random.choice([
+        "Looking through potential buyers that match your criteria...",
+        "Searching for businesses that fit your ICP...",
+        "I'm scanning for the strongest opportunities...",
+        "Let me find companies that match what you described...",
+        "Searching for the right leads in this space...",
+    ])
+
+
+def _get_pre_draft_transition() -> str:
+    """Transition message before drafting."""
+    return random.choice([
+        "I'm putting together a personalized first message...",
+        "Tailoring this based on their business profile...",
+        "Let me write something grounded in their context...",
+        "Crafting a message that fits their specific situation...",
+        "Working on a custom draft for this lead...",
+    ])
+
+
+def _get_refine_confirmation(instruction: str) -> str:
+    """Natural acknowledgment when user asks for refinement."""
+    msg = instruction.lower().strip()
+    if any(kw in msg for kw in ["shorter", "concise", "brief"]):
+        return random.choice([
+            "Done — I tightened it up.",
+            "Made it more concise.",
+            "Trimmed it down for you.",
+        ])
+    if any(kw in msg for kw in ["longer", "more detail", "expand"]):
+        return random.choice([
+            "Done — I expanded it with more context.",
+            "Added more substance to it.",
+            "Made it a bit more detailed.",
+        ])
+    if any(kw in msg for kw in ["casual", "friendly", "less formal", "breezy"]):
+        return random.choice([
+            "Made it more conversational.",
+            "I loosened it up a bit.",
+            "Less formal, more natural.",
+        ])
+    if any(kw in msg for kw in ["formal", "professional"]):
+        return random.choice([
+            "Made it more professional.",
+            "I polished the tone.",
+            "Sounds more formal now.",
+        ])
+    if any(kw in msg for kw in ["less salesy", "softer", "subtle"]):
+        return random.choice([
+            "Removed most of the sales language.",
+            "Made it less pushy.",
+            "Softened the pitch significantly.",
+        ])
+    if any(kw in msg for kw in ["direct", "confident", "stronger"]):
+        return random.choice([
+            "Made it more direct.",
+            "I gave it a stronger tone.",
+            "More confident, less hedging.",
+        ])
+    return random.choice([
+        "Got it — applying that feedback now.",
+        "Let me adjust it based on that.",
+        "Made the change you asked for.",
+    ])
+
+
+def _get_after_send_variation() -> str:
+    """Get a fresh 'after send' variant."""
+    return random.choice([
+        "Sent! Want to find another lead to reach out to?",
+        "Done. Should I look for more people in this space?",
+        "Email's on its way. Ready for the next one?",
+        "Sent. I can find more leads or we can refine a different one.",
+        "All sent. Tell me if you want to continue with more leads.",
+        "Done. Want me to search for another batch or refine someone else?",
+    ])
+
+
+def _get_refine_options_variation() -> str:
+    """Get a fresh refinement prompt."""
+    return random.choice([
+        "Want me to try a different angle?",
+        "I can adjust the length, tone, or make it more casual.",
+        "What would you like to change?",
+        "Tell me what to tweak — shorter, longer, different tone?",
+    ])
+
+
+def detect_preferences_from_refinement(user_message: str) -> dict:
+    """
+    Extract user preferences from refinement messages.
+    """
+    msg = user_message.lower()
+    prefs = {}
+
+    if any(kw in msg for kw in ["shorter", "concise", "brief", "quick"]):
+        prefs["length"] = "short"
+    elif any(kw in msg for kw in ["longer", "more detail", "expand", "deeper"]):
+        prefs["length"] = "long"
+
+    if any(kw in msg for kw in ["casual", "friendly", "breezy", "less formal", "chill"]):
+        prefs["tone"] = "casual"
+    elif any(kw in msg for kw in ["formal", "professional", "corporate"]):
+        prefs["tone"] = "formal"
+
+    if any(kw in msg for kw in ["less salesy", "not salesy", "softer", "subtle", "natural"]):
+        prefs["style"] = "soft_sales"
+
+    return prefs
+
+
+def build_classification_context(
+    user_message: str,
+    session_context: dict,
+    workflow_state: dict,
+) -> dict:
+    """
+    Build enriched context for intent classification including:
+    - parsed single-message fields
+    - workflow stage
+    - user preferences
+    - conversation history summary
+    """
+    user_messages = session_context.get("user_messages", [])
+    assistant_messages = session_context.get("assistant_messages", [])
+    recent = (user_messages + assistant_messages)[-5:]
+
+    service, target, signals = _extract_single_message_fields(user_message)
+
+    action, detail = _classify_natural_action(user_message, {
+        "service": session_context.get("service"),
+        "target": session_context.get("target"),
+        "has_draft": bool(session_context.get("selected_lead_id")),
+    })
+
+    context = {
+        "user_message": user_message,
+        "service": service or session_context.get("service"),
+        "target": target or session_context.get("target"),
+        "selected_lead_id": session_context.get("selected_lead_id"),
+        "has_draft": bool(session_context.get("selected_lead_id")),
+        "user_message_count": len(user_messages),
+        "recent_signals": signals,
+        "parsed_action": action,
+        "parsed_action_detail": detail,
+        "lead_list_active": (
+            "Reply with a number to pick one" in (assistant_messages[-1] or "")
+            if assistant_messages else False
+        ),
+        "recent_conversation": recent[-3:],
+        "workflow_stage": workflow_state.get("stage", "unknown"),
+    }
+
+    return context

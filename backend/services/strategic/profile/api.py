@@ -1,15 +1,16 @@
-"""Strategic Intelligence API endpoints."""
+"""HTTP adapters for onboarding-derived strategic profile operations."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from services.identity.dependencies import AuthContext, get_current_auth
-from services.strategic.profile.generator import get_profile_generator
+from services.onboarding.api import get_onboarding_service
+from services.strategic.profile import service as profile_service
+
 
 router = APIRouter(prefix="/api/v1/strategic-intelligence", tags=["Strategic Intelligence"])
 
@@ -54,41 +55,21 @@ async def generate_strategic_profile(
     payload: GenerateProfileRequest,
     auth: AuthContext = Depends(get_current_auth),
 ) -> GenerateProfileResponse:
-    """Generate a strategic profile from onboarding data.
-
-    Requires authentication. The actor identity is derived from the validated
-    session; a client-supplied ``user_id`` is never trusted for persistence.
-    """
+    """Generate a profile for the authenticated actor only."""
     try:
-        generator = get_profile_generator()
-        profile = await generator.generate_profile(
+        result = await profile_service.generate_profile_for_user(
+            auth.user_id,
             company_description=payload.company_description,
             ideal_customer=payload.ideal_customer,
             differentiation=payload.differentiation,
             annual_goal=payload.annual_goal,
             biggest_obstacle=payload.biggest_obstacle,
             website=payload.website,
+            onboarding_service=get_onboarding_service(),
         )
-        generated_at = datetime.now(timezone.utc).isoformat()
-
-        try:
-            from services.onboarding.api import _get_service as get_onboarding_service
-
-            svc = get_onboarding_service()
-            await svc.save_wizard_data(
-                auth.user_id,
-                {
-                    "strategicProfile": profile,
-                    "strategicProfileGeneratedAt": generated_at,
-                },
-            )
-        except Exception:
-            # Persistence is best-effort; generation still succeeds
-            pass
-
-        return GenerateProfileResponse(profile=profile, generated_at=generated_at)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to generate profile") from e
+        return GenerateProfileResponse(**result)
+    except Exception as error:
+        raise HTTPException(status_code=500, detail="Failed to generate profile") from error
 
 
 @router.get(
@@ -103,19 +84,13 @@ async def get_strategic_profile(
     user_id: str,
     auth: AuthContext = Depends(get_current_auth),
 ) -> GetProfileResponse:
-    """Get the stored strategic profile for the authenticated user."""
+    """Read the authenticated actor's profile; preserve the legacy empty result."""
+    del user_id
     try:
-        from services.onboarding.api import _get_service as get_onboarding_service
-
-        svc = get_onboarding_service()
-        wizard_data = await svc.get_wizard_data(auth.user_id)
-        profile = wizard_data.get("strategicProfile")
-        if isinstance(profile, dict) and profile:
-            generated_at = wizard_data.get("strategicProfileGeneratedAt")
-            return GetProfileResponse(
-                profile=profile,
-                generated_at=generated_at if isinstance(generated_at, str) else None,
-            )
-        return GetProfileResponse(profile=None, generated_at=None)
+        result = await profile_service.get_profile_for_user(
+            auth.user_id,
+            onboarding_service=get_onboarding_service(),
+        )
+        return GetProfileResponse(**result)
     except Exception:
         return GetProfileResponse(profile=None, generated_at=None)

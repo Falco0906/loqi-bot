@@ -236,7 +236,7 @@ class TestStrategicIntelligenceBoundary:
                 return {"COMPANY_SUMMARY": "Acme sells widgets"}
 
         monkeypatch.setattr(
-            "services.strategic_intelligence_api.get_profile_generator",
+            "services.strategic.profile.service.get_profile_generator",
             lambda: _Generator(),
         )
         svc, _ = _build_service()
@@ -286,7 +286,7 @@ class TestStrategicIntelligenceBoundary:
 
         onboarding_api.set_onboarding_service(_FailingOnboarding())
         monkeypatch.setattr(
-            "services.strategic_intelligence_api.get_profile_generator",
+            "services.strategic.profile.service.get_profile_generator",
             lambda: _Generator(),
         )
         svc, _ = _build_service()

@@ -731,7 +731,7 @@ async def complete_legacy_google_callback(code: str, state: str) -> str:
 
 def legacy_web_gmail_connect_url(session_token: str) -> str:
     """Return the historic web-session Gmail OAuth URL compatibility value."""
-    from services.conversation_engine import ConversationEngine
+    from services.conversations.legacy_engine import ConversationEngine
 
     return ConversationEngine().get_gmail_connect_url(
         channel="web",

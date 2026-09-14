@@ -482,7 +482,7 @@ class TestConversationEngineRendering:
 
     def test_planner_result_rendering(self) -> None:
         """_render_workflow_result handles planner_result type."""
-        from services.conversation_engine import ConversationEngine
+        from services.conversations.legacy_engine import ConversationEngine
 
         engine = ConversationEngine()
 
@@ -526,7 +526,7 @@ class TestConversationEngineRendering:
 
     def test_planner_result_failure_rendering(self) -> None:
         """_render_workflow_result handles planner_result with errors."""
-        from services.conversation_engine import ConversationEngine
+        from services.conversations.legacy_engine import ConversationEngine
 
         engine = ConversationEngine()
 

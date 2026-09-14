@@ -17,7 +17,7 @@ from starlette.requests import Request
 
 import services.conversations.compatibility as store
 import services.conversations.api as conversations_api
-import services.conversation_engine as engine_module
+import services.conversations.legacy_engine as engine_module
 import main as main_module
 
 OAUTH_USER_ID = "oauth:google:subject-123"

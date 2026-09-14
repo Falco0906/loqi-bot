@@ -25,7 +25,7 @@ from services.copilot.tools import (
 )
 import services.copilot.runners as copilot_runners
 from services.copilot_orchestrator import execute_copilot_plan, has_multi_step_plan
-from services.conversation_engine import _message
+from services.conversations.legacy_engine import _message
 from services.copilot.response import generate_copilot_response
 from services.platform.supabase import get_user_preferences
 

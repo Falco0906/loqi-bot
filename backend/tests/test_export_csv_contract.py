@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import services.conversation_engine as conversation_engine
+import services.conversations.legacy_engine as legacy_engine
 import services.export.api as export_api
 import services.export.service as export_service
 
@@ -193,14 +193,14 @@ async def test_export_csv_legacy_conversation_fallback_cannot_recover_leads(
     """ConversationEngine's persisted-message read drops lead-list metadata."""
     monkeypatch.setattr(export_service, "load_drafts_only", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(
-        conversation_engine,
+        legacy_engine,
         "get_web_session",
         lambda _token: {"id": OWNER_ID, "username": "Owner"},
     )
-    monkeypatch.setattr(conversation_engine, "list_workflow_sessions", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(conversation_engine, "has_connected_account", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(legacy_engine, "list_workflow_sessions", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(legacy_engine, "has_connected_account", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(
-        conversation_engine,
+        legacy_engine,
         "list_conversation_messages",
         lambda _user_id: [
             {
@@ -215,7 +215,7 @@ async def test_export_csv_legacy_conversation_fallback_cannot_recover_leads(
     )
 
     monkeypatch.setattr(
-        conversation_engine.ConversationEngine,
+        legacy_engine.ConversationEngine,
         "get_web_session_summary",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("export must not consult legacy conversation state")

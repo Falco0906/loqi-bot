@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from services.conversation_engine import ConversationEngine
+from services.conversations.legacy_engine import ConversationEngine
 from services.copilot import service as copilot_service
 from services.conversations.conversation_store import conversation_owned_by, conversation_store
 from services.conversations import service as conversation_service

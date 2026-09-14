@@ -44,8 +44,8 @@ class OpenAIError(Exception):
     pass
 
 
-def _send_openai_request(system_text: str, user_text: str) -> str:
-    """Send request to OpenAI API. Returns the response text or raises OpenAIError."""
+def _request_openai_text(system_text: str, user_text: str, *, timeout: int) -> str:
+    """Send one OpenAI Responses text request or raise ``OpenAIError``."""
     if not OPENAI_API_KEY:
         raise OpenAIError("OPENAI_API_KEY not configured. AI unavailable.")
 
@@ -75,7 +75,7 @@ def _send_openai_request(system_text: str, user_text: str) -> str:
             OPENAI_RESPONSES_URL,
             headers=headers,
             json=payload,
-            timeout=30,
+            timeout=timeout,
         )
         
         # Handle HTTP errors
@@ -108,6 +108,20 @@ def _send_openai_request(system_text: str, user_text: str) -> str:
         status = response.status_code if 'response' in dir() else "unknown"
         _log(f"_send_openai_request error: {error} status={status}")
         raise OpenAIError(f"OpenAI request failed: {error}")
+
+
+def _send_openai_request(system_text: str, user_text: str) -> str:
+    """Existing raising text-transport contract with its historical 30s timeout."""
+    return _request_openai_text(system_text, user_text, timeout=30)
+
+
+def try_send_openai_request(system_text: str, user_text: str, *, timeout: int = 30) -> str | None:
+    """Best-effort text transport for compatibility callers that expect ``None`` on failure."""
+    try:
+        return _request_openai_text(system_text, user_text, timeout=timeout)
+    except OpenAIError as error:
+        _log(f"try_send_openai_request failed: {error}")
+        return None
 
 
 def classify_intent(user_message: str, context: dict) -> str:

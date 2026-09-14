@@ -160,6 +160,7 @@ async def test_unfinished_task_and_completed_history_are_derived_from_actual_out
 
 def test_generated_response_labels_memory_as_context_not_workspace_authority(monkeypatch):
     from services import conversational_response_generator as generator
+    from services import ai as ai_service
 
     captured: dict[str, str] = {}
 
@@ -167,7 +168,7 @@ def test_generated_response_labels_memory_as_context_not_workspace_authority(mon
         captured["system"] = system
         return "Fact: no current campaign data was supplied. Recommendation: retrieve it before deciding."
 
-    monkeypatch.setattr(generator, "_send_openai_request", fake_openai)
+    monkeypatch.setattr(ai_service, "try_send_openai_request", fake_openai)
     result = generator.generate_copilot_response(
         "What should I do next?",
         copilot_context={

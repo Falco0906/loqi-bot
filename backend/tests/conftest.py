@@ -225,6 +225,7 @@ def _mock_openai(monkeypatch):
         return "I see you're on Mission Control. What would you like to do?"
 
     monkeypatch.setattr(ai_mod, "_send_openai_request", mock_send_openai)
+    monkeypatch.setattr(ai_mod, "try_send_openai_request", mock_send_openai)
 
 
 @pytest.fixture(scope="module")

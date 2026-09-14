@@ -1,69 +1,9 @@
 import json
-import os
 import random
 import re
 from typing import Optional
 
-import requests
-from dotenv import load_dotenv
-
-load_dotenv()
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
-
-
-def _log(message: str) -> None:
-    print(f"[conversational_ai] {message}")
-
-
-def _send_openai_request(system_text: str, user_text: str, timeout: int = 30) -> str | None:
-    """Send request to OpenAI API. Returns the response text or None on failure."""
-    if not OPENAI_API_KEY:
-        _log("OPENAI_API_KEY not configured")
-        return None
-
-
-    payload = {
-        "model": OPENAI_MODEL,
-        "input": [
-            {
-                "role": "system",
-                "content": [{"type": "input_text", "text": system_text}],
-            },
-            {
-                "role": "user",
-                "content": [{"type": "input_text", "text": user_text}],
-            },
-        ],
-    }
-    headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-    try:
-        response = requests.post(
-            OPENAI_RESPONSES_URL,
-            headers=headers,
-            json=payload,
-            timeout=timeout,
-        )
-
-        if response.status_code >= 400:
-            _log(f"OpenAI API error: {response.status_code}")
-            return None
-
-        data = response.json()
-        try:
-            return data["output"][0]["content"][0]["text"].strip()
-        except Exception:
-            return data.get("output_text", "").strip() or None
-
-    except Exception as e:
-        _log(f"OpenAI request failed: {e}")
-        return None
+import services.ai as ai_service
 
 
 def decide_copilot_intent(
@@ -74,7 +14,7 @@ def decide_copilot_intent(
     active_search: dict | None = None,
 ) -> dict:
     """Make the agent's intent/tool decision before response generation."""
-    _log(f"COPILOT_INTENT_ROUTER_ENTER message_chars={len(user_message)} history_len={len(message_history or [])}")
+    ai_service._log(f"COPILOT_INTENT_ROUTER_ENTER message_chars={len(user_message)} history_len={len(message_history or [])}")
     system = (
         "You are Loqi's intent and goal router. Return JSON only with keys intent, mode, action, plan, "
         "search_context, lead_ids, filters, sort, limit, campaign_id, draft_id, draft_ids, conversation_id, knowledge_query, knowledge_categories, knowledge_item_id, analytics_scope, edit_request, send_at, reply_body, confirmed, reason. Omit fields that do not apply.\n"
@@ -158,9 +98,9 @@ def decide_copilot_intent(
         "active_search": active_search or {},
         "workspace_context": workspace_context or {},
     }, ensure_ascii=False, default=str)
-    raw = _send_openai_request(system, user, timeout=20)
+    raw = ai_service.try_send_openai_request(system, user, timeout=20)
     if not raw:
-        _log("COPILOT_INTENT_ROUTER_EMPTY reason=model_unavailable_or_error")
+        ai_service._log("COPILOT_INTENT_ROUTER_EMPTY reason=model_unavailable_or_error")
         return {"intent": "clarification", "mode": "new", "search_context": {}, "reason": "Intent router unavailable"}
     try:
         cleaned = raw.strip()
@@ -168,18 +108,18 @@ def decide_copilot_intent(
             cleaned = cleaned.strip("`").removeprefix("json").strip()
         decision = json.loads(cleaned)
     except (TypeError, ValueError, json.JSONDecodeError):
-        _log(f"Copilot intent router returned invalid JSON: {raw[:200]}")
+        ai_service._log(f"Copilot intent router returned invalid JSON: {raw[:200]}")
         return {"intent": "clarification", "mode": "new", "search_context": {}, "reason": "Invalid intent decision"}
     intent_aliases = {
         "lead_discovery": "discovery",
         "informational": "conversation",
     }
     if not isinstance(decision, dict):
-        _log("COPILOT_INTENT_ROUTER_INVALID decision_shape=true")
+        ai_service._log("COPILOT_INTENT_ROUTER_INVALID decision_shape=true")
         return {"intent": "clarification", "mode": "new", "search_context": {}, "reason": "Invalid intent decision"}
     intent = intent_aliases.get(str(decision.get("intent") or ""), str(decision.get("intent") or ""))
     if intent not in {"conversation", "discovery", "discovery_refinement", "read", "action", "clarification"}:
-        _log("COPILOT_INTENT_ROUTER_INVALID intent=true")
+        ai_service._log("COPILOT_INTENT_ROUTER_INVALID intent=true")
         return {"intent": "clarification", "mode": "new", "search_context": {}, "reason": "Invalid intent decision"}
     raw_context = decision.get("search_context") or {}
     if not isinstance(raw_context, dict):
@@ -230,7 +170,7 @@ def decide_copilot_intent(
             "action": "",
             "reason": "A Discovery refinement requires an active Discovery context.",
         }
-    _log(f"COPILOT_INTENT_ROUTER_DECISION intent={normalized['intent']} mode={normalized['mode']} context={context}")
+    ai_service._log(f"COPILOT_INTENT_ROUTER_DECISION intent={normalized['intent']} mode={normalized['mode']} context={context}")
     return normalized
 
 
@@ -657,10 +597,10 @@ def generate_conversational_response(
         "Generate ONE short response (1-2 sentences max). No formalities."
     )
 
-    response = _send_openai_request(system_prompt, user_text, timeout=20)
+    response = ai_service.try_send_openai_request(system_prompt, user_text, timeout=20)
 
     if response and len(response.strip()) > 0:
-        _log(f"AI response generated: {response[:80]}")
+        ai_service._log(f"AI response generated: {response[:80]}")
         return response.strip()
 
     return _get_fallback_variation(stage, recent_assistant_messages)
@@ -956,7 +896,7 @@ def suggest_next_action(
 
     user_text = f"Stage: {stage}\nContext: {context}"
 
-    result = _send_openai_request(system, user_text, timeout=15)
+    result = ai_service.try_send_openai_request(system, user_text, timeout=15)
 
     if result and len(result) > 0 and len(result) < 100:
         return result.strip()
@@ -1259,11 +1199,11 @@ def generate_copilot_response(
 
     user_text = f"User message: {user_message.strip()}"
 
-    _log(f"Copilot request: page={current_page}, campaigns={snapshot.get('campaign_count', 0)}, focus={analysis.get('current_focus', {}).get('focus', 'none') if analysis else 'none'}, history_len={len(message_history)}")
-    response = _send_openai_request(system, user_text, timeout=20)
+    ai_service._log(f"Copilot request: page={current_page}, campaigns={snapshot.get('campaign_count', 0)}, focus={analysis.get('current_focus', {}).get('focus', 'none') if analysis else 'none'}, history_len={len(message_history)}")
+    response = ai_service.try_send_openai_request(system, user_text, timeout=20)
 
     if response and len(response.strip()) > 0:
-        _log(f"Copilot response generated: {response[:80]}")
+        ai_service._log(f"Copilot response generated: {response[:80]}")
         return response.strip()
 
     return "I understand what you're looking at. What would you like me to do?"

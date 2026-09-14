@@ -8,13 +8,13 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-from services.executive_brief import generate_brief
+from services.mission_control.narrative import generate_brief
 from services.intentions.engine import IntentionEngine
 from services.intentions.lifecycle import activate
 from services.intentions.models import Intention, IntentionType, LifecycleStatus
 from services.intentions.priority import order_intentions
 from services.narrative_engine import get_engine as get_narrative
-from services.recommendation_engine import generate_recommendations
+from services.mission_control.recommendations import generate_recommendations
 from services.workspace_snapshot import build_snapshot
 from services.workspace_timeline import (
     get_events as get_timeline_events,

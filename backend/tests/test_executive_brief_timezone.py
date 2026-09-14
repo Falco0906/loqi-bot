@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from services.executive_brief import greeting_for_timezone, normalize_timezone
+from services.mission_control.narrative import greeting_for_timezone, normalize_timezone
 
 
 def test_greeting_uses_the_users_iana_timezone():

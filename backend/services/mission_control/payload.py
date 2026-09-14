@@ -26,7 +26,7 @@ import json
 import time
 from typing import Any
 
-from services.executive_brief import greeting_for_timezone, normalize_timezone
+from services.mission_control.narrative import greeting_for_timezone, normalize_timezone
 from services.world_model.store import WorkspaceDelta
 
 
@@ -150,8 +150,8 @@ async def compute_shared_payload(
     recommendations, brief}; dedupe concurrent callers per key."""
     from services.workspace.state import load_workspace_state
     from services.workspace_snapshot import build_snapshot
-    from services.recommendation_engine import generate_recommendations
-    from services.executive_brief import generate_brief
+    from services.mission_control.recommendations import generate_recommendations
+    from services.mission_control.narrative import generate_brief
     from services.world_model import get_store as get_wm_store
 
     loop = asyncio.get_running_loop()

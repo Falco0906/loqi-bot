@@ -1,9 +1,15 @@
-import json
-import random
-import re
+"""Retained future legacy-conversation response capabilities.
+
+These helpers are intentionally unused today. They support a planned
+onboarding question-skipping and workflow next-step-suggestion feature, so
+they are not legacy dead code and must not be removed without a product check.
+"""
+from __future__ import annotations
+
 from typing import Optional
 
 import services.ai as ai_service
+from services.conversations.legacy_responses import _extract_single_message_fields
 
 
 def should_skip_question(

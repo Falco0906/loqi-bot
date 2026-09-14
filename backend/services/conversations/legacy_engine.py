@@ -14,7 +14,7 @@ from services.conversations.compatibility import (
     record_workflow_message,
     touch_workflow_session,
 )
-from services.google_auth import get_google_auth_url
+from services.communication.google_auth import get_google_auth_url
 from services.platform.supabase import (
     clear_session_context,
     get_lead_by_id,

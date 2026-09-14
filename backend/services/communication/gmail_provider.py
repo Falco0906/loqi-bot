@@ -24,7 +24,7 @@ from services.communication.provider_models import (
 from services.communication.communication_store import store
 from services.communication.provider_normalizer import normalize_message
 from services.communication.provider_events import emit_event
-from services.gmail_auth_failure import (
+from services.communication.gmail_auth_failure import (
     GmailReauthRequired,
     GmailTransientError,
     raise_for_token_response,

@@ -29,7 +29,7 @@ The entire adapter foundation plus three production adapters and the email compo
 - **Purpose:** Establish initial project structure, FastAPI app, Supabase integration, Telegram bot
 - **Major components built:** `main.py`, Telegram webhook, basic Gmail send, Supabase client, conversation engine
 - **Key architectural decisions:** FastAPI as web framework, Supabase as persistence layer, OpenAI for AI generation
-- **Created:** `main.py`, `services/agent.py`, `services/ai.py`, `services/gmail.py`, `services/google_auth.py`, `services/platform/supabase.py`, `services/telegram.py`, `services/conversation_engine.py`
+- **Created:** `main.py`, `services/agent.py`, `services/ai.py`, `services/gmail.py`, `services/communication/google_auth.py`, `services/platform/supabase.py`, `services/telegram.py`, `services/conversation_engine.py`
 - **Status:** Complete. Replaced by later iterations.
 
 ### Phase 2 — Workflow System (v0.3–v0.4)
@@ -860,7 +860,7 @@ Additional tables from schema:
 | Detail | Value |
 |---|---|
 | **OAuth Provider** | Google OAuth 2.0 only |
-| **Flow** | `services/google_auth.py` — generate auth URL → user authorizes → exchange code for tokens → refresh as needed |
+| **Flow** | `services/communication/google_auth.py` — generate auth URL → user authorizes → exchange code for tokens → refresh as needed |
 | **Endpoints** | `/api/auth/gmail/url` (GET URL), `/api/auth/gmail/callback` (OAuth callback) |
 | **Token Storage** | `services/platform/supabase.py` — `save_google_tokens()`, `update_google_access_token()` |
 | **Provider Credentials** | `save_provider_credentials()`, `load_all_provider_credentials()` — persisted for startup recovery |
@@ -924,7 +924,7 @@ If starting a new phase, the following would need to be done:
 | Item | Location | Issue |
 |---|---|---|
 | Legacy Gmail send | `services/gmail.py` | Pre-adapter implementation still exists alongside new GmailAdapter. Should be replaced by adapter calls. |
-| Legacy Google Auth | `services/google_auth.py` | Pre-adapter OAuth flow. The credential framework can potentially replace this. |
+| Legacy Google Auth | `services/communication/google_auth.py` | Pre-adapter OAuth flow. The credential framework can potentially replace this. |
 | In-memory BrandKit/Mailbox storage | `services/email/branding.py`, `mailbox.py` | Brand kits and mailboxes are registered in memory only — no persistence across restarts. |
 | JSON file-based workflow persistence | `services/workflow_persistence.py` | Does not scale beyond single-instance. Should use database for multi-instance deployments. |
 
@@ -958,7 +958,7 @@ If starting a new phase, the following would need to be done:
 | Refactor | Why |
 |---|---|
 | Replace `services/gmail.py` with GmailAdapter | Legacy code should be removed once the adapter is wired into the conversation engine |
-| Replace `services/google_auth.py` with Credential Resolver | Auth flow should use the new credential framework |
+| Replace `services/communication/google_auth.py` with Credential Resolver | Auth flow should use the new credential framework |
 | Remove `services/workflow_persistence.py` file-based persistence | Replace with database-backed persistence for multi-instance |
 | Consolidate conversation services | Multiple conversation files (`conversation_*.py`) have overlapping responsibilities |
 
@@ -1054,7 +1054,7 @@ Implementation stopped after **Phase 5.5 — Email Composition Engine v1.0** was
 11. **Workflow System** (`services/workflow_*.py`, 14 files) — deterministic plan execution
 12. **AI Generation** (`services/ai.py`) — OpenAI integration
 13. **Legacy Gmail** (`services/gmail.py`) — pre-adapter Gmail send (should eventually be replaced)
-14. **Google Auth** (`services/google_auth.py`) — OAuth flow (should eventually use credential framework)
+14. **Google Auth** (`services/communication/google_auth.py`) — OAuth flow (should eventually use credential framework)
 15. **Supabase Client** (`services/platform/supabase.py`) — all DB operations
 16. **Conversation Intelligence** (`services/conversation_intelligence/`) — knowledge registry, detection pipelines
 17. **Reply Generation** (`services/reply_generation/`) — multi-provider AI replies (OpenAI, Anthropic, Gemini, DeepSeek)

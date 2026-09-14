@@ -105,7 +105,7 @@ async def communication_timeline(session_token: str, conversation_id: str, reque
 @router.get("/api/auth/gmail/url")
 async def gmail_auth_url(request: Request, session_token: str = ""):
     """Issue a Gmail OAuth URL for a bearer- or web-session-bound user."""
-    from services.google_auth import get_google_auth_url
+    from services.communication.google_auth import get_google_auth_url
     from services.identity.oauth_state import issue_state
 
     try:
@@ -137,7 +137,7 @@ async def gmail_auth_url(request: Request, session_token: str = ""):
 @router.get("/api/auth/gmail/callback")
 async def gmail_auth_callback(code: str = "", state: str = "", error: str = ""):
     """Complete Gmail OAuth and return the browser popup postMessage page."""
-    from services.google_auth import exchange_code_for_tokens
+    from services.communication.google_auth import exchange_code_for_tokens
 
     ok = False
     provider_id = ""

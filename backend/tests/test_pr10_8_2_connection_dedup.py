@@ -119,7 +119,7 @@ class TestMigrationConstraint:
 class TestReauthState:
     def test_invalid_grant_marks_auth_failed(self, monkeypatch):
         import requests
-        from services.gmail_auth_failure import GmailReauthRequired
+        from services.communication.gmail_auth_failure import GmailReauthRequired
         from services.communication.gmail_provider import GmailProvider
         from services.communication.communication_store import store
         from services.communication.provider_models import ProviderStatus
@@ -190,7 +190,7 @@ class TestReauthState:
 
     def test_auth_failed_does_not_retry_every_cycle(self, monkeypatch):
         import requests
-        from services.gmail_auth_failure import GmailReauthRequired
+        from services.communication.gmail_auth_failure import GmailReauthRequired
         from services.communication.gmail_provider import GmailProvider
         post_mock = MagicMock()
 

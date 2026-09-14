@@ -240,7 +240,7 @@ def _run_async(coro):
             f"Bridge operation exceeded {_ASYNC_BRIDGE_TIMEOUT_SECONDS}s"
         ) from None
 
-from services.google_auth import refresh_access_token
+from services.communication.google_auth import refresh_access_token
 from services.discovery.providers import format_leads_message
 from services.ai import generate_outreach_email, rewrite_message, OpenAIError
 from services.discovery.providers import get_leads, search_with_expansion

@@ -507,7 +507,7 @@ async def connect_gmail_oauth_provider(
     from services.communication.gmail_provider import GmailProvider
     from services.communication import provider_startup
     from services.communication.provider_registry import register_instance, remove_instance
-    from services.google_auth import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+    from services.communication.google_auth import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
     from services.platform.supabase import get_durable_providers_for_user, sync_connected_account
 
     async with gmail_connect_lock(user_id):
@@ -694,7 +694,7 @@ async def resolve_oauth_state_user(state: str) -> str:
 
 async def complete_legacy_google_callback(code: str, state: str) -> str:
     """Complete the legacy web Gmail callback and publish its historic event."""
-    from services.google_auth import exchange_code_for_tokens
+    from services.communication.google_auth import exchange_code_for_tokens
     from services.identity.oauth_state import consume_state
     from services.platform.supabase import save_google_tokens
     from services.world_model import EventType as WMEventType, publish

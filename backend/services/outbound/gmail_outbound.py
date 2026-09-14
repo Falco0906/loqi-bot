@@ -22,7 +22,7 @@ from services.outbound.outbound_models import (
     Recipient,
 )
 from services.communication.gmail_provider import GMAIL_API_BASE, TOKEN_URL
-from services.gmail_auth_failure import (
+from services.communication.gmail_auth_failure import (
     GmailReauthRequired,
     raise_for_token_response,
 )

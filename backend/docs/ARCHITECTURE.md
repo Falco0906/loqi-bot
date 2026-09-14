@@ -808,7 +808,7 @@ The legacy synchronous workflow system is being superseded by the Execution Engi
 | `services/security/crypto/` | Encryption/hashing utilities |
 | `services/platform/supabase.py` | Supabase client (legacy — connection test only) |
 | `services/persistence/` | Production persistence layer (M2.1 — Identity only) |
-| `services/google_auth.py` | Google OAuth token exchange |
+| `services/communication/google_auth.py` | Google OAuth token exchange |
 | `services/platform/migration.py` | Data migration runner |
 
 ---

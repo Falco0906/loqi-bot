@@ -210,7 +210,7 @@ def test_a_oauth_persistence_visible_via_providers(durable, api, monkeypatch, cl
     _set_owner(monkeypatch, USER_A)
     monkeypatch.setattr(provider_service, "resolve_oauth_state_user", _fake_resolve(USER_A))
     monkeypatch.setattr(
-        "services.google_auth.exchange_code_for_tokens",
+        "services.communication.google_auth.exchange_code_for_tokens",
         lambda code: {
             "access_token": "at", "refresh_token": "rt",
             "email": "owner@gmail.com", "account_id": "owner",
@@ -242,7 +242,7 @@ def test_h_success_payload_contract(durable, api, monkeypatch, clean_runtime):
     _set_owner(monkeypatch, USER_A)
     monkeypatch.setattr(provider_service, "resolve_oauth_state_user", _fake_resolve(USER_A))
     monkeypatch.setattr(
-        "services.google_auth.exchange_code_for_tokens",
+        "services.communication.google_auth.exchange_code_for_tokens",
         lambda code: {"access_token": "at", "refresh_token": "rt",
                       "email": "owner@gmail.com", "account_id": "owner"},
     )
@@ -260,7 +260,7 @@ def test_h_popup_targets_configured_frontend_origin(durable, api, monkeypatch, c
     _set_owner(monkeypatch, USER_A)
     monkeypatch.setattr(provider_service, "resolve_oauth_state_user", _fake_resolve(USER_A))
     monkeypatch.setattr(
-        "services.google_auth.exchange_code_for_tokens",
+        "services.communication.google_auth.exchange_code_for_tokens",
         lambda code: {"access_token": "at", "refresh_token": "rt",
                       "email": "owner@gmail.com", "account_id": "owner"},
     )
@@ -277,7 +277,7 @@ def test_h_failure_payload_contract(durable, api, monkeypatch, clean_runtime):
     monkeypatch.setattr(provider_service, "resolve_oauth_state_user", _fake_resolve(USER_A))
     durable.fail_persist = True
     monkeypatch.setattr(
-        "services.google_auth.exchange_code_for_tokens",
+        "services.communication.google_auth.exchange_code_for_tokens",
         lambda code: {"access_token": "at", "refresh_token": "rt",
                       "email": "owner@gmail.com", "account_id": "owner"},
     )
@@ -384,7 +384,7 @@ def test_e_failed_persistence_reports_failure_and_rolls_back(
     _set_owner(monkeypatch, USER_A)
     monkeypatch.setattr(provider_service, "resolve_oauth_state_user", _fake_resolve(USER_A))
     monkeypatch.setattr(
-        "services.google_auth.exchange_code_for_tokens",
+        "services.communication.google_auth.exchange_code_for_tokens",
         lambda code: {"access_token": "at", "refresh_token": "rt",
                       "email": "owner@gmail.com", "account_id": "owner"},
     )

@@ -87,12 +87,12 @@ def _mock_refresh(post_mock, status, body):
 
 class TestClassification:
     def test_invalid_grant_classified_permanent(self):
-        from services.gmail_auth_failure import classify_refresh_status
+        from services.communication.gmail_auth_failure import classify_refresh_status
         assert classify_refresh_status(400, "invalid_grant") == "reauth_required"
         assert classify_refresh_status(400, "unauthorized_client") == "reauth_required"
 
     def test_transient_statuses_remain_transient(self):
-        from services.gmail_auth_failure import classify_refresh_status
+        from services.communication.gmail_auth_failure import classify_refresh_status
         assert classify_refresh_status(500, "") == "transient"
         assert classify_refresh_status(503, "") == "transient"
         assert classify_refresh_status(429, "") == "transient"
@@ -100,7 +100,7 @@ class TestClassification:
         assert classify_refresh_status(200, "") == "success"
 
     def test_invalid_grant_raises_typed_error(self):
-        from services.gmail_auth_failure import (
+        from services.communication.gmail_auth_failure import (
             raise_for_token_response, GmailReauthRequired, GmailTransientError,
         )
         with pytest.raises(GmailReauthRequired):
@@ -130,7 +130,7 @@ class TestReauthState:
         post_mock = MagicMock()
         _mock_refresh(post_mock, 400, {"error": "invalid_grant", "error_description": "revoked"})
         monkeypatch.setattr(requests, "post", post_mock)
-        from services.gmail_auth_failure import GmailReauthRequired
+        from services.communication.gmail_auth_failure import GmailReauthRequired
         from services.communication.gmail_provider import GmailProvider
         provider = GmailProvider()
         provider.connect(
@@ -146,7 +146,7 @@ class TestReauthState:
 
     def test_provider_enters_reauth_required(self, monkeypatch):
         import requests
-        from services.gmail_auth_failure import GmailReauthRequired
+        from services.communication.gmail_auth_failure import GmailReauthRequired
         from services.communication.gmail_provider import GmailProvider
         from services.communication.communication_store import store
         from services.communication.provider_models import ProviderStatus
@@ -181,7 +181,7 @@ class TestReauthState:
         from services.communication.gmail_provider import GmailProvider
         from services.communication import provider_registry
         from services.communication.inbox_sync_engine import InboxSyncEngine
-        from services.gmail_auth_failure import GmailReauthRequired
+        from services.communication.gmail_auth_failure import GmailReauthRequired
         import requests
         post_mock = MagicMock()
         _mock_refresh(post_mock, 400, {"error": "invalid_grant", "error_description": "revoked"})
@@ -215,7 +215,7 @@ class TestReauthState:
 class TestTransientIsolation:
     def test_transient_5xx_does_not_mark_reauth(self, monkeypatch):
         import requests
-        from services.gmail_auth_failure import GmailTransientError
+        from services.communication.gmail_auth_failure import GmailTransientError
         from services.communication.gmail_provider import GmailProvider
         from services.communication.communication_store import store
         from services.communication.provider_models import ProviderStatus
@@ -235,7 +235,7 @@ class TestTransientIsolation:
 
     def test_network_failure_isolated_and_not_reauth(self, monkeypatch):
         import requests
-        from services.gmail_auth_failure import GmailTransientError
+        from services.communication.gmail_auth_failure import GmailTransientError
         from services.communication.gmail_provider import GmailProvider
         post_mock = MagicMock(side_effect=requests.ConnectionError("network down"))
         monkeypatch.setattr(requests, "post", post_mock)
@@ -429,7 +429,7 @@ class TestLoggingSanitization:
     def test_invalid_grant_logs_safe_metadata_only(self, monkeypatch, caplog):
         import logging
         import requests
-        from services.gmail_auth_failure import GmailReauthRequired
+        from services.communication.gmail_auth_failure import GmailReauthRequired
         from services.communication.gmail_provider import GmailProvider
         post_mock = MagicMock()
         _mock_refresh(post_mock, 400, {
@@ -456,7 +456,7 @@ class TestLoggingSanitization:
     def test_raw_response_body_not_logged(self, monkeypatch, caplog):
         import logging
         import requests
-        from services.gmail_auth_failure import GmailTransientError
+        from services.communication.gmail_auth_failure import GmailTransientError
         from services.communication.gmail_provider import GmailProvider
         post_mock = MagicMock()
         _mock_refresh(post_mock, 500, {"error": "backend_error", "detail": RAW_BODY_MARKER})
@@ -473,7 +473,7 @@ class TestLoggingSanitization:
     def test_outbound_refresh_failure_sanitized(self, monkeypatch, caplog):
         import logging
         import requests
-        from services.gmail_auth_failure import GmailReauthRequired
+        from services.communication.gmail_auth_failure import GmailReauthRequired
         from services.outbound.gmail_outbound import GmailOutboundProvider
         post_mock = MagicMock()
         _mock_refresh(post_mock, 400, {"error": "invalid_grant", "error_description": RAW_BODY_MARKER})

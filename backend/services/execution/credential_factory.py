@@ -71,7 +71,7 @@ def resolve_google_credentials(
         return {}
 
     from services.platform.supabase import get_google_credentials, is_token_expired
-    from services.google_auth import refresh_access_token
+    from services.communication.google_auth import refresh_access_token
     from services.platform.supabase import update_google_access_token
 
     creds = get_google_credentials(user_id)

@@ -84,8 +84,8 @@ def restore_gmail_providers() -> None:
     """Restore durable Gmail connections into communication and outbound runtime registries."""
     from services.communication.gmail_provider import GmailProvider
     from services.communication.provider_registry import register_instance
-    from services.gmail_auth_failure import GmailReauthRequired
-    from services.google_auth import refresh_access_token
+    from services.communication.gmail_auth_failure import GmailReauthRequired
+    from services.communication.google_auth import refresh_access_token
     from services.platform.supabase import (
         load_all_provider_credentials,
         reconcile_connected_account_duplicates,

@@ -433,7 +433,7 @@ def test_legacy_google_callback_preserves_popup_and_provider_event(monkeypatch):
     events: list[tuple[str, object, dict, str]] = []
     monkeypatch.setattr("services.identity.oauth_state.consume_state", consume_state)
     monkeypatch.setattr(
-        "services.google_auth.exchange_code_for_tokens",
+        "services.communication.google_auth.exchange_code_for_tokens",
         lambda _code: {
             "email": "owner@example.test",
             "access_token": "access",

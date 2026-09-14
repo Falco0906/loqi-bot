@@ -368,7 +368,7 @@ class TestIdempotentReconnect:
 
     def test_existing_credentials_remain_encrypted(self, monkeypatch):
         from services.platform.supabase import sync_connected_account
-        from services.credential_crypto import is_encrypted
+        from services.security.crypto.credentials import is_encrypted
         from services.persistence.launch import ConnectedAccount
 
         class FakeRepo:
@@ -529,7 +529,7 @@ class TestReconciliation:
 
 class TestOAuthState:
     def test_state_single_use(self):
-        from services.oauth_state import issue_state, consume_state
+        from services.identity.oauth_state import issue_state, consume_state
         import asyncio
         state = asyncio.run(issue_state("user-1"))
         user_id, _ = asyncio.run(consume_state(state))

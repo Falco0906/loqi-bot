@@ -61,7 +61,7 @@ async def _bind_authenticated_web_session(
     """Bind a newly-created legacy web session only when canonical auth exists."""
     if not user_id or not canonical_session_id:
         return
-    from services.web_session_binding import bind_web_session
+    from services.identity.web_session_binding import bind_web_session
 
     await bind_web_session(session_token, user_id, canonical_session_id)
 

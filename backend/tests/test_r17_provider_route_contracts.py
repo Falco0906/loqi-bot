@@ -316,7 +316,7 @@ def test_provider_disconnect_is_owned_and_not_retry_idempotent(owner, monkeypatc
         ),
     )
     from services.events_bus import event_bus
-    from services.session_cache import session_cache
+    from services.identity.session_cache import session_cache
 
     monkeypatch.setattr(session_cache, "invalidate_user", cache_invalidate)
     monkeypatch.setattr(event_bus, "publish_user_event", bus_publish)
@@ -431,7 +431,7 @@ def test_legacy_google_callback_preserves_popup_and_provider_event(monkeypatch):
         return OWNER_ID, {"channel": "web"}
 
     events: list[tuple[str, object, dict, str]] = []
-    monkeypatch.setattr("services.oauth_state.consume_state", consume_state)
+    monkeypatch.setattr("services.identity.oauth_state.consume_state", consume_state)
     monkeypatch.setattr(
         "services.google_auth.exchange_code_for_tokens",
         lambda _code: {

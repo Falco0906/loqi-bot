@@ -417,7 +417,7 @@ def _encrypt_credential_field(value: str) -> str:
     configured (development). Production validation requires the key."""
     if not value:
         return value
-    from services.credential_crypto import encrypt_token, encryption_key_configured
+    from services.security.crypto.credentials import encrypt_token, encryption_key_configured
     if not encryption_key_configured():
         return value
     return encrypt_token(value)
@@ -427,7 +427,7 @@ def _decrypt_credential_field(value: str) -> str:
     """Decrypt a stored credential value. Legacy plaintext passes through."""
     if not value:
         return value
-    from services.credential_crypto import decrypt_token, is_encrypted
+    from services.security.crypto.credentials import decrypt_token, is_encrypted
     if not is_encrypted(value):
         return value
     try:
@@ -439,7 +439,7 @@ def _decrypt_credential_field(value: str) -> str:
 
 def _migrate_legacy_credentials(user_id: str, provider: str, access_token: str, refresh_token: str) -> None:
     """Encrypt-on-write for legacy plaintext credentials once a key is set."""
-    from services.credential_crypto import encryption_key_configured, is_encrypted
+    from services.security.crypto.credentials import encryption_key_configured, is_encrypted
     if not encryption_key_configured():
         return
     if (is_encrypted(access_token) or not access_token) and (is_encrypted(refresh_token) or not refresh_token):

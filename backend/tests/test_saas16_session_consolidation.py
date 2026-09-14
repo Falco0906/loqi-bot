@@ -71,7 +71,7 @@ def _reset():
     reset_crypto_service()
     reset_auth_service()
     reset_oauth_session_repo()
-    from services import web_session_binding
+    from services.identity import web_session_binding
     web_session_binding.reset_store()
 
 
@@ -173,7 +173,7 @@ def _fake_engine_summary(monkeypatch, mapping: dict):
 class TestBootstrapBinding:
 
     def test_authenticated_bootstrap_records_binding(self, client, monkeypatch):
-        from services import web_session_binding
+        from services.identity import web_session_binding
 
         svc, _ = _build_service()
         complete = asyncio.run(_register_user(svc, "bind@example.com"))
@@ -221,7 +221,7 @@ class TestBootstrapBinding:
         assert binding.canonical_session_id == session_id
 
     def test_unauthenticated_bootstrap_no_binding(self, client, monkeypatch):
-        from services import web_session_binding
+        from services.identity import web_session_binding
         from services.conversations import api as conversations_api
 
         monkeypatch.setattr(conversations_api, "engine", type("E", (), {
@@ -246,7 +246,7 @@ class TestBootstrapBinding:
 class TestSessionAuthority:
 
     def test_bound_web_session_resolves_to_canonical_user(self, monkeypatch):
-        from services import web_session_binding
+        from services.identity import web_session_binding
 
         svc, _ = _build_service()
         complete = asyncio.run(_register_user(svc, "auth@example.com"))
@@ -263,7 +263,7 @@ class TestSessionAuthority:
         assert owner == complete.user.id
 
     def test_revoked_canonical_session_invalidates_bound_web_session(self, monkeypatch):
-        from services import web_session_binding
+        from services.identity import web_session_binding
         from fastapi import HTTPException as FE
 
         svc, _ = _build_service()
@@ -286,7 +286,7 @@ class TestSessionAuthority:
         assert exc_info.value.status_code == 401
 
     def test_expired_canonical_session_invalidates_bound_web_session(self, monkeypatch):
-        from services import web_session_binding
+        from services.identity import web_session_binding
         from fastapi import HTTPException as FE
 
         svc, repos = _build_service()
@@ -313,7 +313,7 @@ class TestSessionAuthority:
         assert owner == "legacy-synthetic"
 
     def test_password_change_keeps_bound_web_session_password_reset_revokes(self, monkeypatch):
-        from services import web_session_binding
+        from services.identity import web_session_binding
         from fastapi import HTTPException as FE
 
         svc, _ = _build_service()

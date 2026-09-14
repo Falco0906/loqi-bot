@@ -69,7 +69,7 @@ def test_unconfigured_returns_none(monkeypatch):
 # ─── cache: shared across workers ─────────────────────────────────────
 
 def test_session_identity_shared_across_workers(wire_redis):
-    from services.session_cache import SessionCache, SessionIdentity
+    from services.identity.session_cache import SessionCache, SessionIdentity
 
     async def run():
         worker_a = SessionCache()
@@ -88,7 +88,7 @@ def test_session_identity_shared_across_workers(wire_redis):
 
 
 def test_token_keys_are_hashed_not_raw(wire_redis):
-    from services.session_cache import SessionCache, SessionIdentity, _token_hash
+    from services.identity.session_cache import SessionCache, SessionIdentity, _token_hash
     from services.platform.redis_client import k_session_identity
 
     async def run():
@@ -104,7 +104,7 @@ def test_token_keys_are_hashed_not_raw(wire_redis):
 
 
 def test_cache_ttl_expiry(wire_redis):
-    from services.session_cache import SessionCache, SessionIdentity
+    from services.identity.session_cache import SessionCache, SessionIdentity
 
     async def run():
         worker = SessionCache(ttl_seconds=1)
@@ -118,7 +118,7 @@ def test_cache_ttl_expiry(wire_redis):
 
 
 def test_cross_user_isolation_no_collision(wire_redis):
-    from services.session_cache import SessionCache, SessionIdentity
+    from services.identity.session_cache import SessionCache, SessionIdentity
 
     async def run():
         a, b = SessionCache(), SessionCache()
@@ -147,7 +147,7 @@ def test_redis_unavailable_falls_back_without_bypass(wire_redis, monkeypatch):
     monkeypatch.setattr(rc, "get_client", dead_client)
 
     async def run():
-        from services.session_cache import SessionCache, SessionIdentity
+        from services.identity.session_cache import SessionCache, SessionIdentity
         cache = SessionCache()
         # Never cached → None even while Redis is down.
         assert await cache.get_identity("tok-unknown") is None

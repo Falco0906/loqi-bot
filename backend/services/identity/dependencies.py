@@ -69,7 +69,7 @@ async def ensure_legacy_user_bridge(user_id: str) -> None:
 
 
 async def cached_web_session_identity(token: str) -> dict | None:
-    from services.session_cache import SessionIdentity, session_cache
+    from services.identity.session_cache import SessionIdentity, session_cache
     cached = await session_cache.get_identity(token)
     if cached is not None:
         return cached
@@ -101,7 +101,7 @@ async def cached_web_session_identity(token: str) -> dict | None:
 
 async def web_session_binding(token: str):
     from services.platform import redis_client
-    from services.session_cache import _token_hash
+    from services.identity.session_cache import _token_hash
     key = redis_client.k_session_binding(_token_hash(token))
     now = time.monotonic()
     if len(_binding_local) > 2048:
@@ -123,7 +123,7 @@ async def web_session_binding(token: str):
         except Exception as error:
             log.debug("binding_cache_read_failed error_type=%s", type(error).__name__)
             client = None
-    from services.web_session_binding import find_binding
+    from services.identity.web_session_binding import find_binding
     binding = await find_binding(token)
     if client is not None:
         try:

@@ -225,7 +225,7 @@ class ConversationEngine:
         """PR-2B: minimal identity for hot paths — 2-4 queries instead of the
         full summary's ~9-10. Returns {user_id, display_name, gmail_connected};
         never loads workflow sessions or messages. Pairs with
-        services.session_cache for short-TTL caching."""
+        services.identity.session_cache for short-TTL caching."""
         user = get_web_session(session_token)
         if user is None:
             return None
@@ -279,7 +279,7 @@ class ConversationEngine:
         # flow context (channel + transport id). The callback consumes it and
         # derives ownership from the state — never from a client-constructed
         # user_id (SaaS-1.5).
-        from services.oauth_state import issue_state
+        from services.identity.oauth_state import issue_state
         from services.platform.supabase import _run_blocking
         state = _run_blocking(issue_state(
             str(user["id"]),

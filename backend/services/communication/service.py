@@ -439,7 +439,7 @@ async def disconnect_provider(
         return False
 
     try:
-        from services.session_cache import session_cache
+        from services.identity.session_cache import session_cache
 
         await session_cache.invalidate_user(owner_id)
     except Exception:
@@ -601,7 +601,7 @@ async def connect_gmail_oauth_provider(
             email,
         )
         try:
-            from services.session_cache import session_cache
+            from services.identity.session_cache import session_cache
 
             await session_cache.invalidate_user(user_id)
         except Exception:
@@ -680,7 +680,7 @@ def frontend_postmessage_origin() -> str:
 
 async def resolve_oauth_state_user(state: str) -> str:
     """Resolve a server-issued Gmail OAuth state token to its Loqi user."""
-    from services.oauth_state import consume_state
+    from services.identity.oauth_state import consume_state
 
     user_id, _context = await consume_state(state)
     if not user_id or user_id == "gmail_user":
@@ -695,7 +695,7 @@ async def resolve_oauth_state_user(state: str) -> str:
 async def complete_legacy_google_callback(code: str, state: str) -> str:
     """Complete the legacy web Gmail callback and publish its historic event."""
     from services.google_auth import exchange_code_for_tokens
-    from services.oauth_state import consume_state
+    from services.identity.oauth_state import consume_state
     from services.platform.supabase import save_google_tokens
     from services.world_model import EventType as WMEventType, publish
 

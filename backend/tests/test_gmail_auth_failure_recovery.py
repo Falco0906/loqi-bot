@@ -335,7 +335,7 @@ class TestReauthentication:
 
     def test_new_credentials_encrypted_on_persistence(self, monkeypatch):
         from services.platform.supabase import sync_connected_account
-        from services.credential_crypto import is_encrypted
+        from services.security.crypto.credentials import is_encrypted
         from services.persistence.launch import ConnectedAccount
 
         class FakeRepo:
@@ -498,7 +498,7 @@ class TestLoggingSanitization:
 
 class TestOAuthStateStillValidated:
     def test_state_single_use_and_validated(self):
-        from services.oauth_state import issue_state, consume_state
+        from services.identity.oauth_state import issue_state, consume_state
         import asyncio
         state = asyncio.run(issue_state("user-1"))
         user_id, _ = asyncio.run(consume_state(state))
@@ -506,7 +506,7 @@ class TestOAuthStateStillValidated:
         assert asyncio.run(consume_state(state)) == (None, None)  # single-use
 
     def test_invalid_state_rejected(self):
-        from services.oauth_state import consume_state
+        from services.identity.oauth_state import consume_state
         import asyncio
         assert asyncio.run(consume_state("dev_providers:user-1")) == (None, None)
         assert asyncio.run(consume_state("forged-state")) == (None, None)

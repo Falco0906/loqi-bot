@@ -195,7 +195,7 @@ def validate_config(env: Mapping[str, str] | None = None) -> tuple[list[str], li
         errors.append(f"LOG_FORMAT must be one of: {', '.join(sorted(LOG_FORMATS))}")
 
     # ── Credential encryption key (PR10.7) ──
-    from services.credential_crypto import is_placeholder_key, is_valid_key_format
+    from services.security.crypto.credentials import is_placeholder_key, is_valid_key_format
     for key_name in ("LOQI_CREDENTIAL_ENCRYPTION_KEY", "LOQI_CREDENTIAL_ENCRYPTION_KEY_PREVIOUS"):
         key_value = _raw(source, key_name)
         if key_value:

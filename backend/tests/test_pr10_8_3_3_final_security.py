@@ -228,7 +228,7 @@ class TestTenantIsolationFinal:
 
 class TestOAuthFinal:
     def test_state_single_use_and_user_bound(self):
-        from services.oauth_state import issue_state, consume_state
+        from services.identity.oauth_state import issue_state, consume_state
         import asyncio
         state = asyncio.run(issue_state("user-a"))
         user_a, _ = asyncio.run(consume_state(state))

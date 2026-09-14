@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import main as main_module
-from services.session_cache import SessionCache, SessionIdentity
+from services.identity.session_cache import SessionCache, SessionIdentity
 
 
 TOKEN_A = "cache-token-a"
@@ -150,7 +150,7 @@ def test_resolver_uses_cached_identity_not_full_summary(monkeypatch):
     request = Req()
 
     # Fresh cache → one identity lookup serves BOTH resolver calls.
-    from services.session_cache import session_cache
+    from services.identity.session_cache import session_cache
     session_cache.clear_local_only()
     owner1 = asyncio.run(main_module.identity_dependencies.resolve_web_session(request))
     owner2 = asyncio.run(main_module.identity_dependencies.resolve_web_session(request))
@@ -179,7 +179,7 @@ def test_authenticated_user_id_uses_canonical_session_resolution(monkeypatch):
     monkeypatch.setattr("services.platform.supabase.has_connected_account", lambda _user_id: False)
     monkeypatch.setattr(main_module.engine, "get_web_session_summary", fake_full)
 
-    from services.session_cache import session_cache
+    from services.identity.session_cache import session_cache
     session_cache.clear_local_only()
     owner = asyncio.run(
         main_module.identity_dependencies.authenticated_user_id(None, TOKEN_A),

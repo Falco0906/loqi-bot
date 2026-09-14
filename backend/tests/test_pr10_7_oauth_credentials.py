@@ -14,8 +14,8 @@ sys.path.insert(0, ".")
 import pytest
 
 from services.platform.config_validation import validate_config
-from services import credential_crypto
-from services import oauth_state
+from services.security.crypto import credentials
+from services.identity import oauth_state
 
 SENTINEL = "PR10_7_SENTINEL_SECRET_DO_NOT_LEAK"
 
@@ -71,34 +71,34 @@ class TestConfigValidation:
 class TestCredentialCrypto:
     def test_round_trip(self, monkeypatch):
         monkeypatch.setenv("LOQI_CREDENTIAL_ENCRYPTION_KEY", _key())
-        cipher = credential_crypto.encrypt_token(SENTINEL)
-        assert credential_crypto.is_encrypted(cipher)
+        cipher = credentials.encrypt_token(SENTINEL)
+        assert credentials.is_encrypted(cipher)
         assert SENTINEL not in cipher
-        assert credential_crypto.decrypt_token(cipher) == SENTINEL
+        assert credentials.decrypt_token(cipher) == SENTINEL
 
     def test_tampered_ciphertext_rejected(self, monkeypatch):
         monkeypatch.setenv("LOQI_CREDENTIAL_ENCRYPTION_KEY", _key())
-        cipher = credential_crypto.encrypt_token(SENTINEL)
+        cipher = credentials.encrypt_token(SENTINEL)
         tampered = cipher[:-1] + ("A" if cipher[-1] != "A" else "B")
-        with pytest.raises(credential_crypto.CredentialDecryptionError):
-            credential_crypto.decrypt_token(tampered)
+        with pytest.raises(credentials.CredentialDecryptionError):
+            credentials.decrypt_token(tampered)
 
     def test_wrong_key_rejected(self, monkeypatch):
         monkeypatch.setenv("LOQI_CREDENTIAL_ENCRYPTION_KEY", _key())
-        cipher = credential_crypto.encrypt_token(SENTINEL)
+        cipher = credentials.encrypt_token(SENTINEL)
         monkeypatch.setenv("LOQI_CREDENTIAL_ENCRYPTION_KEY", "cd" * 32)
-        with pytest.raises(credential_crypto.CredentialDecryptionError):
-            credential_crypto.decrypt_token(cipher)
+        with pytest.raises(credentials.CredentialDecryptionError):
+            credentials.decrypt_token(cipher)
 
     def test_previous_key_rotation(self, monkeypatch):
         monkeypatch.setenv("LOQI_CREDENTIAL_ENCRYPTION_KEY", "ab" * 32)
-        cipher = credential_crypto.encrypt_token(SENTINEL)
+        cipher = credentials.encrypt_token(SENTINEL)
         monkeypatch.setenv("LOQI_CREDENTIAL_ENCRYPTION_KEY", "cd" * 32)
         monkeypatch.setenv("LOQI_CREDENTIAL_ENCRYPTION_KEY_PREVIOUS", "ab" * 32)
-        assert credential_crypto.decrypt_token(cipher) == SENTINEL
+        assert credentials.decrypt_token(cipher) == SENTINEL
 
     def test_plaintext_passes_through_when_not_encrypted(self):
-        assert credential_crypto.decrypt_token(SENTINEL) == SENTINEL
+        assert credentials.decrypt_token(SENTINEL) == SENTINEL
 
 
 class TestFieldHelpers:
@@ -106,7 +106,7 @@ class TestFieldHelpers:
         monkeypatch.setenv("LOQI_CREDENTIAL_ENCRYPTION_KEY", _key())
         import services.platform.supabase as supabase_module
         cipher = supabase_module._encrypt_credential_field(SENTINEL)
-        assert credential_crypto.is_encrypted(cipher)
+        assert credentials.is_encrypted(cipher)
         assert SENTINEL not in cipher
         assert supabase_module._decrypt_credential_field(cipher) == SENTINEL
 
@@ -148,8 +148,8 @@ class TestPersistenceIntegration:
         )
         assert ok is True
         entity = repo.accounts[("user-1", "google")]
-        assert credential_crypto.is_encrypted(entity.access_token)
-        assert credential_crypto.is_encrypted(entity.refresh_token)
+        assert credentials.is_encrypted(entity.access_token)
+        assert credentials.is_encrypted(entity.refresh_token)
         assert SENTINEL not in (entity.access_token or "") + (entity.refresh_token or "")
 
     def test_decrypt_only_internal_load_path(self, monkeypatch):
@@ -158,8 +158,8 @@ class TestPersistenceIntegration:
         monkeypatch.setenv("LOQI_CREDENTIAL_ENCRYPTION_KEY", _key())
         repo.accounts[("user-1", "google")] = ConnectedAccount(
             user_id="user-1", provider="google", email="a@b.com",
-            access_token=credential_crypto.encrypt_token(SENTINEL),
-            refresh_token=credential_crypto.encrypt_token(SENTINEL),
+            access_token=credentials.encrypt_token(SENTINEL),
+            refresh_token=credentials.encrypt_token(SENTINEL),
         )
         import services.platform.supabase as supabase_module
         creds = supabase_module.get_google_credentials("user-1")
@@ -167,7 +167,7 @@ class TestPersistenceIntegration:
         assert creds["access_token"] == SENTINEL
         assert creds["refresh_token"] == SENTINEL
         # Stored value stays encrypted (no plaintext write-back on read).
-        assert credential_crypto.is_encrypted(repo.accounts[("user-1", "google")].access_token)
+        assert credentials.is_encrypted(repo.accounts[("user-1", "google")].access_token)
 
     def test_legacy_plaintext_migrated_on_write(self, monkeypatch):
         from services.persistence.launch import ConnectedAccount
@@ -181,8 +181,8 @@ class TestPersistenceIntegration:
         creds = supabase_module.get_google_credentials("user-1")
         assert creds["access_token"] == SENTINEL
         entity = repo.accounts[("user-1", "google")]
-        assert credential_crypto.is_encrypted(entity.access_token)
-        assert credential_crypto.is_encrypted(entity.refresh_token)
+        assert credentials.is_encrypted(entity.access_token)
+        assert credentials.is_encrypted(entity.refresh_token)
 
     def test_encrypted_credential_recognized_after_reload(self, monkeypatch):
         from services.persistence.launch import ConnectedAccount
@@ -190,8 +190,8 @@ class TestPersistenceIntegration:
         monkeypatch.setenv("LOQI_CREDENTIAL_ENCRYPTION_KEY", _key())
         repo.accounts[("user-1", "google")] = ConnectedAccount(
             user_id="user-1", provider="google", email="a@b.com",
-            access_token=credential_crypto.encrypt_token(SENTINEL),
-            refresh_token=credential_crypto.encrypt_token(SENTINEL),
+            access_token=credentials.encrypt_token(SENTINEL),
+            refresh_token=credentials.encrypt_token(SENTINEL),
         )
         import services.platform.supabase as supabase_module
         # Fresh read (simulates restart/reload) resolves the encrypted value.

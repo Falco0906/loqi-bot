@@ -150,7 +150,7 @@ backend/services/coordinator/coordinator.py | ACTIVE | Defines CoordinationPlan 
 backend/services/coordinator/strategy.py | ACTIVE | Defines CoordinatorStrategy.
 backend/services/copilot_orchestrator.py | ACTIVE | Bounded multi-step orchestration over the existing Copilot tool registry.
 backend/services/copilot_tools.py | ACTIVE | Backend-owned Copilot tool contract.
-backend/services/credential_crypto.py | ACTIVE | Authenticated encryption at rest for persisted provider credentials (PR10.7).
+backend/services/security/crypto/credentials.py | ACTIVE | Authenticated encryption at rest for persisted provider credentials (PR10.7).
 backend/services/cta_strategy.py | ACTIVE | CTA strategy engine.
 backend/services/discovery.py | ACTIVE | Discovery service — first-class, persistent research entities.
 backend/services/discovery/context.py | ACTIVE | Optional workspace context for Discovery and qualification.
@@ -302,7 +302,7 @@ backend/services/mission_control/briefing.py | ACTIVE | Defines MissionControlSe
 backend/services/mission_control/payload.py | ACTIVE | Shared Mission Control payload — one state load + one LLM computation per workspace state, served to both ``/mission-control`` and ``/briefing``.
 backend/services/mission_control/types.py | TEST-ONLY | Defines IntentionCard and BriefingSection.
 backend/services/narrative_engine.py | ACTIVE | Defines BriefingContext and NarrativeEngine.
-backend/services/oauth_state.py | ACTIVE | Server-side OAuth state (CSRF) protection, durable across instances (SaaS-1.5).
+backend/services/identity/oauth_state.py | ACTIVE | Server-side OAuth state (CSRF) protection, durable across instances (SaaS-1.5).
 backend/services/objection_predictor.py | ACTIVE | Objection prediction engine.
 backend/services/onboarding/__init__.py | ACTIVE | Package initializer and public import surface.
 backend/services/onboarding/api.py | ACTIVE | Defines set_onboarding_service and set_onboarding_completion_handler.
@@ -464,7 +464,7 @@ backend/services/discovery/search_expansion.py | ACTIVE | Defines expand_search_
 backend/services/security/__init__.py | ACTIVE | Package initializer and public import surface.
 backend/services/security/crypto/__init__.py | ACTIVE | Package initializer and public import surface.
 backend/services/security/crypto/crypto_service.py | ACTIVE | Defines CryptoService and DefaultCryptoService.
-backend/services/session_cache.py | ACTIVE | Session identity cache — PR-3A Redis-backed implementation of the Phase-2B contract.
+backend/services/identity/session_cache.py | ACTIVE | Session identity cache — PR-3A Redis-backed implementation of the Phase-2B contract.
 backend/services/strategic/__init__.py | ACTIVE | Thin Strategic Intelligence layer over canonical Loqi activity.
 backend/services/strategic/actions.py | ACTIVE | Human-approved Strategic Action proposals and execution (PR6.1).
 backend/services/strategic/collector.py | TEST-ONLY | Deterministic collection of strategic signals from canonical activity.
@@ -477,7 +477,7 @@ backend/services/strategy_comparison.py | APPARENTLY-UNUSED | Strategy compariso
 backend/services/platform/supabase.py | ACTIVE | Defines get_supabase_client and test_supabase_connection.
 backend/services/telegram.py | ACTIVE | Defines send_message.
 backend/services/trust_builder.py | ACTIVE | Trust builder engine.
-backend/services/web_session_binding.py | ACTIVE | Web-session → canonical identity binding (SaaS-1.6).
+backend/services/identity/web_session_binding.py | ACTIVE | Web-session → canonical identity binding (SaaS-1.6).
 backend/services/workflow_events.py | ACTIVE | Workflow Events — every execution emits events.
 backend/services/workflow_executor.py | ACTIVE | Workflow Executor — deterministic step-by-step execution engine.
 backend/services/workflow_locks.py | ACTIVE | Workflow Locks — per-resource locking to prevent double execution.

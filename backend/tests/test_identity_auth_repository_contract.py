@@ -2,7 +2,7 @@
 models, not raw PostgREST dicts.
 
 Production bug: SupabaseOAuthSessionRepository.find_by_state returned a raw
-dict, so services.oauth_state.consume_state raised
+dict, so services.identity.oauth_state.consume_state raised
 `AttributeError: 'dict' object has no attribute 'is_used'`, breaking the Gmail
 OAuth connect callback. The same contract bug affected email-identity and
 password-credential lookups (which would break email/password login).
@@ -29,7 +29,7 @@ from services.identity.models import (
     PasswordCredential,
 )
 from services.identity.models.oauth_session import OAuthSession
-from services import oauth_state
+from services.identity import oauth_state
 
 
 class _Row:

@@ -56,7 +56,7 @@ class TestInboxSyncEngine:
         asyncio.run(engine.stop())
         assert engine._task is None
 
-    def test_provider_failures_are_isolated(self, monkeypatch):
+    def test_provider_failures_are_isolated(self, monkeypatch, caplog):
         provider_registry.register_instance("bad", FakeProvider("bad"))
         provider_registry.register_instance("good", FakeProvider("good"))
         calls = []
@@ -68,10 +68,12 @@ class TestInboxSyncEngine:
             return SyncResult(provider_id=provider.provider_id, messages_synced=2, cursor="cursor-2")
 
         monkeypatch.setattr("services.communication.inbox_sync_engine.sync_all", fake_sync)
-        result = asyncio.run(InboxSyncEngine(interval_seconds=3600).sync_once())
+        with caplog.at_level("WARNING", logger="services.communication.inbox_sync_engine"):
+            result = asyncio.run(InboxSyncEngine(interval_seconds=3600).sync_once())
 
         assert calls == ["bad", "good"]
         assert result["providers"] == 2
+        assert "provider=bad error_type=RuntimeError" in caplog.text
 
     def test_webhook_trigger_uses_same_sync_path(self, monkeypatch):
         provider_registry.register_instance("gmail-1", FakeProvider("gmail-1"))

@@ -141,9 +141,13 @@ class InboxSyncEngine:
             return_exceptions=True,
         )
         results = [r for r in outcomes if not isinstance(r, BaseException)]
-        for r in outcomes:
-            if isinstance(r, BaseException):
-                logger.warning("[inbox-sync] provider sync raised error_type=%s", type(r).__name__)
+        for provider_id, outcome in zip(gmail_providers, outcomes):
+            if isinstance(outcome, BaseException):
+                logger.warning(
+                    "[inbox-sync] provider sync raised provider=%s error_type=%s",
+                    provider_id,
+                    type(outcome).__name__,
+                )
 
         async with self._readiness_lock:
             ready = await asyncio.to_thread(maintain_follow_up_readiness)

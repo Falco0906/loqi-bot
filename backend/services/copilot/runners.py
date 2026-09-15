@@ -389,7 +389,7 @@ async def run_inbox(
     from services.conversation_intelligence.legacy_models import ConversationStage
     from services.conversations.conversation_store import conversation_store
     from services.conversations.conversation_store import conversation_in_workspace, conversation_owned_by
-    from services.followup_reasoner import recommend_followup
+    from services.conversation_intelligence.followup_reasoner import recommend_followup
     from services.conversation_intelligence.intent_extractor import detect_intents
     from services.reasoning.reasoning_pipeline import get_pipeline as get_reasoning_pipeline
 

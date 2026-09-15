@@ -452,7 +452,7 @@ async def disconnect_provider(
         actor="user",
     )
     try:
-        from services.events_bus import event_bus
+        from services.events.bus import event_bus
 
         await event_bus.publish_user_event(
             owner_id,

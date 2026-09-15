@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 import main as main_module
-import services.events_bus as events_bus
+import services.events.bus as bus
 import services.outbound.service as outbound_service
 
 OWNER = "3e-owner-0001"
@@ -43,8 +43,8 @@ def capture(monkeypatch):
         return True
 
     # Patch the singleton INSTANCE (not just the class): guarantees the
-    # helper's `from services.events_bus import event_bus` binding hits it.
-    import services.events_bus as eb
+    # helper's `from services.events.bus import event_bus` binding hits it.
+    import services.events.bus as eb
     monkeypatch.setattr(eb.EventBus, "publish_user_event", staticmethod(fake_publish))
     return events
 
@@ -158,8 +158,8 @@ def test_draft_sent_event_published_and_scoped(monkeypatch, capture):
 def test_event_helper_never_raises(monkeypatch):
     async def boom(*a, **k):
         raise RuntimeError("redis down")
-    monkeypatch.setattr("services.events_bus.EventBus.publish_user_event", boom)
+    monkeypatch.setattr("services.events.bus.EventBus.publish_user_event", boom)
 
     async def run():
-        await events_bus.publish_draft_event(OWNER, "draft.approved", draft_id="d1")
+        await bus.publish_draft_event(OWNER, "draft.approved", draft_id="d1")
     asyncio.run(run())  # must not raise

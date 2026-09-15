@@ -9,7 +9,7 @@ import time
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from services.events_bus import event_bus
+from services.events.bus import event_bus
 from services.identity import dependencies as identity_dependencies
 
 

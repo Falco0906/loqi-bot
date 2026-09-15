@@ -18,7 +18,7 @@ from services.intelligence.ai import (
 )
 from services.drafts.comparison import compare_versions
 from services.drafts.intelligence import analyze_draft as analyze_draft_intelligence
-from services.events_bus import publish_draft_event
+from services.events.bus import publish_draft_event
 from services.enrichment.enrichment_factory import get_enricher
 from services.intelligence.lead_intelligence import generate_lead_intelligence
 from services.outbound import service as outbound_service

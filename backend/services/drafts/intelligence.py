@@ -366,7 +366,7 @@ def _wire_buyer_psychology() -> None:
     Draft Intelligence analysis pipeline.
     """
     from services.intelligence.messaging.buyer_psychology import analyze_buyer
-    from services.company_context import analyze_company
+    from services.drafts.company_context import analyze_company
     from services.intelligence.messaging.messaging_strategy import select_strategy
     from services.intelligence.messaging.objection_predictor import predict_objections
     from services.intelligence.messaging.trust_builder import suggest_trust_builders

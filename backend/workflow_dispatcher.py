@@ -175,7 +175,7 @@ async def run_search_workflow(job: Job, on_progress) -> dict:
             # PR-4: notify the SSE/event layer (best-effort). We're on a
             # worker thread with no loop; hand off to the main loop if one
             # is running, otherwise publish inline via a fresh loop.
-            from services.events_bus import EventBus
+            from services.events.bus import EventBus
             bus = EventBus()
 
             async def _publish():

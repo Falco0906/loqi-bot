@@ -71,7 +71,7 @@ from services.drafts.rewrite import execute_rewrite
 from services.drafts.comparison import compare_versions
 from services.communication import provider_startup
 from services.communication.reply_simulator import maybe_schedule as simulate_reply
-from services.events_bus import publish_draft_event
+from services.events.bus import publish_draft_event
 from services.conversation_intelligence.legacy_models import FollowupAction, BuyingSignal, SignalStrength
 from services.execution import AdapterRegistry as ExecutionAdapterRegistry
 from services.operations import (

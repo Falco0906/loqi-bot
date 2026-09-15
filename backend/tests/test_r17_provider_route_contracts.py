@@ -315,7 +315,7 @@ def test_provider_disconnect_is_owned_and_not_retry_idempotent(owner, monkeypatc
             (session_id, event_type, data)
         ),
     )
-    from services.events_bus import event_bus
+    from services.events.bus import event_bus
     from services.identity.session_cache import session_cache
 
     monkeypatch.setattr(session_cache, "invalidate_user", cache_invalidate)

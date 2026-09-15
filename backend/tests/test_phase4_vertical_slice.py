@@ -105,7 +105,7 @@ def pipeline(monkeypatch):
         })
         return True
 
-    from services import events_bus as eb
+    from services.events import bus as eb
     monkeypatch.setattr(eb.EventBus, "publish_user_event", staticmethod(fake_publish))
 
     # ── discovery metadata writes capture ──

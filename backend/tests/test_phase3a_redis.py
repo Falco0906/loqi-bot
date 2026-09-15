@@ -250,7 +250,7 @@ def test_rate_limit_redis_down_falls_back_local(wire_redis, monkeypatch):
 # ─── pub/sub ──────────────────────────────────────────────────────────
 
 def test_pubsub_user_event_delivery(wire_redis):
-    from services.events_bus import EventBus
+    from services.events.bus import EventBus
 
     async def run():
         bus = EventBus()
@@ -288,7 +288,7 @@ async def _drain(pubsub, queue: asyncio.Queue):
 
 
 def test_pubsub_strips_sensitive_keys(wire_redis):
-    from services.events_bus import EventBus
+    from services.events.bus import EventBus
 
     async def run():
         bus = EventBus()
@@ -311,7 +311,7 @@ def test_pubsub_strips_sensitive_keys(wire_redis):
 
 
 def test_pubsub_redis_down_is_best_effort(wire_redis, monkeypatch):
-    from services.events_bus import EventBus
+    from services.events.bus import EventBus
     from services.platform import redis_client as rc
 
     async def run():

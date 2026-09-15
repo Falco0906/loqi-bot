@@ -17,7 +17,7 @@ import services.campaigns.service as campaign_service
 import services.conversations.service as conversation_service
 import services.drafts.service as draft_service
 import services.outbound.service as outbound_service
-from services.events_bus import publish_draft_event
+from services.events.bus import publish_draft_event
 from services.outbound.outbound_executor import executor as outbound_executor
 from services.drafts.rewrite import execute_rewrite
 

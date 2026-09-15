@@ -22,7 +22,7 @@ import services.workspace.access as workspace_access
 import services.workspace.state as workspace_state
 from services.world_model import EventType as WMEventType, publish
 from services.communication.reply_simulator import maybe_schedule as simulate_reply
-from services.events_bus import publish_draft_event
+from services.events.bus import publish_draft_event
 
 log = logging.getLogger("loqi")
 

@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from services.copilot_orchestrator import (
+from services.copilot.orchestrator import (
     MAX_PLAN_STEPS,
     build_plan,
     execute_copilot_plan,

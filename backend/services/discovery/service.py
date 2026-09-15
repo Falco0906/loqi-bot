@@ -149,7 +149,7 @@ async def create_search_run(
 
     async def emit_job_event(payload: dict) -> None:
         try:
-            from services.events_bus import event_bus
+            from services.events.bus import event_bus
 
             event_type = (
                 "job.completed"

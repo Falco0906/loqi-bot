@@ -27,7 +27,7 @@ import fakeredis.aioredis  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from services import events_bus  # noqa: E402
+from services.events import bus as events_bus  # noqa: E402
 from services.events import api as events_api  # noqa: E402
 
 USER_A = "sse-user-aaaaaaaa"
@@ -93,13 +93,13 @@ def test_b_user_isolation_channel_scoping(app, fake_redis, monkeypatch):
     seen: list[str] = []
 
     async def run():
-        bus = events_bus.EventBus()
-        pubsub = await bus.subscribe_user(USER_A)
-        await bus.publish_user_event("sse-user-BBBBBBBB", "job.completed", {"n": 1})
+        event_bus = events_bus.EventBus()
+        pubsub = await event_bus.subscribe_user(USER_A)
+        await event_bus.publish_user_event("sse-user-BBBBBBBB", "job.completed", {"n": 1})
         await asyncio.sleep(0.05)
         msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.5)
         assert msg is None, "user A must not receive user B's event"
-        await bus.publish_user_event(USER_A, "job.completed", {"n": 2})
+        await event_bus.publish_user_event(USER_A, "job.completed", {"n": 2})
         msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.5)
         assert msg is not None and msg["type"] == "message"
         seen.append(msg["data"])
@@ -114,8 +114,8 @@ def test_c_event_forwarding_shape(app, fake_redis):
     """Published events arrive as SSE data frames with the same JSON body."""
 
     async def run():
-        bus = events_bus.EventBus()
-        await bus.publish_user_event(
+        event_bus = events_bus.EventBus()
+        await event_bus.publish_user_event(
             USER_A, "provider.connected",
             {"provider": "gmail"}, status="connected",
         )

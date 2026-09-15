@@ -169,7 +169,7 @@ async def gmail_auth_callback(code: str = "", state: str = "", error: str = ""):
         provider_id = provider_record.id
         log.info("[oauth] callback success user=%s provider=%s", user_id[:8], provider_id[:8])
         try:
-            from services.events_bus import event_bus
+            from services.events.bus import event_bus
 
             await event_bus.publish_user_event(
                 user_id,

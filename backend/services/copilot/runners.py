@@ -82,7 +82,7 @@ async def run_campaign(
         persist_campaign_row,
         persist_campaign_update_awaited,
     )
-    from services.workspace_snapshot import enrich_campaigns
+    from services.workspace.snapshot import enrich_campaigns
 
     page_context = decision.get("page_context") or {}
     campaign_id = str(
@@ -602,7 +602,7 @@ async def run_analytics(
 ) -> dict[str, Any]:
     """Read current, workspace-scoped analytics from canonical snapshots."""
     from services.workspace.state import load_campaign_state, load_workspace_state
-    from services.workspace_snapshot import build_snapshot, enrich_campaigns
+    from services.workspace.snapshot import build_snapshot, enrich_campaigns
 
     page = decision.get("page_context") or {}
     campaign_id = str(

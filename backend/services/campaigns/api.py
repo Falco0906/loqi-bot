@@ -13,8 +13,8 @@ from services.campaigns import service
 from services.drafts import service as draft_service
 from services.campaigns.service import load_campaigns
 from services.identity import dependencies as identity_dependencies
-from services.workspace_memory import record_campaign_open
-from services.workspace_snapshot import enrich_campaigns
+from services.workspace.memory import record_campaign_open
+from services.workspace.snapshot import enrich_campaigns
 from services.workspace.state import load_drafts_only
 from services.world_model import get_store as get_wm_store
 

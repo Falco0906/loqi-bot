@@ -24,7 +24,7 @@ from services.intelligence.lead_intelligence import generate_lead_intelligence
 from services.outbound import service as outbound_service
 from services.drafts.rewrite import execute_rewrite
 from services.world_model import EventType as WMEventType, publish
-from services.workspace_timeline import record_drafts_generated
+from services.workspace.timeline import record_drafts_generated
 
 log = logging.getLogger("loqi")
 
@@ -792,7 +792,7 @@ async def ask_draft_question(payload: dict[str, Any]) -> dict[str, Any]:
 async def approve_draft(
     session_token: str, owner_id: str, workspace_id: str, draft_id: str,
 ) -> dict[str, Any]:
-    from services.workspace_snapshot import enrich_campaigns
+    from services.workspace.snapshot import enrich_campaigns
     from services.workspace.state import load_workspace_state, persist_draft_update_awaited
 
     state = await asyncio.to_thread(

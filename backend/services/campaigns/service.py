@@ -58,7 +58,7 @@ async def create_campaign(
         persist_campaign_lead_awaited,
         persist_campaign_row,
     )
-    from services.workspace_timeline import record_campaign_created
+    from services.workspace.timeline import record_campaign_created
 
     discovery_id = str(payload.get("discovery_id") or "")
     if discovery_id:
@@ -162,7 +162,7 @@ async def update_campaign(
     from fastapi import HTTPException
     from services.outbound.service import dispatch_campaign_sends
     from services.workspace.state import load_drafts_only, persist_campaign_update_awaited
-    from services.workspace_timeline import record_campaign_launched
+    from services.workspace.timeline import record_campaign_launched
 
     target = next(
         (campaign for campaign in load_campaigns(owner_id, workspace_id=workspace_id)

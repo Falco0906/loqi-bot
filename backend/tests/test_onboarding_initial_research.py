@@ -71,8 +71,8 @@ async def test_initial_research_launch_preserves_metadata_memory_and_started_eve
         return {"job_id": "job-1", "discovery_id": "discovery-1"}
 
     monkeypatch.setattr("services.discovery.service.create_search_run", create_search_run)
-    monkeypatch.setattr("services.workspace_memory.record", lambda *args: memory.append(args))
-    monkeypatch.setattr("services.workspace_timeline.record_search_started", lambda *args: timeline.append(args))
+    monkeypatch.setattr("services.workspace.memory.record", lambda *args: memory.append(args))
+    monkeypatch.setattr("services.workspace.timeline.record_search_started", lambda *args: timeline.append(args))
     monkeypatch.setattr("services.world_model.publish", lambda *args, **kwargs: published.append((args, kwargs)))
 
     await OnboardingService.launch_initial_research(

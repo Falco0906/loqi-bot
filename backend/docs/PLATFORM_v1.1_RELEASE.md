@@ -24,7 +24,7 @@ Loqi Platform v1.1 is the second tagged release of the Loqi backend platform. It
 
 **Before maintenance:** 1 failure (`test_reasoner_integration.py::TestWorkspaceReasoner::test_analyze_ranks_correctly`)
 **Root cause:** `CampaignPriority.to_dict()` missing `score` field
-**Fix:** Added `"score": self.score` to `services/workspace_reasoner.py:16`
+**Fix:** Added `"score": self.score` to `services/workspace/reasoner.py:16`
 **After maintenance:** 2338 passed, 0 failed
 
 ### ✓ Zero architecture violations
@@ -95,7 +95,7 @@ Loqi Platform v1.1 is the second tagged release of the Loqi backend platform. It
 | File | Change |
 |---|---|
 | `backend/main.py` | Migrated `@app.on_event("startup")` to FastAPI lifespan pattern; added `asynccontextmanager` import |
-| `backend/services/workspace_reasoner.py` | Added missing `"score"` field to `CampaignPriority.to_dict()` |
+| `backend/services/workspace/reasoner.py` | Added missing `"score"` field to `CampaignPriority.to_dict()` |
 | `backend/tests/test_copilot_api.py` | Replaced `data=` with `content=` in httpx call (deprecation fix) |
 | `backend/services/adapters/http/http_adapter.py` | Removed 6 unused validator imports |
 | `backend/services/adapters/http/exceptions.py` | Removed unused `AuthenticationError` import |

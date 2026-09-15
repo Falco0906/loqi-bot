@@ -16,8 +16,8 @@ from services.conversations.conversation_store import (
 )
 from services.conversations.intelligence_memory import load_legacy_memory
 from services.workspace.state import load_workspace_state
-from services.workspace_reasoner import WorkspaceReasoner
-from services.workspace_snapshot import enrich_campaigns
+from services.workspace.reasoner import WorkspaceReasoner
+from services.workspace.snapshot import enrich_campaigns
 
 
 log = logging.getLogger("loqi")

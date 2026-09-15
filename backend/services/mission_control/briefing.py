@@ -15,8 +15,8 @@ from services.intentions.models import Intention, IntentionType, LifecycleStatus
 from services.intentions.priority import order_intentions
 from services.narrative_engine import get_engine as get_narrative
 from services.mission_control.recommendations import generate_recommendations
-from services.workspace_snapshot import build_snapshot
-from services.workspace_timeline import (
+from services.workspace.snapshot import build_snapshot
+from services.workspace.timeline import (
     get_events as get_timeline_events,
     get_grouped_events as get_grouped_timeline_events,
 )
@@ -82,7 +82,7 @@ class MissionControlService:
         from services.job_engine import job_manager
         from services.mission_control.payload import compute_shared_payload, embed_delta_into_snapshot
         from services.onboarding.api import get_onboarding_service
-        from services.workspace_timeline import get_grouped_events
+        from services.workspace.timeline import get_grouped_events
         from services.world_model import get_store as get_wm_store
 
         started = time.monotonic()

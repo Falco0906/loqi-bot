@@ -102,7 +102,7 @@ def env(monkeypatch):
     monkeypatch.setattr(workspace_state, "persist_draft_update_awaited", fake_persist_draft)
     monkeypatch.setattr(outbound_service, "find_outbound_gmail_provider_id", lambda: "prov-1")
     monkeypatch.setattr(campaign_api.service, "publish", lambda *a, **k: None)
-    monkeypatch.setattr("services.workspace_timeline.record_campaign_launched", lambda *a, **k: None)
+    monkeypatch.setattr("services.workspace.timeline.record_campaign_launched", lambda *a, **k: None)
     monkeypatch.setattr(campaign_api.service, "_feedback", lambda: _FakeFeedback())
     monkeypatch.setattr(outbound_service.outbound_executor, "send_hydrated_draft", fake_send)
     monkeypatch.setattr(

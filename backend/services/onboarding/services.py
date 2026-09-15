@@ -614,8 +614,8 @@ class OnboardingService:
             raise ValueError("Onboarding did not contain research inputs")
         query = f"{offering} for {icp}".strip() if offering and icp else (offering or icp)
 
-        from services.workspace_memory import record as record_memory
-        from services.workspace_timeline import record_search_started
+        from services.workspace.memory import record as record_memory
+        from services.workspace.timeline import record_search_started
         from services.world_model import EventType as WorldModelEventType, publish
 
         if session_token:

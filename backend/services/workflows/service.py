@@ -6,7 +6,7 @@ import time
 from services.workflows.runtime import RuntimeEntry, get_runtime
 from services.campaigns.service import load_campaigns
 from services.workspace.state import load_drafts_only
-from services.workspace_snapshot import build_snapshot
+from services.workspace.snapshot import build_snapshot
 from services.workflows.executor import (
     approve as approve_runtime,
     cancel as cancel_runtime,

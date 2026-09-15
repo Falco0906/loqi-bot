@@ -13,7 +13,7 @@ import pytest
 
 import services.workspace.state as workspace_state
 from services.persistence.launch import Campaign, Company, Lead, WorkspaceLead
-from services.workspace_snapshot import enrich_campaigns
+from services.workspace.snapshot import enrich_campaigns
 from services.workspace.state import _normalize_lead, _persist_campaign_lead_row
 
 

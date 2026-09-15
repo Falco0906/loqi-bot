@@ -9,9 +9,9 @@ Tests that:
 import pytest
 from datetime import datetime, timezone
 
-from services.workspace_memory import clear as clear_memory, record, record_search
-from services.workspace_timeline import clear as clear_timeline
-from services.workspace_snapshot import invalidate_cache, build_snapshot
+from services.workspace.memory import clear as clear_memory, record, record_search
+from services.workspace.timeline import clear as clear_timeline
+from services.workspace.snapshot import invalidate_cache, build_snapshot
 
 
 class _MissionControlSummaryService:

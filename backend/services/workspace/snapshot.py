@@ -3,9 +3,9 @@ import json
 
 from services.job_engine import job_manager
 from services.learning import Learner
-from services.workspace_memory import get_all as get_memory
-from services.workspace_timeline import get_events
-from services.workspace_reasoner import WorkspaceReasoner
+from services.workspace.memory import get_all as get_memory
+from services.workspace.timeline import get_events
+from services.workspace.reasoner import WorkspaceReasoner
 from services.world_model.snapshot_adapter import (
     build_snapshot_from_wm as _build_wm_snapshot,
     get_data_source as _wm_data_source,

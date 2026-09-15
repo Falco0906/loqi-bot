@@ -1,6 +1,6 @@
 from services.job_engine import job_manager
-from services.workspace_memory import get_all as get_memory
-from services.workspace_timeline import get_events
+from services.workspace.memory import get_all as get_memory
+from services.workspace.timeline import get_events
 from services.world_model.publisher import get_store
 from services.world_model.state import WorkspaceState
 
@@ -30,7 +30,7 @@ def _campaigns_from_wm(state: WorkspaceState, campaigns: list | None = None) -> 
     strategy facts), so every surface derives the same step from the same
     gates: leads -> strategy -> drafts -> review -> sending.
     """
-    from services.workspace_snapshot import _derive_campaign_step
+    from services.workspace.snapshot import _derive_campaign_step
 
     legacy_by_id = {c.get("id"): c for c in (campaigns or [])}
     result = []

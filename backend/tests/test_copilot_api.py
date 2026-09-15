@@ -218,7 +218,7 @@ class TestCopilotOperationBoundary:
             lambda *_args, **_kwargs: {"campaigns": [{"id": "c-1", "name": "Outbound", "lead_count": 12, "status": "planning"}], "drafts": []},
         )
         monkeypatch.setattr(
-            "services.workspace_snapshot.build_snapshot",
+            "services.workspace.snapshot.build_snapshot",
             lambda *_args, **_kwargs: {"total_leads": 12, "campaign_count": 1, "drafts": {"total": 0, "pending": 0, "approved": 0}, "campaigns_ready": 0, "campaigns_draft_review": 0, "campaigns": [{"id": "c-1", "name": "Outbound", "lead_count": 12}], "analysis": {}},
         )
         result = await copilot_service.copilot_runners.run_analytics(

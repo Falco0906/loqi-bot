@@ -149,7 +149,7 @@ async def compute_shared_payload(
     """Load state once and compute {campaigns, drafts, snapshot, analysis,
     recommendations, brief}; dedupe concurrent callers per key."""
     from services.workspace.state import load_workspace_state
-    from services.workspace_snapshot import build_snapshot
+    from services.workspace.snapshot import build_snapshot
     from services.mission_control.recommendations import generate_recommendations
     from services.mission_control.narrative import generate_brief
     from services.world_model import get_store as get_wm_store

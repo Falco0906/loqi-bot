@@ -1,8 +1,8 @@
 import asyncio
 from types import SimpleNamespace
 
-import main
 import services.drafts.service as drafts
+import services.drafts.api as drafts_api
 from services.drafts.api import BatchDraftRequest, batch_draft
 from services.job_engine.models import BatchItem, BatchItemStatus, Job
 
@@ -61,8 +61,8 @@ async def test_manual_batch_adapter_preserves_response_shape(monkeypatch):
     async def workspace(*_): return "workspace"
     async def enqueue(*_args): return {"batch_id": "job-1", "total": 1, "status": "queued"}
 
-    monkeypatch.setattr(main.identity_dependencies, "authenticated_user_id", user_id)
-    monkeypatch.setattr(main.workspace_access, "resolve_legacy_workspace_id", workspace)
+    monkeypatch.setattr(drafts_api.identity_dependencies, "authenticated_user_id", user_id)
+    monkeypatch.setattr(drafts_api.workspace_access, "resolve_legacy_workspace_id", workspace)
     monkeypatch.setattr(drafts, "enqueue_draft_batch", enqueue)
     request = SimpleNamespace(headers={"authorization": "Bearer token"})
     payload = BatchDraftRequest(leads=[{"id": "lead-1"}])

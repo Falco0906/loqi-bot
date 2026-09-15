@@ -18,8 +18,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import main as main_module
 import services.intelligence.ai as ai_module
+from services.campaigns import api as campaign_api
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -291,11 +291,11 @@ class TestDraftBatchIdempotency:
             "started_at": _now(),
             "finished_at": _now(),
         }
-        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
+        monkeypatch.setattr(campaign_api.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         async def resolve_workspace(*_args, **_kwargs):
             return "workspace-1"
-        monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", resolve_workspace)
-        monkeypatch.setattr(main_module, "load_campaigns",
+        monkeypatch.setattr(campaign_api.workspace_access, "resolve_legacy_workspace_id", resolve_workspace)
+        monkeypatch.setattr(campaign_api, "load_campaigns",
                             lambda uid, **_kwargs: [campaign])
         monkeypatch.setattr(
             "services.workspace.state.load_campaign_state",
@@ -331,11 +331,11 @@ class TestDraftBatchIdempotency:
             "error": "interrupted",
             "started_at": _now(),
         }
-        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
+        monkeypatch.setattr(campaign_api.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
         async def resolve_workspace(*_args, **_kwargs):
             return "workspace-1"
-        monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", resolve_workspace)
-        monkeypatch.setattr(main_module, "load_campaigns",
+        monkeypatch.setattr(campaign_api.workspace_access, "resolve_legacy_workspace_id", resolve_workspace)
+        monkeypatch.setattr(campaign_api, "load_campaigns",
                             lambda uid, **_kwargs: [campaign])
         monkeypatch.setattr(
             "services.workspace.state.load_campaign_state",

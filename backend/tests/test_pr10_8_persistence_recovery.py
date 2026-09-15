@@ -359,7 +359,11 @@ class TestMessageSeenAfterSuccess:
             urgency=1,
             decision_confidence=0.5,
         )
-        monkeypatch.setattr(gmail_sync, "analyze_message", lambda **kwargs: (fake_intel, None))
+        monkeypatch.setattr(
+            gmail_sync,
+            "project_legacy_reply_intelligence",
+            lambda **_kwargs: (fake_intel, None),
+        )
         if fail_integration:
             import services.conversations.integration as integration_mod
             original = integration_mod.handle_reply

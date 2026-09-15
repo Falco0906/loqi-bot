@@ -165,7 +165,14 @@ class TestBackgroundJobFailure:
 
         storage = _FakeStorage()
         runner = runner_mod.BackgroundRunner(storage=storage)
-        job = Job(user_id="u-1", type="search", query="q", stage="search", progress=0)
+        job = Job(
+            user_id="u-1",
+            type="search",
+            query="q",
+            discovery_id="discovery-1",
+            stage="search",
+            progress=0,
+        )
         storage.create_job(job)
         asyncio.run(runner._run_wrapper(job, _boom, on_update=None, on_complete=None))
         assert job.status == JobStatus.FAILED

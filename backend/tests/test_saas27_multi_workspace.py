@@ -415,13 +415,13 @@ class TestSelectedWorkspacePropagation:
             assert asyncio.run(repo.get_for_workspace(b_id, "W-A2")) is not None
 
     def test_discovery_scoped_to_selected_workspace(self):
-        from services import discovery
+        from services.discovery import service as discovery_service
         db = self._db()
         from unittest.mock import patch
-        with patch.object(discovery, "get_supabase_client", return_value=db):
-            assert discovery.get_discovery("dvB", workspace_id="W-A1") is None
-            assert discovery.get_discovery("dvA", workspace_id="W-A1") is not None
-            assert discovery.get_discovery("dvB", workspace_id="W-A2") is not None
+        with patch.object(discovery_service, "get_supabase_client", return_value=db):
+            assert discovery_service.get_discovery("dvB", workspace_id="W-A1") is None
+            assert discovery_service.get_discovery("dvA", workspace_id="W-A1") is not None
+            assert discovery_service.get_discovery("dvB", workspace_id="W-A2") is not None
 
     def test_draft_write_persists_selected_workspace(self):
         from services.workspace.state import _write_draft_row

@@ -46,13 +46,16 @@ def _configure_authorized_router(monkeypatch) -> None:
 
 
 async def test_campaign_read_routes_keep_registered_paths_and_response_shapes(monkeypatch):
-    """The router owns the five existing GET paths without changing top-level keys."""
+    """The router owns all eight GET paths without changing top-level keys."""
     expected_paths = [
         "/api/web/session/{session_token}/campaigns",
         "/api/web/session/{session_token}/campaigns/summary",
         "/api/web/session/{session_token}/campaigns/{campaign_id}",
         "/api/web/session/{session_token}/campaigns/{campaign_id}/launch-progress",
         "/api/web/session/{session_token}/campaigns/{campaign_id}/timeline",
+        "/api/web/session/{session_token}/campaigns/{campaign_id}/strategy-jobs/{job_id}",
+        "/api/web/session/{session_token}/campaigns/{campaign_id}/drafts",
+        "/api/web/session/{session_token}/campaigns/{campaign_id}/generation-status",
     ]
     read_paths = [
         route.path for route in campaign_api.router.routes

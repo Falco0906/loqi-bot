@@ -204,15 +204,15 @@ def test_enqueue_persists_queued_meta(durable, monkeypatch):
 
 
 def test_status_endpoint_reports_durable_running_job(durable, monkeypatch):
-    import main as m
+    from services.campaigns import api as campaigns_api
     import services.campaigns.service as campaign_service
 
     async def owner(request=None, session_token=None):
         return OWNER_A
-    monkeypatch.setattr(m.identity_dependencies, "authenticated_user_id", owner)
+    monkeypatch.setattr(campaigns_api.identity_dependencies, "authenticated_user_id", owner)
     async def workspace(*_args, **_kwargs):
         return "workspace-a"
-    monkeypatch.setattr(m.workspace_access, "resolve_legacy_workspace_id", workspace)
+    monkeypatch.setattr(campaigns_api.workspace_access, "resolve_legacy_workspace_id", workspace)
     async def load_meta(owner_id, campaign_id, **_kwargs):
         return durable.rows.get(campaign_id)
     monkeypatch.setattr(campaign_service, "load_strategy_job_meta", load_meta)
@@ -230,14 +230,14 @@ def test_status_endpoint_reports_durable_running_job(durable, monkeypatch):
 
 
 def test_completed_durable_record_reports_completed(durable, monkeypatch):
-    import main as m
+    from services.campaigns import api as campaigns_api
 
     async def owner(request=None, session_token=None):
         return OWNER_A
-    monkeypatch.setattr(m.identity_dependencies, "authenticated_user_id", owner)
+    monkeypatch.setattr(campaigns_api.identity_dependencies, "authenticated_user_id", owner)
     async def workspace(*_args, **_kwargs):
         return "workspace-a"
-    monkeypatch.setattr(m.workspace_access, "resolve_legacy_workspace_id", workspace)
+    monkeypatch.setattr(campaigns_api.workspace_access, "resolve_legacy_workspace_id", workspace)
     from services.job_engine.models import Job, JobStatus
     durable.manager._storage.jobs["job-done"] = Job(id="job-done", user_id=OWNER_A, type="strategy", workspace_id="workspace-a", campaign_id="cmp-ok", status=JobStatus.COMPLETED)
     request = type("R", (), {"headers": {}})()
@@ -251,15 +251,15 @@ def test_completed_durable_record_reports_completed(durable, monkeypatch):
 
 def test_tenant_isolation_strategy_status(durable, monkeypatch):
     """Owner B polling owner A's campaign/job gets 404 (no existence leak)."""
-    import main as m
+    from services.campaigns import api as campaigns_api
     from fastapi import HTTPException
 
     async def owner_b(request=None, session_token=None):
         return OWNER_B
-    monkeypatch.setattr(m.identity_dependencies, "authenticated_user_id", owner_b)
+    monkeypatch.setattr(campaigns_api.identity_dependencies, "authenticated_user_id", owner_b)
     async def workspace(*_args, **_kwargs):
         return "workspace-b"
-    monkeypatch.setattr(m.workspace_access, "resolve_legacy_workspace_id", workspace)
+    monkeypatch.setattr(campaigns_api.workspace_access, "resolve_legacy_workspace_id", workspace)
 
     request = type("R", (), {"headers": {}})()
 

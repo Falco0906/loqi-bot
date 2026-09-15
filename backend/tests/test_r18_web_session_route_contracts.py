@@ -16,6 +16,7 @@ from fastapi import HTTPException
 import main as main_module
 import services.conversations.api as conversations_api
 import services.conversations.service as conversations_service
+from services.world_model import EventType as WMEventType
 
 
 def test_create_session_invalid_bearer_falls_back_to_anonymous_contract(monkeypatch, client):
@@ -134,7 +135,7 @@ def test_legacy_message_branch_returns_engine_result_and_publishes_received_even
     assert published == [
         (
             "bound-session",
-            main_module.WMEventType.MESSAGE_RECEIVED,
+            WMEventType.MESSAGE_RECEIVED,
             {"from": "Ada", "text_preview": "hello", "channel": "web"},
         )
     ]

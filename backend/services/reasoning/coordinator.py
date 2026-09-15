@@ -28,7 +28,7 @@ from services.reasoning.opportunity_reasoner import OpportunityReasoner
 from services.reasoning.priority_reasoner import PriorityReasoner
 from services.reasoning.recommendation_reasoner import RecommendationReasoner
 from services.reasoning.risk_reasoner import RiskReasoner
-from services.narrative_engine import BriefingContext
+from services.reasoning.briefing_context import BriefingContext
 
 
 class ReasoningCoordinator:

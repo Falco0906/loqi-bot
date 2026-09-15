@@ -11,7 +11,8 @@ and delegates all natural-language generation to ``NarrativeEngine``.
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from services.narrative_engine import BriefingContext, get_engine
+from services.mission_control.narrative_engine import get_engine
+from services.reasoning.briefing_context import BriefingContext
 
 
 _cache: dict[str, dict] = {}

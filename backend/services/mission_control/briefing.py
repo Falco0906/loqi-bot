@@ -13,7 +13,7 @@ from services.intentions.engine import IntentionEngine
 from services.intentions.lifecycle import activate
 from services.intentions.models import Intention, IntentionType, LifecycleStatus
 from services.intentions.priority import order_intentions
-from services.narrative_engine import get_engine as get_narrative
+from services.mission_control.narrative_engine import get_engine as get_narrative
 from services.mission_control.recommendations import generate_recommendations
 from services.workspace.snapshot import build_snapshot
 from services.workspace.timeline import (

@@ -1,201 +1,152 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any
 
 from services.intelligence.ai import _send_openai_request, OpenAIError
+from services.reasoning.briefing_context import BriefingContext
 
 
-# ── Structured contract between Reasoning and Narrative ──
+def _build_brief_user_text(context: BriefingContext) -> str:
+    """Render the reasoning contract into the Narrative Engine prompt."""
+    parts = [f"Greeting: {context.greeting}"]
 
+    company = context.memory.get("company_description")
+    icp = context.memory.get("ideal_customer")
+    if company or icp:
+        parts.append("")
+        parts.append("ONBOARDING CONTEXT:")
+        if company:
+            parts.append(f"  - Business: {company}")
+        if icp:
+            parts.append(f"  - Ideal customer: {icp}")
+        parts.append("Reference this context naturally so the user can see it was remembered.")
 
-@dataclass
-class BriefingContext:
-    """Everything the Narrative Engine needs to produce natural-language output.
-
-    This is the **only** input to the Narrative Engine.  It is produced by the
-    deterministic Reasoning Layer (WorkspaceReasoner + World Model) and must
-    contain **pre-ranked, pre-prioritised** data.  The Narrative Engine never
-    re-orders or re-prioritises — it only communicates.
-    """
-
-    greeting: str = ""
-
-    # ── World Model data ──
-    workspace_state: dict[str, Any] = field(default_factory=dict)
-    workspace_delta: dict[str, Any] = field(default_factory=dict)
-
-    # ── Reasoning Layer output (deterministic, pre-ranked) ──
-    priorities: list[dict] = field(default_factory=list)
-    attention_items: list[dict] = field(default_factory=list)
-    health_summary: dict[str, Any] = field(default_factory=dict)
-    current_focus: dict[str, Any] = field(default_factory=dict)
-    recommended_next_action: dict[str, Any] = field(default_factory=dict)
-    cross_campaign_insights: list[dict] = field(default_factory=list)
-
-    # ── Recommendations (from recommendation engine, pre-ranked) ──
-    recommendations: list[dict] = field(default_factory=list)
-
-    # ── Derived by Reasoning Layer from delta + analysis ──
-    opportunities: list[dict] = field(default_factory=list)
-    risks: list[dict] = field(default_factory=list)
-
-    # ── Snapshot fields for legacy compatibility ──
-    campaigns: list[dict] = field(default_factory=list)
-    drafts: dict[str, Any] = field(default_factory=dict)
-    jobs: dict[str, Any] = field(default_factory=dict)
-    memory: dict[str, Any] = field(default_factory=dict)
-    timeline: list[dict] = field(default_factory=list)
-
-    def is_first_visit(self) -> bool:
-        return self.workspace_delta.get("first_visit", True)
-
-    def has_delta(self) -> bool:
-        return self.workspace_delta.get("has_delta", False) and not self.is_first_visit()
-
-    def to_user_text(self) -> str:
-        """Build the user prompt from structured context."""
-        parts = [f"Greeting: {self.greeting}"]
-
-        company = self.memory.get("company_description")
-        icp = self.memory.get("ideal_customer")
-        if company or icp:
+    # ── Delta section (pre-computed, no judgment) ──
+    if context.is_first_visit():
+        parts.append("")
+        parts.append("FIRST VISIT — the user has never seen this workspace before.")
+        parts.append("Introduce the workspace naturally and highlight the most important items.")
+    elif context.has_delta():
+        d = context.workspace_delta
+        delta_lines = []
+        if d.get("new_campaigns"):
+            delta_lines.append(f"{d['new_campaigns']} new campaign(s)")
+        if d.get("changed_campaigns"):
+            delta_lines.append(f"{d['changed_campaigns']} campaign(s) changed status")
+        if d.get("new_drafts"):
+            delta_lines.append(f"{d['new_drafts']} new draft(s)")
+        if d.get("scheduled_drafts"):
+            delta_lines.append(f"{d['scheduled_drafts']} draft(s) scheduled")
+        if d.get("sent_outreach"):
+            delta_lines.append(f"{d['sent_outreach']} outreach message(s) sent")
+        if d.get("new_leads"):
+            delta_lines.append(f"{d['new_leads']} new lead(s)")
+        if d.get("new_conversations"):
+            delta_lines.append(f"{d['new_conversations']} new conversation(s)")
+        if d.get("completed_jobs"):
+            delta_lines.append(f"{d['completed_jobs']} job(s) completed")
+        if d.get("learned_preferences"):
+            delta_lines.append(f"{d['learned_preferences']} new preference(s) learned")
+        if d.get("new_insights"):
+            delta_lines.append(f"{d['new_insights']} new insight(s)")
+        if delta_lines:
             parts.append("")
-            parts.append("ONBOARDING CONTEXT:")
-            if company:
-                parts.append(f"  - Business: {company}")
-            if icp:
-                parts.append(f"  - Ideal customer: {icp}")
-            parts.append("Reference this context naturally so the user can see it was remembered.")
+            parts.append("WHAT CHANGED since last visit (in order of importance):")
+            parts.extend(f"  - {line}" for line in delta_lines)
+    else:
+        parts.append("")
+        parts.append("NOTHING CHANGED since the last visit. Keep the briefing brief.")
 
-        # ── Delta section (pre-computed, no judgment) ──
-        if self.is_first_visit():
-            parts.append("")
-            parts.append("FIRST VISIT — the user has never seen this workspace before.")
-            parts.append("Introduce the workspace naturally and highlight the most important items.")
-        elif self.has_delta():
-            d = self.workspace_delta
-            delta_lines = []
-            if d.get("new_campaigns"):
-                delta_lines.append(f"{d['new_campaigns']} new campaign(s)")
-            if d.get("changed_campaigns"):
-                delta_lines.append(f"{d['changed_campaigns']} campaign(s) changed status")
-            if d.get("new_drafts"):
-                delta_lines.append(f"{d['new_drafts']} new draft(s)")
-            if d.get("scheduled_drafts"):
-                delta_lines.append(f"{d['scheduled_drafts']} draft(s) scheduled")
-            if d.get("sent_outreach"):
-                delta_lines.append(f"{d['sent_outreach']} outreach message(s) sent")
-            if d.get("new_leads"):
-                delta_lines.append(f"{d['new_leads']} new lead(s)")
-            if d.get("new_conversations"):
-                delta_lines.append(f"{d['new_conversations']} new conversation(s)")
-            if d.get("completed_jobs"):
-                delta_lines.append(f"{d['completed_jobs']} job(s) completed")
-            if d.get("learned_preferences"):
-                delta_lines.append(f"{d['learned_preferences']} new preference(s) learned")
-            if d.get("new_insights"):
-                delta_lines.append(f"{d['new_insights']} new insight(s)")
-            if delta_lines:
-                parts.append("")
-                parts.append("WHAT CHANGED since last visit (in order of importance):")
-                parts.extend(f"  - {line}" for line in delta_lines)
-        else:
-            parts.append("")
-            parts.append("NOTHING CHANGED since the last visit. Keep the briefing brief.")
+    # ── Work in progress (running research jobs) ──
+    running = context.jobs.get("running") or []
+    if running:
+        parts.append("")
+        parts.append("CURRENTLY WORKING:")
+        for j in running[:2]:
+            stage = j.get("stage", "in progress")
+            q = j.get("query", "")
+            parts.append(f"  - Research ({stage})" + (f" searching for '{q}'" if q else ""))
+        parts.append("Mention that work is already underway — do not imply the workspace is idle.")
 
-        # ── Work in progress (running research jobs) ──
-        running = self.jobs.get("running") or []
-        if running:
-            parts.append("")
-            parts.append("CURRENTLY WORKING:")
-            for j in running[:2]:
-                stage = j.get("stage", "in progress")
-                q = j.get("query", "")
-                parts.append(f"  - Research ({stage})" + (f" searching for '{q}'" if q else ""))
-            parts.append("Mention that work is already underway — do not imply the workspace is idle.")
+    # ── Priorities section (pre-ranked by reasoning layer) ──
+    if context.priorities:
+        parts.append("")
+        parts.append("CAMPAIGN PRIORITIES (ranked by importance, 1 = highest):")
+        for cp in context.priorities[:5]:
+            label = cp.get("label", f"#{cp.get('rank', '?')}")
+            name = cp.get("name", "?")
+            status = cp.get("status", "")
+            reasons = ", ".join(cp.get("reasons", []))
+            parts.append(f"  {label}: {name} ({status}) — {reasons}")
 
-        # ── Priorities section (pre-ranked by reasoning layer) ──
-        if self.priorities:
-            parts.append("")
-            parts.append("CAMPAIGN PRIORITIES (ranked by importance, 1 = highest):")
-            for cp in self.priorities[:5]:
-                label = cp.get("label", f"#{cp.get('rank', '?')}")
-                name = cp.get("name", "?")
-                status = cp.get("status", "")
-                reasons = ", ".join(cp.get("reasons", []))
-                parts.append(f"  {label}: {name} ({status}) — {reasons}")
+    # ── Health section ──
+    h = context.health_summary
+    if h:
+        parts.append("")
+        parts.append("WORKSPACE HEALTH:")
+        parts.append(f"  Overall: {h.get('overall_health', 'unknown')}")
+        parts.append(f"  Pipeline: {h.get('pipeline_velocity', 'unknown').replace('_', ' ').title()}")
+        if h.get("blocked_workflows"):
+            parts.append(f"  Blocked: {', '.join(h['blocked_workflows'])}")
+        parts.append(f"  Ready to launch: {h.get('campaigns_ready', 0)}")
+        parts.append(f"  Waiting: {h.get('campaigns_waiting', 0)}")
+        if h.get("draft_backlog", 0) > 0:
+            parts.append(f"  Draft backlog: {h['draft_backlog']}")
 
-        # ── Health section ──
-        h = self.health_summary
-        if h:
-            parts.append("")
-            parts.append("WORKSPACE HEALTH:")
-            parts.append(f"  Overall: {h.get('overall_health', 'unknown')}")
-            parts.append(f"  Pipeline: {h.get('pipeline_velocity', 'unknown').replace('_', ' ').title()}")
-            if h.get("blocked_workflows"):
-                parts.append(f"  Blocked: {', '.join(h['blocked_workflows'])}")
-            parts.append(f"  Ready to launch: {h.get('campaigns_ready', 0)}")
-            parts.append(f"  Waiting: {h.get('campaigns_waiting', 0)}")
-            if h.get("draft_backlog", 0) > 0:
-                parts.append(f"  Draft backlog: {h['draft_backlog']}")
+    # ── Attention items (pre-ranked by reasoning layer) ──
+    if context.attention_items:
+        parts.append("")
+        parts.append("ATTENTION ITEMS (highest priority first):")
+        for a in context.attention_items[:4]:
+            parts.append(f"  - {a.get('title', '')}: {a.get('reason', '')}")
 
-        # ── Attention items (pre-ranked by reasoning layer) ──
-        if self.attention_items:
-            parts.append("")
-            parts.append("ATTENTION ITEMS (highest priority first):")
-            for a in self.attention_items[:4]:
-                parts.append(f"  - {a.get('title', '')}: {a.get('reason', '')}")
+    # ── Current focus ──
+    cf = context.current_focus
+    if cf:
+        parts.append("")
+        parts.append(f"CURRENT FOCUS: {cf.get('focus', 'unknown')}")
 
-        # ── Current focus ──
-        cf = self.current_focus
-        if cf:
-            parts.append("")
-            parts.append(f"CURRENT FOCUS: {cf.get('focus', 'unknown')}")
+    # ── Insights ──
+    if context.cross_campaign_insights:
+        parts.append("")
+        parts.append("CROSS-CAMPAIGN INSIGHTS:")
+        for ins in context.cross_campaign_insights:
+            parts.append(f"  - {ins.get('insight', '')}")
 
-        # ── Insights ──
-        if self.cross_campaign_insights:
-            parts.append("")
-            parts.append("CROSS-CAMPAIGN INSIGHTS:")
-            for ins in self.cross_campaign_insights:
-                parts.append(f"  - {ins.get('insight', '')}")
+    # ── Recommendations (pre-ranked) ──
+    if context.recommendations:
+        parts.append("")
+        parts.append("RECOMMENDED ACTIONS (in priority order):")
+        for r in context.recommendations[:3]:
+            confidence = r.get("confidence", "medium")
+            parts.append(f"  - [{confidence}] {r.get('observation', '')}")
 
-        # ── Recommendations (pre-ranked) ──
-        if self.recommendations:
-            parts.append("")
-            parts.append("RECOMMENDED ACTIONS (in priority order):")
-            for r in self.recommendations[:3]:
-                confidence = r.get("confidence", "medium")
-                parts.append(f"  - [{confidence}] {r.get('observation', '')}")
+    # ── Recommendations from analysis ──
+    rna = context.recommended_next_action
+    if rna:
+        parts.append("")
+        parts.append(f"NEXT ACTION: {rna.get('title', '')} — {rna.get('reason', '')}")
 
-        # ── Recommendations from analysis ──
-        rna = self.recommended_next_action
-        if rna:
-            parts.append("")
-            parts.append(f"NEXT ACTION: {rna.get('title', '')} — {rna.get('reason', '')}")
-
-        # ── Campaign details (for reference) ──
-        if self.campaigns:
-            parts.append("")
-            parts.append("CAMPAIGNS:")
-            for c in self.campaigns[:8]:
-                parts.append(
-                    f"  - {c.get('name', '?')}: {c.get('status', '?')} "
-                    f"({c.get('pending_drafts', 0)} pending, {c.get('approved_drafts', 0)} approved)"
-                )
-
-        # ── Drafts summary ──
-        if self.drafts:
-            parts.append("")
+    # ── Campaign details (for reference) ──
+    if context.campaigns:
+        parts.append("")
+        parts.append("CAMPAIGNS:")
+        for c in context.campaigns[:8]:
             parts.append(
-                f"DRAFTS: {self.drafts.get('total', 0)} total, "
-                f"{self.drafts.get('pending', 0)} pending, "
-                f"{self.drafts.get('approved', 0)} approved"
+                f"  - {c.get('name', '?')}: {c.get('status', '?')} "
+                f"({c.get('pending_drafts', 0)} pending, {c.get('approved_drafts', 0)} approved)"
             )
 
-        return "\n".join(parts)
+    # ── Drafts summary ──
+    if context.drafts:
+        parts.append("")
+        parts.append(
+            f"DRAFTS: {context.drafts.get('total', 0)} total, "
+            f"{context.drafts.get('pending', 0)} pending, "
+            f"{context.drafts.get('approved', 0)} approved"
+        )
+
+    return "\n".join(parts)
 
 
 # ── Narrative Engine ──
@@ -221,7 +172,7 @@ class NarrativeEngine:
         self._cache: dict[str, str] = {}
 
     def _cache_key(self, kind: str, context: BriefingContext) -> str:
-        return f"{kind}:v{self._VERSION}:{hash(json.dumps(context.to_user_text(), default=str))}"
+        return f"{kind}:v{self._VERSION}:{hash(json.dumps(_build_brief_user_text(context), default=str))}"
 
     # ── Briefing Writer ──
 
@@ -261,7 +212,7 @@ class NarrativeEngine:
             "- Never use bullet points or lists — write prose"
         )
 
-        user_text = context.to_user_text() + "\n\nWrite a brief workspace summary."
+        user_text = _build_brief_user_text(context) + "\n\nWrite a brief workspace summary."
 
         try:
             result = _send_openai_request(system_text, user_text)

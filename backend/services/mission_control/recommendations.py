@@ -13,7 +13,8 @@ import json
 from typing import Optional
 
 from services.intelligence.ai import _send_openai_request, OpenAIError
-from services.narrative_engine import BriefingContext, get_engine
+from services.mission_control.narrative_engine import get_engine
+from services.reasoning.briefing_context import BriefingContext
 
 
 _cache: dict[str, dict] = {}

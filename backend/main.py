@@ -1,22 +1,15 @@
 import asyncio
-import json
 import logging
 import os
-import threading
 import time
-import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
-from typing import Any
 
 from dotenv import load_dotenv
 load_dotenv()
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse, Response
-from pydantic import BaseModel, Field
+from fastapi.responses import PlainTextResponse
 import services.identity.dependencies as identity_dependencies
-import services.workspace.access as workspace_access
 from services.identity.api import router as auth_router
 from services.onboarding.api import router as onboarding_router
 from services.organizations.api import router as organizations_router, _build_org_deps, register_deps as register_org_deps
@@ -36,7 +29,6 @@ from services.events.api import router as events_router
 from services.export.api import router as export_router
 from services.workspace.api import router as workspace_router
 from services.workflows.api import router as workflows_router
-import services.outbound.service as outbound_service
 from services.conversations.api import engine, router as conversations_router
 from services.capabilities.config import CapabilityConfig
 from services.capabilities.services import CapabilityService
@@ -61,38 +53,16 @@ from services.identity.exceptions import (
 from services.identity.metrics import get_metrics
 from services.identity.schemas import ErrorResponse
 from starlette.responses import JSONResponse
-from services.operations.diagnostics import get_build_metadata
 from app import lifespan as app_lifespan
-from services.learning.behavior_tracker import get_tracker as _get_behavior_tracker
-from services.learning.feedback_interpreter import FeedbackInterpreter as _FeedbackInterpreter
-from services.drafts.intelligence import analyze_draft as analyze_draft_intelligence
 from services.strategic.profile.api import router as strategic_intelligence_router
-from services.drafts.rewrite import execute_rewrite
-from services.drafts.comparison import compare_versions
 from services.communication import provider_startup
-from services.communication.reply_simulator import maybe_schedule as simulate_reply
-from services.events.bus import publish_draft_event
-from services.conversation_intelligence.legacy_models import FollowupAction, BuyingSignal, SignalStrength
 from services.execution import AdapterRegistry as ExecutionAdapterRegistry
 from services.operations import (
     RequestLoggingMiddleware,
-    log_config_warnings,
     operations_router,
-    set_startup_time,
-    startup_diagnostics,
     redact_session_path,
     request_id_var,
 )
-
-_feedback_interpreter: _FeedbackInterpreter | None = None
-
-
-def _get_feedback() -> _FeedbackInterpreter:
-    global _feedback_interpreter
-    if _feedback_interpreter is None:
-        _feedback_interpreter = _FeedbackInterpreter(_get_behavior_tracker())
-    return _feedback_interpreter
-
 
 logging.basicConfig(
     level=logging.INFO,
@@ -488,15 +458,6 @@ app.add_middleware(RequestLoggingMiddleware)
 @app.get("/", response_class=PlainTextResponse)
 def read_root():
     return "Loqi backend running"
-
-class LeadDecisionRequest(BaseModel):
-    lead: dict
-    approved: bool
-
-
-class GenerateDraftsRequest(BaseModel):
-    campaign_id: str
-
 
 if __name__ == "__main__":
     import uvicorn

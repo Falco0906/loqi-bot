@@ -160,7 +160,11 @@ class TestConsoleEmailProvider:
         await provider.send_subscription_renewed("sub@example.com", "Bob", "Pro", "$79", "July 1")
         captured = capsys.readouterr()
         assert "sub@example.com" in captured.out
+        assert "Subscription renewed — Loqi" in captured.out
+        assert "Bob" in captured.out
+        assert "Pro" in captured.out
         assert "$79" in captured.out
+        assert "July 1" in captured.out
 
 
 # ─── ResendEmailProvider Tests (mocked SDK) ──────────────────────────

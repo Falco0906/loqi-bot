@@ -610,7 +610,7 @@ async def create_outbound_draft(request: Request, payload: dict[str, Any]) -> di
         raise HTTPException(status_code=503, detail="Draft could not be persisted")
     workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
     try:
-        result = outbound_registry.create_draft(provider_id, draft)
+        result = await asyncio.to_thread(outbound_registry.create_draft, provider_id, draft)
         if not result:
             raise RuntimeError("Provider did not return a draft projection")
         draft = result
@@ -649,7 +649,7 @@ async def update_outbound_draft(request: Request, draft_id: str, payload: dict[s
         raise HTTPException(status_code=503, detail="Draft update could not be persisted")
     updated = existing.model_copy(update=update_data)
     if payload.get("external_draft_id"):
-        updated = outbound_registry.update_draft(provider_id, updated)
+        updated = await asyncio.to_thread(outbound_registry.update_draft, provider_id, updated)
         if not updated:
             raise HTTPException(status_code=502, detail="Provider draft update failed")
     if not await persist_outbound_projection(owner_id, workspace_id, updated, change_summary="provider draft updated"):
@@ -669,7 +669,7 @@ async def delete_outbound_draft(request: Request | None, draft_id: str, provider
         request, session_token, draft_id, provider_id=provider_id,
     )
     if draft and draft.external_draft_id and provider_id:
-        outbound_registry.delete_draft(provider_id, draft.external_draft_id)
+        await asyncio.to_thread(outbound_registry.delete_draft, provider_id, draft.external_draft_id)
     if not await workspace_state.persist_draft_update_awaited(owner_id, draft_id, {"status": "rejected"}, workspace_id=workspace_id):
         raise HTTPException(status_code=503, detail="Draft deletion could not be persisted")
     from services.outbound.outbound_models import DraftStatus
@@ -696,7 +696,7 @@ async def approve_outbound_draft(request: Request | None, draft_id: str, auto: b
     draft.approval_state = ApprovalState.AUTO_APPROVED if auto else ApprovalState.APPROVED
     draft.status = DraftStatus.AUTO_APPROVED if auto else DraftStatus.APPROVED
     try:
-        updated = outbound_registry.create_draft(draft.provider_id, draft)
+        updated = await asyncio.to_thread(outbound_registry.create_draft, draft.provider_id, draft)
         if not updated:
             raise HTTPException(status_code=502, detail="No provider registered for " + draft.provider_id)
         if not updated.external_draft_id:
@@ -758,7 +758,7 @@ async def approve_all_outbound_drafts(request: Request | None, auto: bool = Fals
             _owner, _workspace, _canonical, draft = await require_canonical_outbound_draft(request, session_token, draft_id)
             draft.approval_state = ApprovalState.AUTO_APPROVED if auto else ApprovalState.APPROVED
             draft.status = DraftStatus.AUTO_APPROVED if auto else DraftStatus.APPROVED
-            updated = outbound_registry.create_draft(draft.provider_id, draft)
+            updated = await asyncio.to_thread(outbound_registry.create_draft, draft.provider_id, draft)
             if not updated or not updated.external_draft_id:
                 results.append({"draft_id": draft.id, "ok": False, "error": "No provider or no external_draft_id"})
                 continue
@@ -807,7 +807,7 @@ async def create_provider_draft_after_approval(
         if not provider_id:
             log.warning("[outbound_adapter] No Gmail outbound provider registered — cannot create Gmail draft for %s", draft_id)
             return
-        provider_result = outbound_registry.create_draft(provider_id, outbound_draft)
+        provider_result = await asyncio.to_thread(outbound_registry.create_draft, provider_id, outbound_draft)
         if provider_result and provider_result.external_draft_id:
             outbound_draft.external_draft_id = provider_result.external_draft_id
             if provider_result.thread_id:

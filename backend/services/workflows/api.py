@@ -50,9 +50,9 @@ async def plan_workflow_endpoint(session_token: str, payload: PlanningInput, req
     )
 
 
-def _lifecycle_result(operation, workflow_id: str, session_token: str) -> dict:
+async def _lifecycle_result(operation, workflow_id: str, session_token: str) -> dict:
     try:
-        return operation(workflow_id, session_token)
+        return await operation(workflow_id, session_token)
     except service.WorkflowNotFoundError as error:
         raise HTTPException(status_code=404, detail="Workflow not found") from error
     except ValueError as error:
@@ -67,7 +67,7 @@ async def execute_workflow_endpoint(
 ):
     """Start the existing synchronous legacy workflow runtime."""
     session_token = identity_dependencies.web_session_token(request)
-    return service.start_workflow(
+    return await service.start_workflow_async(
         session_token=session_token,
         plan_id=payload.plan_id,
         goal=payload.goal,
@@ -83,28 +83,32 @@ async def execute_workflow_endpoint(
 async def approve_workflow_step(session_token: str, workflow_id: str, request: Request = None):
     """Approve one owned workflow through its canonical lifecycle operation."""
     session_token = identity_dependencies.web_session_token(request)
-    return _lifecycle_result(service.approve_workflow_for_session, workflow_id, session_token)
+    _owned_runtime_or_404(workflow_id, request, session_token)
+    return await _lifecycle_result(service.approve_workflow_for_session_async, workflow_id, session_token)
 
 
 @router.post("/api/web/session/{session_token}/workflows/{workflow_id}/pause")
 async def pause_workflow_endpoint(session_token: str, workflow_id: str, request: Request = None):
     """Pause one owned workflow through its canonical lifecycle operation."""
     session_token = identity_dependencies.web_session_token(request)
-    return _lifecycle_result(service.pause_workflow_for_session, workflow_id, session_token)
+    _owned_runtime_or_404(workflow_id, request, session_token)
+    return await _lifecycle_result(service.pause_workflow_for_session_async, workflow_id, session_token)
 
 
 @router.post("/api/web/session/{session_token}/workflows/{workflow_id}/resume")
 async def resume_workflow_endpoint(session_token: str, workflow_id: str, request: Request = None):
     """Resume one owned workflow through its canonical lifecycle operation."""
     session_token = identity_dependencies.web_session_token(request)
-    return _lifecycle_result(service.resume_workflow_for_session, workflow_id, session_token)
+    _owned_runtime_or_404(workflow_id, request, session_token)
+    return await _lifecycle_result(service.resume_workflow_for_session_async, workflow_id, session_token)
 
 
 @router.post("/api/web/session/{session_token}/workflows/{workflow_id}/cancel")
 async def cancel_workflow_endpoint(session_token: str, workflow_id: str, request: Request = None):
     """Cancel one owned workflow through its canonical lifecycle operation."""
     session_token = identity_dependencies.web_session_token(request)
-    return _lifecycle_result(service.cancel_workflow_for_session, workflow_id, session_token)
+    _owned_runtime_or_404(workflow_id, request, session_token)
+    return await _lifecycle_result(service.cancel_workflow_for_session_async, workflow_id, session_token)
 
 
 @router.get("/api/web/session/{session_token}/workflows")

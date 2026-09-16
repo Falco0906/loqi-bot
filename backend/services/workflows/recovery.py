@@ -10,7 +10,7 @@ On FastAPI startup:
    - PAUSED: leave paused
 """
 
-from services.workflows.runtime import RuntimeStatus, restore_runtime
+from services.workflows.runtime import RuntimeStatus, restore_runtime, run_lifecycle_operation
 from services.workflows.persistence import load_all
 from services.workflows.events import emit_workflow_recovered, restore_events
 
@@ -45,7 +45,13 @@ def recover_all() -> dict:
             from services.workflows.executor import execute_remaining
             from services.workflows.models import WorkflowPlan
             plan = WorkflowPlan(**entry.plan)
-            execute_remaining(plan, entry.session_token, entry.current_step_index)
+            run_lifecycle_operation(
+                entry.workflow_id,
+                execute_remaining,
+                plan,
+                entry.session_token,
+                entry.current_step_index,
+            )
             summary["resumed"] += 1
 
         elif entry.status == RuntimeStatus.WAITING_APPROVAL:

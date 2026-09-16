@@ -3,7 +3,7 @@ import concurrent.futures
 import os
 import time
 
-from services.workflows.runtime import RuntimeEntry, get_runtime
+from services.workflows.runtime import RuntimeEntry, get_runtime, run_lifecycle_operation
 from services.campaigns.service import load_campaigns
 from services.workspace.state import load_drafts_only
 from services.workspace.snapshot import build_snapshot
@@ -79,12 +79,33 @@ def start_workflow(
         requires_approval=requires_approval,
         steps=steps,
     )
+    return run_lifecycle_operation(
+        plan.id,
+        _start_workflow_operation,
+        plan,
+        session_token,
+        goal,
+        len(steps),
+        risk_level,
+        requires_approval,
+    )
+
+
+def _start_workflow_operation(
+    plan: WorkflowPlan,
+    session_token: str,
+    goal: str,
+    step_count: int,
+    risk_level: str,
+    requires_approval: bool,
+) -> dict:
+    """Execute and publish one already-validated workflow plan."""
     runtime = execute_runtime(plan, session_token)
     progress = calculate_progress(runtime)
     publish(session_token, WMEventType.WORKFLOW_STARTED, {
         "workflow_id": runtime.workflow_id,
         "goal": goal,
-        "step_count": len(steps),
+        "step_count": step_count,
         "risk_level": risk_level,
         "requires_approval": requires_approval,
     }, actor="user")
@@ -99,6 +120,16 @@ def start_workflow(
 
 def approve_workflow_for_session(workflow_id: str, session_token: str) -> dict:
     """Approve one owned workflow step and publish the established event."""
+    return run_lifecycle_operation(
+        workflow_id,
+        _approve_workflow_for_session_operation,
+        workflow_id,
+        session_token,
+    )
+
+
+def _approve_workflow_for_session_operation(workflow_id: str, session_token: str) -> dict:
+    """Validate, approve, and publish while holding the worker-owned guard."""
     _owned_runtime_or_raise(workflow_id, session_token)
     runtime = approve_runtime(workflow_id)
     progress = calculate_progress(runtime)
@@ -117,6 +148,16 @@ def approve_workflow_for_session(workflow_id: str, session_token: str) -> dict:
 
 def pause_workflow_for_session(workflow_id: str, session_token: str) -> dict:
     """Pause one owned workflow and publish the established event."""
+    return run_lifecycle_operation(
+        workflow_id,
+        _pause_workflow_for_session_operation,
+        workflow_id,
+        session_token,
+    )
+
+
+def _pause_workflow_for_session_operation(workflow_id: str, session_token: str) -> dict:
+    """Validate, pause, and publish while holding the worker-owned guard."""
     _owned_runtime_or_raise(workflow_id, session_token)
     runtime = pause_runtime(workflow_id)
     progress = calculate_progress(runtime)
@@ -134,6 +175,16 @@ def pause_workflow_for_session(workflow_id: str, session_token: str) -> dict:
 
 def resume_workflow_for_session(workflow_id: str, session_token: str) -> dict:
     """Resume one owned workflow and publish the established event."""
+    return run_lifecycle_operation(
+        workflow_id,
+        _resume_workflow_for_session_operation,
+        workflow_id,
+        session_token,
+    )
+
+
+def _resume_workflow_for_session_operation(workflow_id: str, session_token: str) -> dict:
+    """Validate, resume, and publish while holding the worker-owned guard."""
     _owned_runtime_or_raise(workflow_id, session_token)
     runtime = resume_runtime(workflow_id)
     progress = calculate_progress(runtime)
@@ -151,6 +202,16 @@ def resume_workflow_for_session(workflow_id: str, session_token: str) -> dict:
 
 def cancel_workflow_for_session(workflow_id: str, session_token: str) -> dict:
     """Cancel one owned workflow and publish the established event."""
+    return run_lifecycle_operation(
+        workflow_id,
+        _cancel_workflow_for_session_operation,
+        workflow_id,
+        session_token,
+    )
+
+
+def _cancel_workflow_for_session_operation(workflow_id: str, session_token: str) -> dict:
+    """Validate, cancel, and publish while holding the worker-owned guard."""
     _owned_runtime_or_raise(workflow_id, session_token)
     runtime = cancel_runtime(workflow_id)
     publish(session_token, WMEventType.WORKFLOW_CANCELLED, {
@@ -162,6 +223,31 @@ def cancel_workflow_for_session(workflow_id: str, session_token: str) -> dict:
         "workflow_id": runtime.workflow_id,
         "status": runtime.status.value,
     }
+
+
+async def start_workflow_async(**kwargs) -> dict:
+    """Run the synchronous start lifecycle without blocking the HTTP loop."""
+    return await asyncio.to_thread(start_workflow, **kwargs)
+
+
+async def approve_workflow_for_session_async(workflow_id: str, session_token: str) -> dict:
+    """Run an approval lifecycle in its worker-owned operation guard."""
+    return await asyncio.to_thread(approve_workflow_for_session, workflow_id, session_token)
+
+
+async def pause_workflow_for_session_async(workflow_id: str, session_token: str) -> dict:
+    """Run a pause lifecycle in its worker-owned operation guard."""
+    return await asyncio.to_thread(pause_workflow_for_session, workflow_id, session_token)
+
+
+async def resume_workflow_for_session_async(workflow_id: str, session_token: str) -> dict:
+    """Run a resume lifecycle in its worker-owned operation guard."""
+    return await asyncio.to_thread(resume_workflow_for_session, workflow_id, session_token)
+
+
+async def cancel_workflow_for_session_async(workflow_id: str, session_token: str) -> dict:
+    """Run a cancellation lifecycle in its worker-owned operation guard."""
+    return await asyncio.to_thread(cancel_workflow_for_session, workflow_id, session_token)
 
 
 async def plan_workspace_workflow(

@@ -7,8 +7,8 @@ PAUSED status, metrics accumulation, history queries, thread-safe.
 from datetime import datetime, timezone
 from enum import Enum
 from uuid import uuid4
-from typing import Optional
-from threading import Lock
+from typing import Any, Callable, Optional, TypeVar
+from threading import Lock, RLock
 
 
 class RuntimeStatus(str, Enum):
@@ -107,6 +107,55 @@ class RuntimeEntry:
 
 _runtimes: dict[str, RuntimeEntry] = {}
 _runtime_lock = Lock()
+
+
+class _LifecycleOperationSlot:
+    """One worker-owned serialisation slot for a workflow runtime."""
+
+    def __init__(self) -> None:
+        self.lock = RLock()
+        self.references = 0
+
+
+_lifecycle_operation_slots: dict[str, _LifecycleOperationSlot] = {}
+_Result = TypeVar("_Result")
+
+
+def _retain_lifecycle_operation_slot(workflow_id: str) -> _LifecycleOperationSlot:
+    """Retain a guard slot before its worker waits for exclusive execution."""
+    with _runtime_lock:
+        slot = _lifecycle_operation_slots.get(workflow_id)
+        if slot is None:
+            slot = _LifecycleOperationSlot()
+            _lifecycle_operation_slots[workflow_id] = slot
+        slot.references += 1
+        return slot
+
+
+def _release_lifecycle_operation_slot(workflow_id: str, slot: _LifecycleOperationSlot) -> None:
+    """Release a worker reference and discard only safely-finished slots."""
+    with _runtime_lock:
+        slot.references -= 1
+        runtime = _runtimes.get(workflow_id)
+        terminal_or_removed = runtime is None or runtime.status in TERMINAL_STATUSES
+        if slot.references == 0 and terminal_or_removed:
+            if _lifecycle_operation_slots.get(workflow_id) is slot:
+                _lifecycle_operation_slots.pop(workflow_id, None)
+
+
+def run_lifecycle_operation(workflow_id: str, operation: Callable[..., _Result], *args: Any, **kwargs: Any) -> _Result:
+    """Run one complete synchronous lifecycle operation for a workflow.
+
+    This guard belongs to the worker that mutates the runtime, rather than
+    the awaiting HTTP coroutine.  A cancelled HTTP request therefore cannot
+    release it while its worker is still persisting state or emitting events.
+    """
+    slot = _retain_lifecycle_operation_slot(workflow_id)
+    try:
+        with slot.lock:
+            return operation(*args, **kwargs)
+    finally:
+        _release_lifecycle_operation_slot(workflow_id, slot)
 
 
 def _locked(fn):
@@ -339,6 +388,9 @@ def remove_runtime(workflow_id: str) -> bool:
     with _runtime_lock:
         if workflow_id in _runtimes:
             del _runtimes[workflow_id]
+            slot = _lifecycle_operation_slots.get(workflow_id)
+            if slot is not None and slot.references == 0:
+                _lifecycle_operation_slots.pop(workflow_id, None)
             return True
     return False
 
@@ -351,6 +403,9 @@ def restore_runtime(entry: RuntimeEntry) -> None:
 def clear() -> None:
     with _runtime_lock:
         _runtimes.clear()
+        for workflow_id, slot in list(_lifecycle_operation_slots.items()):
+            if slot.references == 0:
+                _lifecycle_operation_slots.pop(workflow_id, None)
 
 
 def get_history(session_token: str, status_filter: str | None = None, limit: int = 50) -> list[dict]:

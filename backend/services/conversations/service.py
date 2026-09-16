@@ -113,7 +113,11 @@ async def read_legacy_web_session_messages(*, request, engine: ConversationEngin
     session_token = identity_dependencies.web_session_token(request)
     return {
         "ok": True,
-        "messages": engine.list_messages(channel="web", external_user_id=session_token),
+        "messages": await asyncio.to_thread(
+            engine.list_messages,
+            channel="web",
+            external_user_id=session_token,
+        ),
     }
 
 

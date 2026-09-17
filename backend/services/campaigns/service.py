@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
@@ -13,6 +14,128 @@ from services.world_model.activity_repository import get_activity_repository
 from services.world_model import EventType as WMEventType, publish
 
 log = logging.getLogger("loqi")
+
+
+_status_projection_locks: dict[str, tuple[asyncio.Lock, int]] = {}
+_status_projection_registry_lock = asyncio.Lock()
+
+
+@asynccontextmanager
+async def _status_projection_lock(campaign_id: str):
+    """Serialize a campaign's commit and legacy status projections.
+
+    The v2 RPC allocates revisions in commit order. Holding this scoped lock
+    through both projections ensures the process-local compatibility log uses
+    that same order without retaining slots after the final waiter exits.
+    """
+    async with _status_projection_registry_lock:
+        lock, users = _status_projection_locks.get(campaign_id, (asyncio.Lock(), 0))
+        _status_projection_locks[campaign_id] = (lock, users + 1)
+    try:
+        async with lock:
+            yield
+    finally:
+        async with _status_projection_registry_lock:
+            current_lock, users = _status_projection_locks.get(campaign_id, (lock, 1))
+            if current_lock is lock and users <= 1:
+                _status_projection_locks.pop(campaign_id, None)
+            elif current_lock is lock:
+                _status_projection_locks[campaign_id] = (lock, users - 1)
+
+
+async def _persist_and_project_campaign_status(
+    *,
+    session_token: str,
+    owner_id: str,
+    campaign_id: str,
+    workspace_id: str,
+    updates: dict[str, Any],
+    persist_update: Any,
+) -> Any:
+    """Keep the serialized status operation alive after request cancellation."""
+    task = asyncio.create_task(_locked_persist_and_project_campaign_status(
+        session_token=session_token,
+        owner_id=owner_id,
+        campaign_id=campaign_id,
+        workspace_id=workspace_id,
+        updates=updates,
+        persist_update=persist_update,
+    ))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # The child task owns the lock and must finish its canonical mutation
+        # and ordered projections even when its HTTP waiter disconnects.
+        def consume_background_result(completed: asyncio.Task) -> None:
+            try:
+                completed.result()
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                log.exception("campaign_status_background_operation_failed campaign_id=%s", campaign_id)
+
+        task.add_done_callback(consume_background_result)
+        raise
+
+
+async def _locked_persist_and_project_campaign_status(
+    *,
+    session_token: str,
+    owner_id: str,
+    campaign_id: str,
+    workspace_id: str,
+    updates: dict[str, Any],
+    persist_update: Any,
+) -> Any:
+    """Commit one status update, then project only its locked transition."""
+    async with _status_projection_lock(campaign_id):
+        result = await persist_update(owner_id, campaign_id, updates, workspace_id=workspace_id)
+        if result is None:
+            return None
+        revision = result.revision
+        if not (revision.was_updated and revision.was_status_changed):
+            return result
+
+        campaign = revision.campaign
+        legacy_payload = {
+            "campaign_id": campaign.id,
+            "status": campaign.status,
+            "previous_status": revision.previous_status,
+            "revision": campaign.version,
+        }
+        try:
+            publish(session_token, WMEventType.CAMPAIGN_STATUS_CHANGED, legacy_payload, actor="user")
+        except Exception as projection_error:
+            log.warning(
+                "campaign_status_projection_failed campaign_id=%s revision=%s error_type=%s",
+                campaign.id,
+                campaign.version,
+                type(projection_error).__name__,
+            )
+
+        source_key = f"campaign:{campaign.id}:revision:{campaign.version}:status_changed"
+        activity_payload = {
+            "campaign_id": campaign.id,
+            "status": campaign.status,
+            "previous_status": revision.previous_status,
+        }
+        try:
+            await asyncio.to_thread(
+                get_activity_repository().append_campaign_status_changed,
+                workspace_id=campaign.workspace_id,
+                actor_user_id=owner_id,
+                source_key=source_key,
+                payload=activity_payload,
+                occurred_at=campaign.updated_at.isoformat(),
+            )
+        except Exception as activity_error:
+            log.warning(
+                "workspace_activity_append_failed workspace_id=%s event_type=campaign_status_changed source_key=%s error_type=%s",
+                campaign.workspace_id,
+                source_key,
+                type(activity_error).__name__,
+            )
+        return result
 
 VALID_CAMPAIGN_STATUSES = {
     "planning", "active", "paused", "completed",
@@ -212,9 +335,6 @@ async def update_campaign(
         old_status = target.get("status", "")
         target["status"] = status
         updates["status"] = status
-        publish(session_token, WMEventType.CAMPAIGN_STATUS_CHANGED, {
-            "campaign_id": campaign_id, "status": status, "previous_status": old_status,
-        }, actor="user")
         if status == "completed" and old_status != "completed":
             approved = [
                 draft for draft in load_drafts_only(owner_id, workspace_id=workspace_id)
@@ -242,11 +362,22 @@ async def update_campaign(
         }, actor="user")
     target["updated_at"] = datetime.now(timezone.utc).isoformat()
     if updates:
-        revisioned = await persist_campaign_update_with_revision_awaited(
-            owner_id, campaign_id, updates, workspace_id=workspace_id,
-        )
-        if revisioned is None:
+        if status is not None:
+            persisted = await _persist_and_project_campaign_status(
+                session_token=session_token,
+                owner_id=owner_id,
+                campaign_id=campaign_id,
+                workspace_id=workspace_id,
+                updates=updates,
+                persist_update=persist_campaign_update_with_revision_awaited,
+            )
+        else:
+            persisted = await persist_campaign_update_with_revision_awaited(
+                owner_id, campaign_id, updates, workspace_id=workspace_id,
+            )
+        if persisted is None:
             raise HTTPException(status_code=503, detail="Campaign update could not be persisted")
+        revisioned = persisted.revision
         canonical_campaign = revisioned.campaign
         if revisioned.was_updated:
             # The RPC return, rather than the pre-write dict mutation above,
@@ -258,33 +389,8 @@ async def update_campaign(
                 "status": canonical_campaign.status,
                 "updated_at": canonical_campaign.updated_at.isoformat(),
             })
-        if revisioned.was_status_changed:
-            source_key = (
-                f"campaign:{canonical_campaign.id}:revision:{canonical_campaign.version}:status_changed"
-            )
-            activity_payload = {
-                "campaign_id": canonical_campaign.id,
-                "status": canonical_campaign.status,
-                "previous_status": revisioned.previous_status,
-            }
-            try:
-                await asyncio.to_thread(
-                    get_activity_repository().append_campaign_status_changed,
-                    workspace_id=canonical_campaign.workspace_id,
-                    actor_user_id=owner_id,
-                    source_key=source_key,
-                    payload=activity_payload,
-                    occurred_at=canonical_campaign.updated_at.isoformat(),
-                )
-            except Exception as activity_error:
-                # The canonical mutation is already confirmed. Durable activity
-                # remains best-effort, like campaign-created activity.
-                log.warning(
-                    "workspace_activity_append_failed workspace_id=%s event_type=campaign_status_changed source_key=%s error_type=%s",
-                    canonical_campaign.workspace_id,
-                    source_key,
-                    type(activity_error).__name__,
-                )
+        if persisted.strategy_error is not None:
+            raise HTTPException(status_code=503, detail="Campaign update could not be persisted")
     return {"ok": True, "campaign": target}
 
 

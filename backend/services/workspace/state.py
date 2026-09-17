@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
@@ -43,6 +44,20 @@ from services.persistence.launch import (
     WorkspaceRepository,
 )
 from services.platform.supabase import get_supabase_client
+
+
+@dataclass(frozen=True)
+class CampaignUpdatePersistenceResult:
+    """A committed campaign revision and any later strategy-write failure.
+
+    The campaign mutation is authoritative once its locked RPC returns. An
+    optional strategy write follows it and can fail independently; callers
+    need both facts to keep compatibility projections truthful while retaining
+    the existing API failure for an incomplete combined request.
+    """
+
+    revision: CampaignRevisionResult
+    strategy_error: Exception | None = None
 
 
 def _utc_iso(dt: datetime | None = None) -> str:
@@ -684,7 +699,7 @@ async def persist_campaign_update_with_revision_awaited(
     updates: dict[str, Any],
     *,
     workspace_id: str = "",
-) -> CampaignRevisionResult | None:
+) -> CampaignUpdatePersistenceResult | None:
     """Persist the live campaign-edit path with one atomic campaign revision.
 
     Strategy remains the existing separately versioned canonical record. Its
@@ -707,11 +722,15 @@ async def persist_campaign_update_with_revision_awaited(
             core_updates,
             touch=strategy_present,
         )
-        if strategy_present:
-            await _write_strategy(campaign_id=campaign_id, strategy=updates["strategy"])
     except Exception as error:
         print(f"[workspace_state] revisioned campaign update failed: {error}")
         return None
+    if strategy_present:
+        try:
+            await _write_strategy(campaign_id=campaign_id, strategy=updates["strategy"])
+        except Exception as error:
+            print(f"[workspace_state] campaign strategy update failed: {error}")
+            return CampaignUpdatePersistenceResult(revision=revision, strategy_error=error)
     try:
         append_event(user_id, "campaign.updated", {
             "campaign_id": campaign_id,
@@ -719,7 +738,7 @@ async def persist_campaign_update_with_revision_awaited(
         })
     except Exception as error:
         print(f"[workspace_state] campaign update event append failed: {error}")
-    return revision
+    return CampaignUpdatePersistenceResult(revision=revision)
 
 
 async def persist_campaign_lead_awaited(user_id: str, campaign_id: str, lead: dict[str, Any], workspace_id: str = "") -> bool:

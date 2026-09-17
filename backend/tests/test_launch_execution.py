@@ -96,12 +96,15 @@ def env(monkeypatch):
             updated_at=datetime.now(timezone.utc),
         )
         return SimpleNamespace(
-            campaign=campaign_row,
-            was_updated=True,
-            # These launch tests cover legacy dispatch only; status activity
-            # has its own focused contract tests.
-            was_status_changed=False,
-            previous_status="planning",
+            revision=SimpleNamespace(
+                campaign=campaign_row,
+                was_updated=True,
+                # These launch tests cover legacy dispatch only; status activity
+                # has its own focused contract tests.
+                was_status_changed=False,
+                previous_status="planning",
+            ),
+            strategy_error=None,
         )
 
     async def fake_persist_draft(owner_id: str, draft_id: str, updates: dict, workspace_id: str = "") -> bool:

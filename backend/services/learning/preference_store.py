@@ -65,13 +65,7 @@ class WorkspacePreferenceRepository:
         actor_user_id: str,
         preference: LearnedPreference,
     ) -> dict[str, Any]:
-        """Persist only a strictly higher-confidence typed preference.
-
-        The learner already deduplicates before this call. The repository
-        repeats the comparison so a lower-confidence caller cannot overwrite
-        durable state. It intentionally does not claim retry-safe idempotency:
-        no stable source event key exists until the later activity-log phase.
-        """
+        """Atomically persist only a strictly higher-confidence preference."""
         if not workspace_id:
             raise ValueError("Canonical workspace_id is required for learned preferences")
         key = str(preference.key or "")
@@ -86,41 +80,24 @@ class WorkspacePreferenceRepository:
         client = self._client()
         if client is None:
             raise RuntimeError("Durable preference persistence is unavailable")
-        existing = self.get(workspace_id, key)
-        if existing is not None and float(existing["confidence"]) >= float(preference.confidence):
-            return existing
-
         now = _utc_now()
-        record = {
-            "workspace_id": workspace_id,
-            "preference_key": key,
-            "preference_value": value,
-            "confidence": float(preference.confidence),
-            "source": str(preference.source or ""),
-            "evidence_count": int(preference.evidence_count or 0),
-            "first_observed_at": (
-                existing.get("first_observed_at") if existing else preference.first_observed or now
-            ),
-            "last_observed_at": preference.last_observed or now,
-            "version": int(existing.get("version") or 0) + 1 if existing else 1,
-            "updated_by": actor_user_id or None,
-            "updated_at": now,
-        }
-        if existing is not None:
-            result = (
-                client.table(self.table_name)
-                .update(record)
-                .eq("id", existing["id"])
-                .eq("workspace_id", workspace_id)
-                .select("*")
-                .execute()
-            )
-        else:
-            result = client.table(self.table_name).insert(record).select("*").execute()
+        result = client.rpc("upsert_workspace_preference_if_higher", {
+            "p_workspace_id": workspace_id,
+            "p_actor_user_id": actor_user_id or None,
+            "p_preference_key": key,
+            "p_preference_value": value,
+            "p_confidence": float(preference.confidence),
+            "p_source": str(preference.source or ""),
+            "p_evidence_count": int(preference.evidence_count or 0),
+            "p_first_observed_at": preference.first_observed or now,
+            "p_last_observed_at": preference.last_observed or now,
+        }).execute()
         rows = getattr(result, "data", None) or []
         if not rows:
             raise RuntimeError("Durable preference write was not confirmed")
-        return self._record(rows[0])
+        record = self._record(rows[0])
+        record["was_updated"] = bool(rows[0].get("was_updated") or False)
+        return record
 
     @staticmethod
     def _record(row: dict[str, Any]) -> dict[str, Any]:

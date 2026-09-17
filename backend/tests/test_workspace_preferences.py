@@ -1,8 +1,12 @@
 """Offline contracts for durable, workspace-scoped learned preferences."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Lock
 from types import SimpleNamespace
+
+import pytest
 
 from services.learning.learner import Learner
 from services.learning.models import LearnedPreference, PreferenceKey
@@ -62,9 +66,66 @@ class _Query:
 class _FakePreferenceDatabase:
     def __init__(self):
         self.rows: dict[str, list[dict]] = {}
+        self.rpc_calls: list[tuple[str, dict]] = []
+        self.table_calls: list[str] = []
+        self._lock = Lock()
+        self.fail_after_commit_once = False
 
     def table(self, table_name):
+        self.table_calls.append(table_name)
         return _Query(self, table_name)
+
+    def rpc(self, name, arguments):
+        database = self
+
+        class _Rpc:
+            def execute(self):
+                assert name == "upsert_workspace_preference_if_higher"
+                database.rpc_calls.append((name, dict(arguments)))
+                with database._lock:
+                    rows = database.rows.setdefault("workspace_preferences", [])
+                    existing = next((row for row in rows if row["workspace_id"] == arguments["p_workspace_id"] and row["preference_key"] == arguments["p_preference_key"]), None)
+                    if existing is None:
+                        row = {
+                            "id": f"preference-{len(rows) + 1}",
+                            "workspace_id": arguments["p_workspace_id"],
+                            "preference_key": arguments["p_preference_key"],
+                            "preference_value": arguments["p_preference_value"],
+                            "confidence": arguments["p_confidence"],
+                            "source": arguments["p_source"],
+                            "evidence_count": arguments["p_evidence_count"],
+                            "first_observed_at": arguments["p_first_observed_at"],
+                            "last_observed_at": arguments["p_last_observed_at"],
+                            "version": 1,
+                            "updated_by": arguments["p_actor_user_id"],
+                            "updated_at": arguments["p_last_observed_at"],
+                        }
+                        rows.append(row)
+                        was_updated = True
+                    elif float(existing["confidence"]) >= float(arguments["p_confidence"]):
+                        row = existing
+                        was_updated = False
+                    else:
+                        existing.update({
+                            "preference_value": arguments["p_preference_value"],
+                            "confidence": arguments["p_confidence"],
+                            "source": arguments["p_source"],
+                            "evidence_count": arguments["p_evidence_count"],
+                            "last_observed_at": arguments["p_last_observed_at"],
+                            "version": existing["version"] + 1,
+                            "updated_by": arguments["p_actor_user_id"],
+                            "updated_at": arguments["p_last_observed_at"],
+                        })
+                        row = existing
+                        was_updated = True
+                    result = {**row, "was_updated": was_updated}
+                    should_timeout = database.fail_after_commit_once
+                    database.fail_after_commit_once = False
+                if should_timeout:
+                    raise TimeoutError("response lost after commit")
+                return _Result([result])
+
+        return _Rpc()
 
 
 def _repository(database=None):
@@ -105,6 +166,20 @@ def test_workspace_preferences_migration_has_canonical_scope_and_no_session_colu
         assert forbidden not in sql
 
 
+def test_preference_upsert_migration_uses_locked_rpc_and_existing_column_types():
+    sql = (Path(__file__).resolve().parents[1] / "supabase/migrations/040_workspace_preference_upsert.sql").read_text()
+    for fragment in (
+        "create or replace function upsert_workspace_preference_if_higher",
+        "p_preference_value text",
+        "for update",
+        "on conflict (workspace_id, preference_key) do nothing",
+        "v_current.confidence >= p_confidence",
+        "version = v_current.version + 1",
+        "was_updated boolean",
+    ):
+        assert fragment in sql
+
+
 def test_preference_survives_restart_from_durable_workspace_repository():
     repository, database = _repository()
     first = PreferenceStore(
@@ -143,6 +218,119 @@ def test_preference_workspace_isolation_and_higher_confidence_wins():
     assert workspace_a.save(_preference(value="casual", confidence=0.5, evidence_count=5)) == preference_id
     assert workspace_a.get(PreferenceKey.EMAIL_TONE) == "professional"
     assert workspace_b.get(PreferenceKey.EMAIL_TONE) is None
+
+
+def test_concurrent_first_insert_resolves_to_one_canonical_row():
+    repository, database = _repository()
+
+    def write(actor):
+        return repository.save_if_higher(
+            workspace_id="workspace-a", actor_user_id=actor,
+            preference=_preference(confidence=0.7),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = list(pool.map(write, ["user-a", "user-b"]))
+
+    assert len(database.rows["workspace_preferences"]) == 1
+    assert first["id"] == second["id"]
+    assert database.rows["workspace_preferences"][0]["version"] == 1
+
+
+@pytest.mark.parametrize(
+    ("first_confidence", "second_confidence", "expected_confidence", "expected_version"),
+    [
+        (0.6, 0.8, 0.8, 2),
+        (0.8, 0.6, 0.8, 1),
+    ],
+)
+def test_competing_confidence_writes_preserve_highest_canonical_value(
+    first_confidence, second_confidence, expected_confidence, expected_version,
+):
+    repository, _database = _repository()
+    first = _preference(value="professional", confidence=first_confidence, evidence_count=5)
+    second = _preference(value="casual", confidence=second_confidence, evidence_count=11)
+
+    repository.save_if_higher(workspace_id="workspace-a", actor_user_id="user-a", preference=first)
+    result = repository.save_if_higher(workspace_id="workspace-a", actor_user_id="user-b", preference=second)
+
+    assert result["confidence"] == expected_confidence
+    assert result["version"] == expected_version
+    assert result["value"] == ("casual" if second_confidence > first_confidence else "professional")
+
+
+def test_equal_confidence_preserves_first_durable_winner_without_version_or_evidence_change():
+    repository, _database = _repository()
+    first = repository.save_if_higher(
+        workspace_id="workspace-a", actor_user_id="user-a", preference=_preference(value="professional", confidence=0.7, evidence_count=5),
+    )
+    second = repository.save_if_higher(
+        workspace_id="workspace-a", actor_user_id="user-b", preference=_preference(value="casual", confidence=0.7, evidence_count=12),
+    )
+
+    assert first["was_updated"] is True
+    assert second["was_updated"] is False
+    assert second["value"] == "professional"
+    assert second["evidence_count"] == 5
+    assert second["version"] == 1
+
+
+def test_committed_write_timeout_retry_does_not_increment_version_or_evidence():
+    repository, database = _repository()
+    database.fail_after_commit_once = True
+    preference = _preference(confidence=0.7, evidence_count=9)
+
+    with pytest.raises(TimeoutError):
+        repository.save_if_higher(workspace_id="workspace-a", actor_user_id="user-a", preference=preference)
+    retry = repository.save_if_higher(workspace_id="workspace-a", actor_user_id="user-a", preference=preference)
+
+    assert retry["was_updated"] is False
+    assert retry["version"] == 1
+    assert retry["evidence_count"] == 9
+
+
+def test_higher_confidence_replaces_aggregate_evidence_and_preserves_first_observed():
+    repository, _database = _repository()
+    repository.save_if_higher(
+        workspace_id="workspace-a", actor_user_id="user-a", preference=_preference(confidence=0.6, evidence_count=5),
+    )
+    updated = repository.save_if_higher(
+        workspace_id="workspace-a", actor_user_id="user-b", preference=_preference(
+            value="casual", confidence=0.85, evidence_count=11,
+            first_observed="2026-02-01T00:00:00+00:00",
+            last_observed="2026-02-03T00:00:00+00:00",
+        ),
+    )
+
+    assert updated["evidence_count"] == 11
+    assert updated["version"] == 2
+    assert updated["first_observed_at"] == "2026-01-01T00:00:00+00:00"
+    assert updated["last_observed_at"] == "2026-02-03T00:00:00+00:00"
+    assert updated["source"] == "preference_learner"
+    assert updated["updated_by"] == "user-b"
+
+
+def test_rpc_receives_only_canonical_typed_preference_inputs():
+    repository, database = _repository()
+    repository.save_if_higher(
+        workspace_id="workspace-a", actor_user_id="user-a", preference=_preference(),
+    )
+    name, arguments = database.rpc_calls[0]
+    assert name == "upsert_workspace_preference_if_higher"
+    assert len(database.rpc_calls) == 1
+    assert database.table_calls == []
+    assert set(arguments) == {
+        "p_workspace_id", "p_actor_user_id", "p_preference_key",
+        "p_preference_value", "p_confidence", "p_source",
+        "p_evidence_count", "p_first_observed_at", "p_last_observed_at",
+    }
+    # `preferred_email_tone` is itself a valid typed key; reject only
+    # transport/analytical fields, not that vocabulary within a typed key.
+    for forbidden in (
+        "session_token", "bearer_token", "message_body", "conversation_id",
+        "provider_payload", "credential", "email_address",
+    ):
+        assert forbidden not in arguments
 
 
 def test_preference_updates_evidence_version_and_timestamps_from_durable_state():

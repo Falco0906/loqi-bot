@@ -47,12 +47,56 @@ async def test_draft_batch_runner_completes_durable_item(monkeypatch):
     monkeypatch.setattr("services.workspace.state.load_campaign_state", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(drafts, "publish", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(drafts, "publish_draft_event", lambda *_args, **_kwargs: asyncio.sleep(0))
+    activity_calls = []
+
+    class ActivityRepository:
+        def append_draft_generated(self, **kwargs):
+            activity_calls.append(kwargs)
+
+    monkeypatch.setattr(drafts, "get_activity_repository", lambda: ActivityRepository())
     result = await drafts.run_draft_batch_job(
         Job(id="job", user_id="user", type="draft_batch", workspace_id="workspace", payload={}),
         lambda *_: None,
     )
     assert result["ok"] is True
     assert result["result"]["completed"] == 1
+    assert updates == ["completed"]
+    assert len(activity_calls) == 1
+    activity = activity_calls[0]
+    assert activity["workspace_id"] == "workspace"
+    assert activity["actor_user_id"] == "user"
+    assert activity["source_key"] == "draft_batch:job:0:lead-1:generated"
+    assert activity["payload"] == {
+        "draft_id": activity["payload"]["draft_id"], "campaign_id": "",
+        "lead_id": "lead-1", "batch_job_id": "job", "status": "pending",
+    }
+    assert activity["occurred_at"]
+
+
+async def test_draft_batch_activity_failure_does_not_undo_completed_item(monkeypatch):
+    item = BatchItem("job", "workspace", "campaign", 0, {"id": "lead-1", "name": "Ada"}, "0:lead-1")
+    updates = []
+
+    class Storage:
+        def list_batch_resume_items(self, *_): return [item]
+        def list_batch_items(self, *_): return [item]
+        def mark_batch_item_generating(self, *_): return True
+        def mark_batch_item_completed(self, *_): item.status = BatchItemStatus.COMPLETED; updates.append("completed"); return True
+        def mark_batch_item_failed(self, *_): updates.append("failed"); return True
+
+    class FailingActivityRepository:
+        def append_draft_generated(self, **_kwargs): raise RuntimeError("storage unavailable")
+
+    monkeypatch.setattr("services.job_engine.job_manager._storage", Storage())
+    monkeypatch.setattr(drafts, "_run_draft_with_retry", lambda *_: asyncio.sleep(0, result={"message": "Draft ready: ---\nHello\n---", "subject": "Hi"}))
+    monkeypatch.setattr("services.workspace.state.persist_draft_awaited", lambda *_, **__: asyncio.sleep(0, result=True))
+    monkeypatch.setattr("services.workspace.state.load_campaign_state", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(drafts, "get_activity_repository", lambda: FailingActivityRepository())
+    monkeypatch.setattr(drafts, "publish", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("cache publish after failed durable append")))
+    monkeypatch.setattr(drafts, "publish_draft_event", lambda *_args, **_kwargs: asyncio.sleep(0))
+
+    result = await drafts.run_draft_batch_job(Job(id="job", user_id="user", type="draft_batch", workspace_id="workspace", payload={}), lambda *_: None)
+    assert result["ok"] is True
     assert updates == ["completed"]
 
 

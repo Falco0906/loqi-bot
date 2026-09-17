@@ -23,6 +23,7 @@ from services.enrichment.enrichment_factory import get_enricher
 from services.intelligence.lead_intelligence import generate_lead_intelligence
 from services.outbound import service as outbound_service
 from services.drafts.rewrite import execute_rewrite
+from services.world_model.activity_repository import get_activity_repository
 from services.world_model import EventType as WMEventType, publish
 from services.workspace.timeline import record_drafts_generated
 
@@ -402,11 +403,40 @@ async def run_draft_batch_job(job, on_progress) -> dict[str, Any]:
             if not await asyncio.to_thread(storage.mark_batch_item_completed, job.id, item.idempotency_key, draft["id"]):
                 raise RuntimeError("Draft completion could not be persisted")
             completed += 1
-            publish(session_token, WMEventType.DRAFT_GENERATED, {
-                "id": draft["id"], "campaign_id": job.campaign_id,
-                "lead_id": lead.get("id", ""), "lead_name": name,
-                "subject": draft["subject"], "body_preview": draft["text"][:200],
-            }, actor="system")
+            source_key = f"draft_batch:{job.id}:{item.idempotency_key}:generated"
+            activity_payload = {
+                "draft_id": draft["id"],
+                "campaign_id": str(job.campaign_id or ""),
+                "lead_id": str(lead.get("id") or ""),
+                "batch_job_id": job.id,
+                "status": str(draft.get("status") or ""),
+            }
+            try:
+                await asyncio.to_thread(
+                    get_activity_repository().append_draft_generated,
+                    workspace_id=job.workspace_id,
+                    actor_user_id=job.user_id,
+                    source_key=source_key,
+                    payload=activity_payload,
+                    occurred_at=draft["created_at"],
+                )
+            except Exception as activity_error:
+                # Activity is a durable Mission Control projection. Its failure
+                # must never roll back an already-confirmed canonical draft.
+                log.warning(
+                    "workspace_activity_append_failed workspace_id=%s event_type=draft_generated source_key=%s error_type=%s",
+                    job.workspace_id,
+                    source_key,
+                    type(activity_error).__name__,
+                )
+            else:
+                # The legacy stream still feeds delta_reasoner. It is now only
+                # a best-effort cache projection after the durable append.
+                publish(session_token, WMEventType.DRAFT_GENERATED, {
+                    "id": draft["id"], "campaign_id": job.campaign_id,
+                    "lead_id": lead.get("id", ""), "lead_name": name,
+                    "subject": draft["subject"], "body_preview": draft["text"][:200],
+                }, actor="system")
             await publish_draft_event(
                 job.user_id, "draft.created", draft_id=draft["id"],
                 campaign_id=str(job.campaign_id or ""), lead_name=name,

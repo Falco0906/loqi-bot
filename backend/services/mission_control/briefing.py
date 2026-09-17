@@ -90,7 +90,7 @@ class MissionControlService:
         from services.mission_control.payload import compute_shared_payload, embed_delta_into_snapshot
         from services.onboarding.api import get_onboarding_service
         from services.workspace.timeline import get_grouped_events
-        from services.world_model import get_store as get_wm_store
+        from services.world_model.activity_repository import get_activity_repository
 
         started = time.monotonic()
         payload = await compute_shared_payload(
@@ -107,8 +107,22 @@ class MissionControlService:
         delta = payload["delta"]
         embed_delta_into_snapshot(snapshot, delta)
 
-        world_model = get_wm_store()
-        world_model.record_acknowledgement(session_token)
+        delivered_through_sequence = delta.event_range[1]
+        if delivered_through_sequence:
+            try:
+                await asyncio.to_thread(
+                    get_activity_repository().acknowledge,
+                    workspace_id,
+                    actor_user_id,
+                    delivered_through_sequence,
+                )
+            except Exception as error:
+                logger.warning(
+                    "workspace_briefing_ack_failed workspace_id=%s delivered_through_sequence=%s error_type=%s",
+                    workspace_id,
+                    delivered_through_sequence,
+                    type(error).__name__,
+                )
 
         async def _load_current_jobs() -> list[dict]:
             try:

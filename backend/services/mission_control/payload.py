@@ -2,17 +2,15 @@
 workspace state, served to both ``/mission-control`` and ``/briefing``.
 
 Without this, every Mission Control page visit fired the narrative LLM steps
-twice (one per endpoint). The legacy World Model delta remains excluded from
-selected-workspace payloads until its durable activity-log cutover can scope
-events canonically.
+twice (one per endpoint). Durable activity is read with an authorized
+workspace/user cursor; the legacy session-keyed World Model is not consulted.
 
 Semantics:
   * Key = (owner, workspace, content fingerprint, delta fingerprint, user timezone,
     greeting period, narrative mode).
   * Content fingerprint covers campaign/draft identity + status — changes only
     when the workspace actually changes.
-  * Delta fingerprint preserves the response/cache contract. It is empty for
-    selected-workspace payloads until durable activity events are available.
+  * Delta fingerprint includes the durable cursor/delivered event range.
   * Greeting period lets the greeting rotate at the user's local boundaries.
   * In-flight futures dedupe concurrent calls (the frontend fires both
     endpoints in parallel), so the second caller waits on the first instead of
@@ -27,7 +25,8 @@ import time
 from typing import Any
 
 from services.mission_control.narrative import greeting_for_timezone, normalize_timezone
-from services.world_model.store import WorkspaceDelta
+from services.world_model.activity_repository import WorkspaceActivityEvent, get_activity_repository
+from services.world_model.state import DraftState, WorkspaceDelta
 
 
 _payload_cache: dict[tuple, dict[str, Any]] = {}
@@ -79,7 +78,9 @@ def _content_fingerprint(campaigns: list[dict], drafts: list[dict]) -> str:
 
 def _delta_fingerprint(delta: WorkspaceDelta) -> str:
     meta = (
+        delta.first_visit,
         delta.event_count,
+        *delta.event_range,
         len(delta.new_campaigns),
         len(delta.changed_campaigns),
         len(delta.new_drafts),
@@ -88,6 +89,48 @@ def _delta_fingerprint(delta: WorkspaceDelta) -> str:
         len(delta.completed_jobs),
     )
     return ":".join(str(m) for m in meta)
+
+
+def _durable_draft_delta(events: list[WorkspaceActivityEvent], cursor: int) -> WorkspaceDelta:
+    """Project the first durable activity slice into the existing delta type."""
+    if not events:
+        return WorkspaceDelta(first_visit=cursor == 0, event_range=(0, 0) if cursor == 0 else (cursor + 1, cursor))
+    delta = WorkspaceDelta(
+        first_visit=cursor == 0,
+        event_count=len(events),
+        event_range=(events[0].sequence, events[-1].sequence),
+    )
+    for event in events:
+        if event.event_type != "draft_generated":
+            continue
+        payload = event.payload
+        delta.new_drafts.append(DraftState(
+            id=str(payload.get("draft_id") or ""),
+            campaign_id=str(payload.get("campaign_id") or ""),
+            lead_id=str(payload.get("lead_id") or ""),
+            status=str(payload.get("status") or "pending"),
+            created_at=event.occurred_at,
+        ))
+    return delta
+
+
+async def _read_durable_delta(workspace_id: str, actor_user_id: str) -> WorkspaceDelta:
+    """Read durable activity after this user's selected-workspace cursor."""
+    repository = get_activity_repository()
+    try:
+        cursor = await asyncio.to_thread(repository.read_cursor, workspace_id, actor_user_id)
+        events = await asyncio.to_thread(repository.read_events_after, workspace_id, cursor)
+        return _durable_draft_delta(events, cursor)
+    except Exception as error:
+        # Durable activity enriches an otherwise canonical snapshot. A failed
+        # read remains non-fatal, matching the former empty World Model delta.
+        import logging
+        logging.getLogger(__name__).warning(
+            "workspace_activity_read_failed workspace_id=%s error_type=%s",
+            workspace_id,
+            type(error).__name__,
+        )
+        return WorkspaceDelta()
 
 
 def _evict() -> None:
@@ -173,10 +216,7 @@ async def compute_shared_payload(
     drafts = state["drafts"]
     total_leads = sum(c.get("lead_count", 0) or 0 for c in campaigns)
 
-    # The current World Model is keyed by legacy session token and has no
-    # canonical workspace discriminator.  It cannot safely enrich a selected
-    # workspace payload until the durable activity-log cutover supplies one.
-    delta = WorkspaceDelta()
+    delta = await _read_durable_delta(workspace_id, actor_user_id)
 
     resolved_timezone = normalize_timezone(user_timezone)
     greeting = greeting_for_timezone(resolved_timezone)

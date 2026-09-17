@@ -157,6 +157,89 @@ async def test_selected_workspace_payload_excludes_session_scoped_world_model_de
     assert result["snapshot"]["_delta"]["event_count"] == 0
 
 
+@pytest.mark.asyncio
+async def test_selected_workspace_payload_projects_durable_drafts_without_session_world_model(monkeypatch):
+    from services.mission_control import payload
+    from services.world_model.activity_repository import WorkspaceActivityEvent
+
+    payload._payload_cache.clear()
+    payload._inflight.clear()
+
+    class ActivityRepository:
+        def read_cursor(self, workspace_id, user_id):
+            assert (workspace_id, user_id) == ("workspace-a", "user-a")
+            return 0
+
+        def read_events_after(self, workspace_id, cursor):
+            assert (workspace_id, cursor) == ("workspace-a", 0)
+            return [WorkspaceActivityEvent(
+                id="event-5", workspace_id="workspace-a", actor_user_id="user-a",
+                event_type="draft_generated", source_key="draft_batch:job:item:generated", sequence=5,
+                occurred_at="2026-01-01T00:00:00+00:00",
+                payload={"draft_id": "draft-1", "campaign_id": "campaign-1", "lead_id": "lead-1", "batch_job_id": "job-1", "status": "pending"},
+            )]
+
+    monkeypatch.setattr(payload, "get_activity_repository", lambda: ActivityRepository())
+    monkeypatch.setattr("services.workspace.state.load_workspace_state", lambda *_args, **_kwargs: {"campaigns": [], "drafts": []})
+    monkeypatch.setattr("services.workspace.snapshot.build_snapshot", lambda *_args, **_kwargs: {"campaigns": [], "drafts": {"total": 0, "pending": 0, "approved": 0}, "total_leads": 0, "analysis": {}})
+    monkeypatch.setattr("services.mission_control.recommendations.generate_recommendations", lambda *_args, **_kwargs: [])
+
+    result = await payload.compute_shared_payload("user-a", "workspace-a", "user-a", "legacy-token", include_narrative=False)
+    assert result["delta"].event_count == 1
+    assert result["delta"].event_range == (5, 5)
+    assert result["delta"].first_visit is True
+    assert [draft.id for draft in result["delta"].new_drafts] == ["draft-1"]
+    assert result["snapshot"]["_delta"] == {
+        "first_visit": True, "event_count": 1, "event_range": [5, 5],
+        "new_campaigns": 0, "changed_campaigns": 0, "new_drafts": 1,
+        "scheduled_drafts": 0, "sent_outreach": 0, "new_leads": 0,
+        "new_providers": 0, "new_conversations": 0, "escalated_conversations": 0,
+        "completed_jobs": 0, "learned_preferences": 0, "new_insights": 0,
+        "has_delta": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_durable_delta_cache_keys_include_cursor_and_event_range(monkeypatch):
+    from services.mission_control import payload
+    from services.world_model.activity_repository import WorkspaceActivityEvent
+
+    payload._payload_cache.clear()
+    payload._inflight.clear()
+    calls = []
+
+    class ActivityRepository:
+        cursor = 0
+
+        def read_cursor(self, _workspace_id, _user_id):
+            return self.cursor
+
+        def read_events_after(self, workspace_id, cursor):
+            calls.append((workspace_id, cursor))
+            return [WorkspaceActivityEvent(
+                id=f"event-{cursor + 1}", workspace_id=workspace_id, actor_user_id="user-a",
+                event_type="draft_generated", source_key=f"source-{cursor + 1}", sequence=cursor + 1,
+                occurred_at="2026-01-01T00:00:00+00:00",
+                payload={"draft_id": f"draft-{cursor + 1}", "batch_job_id": "job", "status": "pending"},
+            )]
+
+    repository = ActivityRepository()
+    monkeypatch.setattr(payload, "get_activity_repository", lambda: repository)
+    monkeypatch.setattr("services.workspace.state.load_workspace_state", lambda *_args, **_kwargs: {"campaigns": [], "drafts": []})
+    monkeypatch.setattr("services.workspace.snapshot.build_snapshot", lambda *_args, **_kwargs: {"campaigns": [], "drafts": {"total": 0, "pending": 0, "approved": 0}, "total_leads": 0, "analysis": {}})
+    monkeypatch.setattr("services.mission_control.recommendations.generate_recommendations", lambda *_args, **_kwargs: [])
+
+    first = await payload.compute_shared_payload("user-a", "workspace-a", "user-a", "token", include_narrative=False)
+    repository.cursor = 1
+    second = await payload.compute_shared_payload("user-a", "workspace-a", "user-a", "token", include_narrative=False)
+    other = await payload.compute_shared_payload("user-a", "workspace-b", "user-a", "token", include_narrative=False)
+
+    assert [draft.id for draft in first["delta"].new_drafts] == ["draft-1"]
+    assert [draft.id for draft in second["delta"].new_drafts] == ["draft-2"]
+    assert other["delta"].new_drafts[0].id == "draft-2"
+    assert calls == [("workspace-a", 0), ("workspace-a", 1), ("workspace-b", 1)]
+
+
 @pytest.mark.parametrize(
     ("status_code", "detail"),
     [

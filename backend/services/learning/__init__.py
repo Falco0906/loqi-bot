@@ -1,4 +1,4 @@
-"""Learning Layer — deterministic, event-driven learning from user behavior.
+"""Learning Layer — deterministic learned preferences from user behavior.
 
 Architectural role (per ARCHITECTURE_RFC.md and IMPLEMENTATION_RULES.md):
 
@@ -10,9 +10,9 @@ Architectural role (per ARCHITECTURE_RFC.md and IMPLEMENTATION_RULES.md):
       ↓ natural language
   Experience Layer
 
-  New: Learning Layer (part of Intelligence Layer)
-      ↓ PREFERENCE_LEARNED events
-  World Model
+  Learning Layer (part of Intelligence Layer)
+      ↓ typed workspace preferences
+  Durable preference store
       ↓ preferences
   Reasoning Layer — consumes preferences for personalization
   Narrative Engine — may mention learned preferences
@@ -20,7 +20,7 @@ Architectural role (per ARCHITECTURE_RFC.md and IMPLEMENTATION_RULES.md):
 Design rules:
   - Learning is deterministic.  No LLM.
   - Learning is conservative.  MIN_EVIDENCE = 5.
-  - Learning is event-driven.  It produces PREFERENCE_LEARNED events.
+  - Learning writes typed preferences only with canonical workspace scope.
   - Learning is idempotent.  Same evidence → same result.
   - Preferences are typed.  No natural language blobs.
 
@@ -30,7 +30,7 @@ Modules:
   preference_learner   — evaluates evidence, produces typed preferences
   pattern_detector     — detects temporal patterns (working hours, etc.)
   feedback_interpreter — translates user feedback into evidence
-  preference_store     — typed access to World Model preferences
+  preference_store     — typed access to durable workspace preferences
   learner              — orchestrator, idempotent pipeline runner
 """
 

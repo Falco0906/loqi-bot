@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 
 _DRAFT_GENERATED_FIELDS = {"draft_id", "campaign_id", "lead_id", "batch_job_id", "status"}
+_CAMPAIGN_CREATED_FIELDS = {"campaign_id", "status", "lead_count"}
 _UNSAFE_PAYLOAD_FIELDS = {
     "subject", "body", "body_preview", "lead_name", "recipient_email",
     "provider_id", "external_message_id", "thread_id", "session_token",
@@ -30,7 +31,7 @@ class WorkspaceActivityEvent:
 
 
 class WorkspaceActivityRepository:
-    """Repository for the bounded durable ``draft_generated`` activity slice.
+    """Repository for bounded durable Mission Control activity slices.
 
     Callers must supply already-authorized canonical workspace and user IDs.
     This repository deliberately performs no identity or session-token lookup.
@@ -61,14 +62,56 @@ class WorkspaceActivityRepository:
         if not workspace_id or not actor_user_id or not source_key:
             raise ValueError("Canonical workspace, actor, and source key are required")
         validated_payload = self._validate_draft_generated_payload(payload)
+        return self._append_validated_event(
+            workspace_id=workspace_id,
+            actor_user_id=actor_user_id,
+            event_type="draft_generated",
+            source_key=source_key,
+            payload=validated_payload,
+            occurred_at=occurred_at,
+        )
+
+    def append_campaign_created(
+        self,
+        *,
+        workspace_id: str,
+        actor_user_id: str,
+        source_key: str,
+        payload: dict[str, Any],
+        occurred_at: str | None = None,
+    ) -> WorkspaceActivityEvent:
+        """Append one idempotent, redacted campaign-creation event."""
+        if not workspace_id or not actor_user_id or not source_key:
+            raise ValueError("Canonical workspace, actor, and source key are required")
+        validated_payload = self._validate_campaign_created_payload(payload)
+        return self._append_validated_event(
+            workspace_id=workspace_id,
+            actor_user_id=actor_user_id,
+            event_type="campaign_created",
+            source_key=source_key,
+            payload=validated_payload,
+            occurred_at=occurred_at,
+        )
+
+    def _append_validated_event(
+        self,
+        *,
+        workspace_id: str,
+        actor_user_id: str,
+        event_type: str,
+        source_key: str,
+        payload: dict[str, Any],
+        occurred_at: str | None,
+    ) -> WorkspaceActivityEvent:
+        """Use migration 039's atomic append RPC for one typed event."""
         client = self._client()
         if client is None:
             raise RuntimeError("Durable activity persistence is unavailable")
         result = client.rpc("append_workspace_activity_event", {
             "p_workspace_id": workspace_id,
             "p_actor_user_id": actor_user_id,
-            "p_event_type": "draft_generated",
-            "p_payload": validated_payload,
+            "p_event_type": event_type,
+            "p_payload": payload,
             "p_source_key": source_key,
             "p_occurred_at": occurred_at or datetime.now(timezone.utc).isoformat(),
         }).execute()
@@ -80,8 +123,8 @@ class WorkspaceActivityRepository:
             id=str(row.get("event_id") or ""),
             workspace_id=workspace_id,
             actor_user_id=actor_user_id,
-            event_type="draft_generated",
-            payload=validated_payload,
+            event_type=event_type,
+            payload=payload,
             source_key=source_key,
             sequence=int(row.get("event_sequence") or 0),
             occurred_at=str(row.get("occurred_at") or occurred_at or ""),
@@ -145,6 +188,26 @@ class WorkspaceActivityRepository:
             if value:
                 result[key] = value
         return result
+
+    @staticmethod
+    def _validate_campaign_created_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise ValueError("Activity payload must be an object")
+        keys = set(payload)
+        if keys - _CAMPAIGN_CREATED_FIELDS or keys & _UNSAFE_PAYLOAD_FIELDS:
+            raise ValueError("Activity payload contains unsupported fields")
+        campaign_id = str(payload.get("campaign_id") or "").strip()
+        status = str(payload.get("status") or "").strip()
+        lead_count = payload.get("lead_count")
+        if not campaign_id or not status or isinstance(lead_count, bool) or not isinstance(lead_count, int):
+            raise ValueError("Campaign activity requires campaign_id, status, and lead_count")
+        if lead_count < 0:
+            raise ValueError("Campaign activity lead_count must be nonnegative")
+        return {
+            "campaign_id": campaign_id,
+            "status": status,
+            "lead_count": lead_count,
+        }
 
     @staticmethod
     def _event(row: dict[str, Any]) -> WorkspaceActivityEvent:

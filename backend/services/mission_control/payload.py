@@ -26,7 +26,7 @@ from typing import Any
 
 from services.mission_control.narrative import greeting_for_timezone, normalize_timezone
 from services.world_model.activity_repository import WorkspaceActivityEvent, get_activity_repository
-from services.world_model.state import DraftState, WorkspaceDelta
+from services.world_model.state import CampaignState, DraftState, WorkspaceDelta
 
 
 _payload_cache: dict[tuple, dict[str, Any]] = {}
@@ -91,8 +91,8 @@ def _delta_fingerprint(delta: WorkspaceDelta) -> str:
     return ":".join(str(m) for m in meta)
 
 
-def _durable_draft_delta(events: list[WorkspaceActivityEvent], cursor: int) -> WorkspaceDelta:
-    """Project the first durable activity slice into the existing delta type."""
+def _durable_activity_delta(events: list[WorkspaceActivityEvent], cursor: int) -> WorkspaceDelta:
+    """Project the bounded durable activity slice into the existing delta type."""
     if not events:
         return WorkspaceDelta(first_visit=cursor == 0, event_range=(0, 0) if cursor == 0 else (cursor + 1, cursor))
     delta = WorkspaceDelta(
@@ -101,16 +101,23 @@ def _durable_draft_delta(events: list[WorkspaceActivityEvent], cursor: int) -> W
         event_range=(events[0].sequence, events[-1].sequence),
     )
     for event in events:
-        if event.event_type != "draft_generated":
-            continue
         payload = event.payload
-        delta.new_drafts.append(DraftState(
-            id=str(payload.get("draft_id") or ""),
-            campaign_id=str(payload.get("campaign_id") or ""),
-            lead_id=str(payload.get("lead_id") or ""),
-            status=str(payload.get("status") or "pending"),
-            created_at=event.occurred_at,
-        ))
+        if event.event_type == "draft_generated":
+            delta.new_drafts.append(DraftState(
+                id=str(payload.get("draft_id") or ""),
+                campaign_id=str(payload.get("campaign_id") or ""),
+                lead_id=str(payload.get("lead_id") or ""),
+                status=str(payload.get("status") or "pending"),
+                created_at=event.occurred_at,
+            ))
+        elif event.event_type == "campaign_created":
+            delta.new_campaigns.append(CampaignState(
+                id=str(payload.get("campaign_id") or ""),
+                status=str(payload.get("status") or "planning"),
+                lead_count=int(payload.get("lead_count") or 0),
+                created_at=event.occurred_at,
+                updated_at=event.occurred_at,
+            ))
     return delta
 
 
@@ -120,7 +127,7 @@ async def _read_durable_delta(workspace_id: str, actor_user_id: str) -> Workspac
     try:
         cursor = await asyncio.to_thread(repository.read_cursor, workspace_id, actor_user_id)
         events = await asyncio.to_thread(repository.read_events_after, workspace_id, cursor)
-        return _durable_draft_delta(events, cursor)
+        return _durable_activity_delta(events, cursor)
     except Exception as error:
         # Durable activity enriches an otherwise canonical snapshot. A failed
         # read remains non-fatal, matching the former empty World Model delta.

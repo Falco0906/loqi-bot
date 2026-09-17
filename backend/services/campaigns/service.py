@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from services.workspace.state import load_workspace_state
+from services.world_model.activity_repository import get_activity_repository
 from services.world_model import EventType as WMEventType, publish
 
 log = logging.getLogger("loqi")
@@ -111,6 +112,31 @@ async def create_campaign(
             detail="Campaign links could not be verified; creation was rolled back",
         )
     campaign = canonical_campaign
+
+    source_key = f"campaign:{campaign['id']}:created"
+    activity_payload = {
+        "campaign_id": str(campaign["id"]),
+        "status": str(campaign.get("status") or ""),
+        "lead_count": int(campaign.get("lead_count") or 0),
+    }
+    try:
+        await asyncio.to_thread(
+            get_activity_repository().append_campaign_created,
+            workspace_id=workspace_id,
+            actor_user_id=owner_id,
+            source_key=source_key,
+            payload=activity_payload,
+            occurred_at=str(campaign.get("created_at") or now),
+        )
+    except Exception as activity_error:
+        # Activity is an optional durable Mission Control projection. A
+        # confirmed canonical campaign must remain successful without it.
+        log.warning(
+            "workspace_activity_append_failed workspace_id=%s event_type=campaign_created source_key=%s error_type=%s",
+            workspace_id,
+            source_key,
+            type(activity_error).__name__,
+        )
 
     event_task = asyncio.create_task(asyncio.to_thread(
         append_event, owner_id, "campaign.created", {"campaign": campaign},

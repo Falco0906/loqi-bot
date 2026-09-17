@@ -200,6 +200,43 @@ async def test_selected_workspace_payload_projects_durable_drafts_without_sessio
 
 
 @pytest.mark.asyncio
+async def test_selected_workspace_payload_projects_redacted_durable_campaign_activity(monkeypatch):
+    from services.mission_control import payload
+    from services.world_model.activity_repository import WorkspaceActivityEvent
+
+    payload._payload_cache.clear()
+    payload._inflight.clear()
+
+    class ActivityRepository:
+        def read_cursor(self, workspace_id, user_id):
+            assert (workspace_id, user_id) == ("workspace-a", "user-a")
+            return 0
+
+        def read_events_after(self, workspace_id, cursor):
+            assert (workspace_id, cursor) == ("workspace-a", 0)
+            return [WorkspaceActivityEvent(
+                id="event-7", workspace_id="workspace-a", actor_user_id="user-a",
+                event_type="campaign_created", source_key="campaign:campaign-1:created", sequence=7,
+                occurred_at="2026-01-01T00:00:00+00:00",
+                payload={"campaign_id": "campaign-1", "status": "planning", "lead_count": 3},
+            )]
+
+    monkeypatch.setattr(payload, "get_activity_repository", lambda: ActivityRepository())
+    monkeypatch.setattr("services.workspace.state.load_workspace_state", lambda *_args, **_kwargs: {"campaigns": [], "drafts": []})
+    monkeypatch.setattr("services.workspace.snapshot.build_snapshot", lambda *_args, **_kwargs: {"campaigns": [], "drafts": {"total": 0, "pending": 0, "approved": 0}, "total_leads": 0, "analysis": {}})
+    monkeypatch.setattr("services.mission_control.recommendations.generate_recommendations", lambda *_args, **_kwargs: [])
+
+    result = await payload.compute_shared_payload("user-a", "workspace-a", "user-a", "legacy-token", include_narrative=False)
+
+    assert result["delta"].event_count == 1
+    assert result["delta"].event_range == (7, 7)
+    assert [(campaign.id, campaign.status, campaign.lead_count) for campaign in result["delta"].new_campaigns] == [
+        ("campaign-1", "planning", 3),
+    ]
+    assert result["snapshot"]["_delta"]["new_campaigns"] == 1
+
+
+@pytest.mark.asyncio
 async def test_durable_delta_cache_keys_include_cursor_and_event_range(monkeypatch):
     from services.mission_control import payload
     from services.world_model.activity_repository import WorkspaceActivityEvent

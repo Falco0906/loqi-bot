@@ -104,6 +104,10 @@ def _payload(draft_id="draft-1", **extra):
     return {"draft_id": draft_id, "campaign_id": "campaign-1", "lead_id": "lead-1", "batch_job_id": "job-1", "status": "pending", **extra}
 
 
+def _campaign_payload(campaign_id="campaign-1", **extra):
+    return {"campaign_id": campaign_id, "status": "planning", "lead_count": 3, **extra}
+
+
 def test_activity_migration_has_scoped_sequence_event_and_cursor_contracts():
     sql = (Path(__file__).resolve().parents[1] / "supabase/migrations/039_workspace_activity.sql").read_text()
     for fragment in (
@@ -145,6 +149,30 @@ def test_duplicate_source_key_is_idempotent_and_workspace_sequences_increase():
     assert repository.read_events_after("workspace-b", 0)[0].payload["draft_id"] == "draft-3"
 
 
+def test_campaign_created_source_key_is_idempotent_and_workspace_scoped():
+    repository, _database = _repository()
+    first = repository.append_campaign_created(
+        workspace_id="workspace-a", actor_user_id="user-a",
+        source_key="campaign:campaign-1:created", payload=_campaign_payload(),
+        occurred_at="2026-01-01T00:00:00+00:00",
+    )
+    duplicate = repository.append_campaign_created(
+        workspace_id="workspace-a", actor_user_id="user-a",
+        source_key="campaign:campaign-1:created", payload=_campaign_payload(),
+        occurred_at="2026-01-01T00:00:00+00:00",
+    )
+    other_workspace = repository.append_campaign_created(
+        workspace_id="workspace-b", actor_user_id="user-b",
+        source_key="campaign:campaign-1:created", payload=_campaign_payload(),
+        occurred_at="2026-01-01T00:00:01+00:00",
+    )
+
+    assert (first.id, first.sequence) == (duplicate.id, duplicate.sequence) == ("event-workspace-a-1", 1)
+    assert other_workspace.sequence == 1
+    assert [event.event_type for event in repository.read_events_after("workspace-a", 0)] == ["campaign_created"]
+    assert repository.read_events_after("workspace-b", 0)[0].workspace_id == "workspace-b"
+
+
 def test_cursor_is_user_and_workspace_scoped_and_only_advances_delivered_range():
     repository, _database = _repository()
     first = repository.append_draft_generated(
@@ -172,6 +200,20 @@ def test_activity_payload_rejects_sensitive_or_unsupported_values():
     with pytest.raises(ValueError, match="requires"):
         repository.append_draft_generated(
             workspace_id="workspace-a", actor_user_id="user-a", source_key="key", payload={"draft_id": "draft-1"},
+        )
+    for forbidden in (
+        "name", "objective", "search_query", "lead_id", "lead_name",
+        "email", "session_token", "provider_id", "error", "metadata",
+    ):
+        with pytest.raises(ValueError, match="unsupported"):
+            repository.append_campaign_created(
+                workspace_id="workspace-a", actor_user_id="user-a", source_key="key",
+                payload=_campaign_payload(**{forbidden: "unsafe"}),
+            )
+    with pytest.raises(ValueError, match="requires"):
+        repository.append_campaign_created(
+            workspace_id="workspace-a", actor_user_id="user-a", source_key="key",
+            payload={"campaign_id": "campaign-1", "status": "planning"},
         )
 
 

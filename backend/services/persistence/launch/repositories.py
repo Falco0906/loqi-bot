@@ -411,6 +411,46 @@ class CampaignRepository(LaunchRepository[Campaign]):
             ("workspace_id", "eq", workspace_id),
         ])
 
+    async def update_for_workspace_with_revision(
+        self,
+        campaign_id: str,
+        workspace_id: str,
+        updates: dict[str, Any],
+        *,
+        touch: bool = False,
+    ) -> tuple[Campaign, bool]:
+        """Atomically update one workspace campaign and return its revision.
+
+        This deliberately does not use the repository's generic retry helper:
+        an unknown-response retry could represent a second real mutation and
+        therefore allocate a second revision.
+        """
+        client = self._client()
+        if client is None:
+            raise RuntimeError("Campaign persistence is unavailable")
+        unknown = set(updates) - {"name", "objective", "status"}
+        if unknown:
+            raise ValueError(f"Unsupported revisioned campaign fields: {sorted(unknown)}")
+        arguments = {
+            "p_campaign_id": campaign_id,
+            "p_workspace_id": workspace_id,
+            "p_name": updates.get("name"),
+            "p_name_provided": "name" in updates,
+            "p_objective": updates.get("objective"),
+            "p_objective_provided": "objective" in updates,
+            "p_status": updates.get("status"),
+            "p_status_provided": "status" in updates,
+            "p_touch": touch,
+        }
+        result = await asyncio.to_thread(
+            lambda: client.rpc("update_workspace_campaign_with_revision", arguments).execute(),
+        )
+        rows = getattr(result, "data", None) or []
+        if not rows:
+            raise RuntimeError("Campaign revision write was not confirmed")
+        row = rows[0]
+        return self._from_row(row), bool(row.get("was_updated") or False)
+
 
 class CampaignLeadRepository(LaunchRepository[CampaignLead]):
     _table_name = "campaign_leads"

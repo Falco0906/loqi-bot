@@ -10,6 +10,7 @@ the workspace_state / store boundary so no Supabase or Gmail runs.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -78,9 +79,23 @@ def env(monkeypatch):
     def fake_drafts(owner_id: str, session_token: str = "", workspace_id: str = "") -> list[dict]:
         return list(state["drafts"])
 
-    async def fake_persist_campaign(owner_id: str, campaign_id: str, updates: dict, workspace_id: str = "") -> bool:
+    async def fake_persist_campaign(owner_id: str, campaign_id: str, updates: dict, workspace_id: str = ""):
         state["campaign_updates"].append((campaign_id, dict(updates)))
         return True
+
+    async def fake_persist_campaign_with_revision(
+        owner_id: str, campaign_id: str, updates: dict, *, workspace_id: str = "",
+    ):
+        state["campaign_updates"].append((campaign_id, dict(updates)))
+        campaign = next(campaign for campaign in state["campaigns"] if campaign["id"] == campaign_id)
+        campaign.update({key: value for key, value in updates.items() if key in {"name", "objective", "status"}})
+        return SimpleNamespace(
+            id=campaign_id,
+            name=campaign["name"],
+            objective=campaign["objective"],
+            status=campaign["status"],
+            updated_at=datetime.now(timezone.utc),
+        ), True
 
     async def fake_persist_draft(owner_id: str, draft_id: str, updates: dict, workspace_id: str = "") -> bool:
         state["draft_updates"].append((draft_id, dict(updates)))
@@ -99,6 +114,11 @@ def env(monkeypatch):
     monkeypatch.setattr(campaign_api.service, "load_campaigns", fake_campaigns)
     monkeypatch.setattr(workspace_state, "load_drafts_only", lambda owner_id, workspace_id="": fake_drafts(owner_id, workspace_id=workspace_id))
     monkeypatch.setattr(workspace_state, "persist_campaign_update_awaited", fake_persist_campaign)
+    monkeypatch.setattr(
+        workspace_state,
+        "persist_campaign_update_with_revision_awaited",
+        fake_persist_campaign_with_revision,
+    )
     monkeypatch.setattr(workspace_state, "persist_draft_update_awaited", fake_persist_draft)
     monkeypatch.setattr(outbound_service, "find_outbound_gmail_provider_id", lambda: "prov-1")
     monkeypatch.setattr(campaign_api.service, "publish", lambda *a, **k: None)

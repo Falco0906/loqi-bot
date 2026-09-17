@@ -677,6 +677,50 @@ async def persist_campaign_update_awaited(user_id: str, campaign_id: str, update
     return True
 
 
+async def persist_campaign_update_with_revision_awaited(
+    user_id: str,
+    campaign_id: str,
+    updates: dict[str, Any],
+    *,
+    workspace_id: str = "",
+) -> tuple[Campaign, bool] | None:
+    """Persist the live campaign-edit path with one atomic campaign revision.
+
+    Strategy remains the existing separately versioned canonical record. Its
+    write follows the campaign revision, matching the previous campaign-row
+    then strategy persistence order.
+    """
+    resolved = await _async_workspace(user_id, workspace_id=workspace_id)
+    if not resolved:
+        return None
+    core_updates = {
+        key: updates[key]
+        for key in ("name", "objective", "status")
+        if key in updates
+    }
+    strategy_present = isinstance(updates.get("strategy"), dict)
+    try:
+        entity, was_updated = await CampaignRepository().update_for_workspace_with_revision(
+            campaign_id,
+            resolved,
+            core_updates,
+            touch=strategy_present,
+        )
+        if strategy_present:
+            await _write_strategy(campaign_id=campaign_id, strategy=updates["strategy"])
+    except Exception as error:
+        print(f"[workspace_state] revisioned campaign update failed: {error}")
+        return None
+    try:
+        append_event(user_id, "campaign.updated", {
+            "campaign_id": campaign_id,
+            "updates": updates,
+        })
+    except Exception as error:
+        print(f"[workspace_state] campaign update event append failed: {error}")
+    return entity, was_updated
+
+
 async def persist_campaign_lead_awaited(user_id: str, campaign_id: str, lead: dict[str, Any], workspace_id: str = "") -> bool:
     """Durable (awaited) campaign-lead link for interactive endpoints.
 

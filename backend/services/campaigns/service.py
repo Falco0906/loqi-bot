@@ -187,7 +187,10 @@ async def update_campaign(
     """Persist one selected-workspace campaign update and optional launch."""
     from fastapi import HTTPException
     from services.outbound.service import dispatch_campaign_sends
-    from services.workspace.state import load_drafts_only, persist_campaign_update_awaited
+    from services.workspace.state import (
+        load_drafts_only,
+        persist_campaign_update_with_revision_awaited,
+    )
     from services.workspace.timeline import record_campaign_launched
 
     target = next(
@@ -238,10 +241,23 @@ async def update_campaign(
             "campaign_id": campaign_id, "name": payload["name"],
         }, actor="user")
     target["updated_at"] = datetime.now(timezone.utc).isoformat()
-    if updates and not await persist_campaign_update_awaited(
-        owner_id, campaign_id, updates, workspace_id=workspace_id,
-    ):
-        raise HTTPException(status_code=503, detail="Campaign update could not be persisted")
+    if updates:
+        revisioned = await persist_campaign_update_with_revision_awaited(
+            owner_id, campaign_id, updates, workspace_id=workspace_id,
+        )
+        if revisioned is None:
+            raise HTTPException(status_code=503, detail="Campaign update could not be persisted")
+        canonical_campaign, was_updated = revisioned
+        if was_updated:
+            # The RPC return, rather than the pre-write dict mutation above,
+            # is authoritative for the response's canonical campaign fields.
+            target.update({
+                "id": canonical_campaign.id,
+                "name": canonical_campaign.name,
+                "objective": canonical_campaign.objective,
+                "status": canonical_campaign.status,
+                "updated_at": canonical_campaign.updated_at.isoformat(),
+            })
     return {"ok": True, "campaign": target}
 
 

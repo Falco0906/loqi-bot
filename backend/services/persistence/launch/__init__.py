@@ -43,6 +43,7 @@ from .repositories import (
     AuditLogRepository,
     CampaignLeadRepository,
     CampaignRepository,
+    CampaignRevisionResult,
     CompanyRepository,
     ConnectedAccountRepository,
     DraftRepository,

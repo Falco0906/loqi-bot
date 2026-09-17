@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 _DRAFT_GENERATED_FIELDS = {"draft_id", "campaign_id", "lead_id", "batch_job_id", "status"}
 _CAMPAIGN_CREATED_FIELDS = {"campaign_id", "status", "lead_count"}
+_CAMPAIGN_STATUS_CHANGED_FIELDS = {"campaign_id", "status", "previous_status"}
 _UNSAFE_PAYLOAD_FIELDS = {
     "subject", "body", "body_preview", "lead_name", "recipient_email",
     "provider_id", "external_message_id", "thread_id", "session_token",
@@ -88,6 +89,28 @@ class WorkspaceActivityRepository:
             workspace_id=workspace_id,
             actor_user_id=actor_user_id,
             event_type="campaign_created",
+            source_key=source_key,
+            payload=validated_payload,
+            occurred_at=occurred_at,
+        )
+
+    def append_campaign_status_changed(
+        self,
+        *,
+        workspace_id: str,
+        actor_user_id: str,
+        source_key: str,
+        payload: dict[str, Any],
+        occurred_at: str | None = None,
+    ) -> WorkspaceActivityEvent:
+        """Append one idempotent, redacted canonical status transition."""
+        if not workspace_id or not actor_user_id or not source_key:
+            raise ValueError("Canonical workspace, actor, and source key are required")
+        validated_payload = self._validate_campaign_status_changed_payload(payload)
+        return self._append_validated_event(
+            workspace_id=workspace_id,
+            actor_user_id=actor_user_id,
+            event_type="campaign_status_changed",
             source_key=source_key,
             payload=validated_payload,
             occurred_at=occurred_at,
@@ -207,6 +230,24 @@ class WorkspaceActivityRepository:
             "campaign_id": campaign_id,
             "status": status,
             "lead_count": lead_count,
+        }
+
+    @staticmethod
+    def _validate_campaign_status_changed_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise ValueError("Activity payload must be an object")
+        keys = set(payload)
+        if keys - _CAMPAIGN_STATUS_CHANGED_FIELDS or keys & _UNSAFE_PAYLOAD_FIELDS:
+            raise ValueError("Activity payload contains unsupported fields")
+        campaign_id = str(payload.get("campaign_id") or "").strip()
+        status = str(payload.get("status") or "").strip()
+        previous_status = str(payload.get("previous_status") or "").strip()
+        if not campaign_id or not status or not previous_status:
+            raise ValueError("Campaign status activity requires campaign_id, status, and previous_status")
+        return {
+            "campaign_id": campaign_id,
+            "status": status,
+            "previous_status": previous_status,
         }
 
     @staticmethod

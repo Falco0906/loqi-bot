@@ -118,6 +118,13 @@ def _durable_activity_delta(events: list[WorkspaceActivityEvent], cursor: int) -
                 created_at=event.occurred_at,
                 updated_at=event.occurred_at,
             ))
+        elif event.event_type == "campaign_status_changed":
+            delta.changed_campaigns.append(CampaignState(
+                id=str(payload.get("campaign_id") or ""),
+                status=str(payload.get("status") or "planning"),
+                created_at=event.occurred_at,
+                updated_at=event.occurred_at,
+            ))
     return delta
 
 

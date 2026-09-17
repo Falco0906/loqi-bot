@@ -23,6 +23,7 @@ from services.persistence.launch import (
     Campaign,
     CampaignLead,
     CampaignLeadRepository,
+    CampaignRevisionResult,
     CampaignRepository,
     Company,
     CompanyRepository,
@@ -683,7 +684,7 @@ async def persist_campaign_update_with_revision_awaited(
     updates: dict[str, Any],
     *,
     workspace_id: str = "",
-) -> tuple[Campaign, bool] | None:
+) -> CampaignRevisionResult | None:
     """Persist the live campaign-edit path with one atomic campaign revision.
 
     Strategy remains the existing separately versioned canonical record. Its
@@ -700,7 +701,7 @@ async def persist_campaign_update_with_revision_awaited(
     }
     strategy_present = isinstance(updates.get("strategy"), dict)
     try:
-        entity, was_updated = await CampaignRepository().update_for_workspace_with_revision(
+        revision = await CampaignRepository().update_for_workspace_with_revision(
             campaign_id,
             resolved,
             core_updates,
@@ -718,7 +719,7 @@ async def persist_campaign_update_with_revision_awaited(
         })
     except Exception as error:
         print(f"[workspace_state] campaign update event append failed: {error}")
-    return entity, was_updated
+    return revision
 
 
 async def persist_campaign_lead_awaited(user_id: str, campaign_id: str, lead: dict[str, Any], workspace_id: str = "") -> bool:

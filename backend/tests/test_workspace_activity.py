@@ -108,6 +108,10 @@ def _campaign_payload(campaign_id="campaign-1", **extra):
     return {"campaign_id": campaign_id, "status": "planning", "lead_count": 3, **extra}
 
 
+def _campaign_status_payload(campaign_id="campaign-1", **extra):
+    return {"campaign_id": campaign_id, "status": "running", "previous_status": "planning", **extra}
+
+
 def test_activity_migration_has_scoped_sequence_event_and_cursor_contracts():
     sql = (Path(__file__).resolve().parents[1] / "supabase/migrations/039_workspace_activity.sql").read_text()
     for fragment in (
@@ -171,6 +175,50 @@ def test_campaign_created_source_key_is_idempotent_and_workspace_scoped():
     assert other_workspace.sequence == 1
     assert [event.event_type for event in repository.read_events_after("workspace-a", 0)] == ["campaign_created"]
     assert repository.read_events_after("workspace-b", 0)[0].workspace_id == "workspace-b"
+
+
+def test_campaign_status_source_key_is_idempotent_and_payload_is_redacted():
+    repository, _database = _repository()
+    source_key = "campaign:campaign-1:revision:4:status_changed"
+    first = repository.append_campaign_status_changed(
+        workspace_id="workspace-a", actor_user_id="user-a", source_key=source_key,
+        payload=_campaign_status_payload(), occurred_at="2026-01-01T00:00:00+00:00",
+    )
+    duplicate = repository.append_campaign_status_changed(
+        workspace_id="workspace-a", actor_user_id="user-a", source_key=source_key,
+        payload=_campaign_status_payload(), occurred_at="2026-01-01T00:00:00+00:00",
+    )
+
+    assert (first.id, first.sequence) == (duplicate.id, duplicate.sequence)
+    assert first.event_type == "campaign_status_changed"
+    assert first.payload == _campaign_status_payload()
+    for forbidden in ("name", "objective", "search_query", "lead_id", "email", "session_token", "provider_id", "metadata"):
+        with pytest.raises(ValueError, match="unsupported"):
+            repository.append_campaign_status_changed(
+                workspace_id="workspace-a", actor_user_id="user-a", source_key="other",
+                payload=_campaign_status_payload(**{forbidden: "unsafe"}),
+            )
+
+
+def test_durable_status_activity_projects_only_changed_campaigns():
+    from services.mission_control.payload import _durable_activity_delta
+    from services.world_model.activity_repository import WorkspaceActivityEvent
+
+    delta = _durable_activity_delta([
+        WorkspaceActivityEvent(
+            id="event-1", workspace_id="workspace-a", actor_user_id="user-a",
+            event_type="campaign_status_changed", payload=_campaign_status_payload(),
+            source_key="campaign:campaign-1:revision:4:status_changed", sequence=4,
+            occurred_at="2026-01-01T00:00:00+00:00",
+        ),
+    ], cursor=0)
+
+    assert delta.event_count == 1
+    assert delta.event_range == (4, 4)
+    assert delta.new_campaigns == []
+    assert [(campaign.id, campaign.status) for campaign in delta.changed_campaigns] == [
+        ("campaign-1", "running"),
+    ]
 
 
 def test_cursor_is_user_and_workspace_scoped_and_only_advances_delivered_range():

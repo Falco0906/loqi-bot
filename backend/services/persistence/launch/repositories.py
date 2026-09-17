@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
 from services.persistence.base_repository import SupabaseRepository
@@ -38,6 +39,16 @@ from .models import (
 )
 
 T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class CampaignRevisionResult:
+    """Verified result of the live, locked campaign mutation RPC."""
+
+    campaign: Campaign
+    was_updated: bool
+    was_status_changed: bool
+    previous_status: str
 
 
 class LaunchRepository(SupabaseRepository, Generic[T]):
@@ -418,8 +429,8 @@ class CampaignRepository(LaunchRepository[Campaign]):
         updates: dict[str, Any],
         *,
         touch: bool = False,
-    ) -> tuple[Campaign, bool]:
-        """Atomically update one workspace campaign and return its revision.
+    ) -> CampaignRevisionResult:
+        """Atomically update one workspace campaign and return locked facts.
 
         This deliberately does not use the repository's generic retry helper:
         an unknown-response retry could represent a second real mutation and
@@ -443,13 +454,18 @@ class CampaignRepository(LaunchRepository[Campaign]):
             "p_touch": touch,
         }
         result = await asyncio.to_thread(
-            lambda: client.rpc("update_workspace_campaign_with_revision", arguments).execute(),
+            lambda: client.rpc("update_workspace_campaign_with_revision_v2", arguments).execute(),
         )
         rows = getattr(result, "data", None) or []
         if not rows:
             raise RuntimeError("Campaign revision write was not confirmed")
         row = rows[0]
-        return self._from_row(row), bool(row.get("was_updated") or False)
+        return CampaignRevisionResult(
+            campaign=self._from_row(row),
+            was_updated=bool(row.get("was_updated") or False),
+            was_status_changed=bool(row.get("was_status_changed") or False),
+            previous_status=str(row.get("previous_status") or ""),
+        )
 
 
 class CampaignLeadRepository(LaunchRepository[CampaignLead]):

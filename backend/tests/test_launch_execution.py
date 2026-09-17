@@ -89,13 +89,20 @@ def env(monkeypatch):
         state["campaign_updates"].append((campaign_id, dict(updates)))
         campaign = next(campaign for campaign in state["campaigns"] if campaign["id"] == campaign_id)
         campaign.update({key: value for key, value in updates.items() if key in {"name", "objective", "status"}})
-        return SimpleNamespace(
-            id=campaign_id,
-            name=campaign["name"],
-            objective=campaign["objective"],
-            status=campaign["status"],
+        campaign_row = SimpleNamespace(
+            id=campaign_id, workspace_id=workspace_id,
+            name=campaign["name"], objective=campaign["objective"],
+            status=campaign["status"], version=2,
             updated_at=datetime.now(timezone.utc),
-        ), True
+        )
+        return SimpleNamespace(
+            campaign=campaign_row,
+            was_updated=True,
+            # These launch tests cover legacy dispatch only; status activity
+            # has its own focused contract tests.
+            was_status_changed=False,
+            previous_status="planning",
+        )
 
     async def fake_persist_draft(owner_id: str, draft_id: str, updates: dict, workspace_id: str = "") -> bool:
         state["draft_updates"].append((draft_id, dict(updates)))

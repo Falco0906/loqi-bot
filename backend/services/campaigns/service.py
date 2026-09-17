@@ -247,8 +247,8 @@ async def update_campaign(
         )
         if revisioned is None:
             raise HTTPException(status_code=503, detail="Campaign update could not be persisted")
-        canonical_campaign, was_updated = revisioned
-        if was_updated:
+        canonical_campaign = revisioned.campaign
+        if revisioned.was_updated:
             # The RPC return, rather than the pre-write dict mutation above,
             # is authoritative for the response's canonical campaign fields.
             target.update({
@@ -258,6 +258,33 @@ async def update_campaign(
                 "status": canonical_campaign.status,
                 "updated_at": canonical_campaign.updated_at.isoformat(),
             })
+        if revisioned.was_status_changed:
+            source_key = (
+                f"campaign:{canonical_campaign.id}:revision:{canonical_campaign.version}:status_changed"
+            )
+            activity_payload = {
+                "campaign_id": canonical_campaign.id,
+                "status": canonical_campaign.status,
+                "previous_status": revisioned.previous_status,
+            }
+            try:
+                await asyncio.to_thread(
+                    get_activity_repository().append_campaign_status_changed,
+                    workspace_id=canonical_campaign.workspace_id,
+                    actor_user_id=owner_id,
+                    source_key=source_key,
+                    payload=activity_payload,
+                    occurred_at=canonical_campaign.updated_at.isoformat(),
+                )
+            except Exception as activity_error:
+                # The canonical mutation is already confirmed. Durable activity
+                # remains best-effort, like campaign-created activity.
+                log.warning(
+                    "workspace_activity_append_failed workspace_id=%s event_type=campaign_status_changed source_key=%s error_type=%s",
+                    canonical_campaign.workspace_id,
+                    source_key,
+                    type(activity_error).__name__,
+                )
     return {"ok": True, "campaign": target}
 
 

@@ -5,6 +5,7 @@ import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -19,7 +20,7 @@ class _Result:
 
 
 class _RevisionDatabase:
-    """Deterministic stand-in for the migration-041 locked RPC."""
+    """Deterministic stand-in for the migration-042 locked RPC."""
 
     def __init__(self):
         self.lock = Lock()
@@ -38,7 +39,7 @@ class _RevisionDatabase:
 
         class _Rpc:
             def execute(self):
-                assert name == "update_workspace_campaign_with_revision"
+                assert name == "update_workspace_campaign_with_revision_v2"
                 with database.lock:
                     database.calls.append((name, dict(arguments)))
                     if arguments["p_workspace_id"] != database.row["workspace_id"]:
@@ -55,6 +56,8 @@ class _RevisionDatabase:
                         row["objective"] != objective_value,
                         row["status"] != status_value,
                     ))
+                    status_changed = row["status"] != status_value
+                    previous_status = row["status"]
                     if changed:
                         row.update({
                             "name": name_value,
@@ -63,7 +66,12 @@ class _RevisionDatabase:
                             "version": row["version"] + 1,
                             "updated_at": datetime.now(timezone.utc).isoformat(),
                         })
-                    return _Result([{**row, "was_updated": changed}])
+                    return _Result([{
+                        **row,
+                        "was_updated": changed,
+                        "was_status_changed": status_changed,
+                        "previous_status": previous_status,
+                    }])
 
         return _Rpc()
 
@@ -76,15 +84,17 @@ def _repository():
 
 
 def test_campaign_revision_migration_is_workspace_scoped_and_locked():
-    sql = (Path(__file__).resolve().parents[1] / "supabase/migrations/041_campaign_update_revision.sql").read_text()
+    sql = (Path(__file__).resolve().parents[1] / "supabase/migrations/042_campaign_status_revision.sql").read_text()
     for fragment in (
-        "create or replace function update_workspace_campaign_with_revision",
+        "create or replace function update_workspace_campaign_with_revision_v2",
         "p_campaign_id uuid",
         "p_workspace_id uuid",
         "and c.workspace_id = p_workspace_id",
         "for update",
         "version = v_current.version + 1",
         "was_updated boolean",
+        "was_status_changed boolean",
+        "previous_status text",
         "if not v_changed then",
     ):
         assert fragment in sql
@@ -94,17 +104,19 @@ def test_campaign_revision_migration_is_workspace_scoped_and_locked():
 async def test_revisioned_status_and_non_status_updates_increment_once():
     repository, database = _repository()
 
-    status, status_changed = await repository.update_for_workspace_with_revision(
-        "campaign-1", "workspace-a", {"status": "running"},
+    status = await repository.update_for_workspace_with_revision(
+        "campaign-1", "workspace-a", {"status": "active"},
     )
-    renamed, rename_changed = await repository.update_for_workspace_with_revision(
+    renamed = await repository.update_for_workspace_with_revision(
         "campaign-1", "workspace-a", {"name": "Renamed"},
     )
 
-    assert status_changed is True
-    assert (status.status, status.version) == ("running", 2)
-    assert rename_changed is True
-    assert (renamed.name, renamed.version) == ("Renamed", 3)
+    assert status.was_updated is True
+    assert (status.campaign.status, status.campaign.version, status.previous_status) == ("active", 2, "planning")
+    assert status.was_status_changed is True
+    assert renamed.was_updated is True
+    assert (renamed.campaign.name, renamed.campaign.version) == ("Renamed", 3)
+    assert renamed.was_status_changed is False
     assert all(call[1]["p_workspace_id"] == "workspace-a" for call in database.calls)
 
 
@@ -112,13 +124,14 @@ async def test_revisioned_status_and_non_status_updates_increment_once():
 async def test_true_noop_returns_canonical_row_without_allocating_revision():
     repository, _database = _repository()
 
-    campaign, changed = await repository.update_for_workspace_with_revision(
+    result = await repository.update_for_workspace_with_revision(
         "campaign-1", "workspace-a", {"name": "Original"},
     )
 
-    assert changed is False
-    assert campaign.version == 1
-    assert campaign.name == "Original"
+    assert result.was_updated is False
+    assert result.was_status_changed is False
+    assert result.campaign.version == 1
+    assert result.campaign.name == "Original"
 
 
 @pytest.mark.asyncio
@@ -136,12 +149,12 @@ async def test_concurrent_real_updates_receive_distinct_monotonic_revisions():
     repository, _database = _repository()
 
     first, second = await asyncio.gather(
-        repository.update_for_workspace_with_revision("campaign-1", "workspace-a", {"status": "running"}),
+        repository.update_for_workspace_with_revision("campaign-1", "workspace-a", {"status": "active"}),
         repository.update_for_workspace_with_revision("campaign-1", "workspace-a", {"name": "Renamed"}),
     )
 
-    assert first[1] is True and second[1] is True
-    assert sorted((first[0].version, second[0].version)) == [2, 3]
+    assert first.was_updated is True and second.was_updated is True
+    assert sorted((first.campaign.version, second.campaign.version)) == [2, 3]
 
 
 @pytest.mark.asyncio
@@ -164,7 +177,10 @@ async def test_live_service_preserves_response_envelope_and_uses_rpc_return(monk
 
     async def persist(owner_id, campaign_id, updates, *, workspace_id=""):
         calls.append(("persist", owner_id, campaign_id, dict(updates), workspace_id))
-        return canonical, True
+        return SimpleNamespace(
+            campaign=canonical, was_updated=True,
+            was_status_changed=False, previous_status="planning",
+        )
 
     monkeypatch.setattr(workspace_state, "persist_campaign_update_with_revision_awaited", persist)
 
@@ -183,6 +199,127 @@ async def test_live_service_preserves_response_envelope_and_uses_rpc_return(monk
     assert calls[0][0] == "publish"  # Existing in-memory order is unchanged.
     assert calls[1] == ("persist", "user-a", "campaign-1", {"name": "Requested"}, "workspace-a")
     assert "version" not in response["campaign"]
+
+
+@pytest.mark.asyncio
+async def test_status_activity_is_appended_after_canonical_persistence_with_locked_facts(monkeypatch):
+    target = {"id": "campaign-1", "name": "Original", "objective": "Book demos", "status": "planning"}
+    canonical = Campaign(
+        id="campaign-1", workspace_id="workspace-a", name="Original",
+        objective="Book demos", status="active", version=4,
+        updated_at=datetime(2026, 9, 17, tzinfo=timezone.utc),
+    )
+    order = []
+    activity_calls = []
+    monkeypatch.setattr(campaign_service, "load_campaigns", lambda *_args, **_kwargs: [target])
+    monkeypatch.setattr(campaign_service, "publish", lambda *_args, **_kwargs: order.append("legacy_publish"))
+    import services.workspace.state as workspace_state
+
+    async def persist(*_args, **_kwargs):
+        order.append("canonical_persist")
+        return SimpleNamespace(
+            campaign=canonical, was_updated=True,
+            was_status_changed=True, previous_status="draft",
+        )
+
+    class _ActivityRepository:
+        def append_campaign_status_changed(self, **kwargs):
+            order.append("durable_activity")
+            activity_calls.append(kwargs)
+
+    monkeypatch.setattr(workspace_state, "persist_campaign_update_with_revision_awaited", persist)
+    monkeypatch.setattr(campaign_service, "get_activity_repository", lambda: _ActivityRepository())
+
+    response = await campaign_service.update_campaign(
+        "session-a", "user-a", "workspace-a", "campaign-1", {"status": "active"},
+    )
+
+    assert response["ok"] is True
+    assert order == ["legacy_publish", "canonical_persist", "durable_activity"]
+    assert activity_calls == [{
+        "workspace_id": "workspace-a", "actor_user_id": "user-a",
+        "source_key": "campaign:campaign-1:revision:4:status_changed",
+        "payload": {"campaign_id": "campaign-1", "status": "active", "previous_status": "draft"},
+        "occurred_at": "2026-09-17T00:00:00+00:00",
+    }]
+
+
+@pytest.mark.asyncio
+async def test_non_status_or_noop_revision_results_never_append_status_activity(monkeypatch):
+    target = {"id": "campaign-1", "name": "Original", "objective": "Book demos", "status": "planning"}
+    canonical = Campaign(id="campaign-1", workspace_id="workspace-a", name="Requested", objective="Book demos")
+    monkeypatch.setattr(campaign_service, "load_campaigns", lambda *_args, **_kwargs: [target])
+    monkeypatch.setattr(campaign_service, "publish", lambda *_args, **_kwargs: None)
+    import services.workspace.state as workspace_state
+
+    async def persist(*_args, **_kwargs):
+        return SimpleNamespace(
+            campaign=canonical, was_updated=True,
+            was_status_changed=False, previous_status="planning",
+        )
+
+    class _ActivityRepository:
+        def append_campaign_status_changed(self, **_kwargs):
+            raise AssertionError("name-only update must not append status activity")
+
+    monkeypatch.setattr(workspace_state, "persist_campaign_update_with_revision_awaited", persist)
+    monkeypatch.setattr(campaign_service, "get_activity_repository", lambda: _ActivityRepository())
+    response = await campaign_service.update_campaign(
+        "session-a", "user-a", "workspace-a", "campaign-1", {"name": "Requested"},
+    )
+    assert response["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_completed_validation_failure_never_appends_durable_status_activity(monkeypatch):
+    target = {"id": "campaign-1", "name": "Original", "objective": "Book demos", "status": "planning"}
+    monkeypatch.setattr(campaign_service, "load_campaigns", lambda *_args, **_kwargs: [target])
+    published = []
+    monkeypatch.setattr(campaign_service, "publish", lambda *_args, **_kwargs: published.append("legacy_publish"))
+    import services.workspace.state as workspace_state
+
+    monkeypatch.setattr(workspace_state, "load_drafts_only", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        workspace_state,
+        "persist_campaign_update_with_revision_awaited",
+        lambda *_args, **_kwargs: pytest.fail("failed launch must not persist status"),
+    )
+
+    class _ActivityRepository:
+        def append_campaign_status_changed(self, **_kwargs):
+            raise AssertionError("failed launch must not append durable activity")
+
+    monkeypatch.setattr(campaign_service, "get_activity_repository", lambda: _ActivityRepository())
+    with pytest.raises(HTTPException) as error:
+        await campaign_service.update_campaign(
+            "session-a", "user-a", "workspace-a", "campaign-1", {"status": "completed"},
+        )
+
+    assert error.value.status_code == 400
+    assert published == ["legacy_publish"]
+
+
+@pytest.mark.asyncio
+async def test_activity_append_failure_does_not_fail_canonical_status_update(monkeypatch):
+    target = {"id": "campaign-1", "name": "Original", "objective": "Book demos", "status": "planning"}
+    canonical = Campaign(id="campaign-1", workspace_id="workspace-a", status="active", version=2)
+    monkeypatch.setattr(campaign_service, "load_campaigns", lambda *_args, **_kwargs: [target])
+    monkeypatch.setattr(campaign_service, "publish", lambda *_args, **_kwargs: None)
+    import services.workspace.state as workspace_state
+
+    async def persist(*_args, **_kwargs):
+        return SimpleNamespace(campaign=canonical, was_updated=True, was_status_changed=True, previous_status="planning")
+
+    class _FailingActivityRepository:
+        def append_campaign_status_changed(self, **_kwargs):
+            raise RuntimeError("unavailable")
+
+    monkeypatch.setattr(workspace_state, "persist_campaign_update_with_revision_awaited", persist)
+    monkeypatch.setattr(campaign_service, "get_activity_repository", lambda: _FailingActivityRepository())
+    response = await campaign_service.update_campaign(
+        "session-a", "user-a", "workspace-a", "campaign-1", {"status": "active"},
+    )
+    assert response["ok"] is True
 
 
 @pytest.mark.asyncio
@@ -219,10 +356,19 @@ async def test_completed_path_keeps_legacy_publish_dispatch_then_persist_order(m
 
     async def persist(*_args, **_kwargs):
         calls.append("persist")
-        return canonical, True
+        return SimpleNamespace(
+            campaign=canonical, was_updated=True,
+            was_status_changed=True, previous_status="planning",
+        )
 
     monkeypatch.setattr(outbound_service, "dispatch_campaign_sends", dispatch)
     monkeypatch.setattr(workspace_state, "persist_campaign_update_with_revision_awaited", persist)
+
+    class _ActivityRepository:
+        def append_campaign_status_changed(self, **_kwargs):
+            calls.append("durable_activity")
+
+    monkeypatch.setattr(campaign_service, "get_activity_repository", lambda: _ActivityRepository())
 
     response = await campaign_service.update_campaign(
         "session-a", "user-a", "workspace-a", "campaign-1", {"status": "completed"},

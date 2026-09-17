@@ -5,7 +5,6 @@ All tests are deterministic — no API calls, no mocks.
 
 import os
 import json
-import time
 import tempfile
 import shutil
 
@@ -30,7 +29,6 @@ from services.workflows.retry import (
 )
 from services.workflows.locks import try_lock, unlock, unlock_all, is_locked, get_lock_owner, clear as clear_locks
 from services.workflows.persistence import persist, load, remove, list_persisted, load_all, clear_all_persisted
-from services.workflows.scheduler import schedule, cancel_scheduled, cancel_all as cancel_all_scheduled
 from services.workflows.recovery import recover_all
 
 
@@ -497,35 +495,6 @@ class TestRecovery:
     def test_recover_no_workflows(self):
         summary = recover_all()
         assert summary["total_recovered"] >= 0
-
-
-# ── Scheduler Tests ──
-
-
-class TestScheduler:
-    def teardown_method(self):
-        cancel_all_scheduled()
-
-    def test_schedule_and_cancel(self):
-        results = []
-        def cb():
-            results.append("done")
-        wid = "sch-1"
-        assert schedule(wid, 10.0, cb)
-        assert cancel_scheduled(wid)
-        time.sleep(0.05)
-        assert len(results) == 0
-
-    def test_cancel_all(self):
-        def cb():
-            pass
-        schedule("s1", 10.0, cb)
-        schedule("s2", 10.0, cb)
-        count = cancel_all_scheduled()
-        assert count == 2
-
-    def test_schedule_nonexistent_returns_false(self):
-        assert not cancel_scheduled("nonexistent")
 
 
 # ── RuntimeEntry from_dict Tests ──

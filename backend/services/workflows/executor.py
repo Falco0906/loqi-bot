@@ -31,7 +31,6 @@ from services.workflows.retry import (
 )
 from services.workflows.locks import try_lock, unlock_all, is_locked
 from services.workflows.persistence import persist
-from services.workflows.scheduler import schedule
 
 
 _PERSIST_AFTER_EVERY_STEP = True

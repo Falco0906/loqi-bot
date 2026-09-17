@@ -20,11 +20,13 @@ class _MissionControlSummaryService:
     def __init__(self, campaigns: list[dict], drafts: list[dict]) -> None:
         self.campaigns = campaigns
         self.drafts = drafts
-        self.calls: list[tuple[str, str]] = []
-        self.briefing_calls: list[tuple[str, str, str | None]] = []
+        self.calls: list[tuple[str, str, str, str]] = []
+        self.briefing_calls: list[tuple[str, str, str, str, str | None]] = []
 
-    async def get_summary(self, *, owner_id: str, session_token: str) -> dict:
-        self.calls.append((owner_id, session_token))
+    async def get_summary(
+        self, *, owner_id: str, workspace_id: str, actor_user_id: str, session_token: str,
+    ) -> dict:
+        self.calls.append((owner_id, workspace_id, actor_user_id, session_token))
         campaign_name = self.campaigns[0]["name"] if self.campaigns else "campaign"
         return {
             "ok": True,
@@ -56,10 +58,12 @@ class _MissionControlSummaryService:
         self,
         *,
         owner_id: str,
+        workspace_id: str,
+        actor_user_id: str,
         session_token: str,
         user_timezone: str | None,
     ) -> dict:
-        self.briefing_calls.append((owner_id, session_token, user_timezone))
+        self.briefing_calls.append((owner_id, workspace_id, actor_user_id, session_token, user_timezone))
         return {"ok": True, "briefing": {"greeting": "Good morning"}}
 
 
@@ -260,7 +264,7 @@ class TestMissionControlIntegration:
         assert data["ok"] is True
         assert data["campaign_count"] == 2
         assert len(data["campaigns"]) == 2
-        assert service.calls and service.calls[0][1] == token
+        assert service.calls and service.calls[0][-1] == token
 
     def test_mc_contains_workspace_analysis(self, client, session_with_data, monkeypatch):
         s = session_with_data
@@ -314,7 +318,7 @@ class TestMissionControlIntegration:
 
         assert response.status_code == 200
         assert response.json()["briefing"]["greeting"] == "Good morning"
-        assert service.briefing_calls and service.briefing_calls[0][1:] == (
+        assert service.briefing_calls and service.briefing_calls[0][-2:] == (
             s["token"], "Asia/Kolkata"
         )
 

@@ -77,7 +77,14 @@ class MissionControlService:
     def intention_engine(self) -> IntentionEngine:
         return self._intention_engine
 
-    async def get_summary(self, *, owner_id: str, session_token: str) -> dict[str, Any]:
+    async def get_summary(
+        self,
+        *,
+        owner_id: str,
+        workspace_id: str,
+        actor_user_id: str,
+        session_token: str,
+    ) -> dict[str, Any]:
         """Assemble the current workspace Mission Control summary."""
         from services.job_engine import job_manager
         from services.mission_control.payload import compute_shared_payload, embed_delta_into_snapshot
@@ -88,8 +95,9 @@ class MissionControlService:
         started = time.monotonic()
         payload = await compute_shared_payload(
             owner_id,
+            workspace_id,
+            actor_user_id,
             session_token,
-            owner_id,
             include_narrative=False,
         )
         campaigns = payload["campaigns"]
@@ -104,7 +112,8 @@ class MissionControlService:
 
         async def _load_current_jobs() -> list[dict]:
             try:
-                return await asyncio.to_thread(job_manager.list_active_jobs, owner_id)
+                jobs = await asyncio.to_thread(job_manager.list_active_jobs, owner_id)
+                return [job for job in jobs if str(job.get("workspace_id") or "") == workspace_id]
             except Exception:
                 return []
 
@@ -115,8 +124,8 @@ class MissionControlService:
                 if not job_id:
                     recent_searches = [
                         job
-                        for job in await asyncio.to_thread(job_manager.list_recent_jobs, owner_id)
-                        if job.get("type") == "search"
+                    for job in await asyncio.to_thread(job_manager.list_recent_jobs, owner_id)
+                    if job.get("type") == "search" and str(job.get("workspace_id") or "") == workspace_id
                     ]
                     if recent_searches:
                         job_id = str(recent_searches[0].get("id") or "")
@@ -199,6 +208,8 @@ class MissionControlService:
         self,
         *,
         owner_id: str,
+        workspace_id: str,
+        actor_user_id: str,
         session_token: str,
         user_timezone: str | None,
     ) -> BriefingResponse:
@@ -207,8 +218,9 @@ class MissionControlService:
 
         payload = await compute_shared_payload(
             owner_id,
+            workspace_id,
+            actor_user_id,
             session_token,
-            owner_id,
             user_timezone=user_timezone,
         )
         return self.get_briefing(
@@ -217,6 +229,7 @@ class MissionControlService:
             drafts=payload["drafts"],
             total_leads=payload["total_leads"],
             db_user_id=owner_id,
+            workspace_id=workspace_id,
             prebuilt=payload,
         )
 
@@ -228,6 +241,7 @@ class MissionControlService:
         total_leads: int = 0,
         user_id: str | None = None,
         db_user_id: str | None = None,
+        workspace_id: str = "",
         prebuilt: dict | None = None,
     ) -> BriefingResponse:
         def _phase(name: str) -> None:
@@ -244,7 +258,14 @@ class MissionControlService:
             brief = prebuilt["brief"]
             raw_delta = prebuilt.get("delta", snapshot.get("_delta", {}))
         else:
-            snapshot = build_snapshot(session_token, campaigns, drafts, total_leads, user_id=db_user_id)
+            snapshot = build_snapshot(
+                session_token,
+                campaigns,
+                drafts,
+                total_leads,
+                user_id=db_user_id,
+                workspace_id=workspace_id,
+            )
             _phase("snapshot")
             analysis = snapshot.get("analysis", {})
             _phase("analysis")
@@ -260,7 +281,7 @@ class MissionControlService:
         signals = self._build_signals(snapshot, analysis, health_raw, delta)
 
         intentions = self._intention_engine.evaluate(
-            workspace_id=session_token,
+            workspace_id=workspace_id or session_token,
             signals=signals,
             reasoning=analysis,
             delta=delta,

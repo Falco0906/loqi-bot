@@ -2,17 +2,17 @@
 workspace state, served to both ``/mission-control`` and ``/briefing``.
 
 Without this, every Mission Control page visit fired the narrative LLM steps
-twice (one per endpoint) AND re-ran them on the next visit because the World
-Model acknowledgement consumes the delta that the brief caches key on.
+twice (one per endpoint). The legacy World Model delta remains excluded from
+selected-workspace payloads until its durable activity-log cutover can scope
+events canonically.
 
 Semantics:
-  * Key = (owner, content fingerprint, delta fingerprint, user timezone,
+  * Key = (owner, workspace, content fingerprint, delta fingerprint, user timezone,
     greeting period, narrative mode).
   * Content fingerprint covers campaign/draft identity + status — changes only
     when the workspace actually changes.
-  * Delta fingerprint covers the "what's new since last view" counts — changes
-    once when new events arrive, and once when they are acknowledged, then
-    stabilises (no ack-churn).
+  * Delta fingerprint preserves the response/cache contract. It is empty for
+    selected-workspace payloads until durable activity events are available.
   * Greeting period lets the greeting rotate at the user's local boundaries.
   * In-flight futures dedupe concurrent calls (the frontend fires both
     endpoints in parallel), so the second caller waits on the first instead of
@@ -98,6 +98,7 @@ def _evict() -> None:
 
 def get_cached_payload(
     owner_id: str,
+    workspace_id: str,
     campaigns: list[dict],
     drafts: list[dict],
     delta: WorkspaceDelta,
@@ -107,6 +108,7 @@ def get_cached_payload(
     resolved_timezone = normalize_timezone(user_timezone)
     key = (
         owner_id,
+        workspace_id,
         _content_fingerprint(campaigns, drafts),
         _delta_fingerprint(delta),
         resolved_timezone,
@@ -118,6 +120,7 @@ def get_cached_payload(
 
 def cache_payload(
     owner_id: str,
+    workspace_id: str,
     campaigns: list[dict],
     drafts: list[dict],
     delta: WorkspaceDelta,
@@ -128,6 +131,7 @@ def cache_payload(
     resolved_timezone = normalize_timezone(user_timezone)
     key = (
         owner_id,
+        workspace_id,
         _content_fingerprint(campaigns, drafts),
         _delta_fingerprint(delta),
         resolved_timezone,
@@ -141,8 +145,9 @@ def cache_payload(
 
 async def compute_shared_payload(
     owner_id: str,
+    workspace_id: str,
+    actor_user_id: str,
     session_token: str,
-    db_user_id: str | None,
     include_narrative: bool = True,
     user_timezone: str | None = None,
 ) -> dict[str, Any]:
@@ -152,24 +157,32 @@ async def compute_shared_payload(
     from services.workspace.snapshot import build_snapshot
     from services.mission_control.recommendations import generate_recommendations
     from services.mission_control.narrative import generate_brief
-    from services.world_model import get_store as get_wm_store
 
     loop = asyncio.get_running_loop()
 
     # State load is independent of the key — but on a cache hit we can serve
     # straight from the stored payload without touching Supabase again.
-    state = await asyncio.to_thread(load_workspace_state, owner_id, include_details=False)
+    state = await asyncio.to_thread(
+        load_workspace_state,
+        owner_id,
+        include_details=False,
+        workspace_id=workspace_id,
+        canonical_only=True,
+    )
     campaigns = state["campaigns"]
     drafts = state["drafts"]
     total_leads = sum(c.get("lead_count", 0) or 0 for c in campaigns)
 
-    wm = get_wm_store()
-    delta = wm.compute_delta(session_token)
+    # The current World Model is keyed by legacy session token and has no
+    # canonical workspace discriminator.  It cannot safely enrich a selected
+    # workspace payload until the durable activity-log cutover supplies one.
+    delta = WorkspaceDelta()
 
     resolved_timezone = normalize_timezone(user_timezone)
     greeting = greeting_for_timezone(resolved_timezone)
     key = (
         owner_id,
+        workspace_id,
         _content_fingerprint(campaigns, drafts),
         _delta_fingerprint(delta),
         resolved_timezone,
@@ -192,7 +205,12 @@ async def compute_shared_payload(
                 synchronous (Supabase + OpenAI, 30s timeouts). Run them on a
                 worker thread so a slow LLM cannot stall the event loop."""
                 snap = build_snapshot(
-                    session_token, campaigns, drafts, total_leads, user_id=db_user_id,
+                    session_token,
+                    campaigns,
+                    drafts,
+                    total_leads,
+                    user_id=actor_user_id,
+                    workspace_id=workspace_id,
                 )
                 embed_delta_into_snapshot(snap, delta)
                 recs = generate_recommendations(snap, use_narrative=include_narrative)

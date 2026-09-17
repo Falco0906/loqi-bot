@@ -5,6 +5,7 @@ from fastapi import APIRouter, Request
 
 from services.identity import dependencies as identity_dependencies
 from services.mission_control.briefing import get_service
+from services.workspace import access as workspace_access
 
 router = APIRouter(tags=["Mission Control"])
 
@@ -18,8 +19,11 @@ async def mission_control_summary(
     del onboarding_user_id
     session_token = identity_dependencies.web_session_token(request)
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    workspace = await workspace_access.resolve_selected_workspace_context(request, owner_id)
     return await get_service().get_summary(
         owner_id=owner_id,
+        workspace_id=workspace.workspace_id,
+        actor_user_id=workspace.user_id,
         session_token=session_token,
     )
 
@@ -33,8 +37,11 @@ async def briefing_endpoint(
     del onboarding_user_id
     session_token = identity_dependencies.web_session_token(request)
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
+    workspace = await workspace_access.resolve_selected_workspace_context(request, owner_id)
     return await get_service().get_workspace_briefing(
         owner_id=owner_id,
+        workspace_id=workspace.workspace_id,
+        actor_user_id=workspace.user_id,
         session_token=session_token,
         user_timezone=request.headers.get("x-timezone"),
     )

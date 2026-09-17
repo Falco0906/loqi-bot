@@ -15,13 +15,13 @@ def _log(msg: str) -> None:
     print(f"[workspace_snapshot] {msg}")
 
 
-def _make_cache_key(session_token: str, campaigns: list, drafts: list) -> str:
-    content = f"{session_token}:{len(campaigns)}:{len(drafts)}"
+def _make_cache_key(session_token: str, workspace_id: str, campaigns: list, drafts: list) -> str:
+    content = f"{session_token}:{workspace_id}:{len(campaigns)}:{len(drafts)}"
     for c in campaigns:
         content += f"|{c.get('id','')}:{c.get('status','')}:{c.get('lead_count',0)}:{c.get('updated_at','')}"
     for d in drafts:
         content += f"|{d.get('id','')}:{d.get('status','')}:{d.get('campaign_id','')}"
-    return hashlib.sha256(content.encode()).hexdigest()[:32]
+    return f"{session_token}:{workspace_id}:{hashlib.sha256(content.encode()).hexdigest()[:32]}"
 
 
 def _derive_campaign_step(c: dict) -> str:
@@ -86,12 +86,13 @@ def build_snapshot(
     total_leads: int = 0,
     force_refresh: bool = False,
     user_id: str | None = None,
+    workspace_id: str = "",
 ) -> dict:
     _log(
         f"Canonical snapshot (campaigns={len(campaigns)}, drafts={len(drafts)})"
     )
 
-    ck = _make_cache_key(session_token, campaigns, drafts)
+    ck = _make_cache_key(session_token, workspace_id, campaigns, drafts)
     if not force_refresh and _cache.get(ck):
         _log("returning cached snapshot")
         return _cache[ck]
@@ -125,6 +126,8 @@ def build_snapshot(
     recent_jobs = []
     try:
         all_jobs = job_manager.list_recent_jobs(user_id)
+        if workspace_id:
+            all_jobs = [job for job in all_jobs if str(job.get("workspace_id") or "") == workspace_id]
         running_jobs = [j for j in all_jobs if j.get("status") in ("queued", "running")]
         recent_jobs = [j for j in all_jobs if j.get("status") == "completed"][:5]
     except Exception:
@@ -162,7 +165,11 @@ def build_snapshot(
     # ── Phase 8: deterministic learning from user behavior ──
     try:
         learner = Learner()
-        learned_event_ids = learner.run(session_token)
+        learned_event_ids = learner.run(
+            session_token,
+            workspace_id=workspace_id,
+            actor_user_id=user_id,
+        )
         if learned_event_ids:
             _log(f"learned {len(learned_event_ids)} new preference(s)")
     except Exception:

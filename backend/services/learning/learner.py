@@ -43,11 +43,22 @@ class Learner:
         self.preference_learner = PreferenceLearner(tracker)
         self.pattern_detector = PatternDetector(tracker)
 
-    def run(self, session_id: str) -> list[str]:
+    def run(
+        self,
+        session_id: str,
+        *,
+        workspace_id: str = "",
+        actor_user_id: str = "",
+    ) -> list[str]:
         """Run the full learning pipeline for a session.
 
         Returns a list of event IDs for newly emitted PREFERENCE_LEARNED events.
+
+        ``workspace_id`` and ``actor_user_id`` are explicit scope inputs for
+        the pending durable-preference cutover.  The current process-local
+        preference projection remains session-keyed in this phase.
         """
+        del workspace_id, actor_user_id
         emitted: list[str] = []
         store = PreferenceStore(session_id)
 

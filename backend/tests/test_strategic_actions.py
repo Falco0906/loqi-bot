@@ -25,6 +25,7 @@ from services.strategic.api import (
 
 from tests.test_knowledge_service import FakeSupabaseClient  # noqa: E402
 import main as main_module  # noqa: E402
+from services.strategic import api as strategic_api
 
 
 OWNER_A = "action-owner-a"
@@ -247,7 +248,7 @@ class TestActionRoutes:
         async def owner(request, session_token):
             return OWNER_A
 
-        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner)
+        monkeypatch.setattr(strategic_api.identity_dependencies, "authenticated_user_id", owner)
         proposal = asyncio.run(propose_strategic_action(
             "session", update.id, object(), {"action_type": "update_messaging"}))
         action_id = proposal["action"]["id"]

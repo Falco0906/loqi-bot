@@ -24,7 +24,6 @@ sys.path.insert(0, ".")
 import pytest
 from fastapi import HTTPException
 
-import main as main_module
 import services.discovery.api as discovery_api
 import services.drafts.service as draft_service
 import services.identity.dependencies as identity_dependencies
@@ -151,7 +150,6 @@ def _clean_runtime_state(monkeypatch):
         return list(_CANONICAL_DRAFTS.get(owner_id, []))
 
     monkeypatch.setattr(outbound_service.workspace_access, "resolve_legacy_workspace_id", _workspace)
-    monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", _workspace)
     monkeypatch.setattr(outbound_service.workspace_state, "load_drafts_only", _load_drafts)
     yield
 

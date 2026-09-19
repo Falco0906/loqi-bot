@@ -19,6 +19,7 @@ import services.conversations.compatibility as store
 import services.conversations.api as conversations_api
 import services.conversations.legacy_engine as engine_module
 import main as main_module
+import services.identity.dependencies as identity_dependencies
 
 OAUTH_USER_ID = "oauth:google:subject-123"
 
@@ -120,7 +121,7 @@ def test_authenticated_bridge_is_memoized_after_successful_verification(monkeypa
 
     bridge_calls: list[tuple[str, str]] = []
 
-    monkeypatch.setattr(main_module.identity_dependencies, "_bridge_verified", {})
+    monkeypatch.setattr(identity_dependencies, "_bridge_verified", {})
     monkeypatch.setattr(
         "services.identity.api.get_auth_user_service", lambda: _UserService(),
     )
@@ -132,8 +133,8 @@ def test_authenticated_bridge_is_memoized_after_successful_verification(monkeypa
         ),
     )
 
-    asyncio.run(main_module.identity_dependencies.ensure_legacy_user_bridge(OAUTH_USER_ID))
-    asyncio.run(main_module.identity_dependencies.ensure_legacy_user_bridge(OAUTH_USER_ID))
+    asyncio.run(identity_dependencies.ensure_legacy_user_bridge(OAUTH_USER_ID))
+    asyncio.run(identity_dependencies.ensure_legacy_user_bridge(OAUTH_USER_ID))
 
     assert bridge_calls == [(OAUTH_USER_ID, "Ada")]
 
@@ -336,7 +337,7 @@ def test_create_web_session_endpoint_binds_authenticated_identity(monkeypatch, c
     async def fake_bridge(user_id):
         captured["bridged_user_id"] = user_id
 
-    monkeypatch.setattr(main_module.identity_dependencies, "ensure_legacy_user_bridge", fake_bridge)
+    monkeypatch.setattr(identity_dependencies, "ensure_legacy_user_bridge", fake_bridge)
 
     resp = client.post(
         "/api/web/session",
@@ -372,7 +373,7 @@ def test_create_web_session_fails_closed_when_legacy_user_bridge_cannot_be_provi
         from fastapi import HTTPException
         raise HTTPException(status_code=503, detail="Authenticated user provisioning is temporarily unavailable")
 
-    monkeypatch.setattr(main_module.identity_dependencies, "ensure_legacy_user_bridge", failing_bridge)
+    monkeypatch.setattr(identity_dependencies, "ensure_legacy_user_bridge", failing_bridge)
 
     response = client.post(
         "/api/web/session",
@@ -396,7 +397,7 @@ def test_authenticated_request_does_not_downgrade_bridge_failure_to_another_sess
     monkeypatch.setattr(
         "services.identity.api.get_authenticated_user_id", fake_authenticated_user_id,
     )
-    monkeypatch.setattr(main_module.identity_dependencies, "ensure_legacy_user_bridge", failing_bridge)
+    monkeypatch.setattr(identity_dependencies, "ensure_legacy_user_bridge", failing_bridge)
 
     request = Request({
         "type": "http",

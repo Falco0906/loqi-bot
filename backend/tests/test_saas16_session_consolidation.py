@@ -150,18 +150,18 @@ def _web_request(web_token: str):
 
 def _fake_engine_summary(monkeypatch, mapping: dict):
     """Make the canonical legacy-session identity lookup deterministic."""
-    import main as main_module
+    import services.identity.dependencies as identity_dependencies
 
     async def identity(token):
         return mapping.get(token)
 
     monkeypatch.setattr(
-        main_module.identity_dependencies,
+        identity_dependencies,
         "cached_web_session_identity",
         identity,
     )
     monkeypatch.setattr(
-        main_module.identity_dependencies,
+        identity_dependencies,
         "ensure_legacy_user_bridge",
         lambda _user_id: asyncio.sleep(0),
     )

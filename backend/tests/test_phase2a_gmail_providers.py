@@ -31,6 +31,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import main as main_module
+import services.identity.dependencies as identity_dependencies
 from services.communication import api as provider_api
 from services.communication import service as provider_service
 import services.platform.supabase as supabase_module
@@ -177,7 +178,7 @@ def api(monkeypatch):
 def _set_owner(monkeypatch, user_id: str) -> None:
     async def fake_owner(request=None, session_token=None):
         return user_id
-    monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", fake_owner)
+    monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id", fake_owner)
 
 
 def _wipe_memory_registries():

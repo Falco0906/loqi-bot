@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from fastapi import HTTPException
 
 import main as main_module
+import services.identity.dependencies as identity_dependencies
 
 
 # This row is intentionally durable across test runs.  Cleanup below may only
@@ -91,7 +92,7 @@ def shared_authenticated_session(client, monkeypatch, shared_test_identity):
     async def current_auth(_request):
         return SimpleNamespace(user_id=shared_test_identity, session_id="shared-test-session")
 
-    monkeypatch.setattr(main_module.identity_dependencies, "get_current_auth", current_auth)
+    monkeypatch.setattr(identity_dependencies, "get_current_auth", current_auth)
     response = client.post(
         "/api/web/session",
         json={"display_name": "Loqi Test Fixture"},
@@ -102,7 +103,7 @@ def shared_authenticated_session(client, monkeypatch, shared_test_identity):
 
 # Captured BEFORE any test patches, so the security suite can exercise the
 # real authentication resolver directly.
-REAL_RESOLVE_WEB_SESSION = main_module.identity_dependencies.resolve_web_session
+REAL_RESOLVE_WEB_SESSION = identity_dependencies.resolve_web_session
 
 
 @pytest.fixture(autouse=True)
@@ -117,10 +118,10 @@ def _session_auth_shim(monkeypatch):
     """
     import main as main_module
 
-    real_resolve = main_module.identity_dependencies.resolve_web_session
+    real_resolve = identity_dependencies.resolve_web_session
 
     async def _test_resolve_web_session(request):
-        token = main_module.identity_dependencies.web_session_token(request)
+        token = identity_dependencies.web_session_token(request)
         if not token:
             raise HTTPException(status_code=401, detail="Authentication required")
         try:
@@ -130,7 +131,7 @@ def _session_auth_shim(monkeypatch):
             return "test-owner", token
 
     monkeypatch.setattr(
-        main_module.identity_dependencies, "resolve_web_session", _test_resolve_web_session,
+        identity_dependencies, "resolve_web_session", _test_resolve_web_session,
     )
     yield
 

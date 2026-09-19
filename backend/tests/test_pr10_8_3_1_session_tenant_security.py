@@ -32,6 +32,7 @@ from fastapi import HTTPException
 import services.conversations.api as conversation_api
 import services.conversations.service as conversation_service
 import services.communication.api as provider_api
+import services.identity.dependencies as identity_dependencies
 
 SENTINEL = "PR10831_SESSION_SENTINEL_DO_NOT_LEAK"
 
@@ -50,14 +51,14 @@ def _restore_patched_main_helpers():
         if hasattr(_main, name)
     }
     saved_identity = {
-        name: getattr(_main.identity_dependencies, name)
+        name: getattr(identity_dependencies, name)
         for name in ("resolve_web_session", "web_session_token", "authenticated_user_id")
     }
     yield
     for name, fn in saved.items():
         setattr(_main, name, fn)
     for name, fn in saved_identity.items():
-        setattr(_main.identity_dependencies, name, fn)
+        setattr(identity_dependencies, name, fn)
 
 
 @pytest.fixture(autouse=True)
@@ -108,11 +109,11 @@ class TestSessionAuth:
     def test_token_extracted_only_from_header(self):
         import main as main_module
         # Header present -> token returned.
-        assert main_module.identity_dependencies.web_session_token(_request_with_header()) == SENTINEL
+        assert identity_dependencies.web_session_token(_request_with_header()) == SENTINEL
         # No header -> empty (no URL/query fallback).
-        assert main_module.identity_dependencies.web_session_token(_request_without_header()) == ""
-        assert main_module.identity_dependencies.web_session_token(_request_with_query_token()) == ""
-        assert main_module.identity_dependencies.web_session_token(None) == ""
+        assert identity_dependencies.web_session_token(_request_without_header()) == ""
+        assert identity_dependencies.web_session_token(_request_with_query_token()) == ""
+        assert identity_dependencies.web_session_token(None) == ""
 
     def test_real_resolver_rejects_missing_and_invalid_tokens(self):
         import main as main_module
@@ -136,14 +137,14 @@ class TestSessionAuth:
         from fastapi.testclient import TestClient
         import main as main_module
         from tests.conftest import REAL_RESOLVE_WEB_SESSION
-        main_module.identity_dependencies.resolve_web_session = REAL_RESOLVE_WEB_SESSION
+        identity_dependencies.resolve_web_session = REAL_RESOLVE_WEB_SESSION
         app = FastAPI()
 
         @app.middleware("http")
         async def require_auth(request, call_next):
             if request.url.path.startswith("/api/web/session/"):
                 try:
-                    await main_module.identity_dependencies.resolve_web_session(request)
+                    await identity_dependencies.resolve_web_session(request)
                 except HTTPException as exc:
                     from fastapi.responses import JSONResponse
                     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
@@ -162,12 +163,12 @@ class TestSessionAuth:
         import services.platform.supabase as supabase_module
         from services.communication.communication_store import store
         from tests.conftest import REAL_RESOLVE_WEB_SESSION
-        main_module.identity_dependencies.resolve_web_session = REAL_RESOLVE_WEB_SESSION
+        identity_dependencies.resolve_web_session = REAL_RESOLVE_WEB_SESSION
         # Patch the canonical user-resolution boundary for this route test.
         # to simulate the authenticated owner for a header-bearing request.
         store._providers["p-a"] = _provider_record("p-a", "a@a.com", user_id="test-owner")
         store._user_providers["test-owner"] = ["p-a"]
-        main_module.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
+        provider_api.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
         # PR-2A: /providers reads the DURABLE store as source of truth; seed
         # that seam so the ownership assertion keeps testing auth resolution,
         # not the database.
@@ -266,7 +267,7 @@ class TestFailClosedConversationOwnership:
     def test_owner_can_read_own_conversation(self):
         import main as main_module
         convo = _make_convo(owner_id="test-owner")
-        main_module.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
+        conversation_api.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
         result = asyncio.run(
             conversation_api.get_conversation_route("_", convo.conversation_id, _request_with_header())
         )
@@ -275,7 +276,7 @@ class TestFailClosedConversationOwnership:
     def test_other_user_conversation_denied(self):
         import main as main_module
         convo = _make_convo(owner_id="other-user")
-        main_module.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
+        conversation_api.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
         with pytest.raises(HTTPException) as exc:
             asyncio.run(
                 conversation_api.get_conversation_route("_", convo.conversation_id, _request_with_header())
@@ -287,7 +288,7 @@ class TestFailClosedConversationOwnership:
         import main as main_module
         convo = _make_convo(owner_id="")
         # No provider record in the store.
-        main_module.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
+        conversation_api.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
         with pytest.raises(HTTPException) as exc:
             asyncio.run(
                 conversation_api.get_conversation_route("_", convo.conversation_id, _request_with_header())
@@ -297,7 +298,7 @@ class TestFailClosedConversationOwnership:
     def test_unresolved_provider_denied(self):
         import main as main_module
         convo = _make_convo(owner_id="", provider_id="prov-missing")
-        main_module.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
+        conversation_api.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
         with pytest.raises(HTTPException) as exc:
             asyncio.run(
                 conversation_api.get_conversation_route("_", convo.conversation_id, _request_with_header())
@@ -308,7 +309,7 @@ class TestFailClosedConversationOwnership:
         import main as main_module
         self._register_owner_provider("prov-a", user_id="test-owner")
         convo = _make_convo(owner_id="", provider_id="prov-a")
-        main_module.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
+        conversation_api.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
         result = asyncio.run(
             conversation_api.get_conversation_route("_", convo.conversation_id, _request_with_header())
         )
@@ -317,7 +318,7 @@ class TestFailClosedConversationOwnership:
     def test_reply_to_other_user_conversation_denied(self):
         import main as main_module
         convo = _make_convo(owner_id="other-user")
-        main_module.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
+        conversation_api.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
         payload = MagicMock()
         payload.body = "reply"
         payload.test_recipient = ""
@@ -334,7 +335,7 @@ class TestFailClosedConversationOwnership:
         import main as main_module
         convo = _make_convo(owner_id="other-user")
         # The authenticated owner is test-owner; a crafted user_id param is ignored.
-        main_module.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
+        conversation_api.identity_dependencies.authenticated_user_id = _async_owner("test-owner")
         with pytest.raises(HTTPException) as exc:
             asyncio.run(
                 conversation_api.get_conversation_route("_", convo.conversation_id, _request_with_header())

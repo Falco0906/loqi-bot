@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-import main
+from services.campaigns import api as campaigns_api
+from services.drafts import api as drafts_api
 import services.drafts.service as drafts
 from services.job_engine.models import BatchItem, BatchItemStatus, Job, JobStatus
 
@@ -60,13 +61,12 @@ async def test_batch_status_adapter_preserves_response_shape(monkeypatch):
             "started_at": "now",
         }
 
-    monkeypatch.setattr(main.identity_dependencies, "web_session_token", lambda _request: "token")
-    monkeypatch.setattr(main.identity_dependencies, "authenticated_user_id", user_id)
-    monkeypatch.setattr(main.workspace_access, "resolve_legacy_workspace_id", workspace)
-    from services.drafts.api import batch_status
+    monkeypatch.setattr(drafts_api.identity_dependencies, "web_session_token", lambda _request: "token")
+    monkeypatch.setattr(drafts_api.identity_dependencies, "authenticated_user_id", user_id)
+    monkeypatch.setattr(drafts_api.workspace_access, "resolve_legacy_workspace_id", workspace)
 
     monkeypatch.setattr(drafts, "draft_batch_status", status)
-    response = await batch_status("_", "batch-1", SimpleNamespace(headers={}))
+    response = await drafts_api.batch_status("_", "batch-1", SimpleNamespace(headers={}))
 
     assert response["ok"] is True
     assert {"batch_id", "total", "completed", "current_index", "current_name", "status"} <= response.keys()
@@ -130,13 +130,12 @@ async def test_generation_status_uses_active_durable_batch(monkeypatch):
     async def active(*_args): return {"batch_id": "batch-1", "total": 2, "status": "running"}
     async def status(*_args): return {"batch_id": "batch-1", "total": 2, "completed": 1}
 
-    monkeypatch.setattr(main.identity_dependencies, "web_session_token", lambda _request: "token")
-    monkeypatch.setattr(main.identity_dependencies, "authenticated_user_id", user_id)
-    monkeypatch.setattr(main.workspace_access, "resolve_legacy_workspace_id", workspace)
+    monkeypatch.setattr(campaigns_api.identity_dependencies, "web_session_token", lambda _request: "token")
+    monkeypatch.setattr(campaigns_api.identity_dependencies, "authenticated_user_id", user_id)
+    monkeypatch.setattr(campaigns_api.workspace_access, "resolve_legacy_workspace_id", workspace)
     monkeypatch.setattr(drafts, "active_draft_batch", active)
     monkeypatch.setattr(drafts, "draft_batch_status", status)
-    from services.campaigns.api import campaign_generation_status
-    response = await campaign_generation_status("_", "campaign-1", SimpleNamespace(headers={}))
+    response = await campaigns_api.campaign_generation_status("_", "campaign-1", SimpleNamespace(headers={}))
 
     assert response == {
         "ok": True, "active": True, "status": "processing", "total": 2,

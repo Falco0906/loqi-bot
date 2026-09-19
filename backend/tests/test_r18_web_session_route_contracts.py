@@ -15,7 +15,6 @@ from unittest.mock import MagicMock
 from fastapi import HTTPException
 import pytest
 
-import main as main_module
 import services.conversations.api as conversations_api
 import services.conversations.service as conversations_service
 from services.world_model import EventType as WMEventType
@@ -68,7 +67,7 @@ def test_web_session_read_routes_use_bound_token_and_preserve_envelopes(monkeypa
     calls: list[tuple[str, object]] = []
 
     monkeypatch.setattr(
-        main_module.identity_dependencies,
+        conversations_api.identity_dependencies,
         "web_session_token",
         lambda _request: "bound-session",
     )
@@ -194,7 +193,7 @@ async def test_web_session_messages_preserve_empty_legacy_result(monkeypatch):
 
 
 def test_web_session_summary_missing_is_404_with_frozen_error(monkeypatch, client):
-    monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda _request: "bound-session")
+    monkeypatch.setattr(conversations_api.identity_dependencies, "web_session_token", lambda _request: "bound-session")
     monkeypatch.setattr(conversations_api.engine, "get_web_session_summary", lambda _token: None)
 
     response = client.get("/api/web/session/path-token")
@@ -206,14 +205,14 @@ def test_web_session_summary_missing_is_404_with_frozen_error(monkeypatch, clien
 def test_legacy_message_branch_returns_engine_result_and_publishes_received_event(monkeypatch):
     """Non-Copilot web messages retain the legacy engine response and event."""
     published: list[tuple[object, ...]] = []
-    monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda _request: "bound-session")
+    monkeypatch.setattr(conversations_api.identity_dependencies, "web_session_token", lambda _request: "bound-session")
     monkeypatch.setattr(
-        main_module.engine,
+        conversations_api.engine,
         "get_web_session_summary",
         lambda _token: {"display_name": "Ada", "user_id": "legacy-user"},
     )
     monkeypatch.setattr(
-        main_module.engine,
+        conversations_api.engine,
         "handle_message",
         lambda **kwargs: {"ok": True, "messages": [{"role": "assistant", "text": "Legacy reply"}]},
     )
@@ -243,15 +242,15 @@ def test_legacy_message_bootstrap_creates_anonymous_session_without_outer_event(
     published: list[tuple[object, ...]] = []
     summaries = iter([None, {"display_name": "web-user", "user_id": "web:anonymous"}])
 
-    monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda _request: "missing-token")
-    monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: next(summaries))
+    monkeypatch.setattr(conversations_api.identity_dependencies, "web_session_token", lambda _request: "missing-token")
+    monkeypatch.setattr(conversations_api.engine, "get_web_session_summary", lambda _token: next(summaries))
     monkeypatch.setattr(
-        main_module.engine,
+        conversations_api.engine,
         "create_web_session",
         lambda **kwargs: created.append(kwargs) or {"session_token": "created-token"},
     )
     monkeypatch.setattr(
-        main_module.engine,
+        conversations_api.engine,
         "handle_message",
         lambda **kwargs: {"ok": True, "messages": [{"role": "assistant", "text": "Welcome"}]},
     )

@@ -40,6 +40,7 @@ from services.reasoning.reasoning_models import (
 
 import main as main_module  # noqa: E402
 from services.conversations.api import generate_reply_route  # noqa: E402
+from services.conversations import api as conversations_api  # noqa: E402
 def _auth_request(token="session"):
     request = SimpleNamespace()
     request.headers = SimpleNamespace(get=lambda k, d="": f"Bearer {token}" if k == "authorization" else d)
@@ -263,10 +264,10 @@ class TestReplyGenerationContext:
         async def fake_owner(request, session_token):
             return "owner-a"
 
-        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", fake_owner)
+        monkeypatch.setattr(conversations_api.identity_dependencies, "authenticated_user_id", fake_owner)
         async def _resolve(request):
             return "owner-a", "session"
-        monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", _resolve)
+        monkeypatch.setattr(conversations_api.identity_dependencies, "resolve_web_session", _resolve)
         monkeypatch.setattr("services.reply_generation.generation_pipeline.GenerationPipeline", FakePipeline)
         monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", fake_retrieve)
 

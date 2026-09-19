@@ -427,7 +427,7 @@ class TestIdempotentReconnect:
 
 class TestSettingsApiDedup:
     def test_provider_list_returns_canonical_accounts_only(self, monkeypatch):
-        import main as main_module
+        from services.communication import api as provider_api
         from services.communication.communication_store import store as comm_store
         from services.communication.provider_models import (
             CommunicationProvider, ProviderType, ProviderStatus,
@@ -442,7 +442,7 @@ class TestSettingsApiDedup:
                 metadata={"email": email, "account_id": "google-sub-1"},
             ))
         healthy = SimpleNamespaceStatus(ProviderStatus.HEALTHY)
-        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-1"))
+        monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-1"))
 
         def _fake_get_provider(pid):
             inst = MagicMock()

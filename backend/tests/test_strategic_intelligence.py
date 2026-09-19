@@ -33,7 +33,7 @@ from services.strategic.api import (
 )
 
 from tests.test_knowledge_service import FakeSupabaseClient  # noqa: E402
-import main as main_module  # noqa: E402
+from services.strategic import api as strategic_api
 
 
 OWNER_A = "owner-a"
@@ -271,11 +271,11 @@ class TestStrategicUpdateRoutes:
         async def owner_b(request, session_token):
             return OWNER_B
 
-        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner_a)
+        monkeypatch.setattr(strategic_api.identity_dependencies, "authenticated_user_id", owner_a)
         refresh = asyncio.run(refresh_strategic_updates("session", object()))
         update_id = refresh["updates"][0]["id"]
 
-        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner_b)
+        monkeypatch.setattr(strategic_api.identity_dependencies, "authenticated_user_id", owner_b)
         listing = asyncio.run(list_strategic_updates("session", object()))
         with pytest.raises(Exception) as error:
             asyncio.run(get_strategic_update("session", update_id, object()))

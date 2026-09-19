@@ -151,8 +151,11 @@ def _use_copilot_workspace(monkeypatch, campaigns: list[dict], drafts: list[dict
         assert canonical_only is True
         return {"campaigns": campaigns, "drafts": drafts}
 
+    from services.copilot import service as copilot_service
+
     monkeypatch.setattr(
-        "main.workspace_access.resolve_selected_workspace_context",
+        copilot_service.workspace_access,
+        "resolve_selected_workspace_context",
         selected_workspace,
     )
     monkeypatch.setattr(workspace_state, "load_workspace_state", load_workspace_state)

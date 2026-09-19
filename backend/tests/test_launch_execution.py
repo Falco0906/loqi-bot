@@ -15,7 +15,6 @@ from types import SimpleNamespace
 
 import pytest
 
-import main as main_module
 import services.campaigns.api as campaign_api
 import services.outbound.service as outbound_service
 def _auth_request(token="pr3b-tok-1"):
@@ -120,7 +119,7 @@ def env(monkeypatch):
         }})
         return {"ok": True, "send_result": {"thread_id": "th-1", "external_message_id": "em-1"}}
 
-    monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", fake_owner)
+    monkeypatch.setattr(campaign_api.identity_dependencies, "authenticated_user_id", fake_owner)
     monkeypatch.setattr(campaign_api.service, "load_campaigns", fake_campaigns)
     monkeypatch.setattr(workspace_state, "load_drafts_only", lambda owner_id, workspace_id="": fake_drafts(owner_id, workspace_id=workspace_id))
     monkeypatch.setattr(workspace_state, "persist_campaign_update_awaited", fake_persist_campaign)

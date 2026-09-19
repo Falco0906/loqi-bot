@@ -3,7 +3,7 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
-import main
+from services.identity import dependencies as identity_dependencies
 from services.workspace import access as workspace_context
 
 
@@ -12,15 +12,15 @@ def _request(headers=()):
 
 
 def test_legacy_bearer_is_header_only():
-    assert main.identity_dependencies.web_session_token(_request([(b"authorization", b"Bearer token-a")])) == "token-a"
-    assert main.identity_dependencies.web_session_token(_request()) == ""
-    assert main.identity_dependencies.web_session_token(_request([(b"authorization", b"Basic token-a")])) == ""
+    assert identity_dependencies.web_session_token(_request([(b"authorization", b"Bearer token-a")])) == "token-a"
+    assert identity_dependencies.web_session_token(_request()) == ""
+    assert identity_dependencies.web_session_token(_request([(b"authorization", b"Basic token-a")])) == ""
 
 
 @pytest.mark.asyncio
 async def test_legacy_session_requires_bearer():
     with pytest.raises(HTTPException) as error:
-        await main.identity_dependencies.resolve_web_session(_request())
+        await identity_dependencies.resolve_web_session(_request())
     assert error.value.status_code == 401
 
 

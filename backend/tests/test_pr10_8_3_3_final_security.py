@@ -30,8 +30,11 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import main as main_module
+import services.identity.dependencies as identity_dependencies
 import services.conversations.api as conversation_api
 import services.discovery.api as discovery_api
+from services.communication import api as provider_api
+from services.outbound import api as outbound_api
 
 SENTINEL = "PR10833_FINAL_SENTINEL_DO_NOT_LEAK"
 
@@ -78,7 +81,7 @@ class TestAuthenticationFinal:
     def test_url_token_alone_rejected(self):
         """A session token in the URL path (no Authorization header) -> 401."""
         from tests.conftest import REAL_RESOLVE_WEB_SESSION
-        main_module.identity_dependencies.resolve_web_session = REAL_RESOLVE_WEB_SESSION
+        identity_dependencies.resolve_web_session = REAL_RESOLVE_WEB_SESSION
         app = FastAPI_WithAuth()
         with TestClient(app) as client:
             resp = client.get(f"/api/web/session/{SENTINEL}/providers")
@@ -87,14 +90,14 @@ class TestAuthenticationFinal:
     def test_x_session_token_alone_rejected(self):
         """The legacy x-session-token header must NOT authenticate anything."""
         from tests.conftest import REAL_RESOLVE_WEB_SESSION
-        main_module.identity_dependencies.resolve_web_session = REAL_RESOLVE_WEB_SESSION
+        identity_dependencies.resolve_web_session = REAL_RESOLVE_WEB_SESSION
         with pytest.raises(HTTPException) as exc:
             asyncio.run(discovery_api.list_jobs(_req_x_session(SENTINEL)))
         assert exc.value.status_code == 401
 
     def test_bearer_accepted(self):
         from tests.conftest import REAL_RESOLVE_WEB_SESSION
-        main_module.identity_dependencies.resolve_web_session = REAL_RESOLVE_WEB_SESSION
+        identity_dependencies.resolve_web_session = REAL_RESOLVE_WEB_SESSION
         # A valid identity/web token resolves; a garbage token -> 401.
         with pytest.raises(HTTPException) as exc:
             asyncio.run(discovery_api.list_jobs(_req("garbage")))
@@ -104,7 +107,7 @@ class TestAuthenticationFinal:
         """list_jobs must ignore a client-supplied user_id query parameter."""
         async def _resolve(request):
             return "owner-a", "token"
-        main_module.identity_dependencies.resolve_web_session = _resolve
+        identity_dependencies.resolve_web_session = _resolve
         request = _req("token")
         request.query_params = {"user_id": "owner-b"}
         result = asyncio.run(discovery_api.list_jobs(request))
@@ -120,7 +123,7 @@ def FastAPI_WithAuth():
         from fastapi.responses import JSONResponse
         if request.url.path.startswith("/api/web/session/"):
             try:
-                await main_module.identity_dependencies.resolve_web_session(request)
+                await identity_dependencies.resolve_web_session(request)
             except HTTPException as exc:
                 return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
         return await call_next(request)
@@ -141,13 +144,13 @@ class TestTenantIsolationFinal:
         owners = {"token-a": "owner-a", "token-b": "owner-b"}
 
         async def _resolve(request):
-            token = main_module.identity_dependencies.web_session_token(request)
+            token = identity_dependencies.web_session_token(request)
             if not token:
                 raise HTTPException(status_code=401, detail="Authentication required")
             return owners.get(token, "test-owner"), token
 
         async def _owner(request, session_token=""):
-            token = main_module.identity_dependencies.web_session_token(request)
+            token = identity_dependencies.web_session_token(request)
             if not token:
                 raise HTTPException(status_code=401, detail="Authentication required")
             return owners.get(token, "test-owner")
@@ -168,22 +171,20 @@ class TestTenantIsolationFinal:
         )
 
     def test_cross_tenant_provider_sync_denied(self, monkeypatch):
-        from services.communication import api as provider_api
         resolve, owner, workspace = self._two_user_resolver()
-        monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", resolve)
-        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner)
-        monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", workspace)
+        monkeypatch.setattr(provider_api.identity_dependencies, "resolve_web_session", resolve)
+        monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id", owner)
+        monkeypatch.setattr(provider_api.workspace_access, "resolve_legacy_workspace_id", workspace)
         self._provider("prov-b", "owner-b")
         with pytest.raises(HTTPException) as exc:
             asyncio.run(provider_api.provider_sync("_", "prov-b", _req("token-a")))
         assert exc.value.status_code == 404
 
     def test_cross_tenant_provider_disconnect_denied(self, monkeypatch):
-        from services.communication import api as provider_api
         resolve, owner, workspace = self._two_user_resolver()
-        monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", resolve)
-        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner)
-        monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", workspace)
+        monkeypatch.setattr(provider_api.identity_dependencies, "resolve_web_session", resolve)
+        monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id", owner)
+        monkeypatch.setattr(provider_api.workspace_access, "resolve_legacy_workspace_id", workspace)
         self._provider("prov-b", "owner-b")
         with pytest.raises(HTTPException) as exc:
             asyncio.run(provider_api.provider_disconnect("_", "prov-b", _req("token-a")))
@@ -191,9 +192,8 @@ class TestTenantIsolationFinal:
 
     def test_unattributable_conversation_denied(self, monkeypatch):
         resolve, owner, workspace = self._two_user_resolver()
-        monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", resolve)
-        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner)
-        monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", workspace)
+        monkeypatch.setattr(conversation_api.identity_dependencies, "resolve_web_session", resolve)
+        monkeypatch.setattr(conversation_api.identity_dependencies, "authenticated_user_id", owner)
         from services.conversations.integration import create_conversation_from_send
         convo = create_conversation_from_send(
             provider_id="", provider_type="gmail",
@@ -208,15 +208,13 @@ class TestTenantIsolationFinal:
         assert exc.value.status_code in (403, 404)
 
     def test_cross_tenant_outbound_draft_side_effect_denied(self, monkeypatch):
-        from services.outbound.api import outbound_approve_draft
-
         resolve, owner, workspace = self._two_user_resolver()
-        monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", resolve)
-        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", owner)
-        monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", workspace)
+        monkeypatch.setattr(outbound_api.identity_dependencies, "resolve_web_session", resolve)
+        monkeypatch.setattr(outbound_api.identity_dependencies, "authenticated_user_id", owner)
+        monkeypatch.setattr(outbound_api.workspace_access, "resolve_legacy_workspace_id", workspace)
         self._provider("prov-b", "owner-b")
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(outbound_approve_draft("_", "draft-b", False, _req("token-a")))
+            asyncio.run(outbound_api.outbound_approve_draft("_", "draft-b", False, _req("token-a")))
         assert exc.value.status_code == 404
 
 

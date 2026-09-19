@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import main as main_module
+import services.identity.dependencies as identity_dependencies
 from services.identity.session_cache import SessionCache, SessionIdentity
 
 
@@ -134,11 +135,11 @@ def test_resolver_uses_cached_identity_not_full_summary(monkeypatch):
     )
     monkeypatch.setattr(main_module.engine, "get_web_session_summary", fake_summary_full)
     monkeypatch.setattr(
-        main_module.identity_dependencies, "web_session_binding",
+        identity_dependencies, "web_session_binding",
         lambda token: asyncio.sleep(0, result=None),
     )
     monkeypatch.setattr(
-        main_module.identity_dependencies,
+        identity_dependencies,
         "ensure_legacy_user_bridge",
         lambda _user_id: asyncio.sleep(0),
     )
@@ -152,8 +153,8 @@ def test_resolver_uses_cached_identity_not_full_summary(monkeypatch):
     # Fresh cache → one identity lookup serves BOTH resolver calls.
     from services.identity.session_cache import session_cache
     session_cache.clear_local_only()
-    owner1 = asyncio.run(main_module.identity_dependencies.resolve_web_session(request))
-    owner2 = asyncio.run(main_module.identity_dependencies.resolve_web_session(request))
+    owner1 = asyncio.run(identity_dependencies.resolve_web_session(request))
+    owner2 = asyncio.run(identity_dependencies.resolve_web_session(request))
     assert owner1[0] == USER_A and owner2[0] == USER_A
     assert calls["identity"] == 1, "second call must be a cache hit"
     assert calls["summary"] == 0, "full summary must not run in the resolver"
@@ -171,7 +172,7 @@ def test_authenticated_user_id_uses_canonical_session_resolution(monkeypatch):
         seen["full"] += 1
         return {"user_id": USER_A, "messages": [], "workflow_sessions": []}
 
-    monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", fake_owner)
+    monkeypatch.setattr(identity_dependencies, "resolve_web_session", fake_owner)
     monkeypatch.setattr(
         "services.conversations.compatibility.get_web_session",
         lambda _token: fake_identity(_token) and {"id": USER_A, "username": "u"},
@@ -182,7 +183,7 @@ def test_authenticated_user_id_uses_canonical_session_resolution(monkeypatch):
     from services.identity.session_cache import session_cache
     session_cache.clear_local_only()
     owner = asyncio.run(
-        main_module.identity_dependencies.authenticated_user_id(None, TOKEN_A),
+        identity_dependencies.authenticated_user_id(None, TOKEN_A),
     )
     assert owner == USER_A
     assert seen["full"] == 0

@@ -18,7 +18,7 @@ def _selected_copilot_workspace(monkeypatch):
     async def resolve(_request, _owner_id):
         return SimpleNamespace(workspace_id="workspace-1")
 
-    monkeypatch.setattr(main_module.workspace_access, "resolve_selected_workspace_context", resolve)
+    monkeypatch.setattr(copilot_service.workspace_access, "resolve_selected_workspace_context", resolve)
     # Endpoint tests below pin model decisions explicitly. Keep the local
     # classifier out of those fixtures so each tests its stated tool boundary.
     monkeypatch.setattr(
@@ -76,8 +76,8 @@ class TestCopilotOperationBoundary:
             captured["history"] = kwargs["message_history"]
             return {"intent": "conversation", "action": "", "search_context": {}}
 
-        monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", fake_resolve_session)
-        monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
+        monkeypatch.setattr(copilot_service.identity_dependencies, "resolve_web_session", fake_resolve_session)
+        monkeypatch.setattr(conversations_api.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
         monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
         monkeypatch.setattr("services.copilot.service.CopilotMemoryService", lambda: FakeMemory())
         monkeypatch.setattr("services.copilot.service.get_user_preferences", lambda _user_id: {"tone": "concise"})
@@ -126,8 +126,8 @@ class TestCopilotOperationBoundary:
             return {"ok": True, "status": "completed", "tool": tool_name,
                     "result": {"campaign_id": "campaign-canonical", "drafts": []}}
 
-        monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", fake_resolve_session)
-        monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
+        monkeypatch.setattr(copilot_service.identity_dependencies, "resolve_web_session", fake_resolve_session)
+        monkeypatch.setattr(conversations_api.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
         monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
         monkeypatch.setattr("services.copilot.service.classify_copilot_read_question", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(
@@ -382,7 +382,7 @@ class TestCopilotOperationBoundary:
             "services.copilot.service.decide_copilot_intent",
             lambda *_args, **_kwargs: {"intent": "read", "action": "outreach.drafts.read", "search_context": {}, "reason": "read drafts"},
         )
-        monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
+        monkeypatch.setattr(conversations_api.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
         monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *args, **kwargs: {"snapshot": {}, "analysis": {}})
         monkeypatch.setattr(
             "services.knowledge.context_adapter.retrieve_knowledge_context",
@@ -409,7 +409,7 @@ class TestCopilotOperationBoundary:
             "services.copilot.service.decide_copilot_intent",
             lambda *_args, **_kwargs: {"intent": "read", "action": "analytics.workspace.summary", "search_context": {}},
         )
-        monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
+        monkeypatch.setattr(conversations_api.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1"})
         monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *_args, **_kwargs: {"snapshot": {}, "analysis": {}})
 
         async def must_not_prefetch(*_args, **_kwargs):
@@ -704,7 +704,7 @@ class TestCopilotOperationBoundary:
         async def unavailable(*_args, **_kwargs):
             raise HTTPException(status_code=404, detail="Workspace not found")
 
-        monkeypatch.setattr(main_module.workspace_access, "resolve_selected_workspace_context", unavailable)
+        monkeypatch.setattr(copilot_service.workspace_access, "resolve_selected_workspace_context", unavailable)
         monkeypatch.setattr(copilot_service.copilot_runners, "run_campaign", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("runner must not execute outside workspace")))
         request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
         payload = conversations_api.SendWebMessageRequest(

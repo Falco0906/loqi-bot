@@ -26,8 +26,8 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-import main as main_module
 import services.outbound.service as outbound_service
+from services.outbound import api as outbound_api
 import services.workspace.state as workspace_state
 from services.outbound import outbound_registry
 from services.outbound.outbound_models import (
@@ -94,15 +94,15 @@ def harness(monkeypatch):
         "executor_result": {"ok": True},
     }
 
-    monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda request: SESSION)
+    monkeypatch.setattr(outbound_api.identity_dependencies, "web_session_token", lambda request: SESSION)
 
     async def fake_owner(request=None, session_token=None):
         return OWNER
-    monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", fake_owner)
+    monkeypatch.setattr(outbound_api.identity_dependencies, "authenticated_user_id", fake_owner)
 
     async def fake_ws(request=None, owner_id=None):
         return ""
-    monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", fake_ws)
+    monkeypatch.setattr(outbound_api.workspace_access, "resolve_legacy_workspace_id", fake_ws)
 
     def fake_workspace_drafts(user_id, workspace_id=""):
         state["workspace_ids_seen"].append(workspace_id)

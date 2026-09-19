@@ -76,12 +76,12 @@ def owner(monkeypatch):
         return OWNER_ID
 
     monkeypatch.setattr(
-        main_module.identity_dependencies,
+        provider_api.identity_dependencies,
         "authenticated_user_id",
         authenticated_user_id,
     )
     monkeypatch.setattr(
-        main_module.identity_dependencies,
+        provider_api.identity_dependencies,
         "web_session_token",
         lambda _request: "r17-token",
     )

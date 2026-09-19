@@ -12,8 +12,8 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-import main as main_module
 import services.events.bus as bus
+from services.outbound import api as outbound_api
 import services.outbound.service as outbound_service
 
 OWNER = "3e-owner-0001"
@@ -63,8 +63,8 @@ def _wire_send_route(app, monkeypatch):
 
     async def fake_owner(request=None, session_token=None):
         return OWNER
-    monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", fake_owner)
-    monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda r: SESSION)
+    monkeypatch.setattr(outbound_api.identity_dependencies, "authenticated_user_id", fake_owner)
+    monkeypatch.setattr(outbound_api.identity_dependencies, "web_session_token", lambda r: SESSION)
     monkeypatch.setattr(outbound_service, "test_recipient_override_enabled", lambda: False)
     monkeypatch.setattr(outbound_service, "resolve_provider_for_draft", lambda d, o: "prov-1")
 
@@ -131,7 +131,7 @@ def test_draft_sent_event_published_and_scoped(monkeypatch, capture):
 
     async def fake_resolve(request=None):
         return OWNER
-    monkeypatch.setattr(main_module.identity_dependencies, "resolve_web_session", lambda r: asyncio.sleep(0, result=(OWNER, SESSION)))
+    monkeypatch.setattr(outbound_api.identity_dependencies, "resolve_web_session", lambda r: asyncio.sleep(0, result=(OWNER, SESSION)))
 
     # Drive the real route coroutine directly (TestClient's portal loop
     # interferes with the async event capture).

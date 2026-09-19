@@ -16,6 +16,7 @@ os.chdir(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ".")
 
 import pytest
+from services.communication import api as provider_api
 
 SENTINEL = "PR1082LIVE_SENTINEL_SECRET"
 
@@ -148,7 +149,7 @@ class TestSettingsApiCanonical:
         store._providers["p-new"] = _provider_record("p-new", "faisal96kp@gmail.com", account_id="sub-1")
         store._user_providers["owner-1"] = ["p-old", "p-new"]
 
-        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-1"))
+        monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-1"))
 
         def _fake_get(pid):
             return _fake_instance("healthy")
@@ -178,7 +179,7 @@ class TestSettingsApiCanonical:
         store._providers["p-auth"] = _provider_record("p-auth", "a@b.com", account_id="s1",
                                                       status="auth_failed")
         store._user_providers["owner-1"] = ["p-auth"]
-        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-1"))
+        monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-1"))
 
         def _fake_get(pid):
             return _fake_instance("auth_failed")
@@ -193,7 +194,7 @@ class TestSettingsApiCanonical:
         from services.communication.communication_store import store
         store._providers["p1"] = _provider_record("p1", "a@b.com", account_id="s1")
         store._user_providers["owner-1"] = ["p1"]
-        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-1"))
+        monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-1"))
         from services.communication import api as provider_api, service as provider_service
         monkeypatch.setattr(provider_service, "get_provider", lambda pid: _fake_instance("healthy"))
         result = asyncio.run(provider_api.provider_list("token", MagicMock()))
@@ -297,7 +298,7 @@ class TestStartupRestoreSurfacesStatus:
         assert len(providers) == 1
         assert providers[0].status.value == "auth_failed"
         # The API surfaces auth_failed (never a stale healthy).
-        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id",
+        monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id",
                             AsyncMock(return_value="7de769b4-0000-0000-0000-000000000000"))
         monkeypatch.setattr(
             "services.platform.supabase.get_durable_providers_for_user",
@@ -462,7 +463,7 @@ class TestForcedDuplicatePrevention:
         store._providers["p-h"] = _provider_record("p-h", "faisal96kp@gmail.com",
                                                    account_id="s1", status="healthy")
         store._user_providers["owner-1"] = ["p-h"]
-        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-1"))
+        monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-1"))
         from services.communication import api as provider_api, service as provider_service
         monkeypatch.setattr(provider_service, "get_provider", lambda pid: _fake_instance("healthy"))
         monkeypatch.setattr("services.platform.supabase.is_connected_account_reauth_required",

@@ -23,6 +23,8 @@ sys.path.insert(0, ".")
 
 import pytest
 from services.conversations import service as conversation_service
+from services.communication import api as provider_api
+from services.outbound import api as outbound_api
 
 SENTINEL = "PR1083_SENTINEL_SECRET_DO_NOT_LEAK"
 SENTINEL_SESSION = "PR1083_SENTINEL_SESSION_TOKEN"
@@ -129,49 +131,42 @@ class TestSessionTokenRedaction:
 
 class TestProviderRouteOwnership:
     def _setup(self, monkeypatch):
-        import main as main_module
         from services.communication.communication_store import store
         # A provider owned by "owner-b" (the victim).
         store._providers["prov-b"] = _provider_record("prov-b", "victim@b.com", user_id="owner-b")
         store._user_providers["owner-b"] = ["prov-b"]
-        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-a"))
-        return main_module
+        monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-a"))
 
     def test_health_denied_for_another_users_provider(self, monkeypatch):
         self._setup(monkeypatch)
-        from services.communication import api as provider_api
         with pytest.raises(Exception) as exc:
             asyncio.run(provider_api.provider_health("tok", "prov-b", MagicMock()))
         assert exc.value.status_code == 404
     def test_disconnect_denied_for_another_users_provider(self, monkeypatch):
         self._setup(monkeypatch)
-        from services.communication import api as provider_api
         with pytest.raises(Exception) as exc:
             asyncio.run(provider_api.provider_disconnect("tok", "prov-b", MagicMock()))
         assert exc.value.status_code == 404
 
     def test_sync_denied_for_another_users_provider(self, monkeypatch):
         self._setup(monkeypatch)
-        from services.communication import api as provider_api
         with pytest.raises(Exception) as exc:
             asyncio.run(provider_api.provider_sync("tok", "prov-b", MagicMock()))
         assert exc.value.status_code == 404
 
     def test_status_denied_for_another_users_provider(self, monkeypatch):
         self._setup(monkeypatch)
-        from services.communication import api as provider_api
         with pytest.raises(Exception) as exc:
             asyncio.run(provider_api.provider_status("tok", "prov-b", MagicMock()))
         assert exc.value.status_code == 404
 
     def test_owner_can_access_own_provider(self, monkeypatch):
-        import main as m
         from services.communication.communication_store import store
-        m = self._setup(monkeypatch)
+        self._setup(monkeypatch)
         store._providers["prov-a"] = _provider_record("prov-a", "a@a.com", user_id="owner-a")
         store._user_providers["owner-a"] = ["prov-a"]
-        monkeypatch.setattr(m.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-a"))
-        from services.communication import api as provider_api, service as provider_service
+        monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-a"))
+        from services.communication import service as provider_service
         monkeypatch.setattr(provider_service, "get_provider", lambda pid: _fake_instance("healthy"))
         result = asyncio.run(provider_api.provider_health("tok", "prov-a", MagicMock()))
         assert result["ok"] is True
@@ -221,18 +216,17 @@ class TestLegacyConnectProductionGuard:
 
 class TestSendDraftOwnership:
     def test_send_denied_for_another_users_draft(self, monkeypatch):
-        import main as main_module
         from services.outbound.api import send_draft
         from services.communication.communication_store import store
 
         store._providers["prov-b"] = _provider_record("prov-b", "victim@b.com", user_id="owner-b")
-        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-a"))
-        monkeypatch.setattr(main_module.identity_dependencies, "web_session_token", lambda request: "tok")
+        monkeypatch.setattr(outbound_api.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-a"))
+        monkeypatch.setattr(outbound_api.identity_dependencies, "web_session_token", lambda request: "tok")
 
         async def workspace(request, user_id):
             return "workspace-owner-a"
 
-        monkeypatch.setattr(main_module.workspace_access, "resolve_legacy_workspace_id", workspace)
+        monkeypatch.setattr(outbound_api.workspace_access, "resolve_legacy_workspace_id", workspace)
         request = MagicMock()
         with pytest.raises(Exception) as exc:
             asyncio.run(send_draft("tok", "draft-b-1", request))
@@ -261,9 +255,7 @@ class TestConversationSendOwnership:
         )
 
     def test_reply_denied_for_another_users_conversation(self, monkeypatch):
-        import main as main_module
         convo = self._convo()
-        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-a"))
         payload = MagicMock()
         payload.body = "reply"
         payload.test_recipient = ""
@@ -277,9 +269,7 @@ class TestConversationSendOwnership:
         assert exc.value.status_code == 404
 
     def test_followup_denied_for_another_users_conversation(self, monkeypatch):
-        import main as main_module
         convo = self._convo()
-        monkeypatch.setattr(main_module.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-a"))
         payload = MagicMock()
         payload.body = "follow-up"
         payload.test_recipient = ""

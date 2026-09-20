@@ -252,20 +252,45 @@ async def test_launch_progress_endpoint_reads_durable_values(env):
     assert result["launch_complete"] is False
 
 
-async def test_campaign_timeline_endpoint_filters_wm_events(env):
-    """PR3B — timeline endpoint aggregates World Model events for one campaign."""
+async def test_campaign_timeline_endpoint_returns_redacted_legacy_fallback(env, monkeypatch):
+    """The route delegates to the active safe timeline projection seam."""
+    from services.campaigns import timeline as campaign_timeline
     from services.world_model import EventType as WMET
-    from services.world_model import publish as wm_publish
+    from services.world_model.events import WorkspaceEvent
 
-    wm_publish("pr3b-tok-1", WMET.DRAFT_SENT, {
-        "draft_id": "d1", "campaign_id": "c-1", "recipient_email": "ada@acme.com"})
-    wm_publish("pr3b-tok-1", WMET.DRAFT_FAILED, {
-        "draft_id": "d2", "campaign_id": "c-1", "error": "smtp refused"})
-    wm_publish("pr3b-tok-1", WMET.DRAFT_SENT, {
-        "draft_id": "d3", "campaign_id": "c-9", "recipient_email": "zed@acme.com"})
+    class _Store:
+        def get_events(self, _token, *, after_sequence, limit):
+            events = [
+                WorkspaceEvent(
+                    type=WMET.DRAFT_SENT, session_id="pr3b-tok-1", sequence=1,
+                    timestamp="2026-01-01T00:00:01+00:00",
+                    data={"draft_id": "d1", "campaign_id": "c-1", "recipient_email": "ada@acme.com"},
+                ),
+                WorkspaceEvent(
+                    type=WMET.DRAFT_FAILED, session_id="pr3b-tok-1", sequence=2,
+                    timestamp="2026-01-01T00:00:02+00:00",
+                    data={"draft_id": "d2", "campaign_id": "c-1", "error": "smtp refused"},
+                ),
+                WorkspaceEvent(
+                    type=WMET.DRAFT_SENT, session_id="pr3b-tok-1", sequence=3,
+                    timestamp="2026-01-01T00:00:03+00:00",
+                    data={"draft_id": "d3", "campaign_id": "c-9", "recipient_email": "zed@example.test"},
+                ),
+            ]
+            return [event for event in events if event.sequence > after_sequence][:limit]
+
+    class _ActivityRepository:
+        def read_events_after(self, _workspace_id, _after_sequence):
+            return []
+
+    monkeypatch.setattr(campaign_timeline, "load_campaigns", lambda *_args, **_kwargs: env["state"]["campaigns"])
+    monkeypatch.setattr(campaign_timeline, "load_drafts_only", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(campaign_timeline, "list_outbound_history", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(campaign_timeline, "get_activity_repository", lambda: _ActivityRepository())
+    monkeypatch.setattr(campaign_timeline, "get_wm_store", _Store)
 
     result = await campaign_api.campaign_timeline("_", "c-1", _auth_request("pr3b-tok-1"))
     assert result["ok"] is True
     assert [e["type"] for e in result["events"]] == ["draft_sent", "draft_failed"]
-    assert all(e["data"]["campaign_id"] == "c-1" for e in result["events"])
-    assert result["events"][1]["data"]["error"] == "smtp refused"
+    assert all(set(event) == {"type", "timestamp", "data"} for event in result["events"])
+    assert all(event["data"] == {} for event in result["events"])

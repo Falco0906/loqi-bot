@@ -40,9 +40,9 @@ function eventLabel(e: TimelineEvent): string {
   const d = e.data || {};
   switch (e.type) {
     case "draft_sent":
-      return `Delivered to ${String(d.recipient_email || "recipient")}`;
+      return "Delivered";
     case "draft_failed":
-      return `Send failed — ${String(d.error || "unknown error")}`;
+      return "Send failed";
     case "draft_approved":
       return "Draft approved";
     case "draft_updated":

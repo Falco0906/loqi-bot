@@ -16,7 +16,7 @@ from services.identity import dependencies as identity_dependencies
 from services.workspace.memory import record_campaign_open
 from services.workspace.snapshot import enrich_campaigns
 from services.workspace.state import load_drafts_only
-from services.world_model import get_store as get_wm_store
+from services.campaigns.timeline import CampaignTimelineService
 
 
 router = APIRouter(tags=["Campaigns"])
@@ -215,29 +215,15 @@ async def campaign_launch_progress(session_token: str, campaign_id: str, request
 
 @router.get("/api/web/session/{session_token}/campaigns/{campaign_id}/timeline")
 async def campaign_timeline(session_token: str, campaign_id: str, request: Request):
-    """Return the existing session-scoped World Model campaign projection."""
+    """Return the safe durable/canonical campaign timeline projection."""
     del session_token
     owner_id, bearer_token, workspace_id = await _authorized_workspace(request)
-    campaigns = load_campaigns(owner_id, workspace_id=workspace_id)
-    if not any(campaign.get("id") == campaign_id for campaign in campaigns):
-        raise HTTPException(status_code=404, detail="Campaign not found")
-
-    events: list[dict] = []
-    after_sequence = 0
-    store = get_wm_store()
-    while True:
-        batch = store.get_events(bearer_token, after_sequence=after_sequence, limit=100)
-        if not batch:
-            break
-        after_sequence = batch[-1].sequence
-        events.extend(
-            event.to_dict()
-            for event in batch
-            if event.data.get("campaign_id") == campaign_id
-        )
-        if len(batch) < 100:
-            break
-    return {"ok": True, "campaign_id": campaign_id, "events": events}
+    return await CampaignTimelineService().read(
+        owner_id=owner_id,
+        workspace_id=workspace_id,
+        session_token=bearer_token,
+        campaign_id=campaign_id,
+    )
 
 
 @router.post("/api/web/session/{session_token}/campaigns/{campaign_id}/generate-strategy", status_code=202)

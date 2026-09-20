@@ -180,6 +180,27 @@ def test_preference_upsert_migration_uses_locked_rpc_and_existing_column_types()
         assert fragment in sql
 
 
+def test_preference_upsert_ambiguity_fix_qualifies_all_conflicting_table_references():
+    sql = (Path(__file__).resolve().parents[1] / "supabase/migrations/043_fix_workspace_preference_upsert_ambiguity.sql").read_text()
+
+    for fragment in (
+        "create or replace function upsert_workspace_preference_if_higher",
+        "from workspace_preferences as wp",
+        "where wp.workspace_id = p_workspace_id",
+        "and wp.preference_key = p_preference_key",
+        "update workspace_preferences as wp",
+        "where wp.id = v_current.id",
+        "returning wp.* into v_current",
+        "on conflict on constraint workspace_preferences_scope_key_uidx do nothing",
+    ):
+        assert fragment in sql
+
+    # ``workspace_id``, ``preference_key``, and ``id`` are all RETURN TABLE
+    # variables.  They must not be used as unqualified table references.
+    assert "on conflict (workspace_id, preference_key)" not in sql
+    assert "where id = v_current.id" not in sql
+
+
 def test_preference_survives_restart_from_durable_workspace_repository():
     repository, database = _repository()
     first = PreferenceStore(

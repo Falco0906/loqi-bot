@@ -430,8 +430,9 @@ async def run_draft_batch_job(job, on_progress) -> dict[str, Any]:
                     type(activity_error).__name__,
                 )
             else:
-                # The legacy stream still feeds delta_reasoner. It is now only
-                # a best-effort cache projection after the durable append.
+                # The legacy stream still feeds the session-scoped campaign
+                # timeline. It is only a best-effort projection after the
+                # durable append.
                 publish(session_token, WMEventType.DRAFT_GENERATED, {
                     "id": draft["id"], "campaign_id": job.campaign_id,
                     "lead_id": lead.get("id", ""), "lead_name": name,

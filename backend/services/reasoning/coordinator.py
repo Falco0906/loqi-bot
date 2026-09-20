@@ -22,7 +22,6 @@ from typing import Any
 
 from services.intelligence.signal_factory import SignalFactory
 from services.reasoning.attention_reasoner import AttentionReasoner
-from services.reasoning.delta_reasoner import DeltaReasoner
 from services.reasoning.health_reasoner import HealthReasoner
 from services.reasoning.opportunity_reasoner import OpportunityReasoner
 from services.reasoning.priority_reasoner import PriorityReasoner
@@ -42,7 +41,6 @@ class ReasoningCoordinator:
         self.risk = RiskReasoner()
         self.opportunity = OpportunityReasoner()
         self.recommendation = RecommendationReasoner()
-        self.delta = DeltaReasoner()
 
     def analyze(
         self,
@@ -64,10 +62,12 @@ class ReasoningCoordinator:
         jobs: dict = snapshot.get("jobs", {})
         memory: dict = snapshot.get("memory", {})
 
-        # ── 1. Delta ──
+        # ── 1. Durable delta supplied by the authorized caller ──
         wm_delta: dict = snapshot.get("_delta", {})
-        if not wm_delta and session_token:
-            wm_delta, _ = self.delta.compute(session_token)
+        # ``session_token`` remains an unused compatibility argument for
+        # legacy direct callers. Session-keyed in-memory World Model deltas
+        # are not a safe reasoning source.
+        del session_token
 
         # ── 1b. Intelligence Layer: extract typed signals from raw state ──
         (

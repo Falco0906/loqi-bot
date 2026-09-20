@@ -427,7 +427,6 @@ backend/services/reasoning/_shared.py | ACTIVE | Shared utilities for determinis
 backend/services/reasoning/attention_reasoner.py | ACTIVE | AttentionReasoner — determines what needs the user's attention.
 backend/services/reasoning/confidence_engine.py | ACTIVE | Confidence Engine — calculates reasoning confidence from intelligence signals.
 backend/services/reasoning/coordinator.py | ACTIVE | ReasoningCoordinator — orchestrates the deterministic reasoning pipeline.
-backend/services/reasoning/delta_reasoner.py | ACTIVE | DeltaReasoner — computes what changed since the user's last visit.
 backend/services/reasoning/goal_selector.py | ACTIVE | Goal Selection — determines the best objective from conversation intelligence.
 backend/services/reasoning/health_reasoner.py | ACTIVE | HealthReasoner — computes workspace health and cross-campaign insights.
 backend/services/reasoning/opportunity_reasoner.py | ACTIVE | OpportunityReasoner — identifies opportunities from workspace state and delta.

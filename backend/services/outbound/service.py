@@ -828,9 +828,14 @@ async def update_campaign_launch_progress(
     sent_count: int,
     failed_count: int,
     total_count: int,
+    *,
+    launch_id: str,
 ) -> None:
     """Persist campaign send progress for the existing polling endpoint."""
     from services.workspace.state import persist_campaign_update_awaited
+
+    if not launch_id:
+        raise ValueError("A durable campaign launch ID is required")
 
     if total_count <= 0:
         status = "idle"
@@ -854,8 +859,11 @@ async def dispatch_campaign_sends(
     owner_id: str,
     *,
     workspace_id: str,
+    launch_id: str,
 ) -> dict[str, Any]:
     """Send approved campaign drafts through the existing outbound executor."""
+    if not launch_id:
+        raise ValueError("A durable campaign launch ID is required")
     campaign_id = campaign.get("id", "")
     durable = workspace_state.load_drafts_only(owner_id, workspace_id)
     approved_durable = [
@@ -875,7 +883,9 @@ async def dispatch_campaign_sends(
         log.warning("[campaign_launch] No Gmail outbound provider registered")
         total = len(approved)
         campaign.update({"total_sends": total, "sent_count": 0, "failed_count": total})
-        await update_campaign_launch_progress(owner_id, session_token, campaign_id, 0, total, total)
+        await update_campaign_launch_progress(
+            owner_id, session_token, campaign_id, 0, total, total, launch_id=launch_id,
+        )
         return {"ok": False, "error": "No Gmail outbound provider registered", "total": total, "sent": 0, "failed": total, "results": []}
 
     results = []
@@ -889,7 +899,10 @@ async def dispatch_campaign_sends(
                 error = "This lead has no email address"
                 results.append({"draft_id": draft.id, "ok": False, "error": error})
                 publish(session_token, WMEventType.DRAFT_FAILED, {"draft_id": draft.id, "campaign_id": campaign_id, "error": error}, actor="system")
-                await update_campaign_launch_progress(owner_id, session_token, campaign_id, sent_count, failed_count, len(approved))
+                await update_campaign_launch_progress(
+                    owner_id, session_token, campaign_id, sent_count, failed_count,
+                    len(approved), launch_id=launch_id,
+                )
                 continue
             result = await asyncio.to_thread(
                 outbound_executor.send_hydrated_draft,
@@ -958,7 +971,10 @@ async def dispatch_campaign_sends(
             failed_count += 1
             results.append({"draft_id": draft.id, "ok": False, "error": str(error)})
             publish(session_token, WMEventType.DRAFT_FAILED, {"draft_id": draft.id, "campaign_id": campaign_id, "error": str(error)}, actor="system")
-        await update_campaign_launch_progress(owner_id, session_token, campaign_id, sent_count, failed_count, len(approved))
+        await update_campaign_launch_progress(
+            owner_id, session_token, campaign_id, sent_count, failed_count,
+            len(approved), launch_id=launch_id,
+        )
     total = len(approved)
     campaign.update({"total_sends": total, "sent_count": sent_count, "failed_count": failed_count})
     log.info("[campaign_launch] Complete: %d/%d sent, %d failed", sent_count, total, failed_count)

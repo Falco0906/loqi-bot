@@ -46,7 +46,8 @@ async def test_campaign_dispatch_marks_no_email_draft_failed(monkeypatch):
     monkeypatch.setattr(outbound_service, "update_campaign_launch_progress", lambda *_args, **_kwargs: asyncio.sleep(0))
 
     result = await outbound_service.dispatch_campaign_sends(
-        "token", {"id": "campaign-1"}, "owner-1", workspace_id="workspace-1",
+        "token", {"id": "campaign-1"}, "owner-1",
+        workspace_id="workspace-1", launch_id="launch-1",
     )
 
     assert result["failed"] == 1

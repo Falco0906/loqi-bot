@@ -346,6 +346,11 @@ async def test_dispatch_or_canonical_failure_emits_no_status_projection(monkeypa
         {"campaign_id": "campaign-1", "status": "approved"},
     ])
 
+    async def create_launch(**_kwargs):
+        return SimpleNamespace(id="launch-1")
+
+    monkeypatch.setattr(campaign_service, "create_campaign_launch", create_launch)
+
     async def failed_dispatch(*_args, **_kwargs):
         return {"ok": False, "error": "provider unavailable"}
 
@@ -560,6 +565,11 @@ async def test_completed_path_publishes_only_after_dispatch_and_canonical_persis
     monkeypatch.setattr(workspace_state, "load_drafts_only", lambda *_args, **_kwargs: [
         {"campaign_id": "campaign-1", "status": "approved"},
     ])
+    monkeypatch.setattr(
+        campaign_service,
+        "create_campaign_launch",
+        lambda **_kwargs: asyncio.sleep(0, result=SimpleNamespace(id="launch-1")),
+    )
     monkeypatch.setattr(timeline, "record_campaign_launched", lambda *_args: calls.append("timeline"))
 
     async def dispatch(*_args, **_kwargs):

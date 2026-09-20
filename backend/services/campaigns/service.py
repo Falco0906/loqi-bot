@@ -166,6 +166,22 @@ def _feedback():
     return FeedbackInterpreter(get_tracker())
 
 
+async def create_campaign_launch(
+    *,
+    workspace_id: str,
+    campaign_id: str,
+    actor_user_id: str,
+):
+    """Create the database-owned identity for one accepted send launch."""
+    from services.persistence.launch import CampaignLaunchRepository
+
+    return await CampaignLaunchRepository().create_for_workspace(
+        workspace_id=workspace_id,
+        campaign_id=campaign_id,
+        actor_user_id=actor_user_id,
+    )
+
+
 async def create_campaign(
     session_token: str,
     owner_id: str,
@@ -345,10 +361,29 @@ async def update_campaign(
                     status_code=400,
                     detail="No approved drafts — approve at least one draft before launching",
                 )
+            try:
+                launch = await create_campaign_launch(
+                    workspace_id=workspace_id,
+                    campaign_id=campaign_id,
+                    actor_user_id=owner_id,
+                )
+            except Exception as error:
+                log.warning(
+                    "campaign_launch_creation_failed workspace_id=%s campaign_id=%s error_type=%s",
+                    workspace_id,
+                    campaign_id,
+                    type(error).__name__,
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail="Campaign launch could not be initialized",
+                ) from error
             record_campaign_launched(session_token, target.get("name", ""))
             _feedback().on_campaign_launched(session_token, campaign_id)
             launch_result = await dispatch_campaign_sends(
-                session_token, target, owner_id, workspace_id=workspace_id,
+                session_token, target, owner_id,
+                workspace_id=workspace_id,
+                launch_id=launch.id,
             )
             target["launch_result"] = {
                 key: launch_result[key]

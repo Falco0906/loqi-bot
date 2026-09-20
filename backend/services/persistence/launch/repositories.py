@@ -35,6 +35,7 @@ from .models import (
     WorkspaceLead,
     WorkspaceMember,
     OutboundMessage,
+    CampaignLaunch,
     ProviderEvent,
 )
 
@@ -777,6 +778,53 @@ class OutboundMessageRepository(LaunchRepository[OutboundMessage]):
             ("id", "eq", entity_id),
             ("workspace_id", "eq", workspace_id),
         ])
+
+
+class CampaignLaunchRepository(LaunchRepository[CampaignLaunch]):
+    """Create database-identified campaign launches in an authorized workspace."""
+
+    _table_name = "campaign_launches"
+
+    @classmethod
+    def _entity_type(cls) -> type[CampaignLaunch]:
+        return CampaignLaunch
+
+    async def create_for_workspace(
+        self,
+        *,
+        workspace_id: str,
+        campaign_id: str,
+        actor_user_id: str,
+    ) -> CampaignLaunch:
+        """Insert one launch without retrying an unknown-response mutation.
+
+        The database, not the application, allocates the immutable launch ID.
+        This operation intentionally has no automatic retry: the launch API has
+        no request idempotency key, so retrying an unknown response could create
+        a second accepted launch.
+        """
+        if not workspace_id or not campaign_id:
+            raise ValueError("Canonical workspace_id and campaign_id are required")
+        client = self._client()
+        if client is None:
+            raise RuntimeError("Campaign launch persistence is unavailable")
+        import asyncio
+
+        row = {
+            "workspace_id": workspace_id,
+            "campaign_id": campaign_id,
+            "actor_user_id": actor_user_id or None,
+        }
+        result = await asyncio.to_thread(
+            lambda: client.table(self._table_name).insert(row).select("*").execute(),
+        )
+        rows = getattr(result, "data", None) or []
+        if not rows:
+            raise RuntimeError("Campaign launch creation was not confirmed")
+        launch = self._from_row(rows[0])
+        if not launch.id:
+            raise RuntimeError("Campaign launch did not return a database ID")
+        return launch
 
 
 class ProviderEventRepository(LaunchRepository[ProviderEvent]):

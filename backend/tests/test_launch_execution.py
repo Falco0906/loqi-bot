@@ -133,6 +133,11 @@ def env(monkeypatch):
     monkeypatch.setattr(campaign_api.service, "publish", lambda *a, **k: None)
     monkeypatch.setattr("services.workspace.timeline.record_campaign_launched", lambda *a, **k: None)
     monkeypatch.setattr(campaign_api.service, "_feedback", lambda: _FakeFeedback())
+    monkeypatch.setattr(
+        campaign_api.service,
+        "create_campaign_launch",
+        lambda **_kwargs: asyncio.sleep(0, result=SimpleNamespace(id="launch-test-1")),
+    )
     monkeypatch.setattr(outbound_service.outbound_executor, "send_hydrated_draft", fake_send)
     monkeypatch.setattr(
         outbound_service,
@@ -161,7 +166,9 @@ def _launch_progress(state) -> dict:
 
 async def test_launch_dispatch_reads_durable_approved_drafts(env):
     env["state"]["drafts"] = [_draft("d-1"), _draft("d-2")]
-    result = await outbound_service.dispatch_campaign_sends("tok-1", _campaign(), "owner-1", workspace_id="workspace-test")
+    result = await outbound_service.dispatch_campaign_sends(
+        "tok-1", _campaign(), "owner-1", workspace_id="workspace-test", launch_id="launch-test-1",
+    )
 
     assert result["total"] == 2
     assert result["sent"] == 2
@@ -184,7 +191,9 @@ async def test_dispatch_only_sends_approved_drafts(env):
         _draft("d-pending", status="pending"),
         _draft("d-sent", status="sent"),
     ]
-    result = await outbound_service.dispatch_campaign_sends("tok-1", _campaign(), "owner-1", workspace_id="workspace-test")
+    result = await outbound_service.dispatch_campaign_sends(
+        "tok-1", _campaign(), "owner-1", workspace_id="workspace-test", launch_id="launch-test-1",
+    )
     assert [c["draft_id"] for c in env["calls"]] == ["d-approved"]
     assert result["total"] == 1
     assert result["sent"] == 1
@@ -192,7 +201,9 @@ async def test_dispatch_only_sends_approved_drafts(env):
 
 async def test_dispatch_zero_approved_returns_error(env):
     env["state"]["drafts"] = [_draft("d-pending", status="pending")]
-    result = await outbound_service.dispatch_campaign_sends("tok-1", _campaign(), "owner-1", workspace_id="workspace-test")
+    result = await outbound_service.dispatch_campaign_sends(
+        "tok-1", _campaign(), "owner-1", workspace_id="workspace-test", launch_id="launch-test-1",
+    )
     assert result["ok"] is False
     assert "approve" in result["error"].lower()
     assert env["calls"] == []
@@ -209,7 +220,9 @@ async def test_dispatch_partial_failure_tracks_progress(env, monkeypatch):
         return {"ok": True, "send_result": {"thread_id": "th", "external_message_id": "em"}}
 
     monkeypatch.setattr(outbound_service.outbound_executor, "send_hydrated_draft", flaky)
-    result = await outbound_service.dispatch_campaign_sends("tok-1", _campaign(), "owner-1", workspace_id="workspace-test")
+    result = await outbound_service.dispatch_campaign_sends(
+        "tok-1", _campaign(), "owner-1", workspace_id="workspace-test", launch_id="launch-test-1",
+    )
     assert result["sent"] == 1
     assert result["failed"] == 1
     assert _launch_progress(env["state"])["status"] == "partial"

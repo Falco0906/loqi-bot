@@ -119,6 +119,22 @@ def test_campaign_revision_migration_is_workspace_scoped_and_locked():
         assert fragment in sql
 
 
+def test_campaign_revision_ambiguity_fix_qualifies_both_rpc_mutation_branches():
+    sql = (Path(__file__).resolve().parents[1] / "supabase/migrations/044_fix_campaign_revision_rpc_ambiguity.sql").read_text()
+
+    v1_start = sql.index("update_workspace_campaign_with_revision(")
+    v2_start = sql.index("update_workspace_campaign_with_revision_v2(")
+    for function_sql in (sql[v1_start:v2_start], sql[v2_start:]):
+        assert "from campaigns as c" in function_sql
+        assert "where c.id = p_campaign_id" in function_sql
+        assert "and c.workspace_id = p_workspace_id" in function_sql
+        assert "update campaigns as c" in function_sql
+        assert "where c.id = v_current.id" in function_sql
+        assert "returning c.* into v_updated" in function_sql
+        assert "where id = v_current.id" not in function_sql
+        assert "returning * into v_updated" not in function_sql
+
+
 @pytest.mark.asyncio
 async def test_revisioned_status_and_non_status_updates_increment_once():
     repository, database = _repository()

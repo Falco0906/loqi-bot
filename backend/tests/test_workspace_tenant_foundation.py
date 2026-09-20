@@ -177,18 +177,25 @@ _FUTURE = _iso(datetime.now(timezone.utc) + timedelta(minutes=5))
 
 @pytest.fixture(autouse=True)
 def _reset():
+    import services.platform.supabase as platform_supabase
+
     reset_repository_provider()
     reset_connection_manager()
+    platform_supabase._client = None
     yield
     reset_repository_provider()
     reset_connection_manager()
+    platform_supabase._client = None
 
 
 def _attach_client(db):
     """Point the global launch repos + workspace_state reads at a fake DB."""
+    import services.platform.supabase as platform_supabase
+
     cm = SupabaseConnectionManager(url="http://test", key="test-key")
     cm._client = db
     set_connection_manager(cm)
+    platform_supabase._client = db
 
 
 def _durable_repos(db):

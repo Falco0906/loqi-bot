@@ -20,6 +20,9 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
+
+
+pytestmark = pytest.mark.requires_db
 from fastapi.testclient import TestClient
 
 import services.intelligence.ai as ai_module

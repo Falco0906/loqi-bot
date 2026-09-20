@@ -152,8 +152,9 @@ class TestCampaignExists:
             "id": "c1", "name": "Restaurant Outreach",
             "status": "ready_to_send", "lead_count": 10,
             "pending_drafts": 0, "approved_drafts": 5,
-            "created_at": "2026-01-01T00:00:00Z",
-            "updated_at": "2026-07-12T00:00:00Z",
+            "current_step": "sending",
+            "created_at": "2026-09-20T00:00:00Z",
+            "updated_at": "2026-09-20T00:00:00Z",
         }], drafts={"total": 5, "pending": 0, "approved": 5})
         plan_pair = plan_workflow("Finish this campaign", snapshot)
         assert plan_pair.primary_plan.goal == "Launch Restaurant Outreach"
@@ -165,8 +166,9 @@ class TestCampaignExists:
             "id": "c1", "name": "Tech Conference",
             "status": "draft_review", "lead_count": 8,
             "pending_drafts": 3, "approved_drafts": 2,
-            "created_at": "2026-01-01T00:00:00Z",
-            "updated_at": "2026-07-12T00:00:00Z",
+            "current_step": "review",
+            "created_at": "2026-09-20T00:00:00Z",
+            "updated_at": "2026-09-20T00:00:00Z",
         }], drafts={"total": 5, "pending": 3, "approved": 2})
         plan_pair = plan_workflow("Finish this campaign", snapshot)
         assert "review" in plan_pair.primary_plan.goal.lower()

@@ -192,11 +192,12 @@ class TestProviderFailureLogging:
             raise RuntimeError("provider down")
 
         monkeypatch.setattr("services.communication.inbox_sync_engine.sync_all", boom)
-        with caplog.at_level(logging.ERROR):
+        with caplog.at_level(logging.WARNING):
             asyncio.run(InboxSyncEngine(interval_seconds=3600).sync_once())
         assert SENTINEL not in caplog.text
         assert any(
             "prov-fail" in record.getMessage()
+            and "error_type=RuntimeError" in record.getMessage()
             for record in caplog.records
             if record.name == "services.communication.inbox_sync_engine"
         )

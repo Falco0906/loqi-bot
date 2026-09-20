@@ -136,6 +136,18 @@ def _session_auth_shim(monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _reset_persistence_provider_between_tests():
+    """Prevent a test-installed fake Supabase provider leaking to another test."""
+    from services.persistence import reset_connection_manager, reset_repository_provider
+
+    reset_connection_manager()
+    reset_repository_provider()
+    yield
+    reset_connection_manager()
+    reset_repository_provider()
+
+
 class _AuthTestClient(TestClient):
     """TestClient that injects Authorization: Bearer from the URL token.
 

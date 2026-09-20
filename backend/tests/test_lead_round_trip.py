@@ -18,6 +18,9 @@ from datetime import datetime, timezone
 
 import pytest
 
+
+pytestmark = pytest.mark.requires_db
+
 from fastapi.testclient import TestClient
 from tests.conftest import _AuthTestClient
 from main import app

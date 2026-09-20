@@ -12,6 +12,11 @@ from services.conversations import api as conversations_api
 from types import SimpleNamespace
 
 
+# These route contracts create canonical legacy web sessions, which currently
+# require the durable identity/workspace graph.
+pytestmark = pytest.mark.requires_db
+
+
 @pytest.fixture(autouse=True)
 def _selected_copilot_workspace(monkeypatch):
     """Keep endpoint tests inside an explicitly resolved test workspace."""

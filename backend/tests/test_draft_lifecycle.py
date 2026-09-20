@@ -24,7 +24,6 @@ sys.path.insert(0, ".")
 import pytest
 
 import services.workspace.state as workspace_state
-import services.intelligence.ai as ai_service
 from services.drafts import api as drafts_api
 from services.drafts import service as drafts_service
 import services.outbound.service as outbound_service
@@ -226,9 +225,9 @@ class TestDraftAnalysisCompatibility:
     @pytest.mark.asyncio
     async def test_analysis_preserves_legacy_generation_error_envelope(self, monkeypatch):
         def unavailable(*_args, **_kwargs):
-            raise ai_service.OpenAIError("provider unavailable")
+            raise drafts_service.OpenAIError("provider unavailable")
 
-        monkeypatch.setattr(ai_service, "_send_openai_request", unavailable)
+        monkeypatch.setattr(drafts_service, "analyze_draft_with_ai", unavailable)
         monkeypatch.setattr(drafts_service, "analyze_draft_intelligence", unavailable)
 
         result = await drafts_service.analyze_draft({"draft_text": "Hello"})
@@ -243,9 +242,9 @@ class TestDraftAnalysisCompatibility:
     @pytest.mark.asyncio
     async def test_question_preserves_legacy_generation_error_envelope(self, monkeypatch):
         def unavailable(*_args, **_kwargs):
-            raise ai_service.OpenAIError("provider unavailable")
+            raise drafts_service.OpenAIError("provider unavailable")
 
-        monkeypatch.setattr(ai_service, "_send_openai_request", unavailable)
+        monkeypatch.setattr(drafts_service, "answer_draft_question", unavailable)
 
         result = await drafts_service.ask_draft_question(
             {"question": "What should I improve?", "draft_text": "Hello"},

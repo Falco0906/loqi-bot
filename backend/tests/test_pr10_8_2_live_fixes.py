@@ -154,7 +154,7 @@ class TestSettingsApiCanonical:
         def _fake_get(pid):
             return _fake_instance("healthy")
 
-        from services.communication import api as provider_api, service as provider_service
+        from services.communication import service as provider_service
         monkeypatch.setattr(provider_service, "get_provider", _fake_get)
         monkeypatch.setattr(
             "services.platform.supabase.get_durable_providers_for_user",
@@ -184,7 +184,7 @@ class TestSettingsApiCanonical:
         def _fake_get(pid):
             return _fake_instance("auth_failed")
 
-        from services.communication import api as provider_api, service as provider_service
+        from services.communication import service as provider_service
         monkeypatch.setattr(provider_service, "get_provider", _fake_get)
         result = asyncio.run(provider_api.provider_list("token", MagicMock()))
         assert result["providers"][0]["status"] == "auth_failed"
@@ -195,7 +195,7 @@ class TestSettingsApiCanonical:
         store._providers["p1"] = _provider_record("p1", "a@b.com", account_id="s1")
         store._user_providers["owner-1"] = ["p1"]
         monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-1"))
-        from services.communication import api as provider_api, service as provider_service
+        from services.communication import service as provider_service
         monkeypatch.setattr(provider_service, "get_provider", lambda pid: _fake_instance("healthy"))
         result = asyncio.run(provider_api.provider_list("token", MagicMock()))
         assert "session_token" not in result
@@ -310,7 +310,7 @@ class TestStartupRestoreSurfacesStatus:
                 "last_synced_at": None,
             }],
         )
-        from services.communication import api as provider_api, service as provider_service
+        from services.communication import service as provider_service
         monkeypatch.setattr(provider_service, "get_provider",
                             lambda pid: _fake_instance("auth_failed"))
         result = asyncio.run(provider_api.provider_list("tok", MagicMock()))
@@ -464,7 +464,7 @@ class TestForcedDuplicatePrevention:
                                                    account_id="s1", status="healthy")
         store._user_providers["owner-1"] = ["p-h"]
         monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-1"))
-        from services.communication import api as provider_api, service as provider_service
+        from services.communication import service as provider_service
         monkeypatch.setattr(provider_service, "get_provider", lambda pid: _fake_instance("healthy"))
         monkeypatch.setattr("services.platform.supabase.is_connected_account_reauth_required",
                             lambda *a, **k: True)

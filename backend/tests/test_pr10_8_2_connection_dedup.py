@@ -371,6 +371,8 @@ class TestIdempotentReconnect:
         from services.security.crypto.credentials import is_encrypted
         from services.persistence.launch import ConnectedAccount
 
+        monkeypatch.setenv("LOQI_CREDENTIAL_ENCRYPTION_KEY", "12" * 32)
+
         class FakeRepo:
             def __init__(self):
                 self.saved = None

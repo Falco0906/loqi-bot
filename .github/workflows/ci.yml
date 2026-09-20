@@ -95,8 +95,7 @@ jobs:
       - name: Run tests
         run: |
           python -m pytest tests/ -v --tb=short -q \
-            --ignore=tests/test_copilot_api.py \
-            --ignore=tests/test_reasoner_integration.py \
+            -m "not integration and not requires_db" \
             --junitxml=pytest-report.xml 2>&1 | tee pytest-output.txt
           exit ${PIPESTATUS[0]}
         env:

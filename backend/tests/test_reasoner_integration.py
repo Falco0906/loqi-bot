@@ -14,6 +14,11 @@ from services.workspace.timeline import clear as clear_timeline
 from services.workspace.snapshot import invalidate_cache, build_snapshot
 
 
+# The end-to-end session fixture creates the canonical durable identity and
+# workspace graph, so this suite belongs to the database-backed gate.
+pytestmark = pytest.mark.requires_db
+
+
 class _MissionControlSummaryService:
     """Route-boundary double; Mission Control data is canonical, not session state."""
 

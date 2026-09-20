@@ -25,6 +25,11 @@ sys.path.insert(0, ".")
 
 import pytest
 
+
+# This suite includes Gmail transport behavior and belongs to the provider
+# integration gate, not the hermetic release gate.
+pytestmark = pytest.mark.integration
+
 SENTINEL_TOKEN = "PR1081_SENTINEL_ACCESS_TOKEN"
 SENTINEL_REFRESH = "PR1081_SENTINEL_REFRESH_TOKEN"
 SENTINEL_SECRET = "PR1081_SENTINEL_CLIENT_SECRET"

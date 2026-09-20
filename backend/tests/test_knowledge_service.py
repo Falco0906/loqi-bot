@@ -178,6 +178,26 @@ def db(monkeypatch):
     return store
 
 
+@pytest.fixture(autouse=True)
+def _knowledge_route_workspace_scope(monkeypatch):
+    """Keep Knowledge route contracts hermetic at their imported resolver seam."""
+    async def selected_workspace(_request, owner_id: str) -> str | None:
+        return OWNER_WS.get(owner_id)
+
+    def forbid_supabase(*_args, **_kwargs):
+        raise AssertionError("Knowledge route tests must not access Supabase")
+
+    monkeypatch.setattr(
+        knowledge_api.workspace_access,
+        "resolve_legacy_workspace_id",
+        selected_workspace,
+    )
+    # The resolver above is the route's active dependency. These guards make
+    # any accidental regression back to its live Supabase lookup fail locally.
+    monkeypatch.setattr("services.platform.supabase.get_supabase_client", forbid_supabase)
+    monkeypatch.setattr("services.workspace.access.get_supabase_client", forbid_supabase)
+
+
 @pytest.fixture
 def auth(monkeypatch, db):
     """Resolves session ownership for route-level tests."""

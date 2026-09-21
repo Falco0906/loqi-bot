@@ -56,11 +56,67 @@ class DiscoveryJobLifecycleError(Exception):
         self.detail = detail
 
 
+class DiscoveryLeadDecisionError(Exception):
+    """A selected Discovery lead could not be durably updated."""
+
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
 def _count_of(payload: Any) -> int:
     try:
         return int(payload[0]["count"])
     except Exception:
         return 0
+
+
+async def decide_discovery_lead(
+    owner_id: str,
+    workspace_id: str,
+    session_token: str,
+    lead: dict[str, Any],
+    approved: bool,
+) -> dict[str, Any]:
+    """Persist one Discovery-card approval or rejection for its workspace lead.
+
+    The browser supplies the canonical ``workspace_leads.id`` carried by a
+    durable Discovery detail response.  The persistence boundary verifies
+    that it belongs to ``workspace_id`` before changing its lifecycle status.
+    """
+    lead = dict(lead)
+    lead_id = str(lead.get("id") or "").strip()
+    if not lead_id:
+        raise DiscoveryLeadDecisionError(400, "Lead identity is required")
+
+    from services.workspace.state import persist_lead_decision_awaited
+
+    canonical_lead_id = await persist_lead_decision_awaited(
+        owner_id,
+        lead,
+        approved,
+        workspace_id=workspace_id,
+    )
+    if not canonical_lead_id:
+        raise DiscoveryLeadDecisionError(503, "Lead decision could not be persisted")
+
+    # Preserve the legacy projection emission. Durable workspace_leads status
+    # remains the decision authority.
+    from services.world_model.events import EventType
+    from services.world_model.publisher import publish
+
+    publish(
+        session_token,
+        EventType.LEAD_SELECTED if approved else EventType.LEAD_DISCOVERED,
+        {
+            "lead_id": str(canonical_lead_id),
+            "name": lead.get("name", lead.get("company", "")),
+            "approved": approved,
+        },
+        actor="user",
+    )
+    return {"ok": True, "lead": lead, "approved": approved}
 
 
 def create_discovery(

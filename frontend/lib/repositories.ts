@@ -887,6 +887,7 @@ function _companyToRecommendation(
   company: Record<string, unknown>,
   index: number,
   qualification?: DiscoveryRecommendation["qualification"],
+  workspaceLeadId?: string,
 ): DiscoveryRecommendation {
   const stage = (company.stage as string) || "";
   const employeeCount = company.employee_count;
@@ -895,7 +896,10 @@ function _companyToRecommendation(
         ? `${employeeCount} employees`
         : "Prospect");
   return {
-    id: String(company.id || `company-${index}`),
+    // A Discovery card represents a persisted workspace lead. Company data is
+    // presentation context only; using its ID here made approvals look up a
+    // company in the workspace_leads table after a reload.
+    id: String(workspaceLeadId || company.id || `company-${index}`),
     company: String(company.name || company.domain || "Unknown company"),
     match: _scoreToMatch(company.match_score, Math.max(55, 90 - index * 3)),
     subtitle: String(company.industry || "Company"),
@@ -1066,6 +1070,7 @@ export async function fetchDiscovery(id: string): Promise<DiscoveryData | null> 
         ];
       } else {
         const qualificationByCompany = new Map<string, DiscoveryRecommendation["qualification"]>();
+        const workspaceLeadIdByCompany = new Map<string, string>();
         for (const lead of leads) {
           const workspaceLead = isRecord(lead.workspace_lead) ? lead.workspace_lead : {};
           const qualification: DiscoveryRecommendation["qualification"] | null =
@@ -1073,12 +1078,19 @@ export async function fetchDiscovery(id: string): Promise<DiscoveryData | null> 
           if (qualification && workspaceLead.company_id) {
             qualificationByCompany.set(String(workspaceLead.company_id), qualification);
           }
+          if (workspaceLead.id && workspaceLead.company_id) {
+            const companyId = String(workspaceLead.company_id);
+            if (!workspaceLeadIdByCompany.has(companyId)) {
+              workspaceLeadIdByCompany.set(companyId, String(workspaceLead.id));
+            }
+          }
         }
         recommendations = companies.map((c, i) =>
           _companyToRecommendation(
             c.company || {},
             i,
             qualificationByCompany.get(String(c.company_id || (c.company as Record<string, unknown> | undefined)?.id || "")),
+            workspaceLeadIdByCompany.get(String(c.company_id || (c.company as Record<string, unknown> | undefined)?.id || "")),
           ),
         );
         if (recommendations.length === 0 && leads.length > 0) {

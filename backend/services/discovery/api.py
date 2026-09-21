@@ -10,8 +10,10 @@ from pydantic import BaseModel
 from services.identity import dependencies as identity_dependencies
 from services.workspace import access as workspace_access
 from services.discovery.service import (
+    DiscoveryLeadDecisionError,
     DiscoveryJobLifecycleError,
     create_search_run,
+    decide_discovery_lead,
     get_discovery,
     get_job_for_user,
     get_job_results_for_user,
@@ -39,6 +41,11 @@ class StartSearchRequest(BaseModel):
 
 class CreateDiscoveryRequest(BaseModel):
     query: str
+
+
+class LeadDecisionRequest(BaseModel):
+    lead: dict
+    approved: bool
 
 
 @router.post("/api/jobs/search")
@@ -95,6 +102,27 @@ async def get_discovery_endpoint(discovery_id: str, request: Request):
     if not discovery:
         raise HTTPException(status_code=404, detail="Discovery not found")
     return {"ok": True, "discovery": discovery}
+
+
+@router.post("/api/web/session/{session_token}/leads/decision")
+async def decide_discovery_lead_endpoint(
+    session_token: str,
+    payload: LeadDecisionRequest,
+    request: Request,
+):
+    """Persist an approval/rejection for a durable Discovery workspace lead."""
+    del session_token
+    owner_id, bearer_token, workspace_id = await _authorized_workspace(request)
+    try:
+        return await decide_discovery_lead(
+            owner_id,
+            workspace_id,
+            bearer_token,
+            payload.lead,
+            payload.approved,
+        )
+    except DiscoveryLeadDecisionError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
 
 
 async def _authenticated_user(request: Request) -> str:

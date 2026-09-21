@@ -61,6 +61,16 @@ def test_skips_rows_without_real_refresh_token(monkeypatch):
     assert rows[0]["google_refresh_token"] == "1//" + "x" * 100
 
 
+def test_preserves_persisted_communication_provider_identity(monkeypatch):
+    row = {**REAL, "metadata": {"communication_provider_id": "gmail-runtime-id"}}
+    monkeypatch.setattr(supabase, "get_supabase_client", lambda: _fake_client([row]))
+
+    restored = supabase.load_all_provider_credentials()
+
+    assert restored[0]["communication_provider_id"] == "gmail-runtime-id"
+    assert restored[0]["google_provider_id"] == "gmail-runtime-id"
+
+
 def test_all_placeholder_rows_returns_empty(monkeypatch):
     monkeypatch.setattr(supabase, "get_supabase_client", lambda: _fake_client([GARBAGE]))
     assert supabase.load_all_provider_credentials() == []

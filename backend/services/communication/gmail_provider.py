@@ -81,6 +81,12 @@ class GmailProvider(CommunicationProviderBase):
         self._connected = True
 
         provider = CommunicationProvider(
+            # ``connected_accounts.metadata.communication_provider_id`` is
+            # the durable identity for this runtime projection.  OAuth
+            # connects leave it empty so a new ID is allocated once; startup
+            # restoration supplies it so drafts, registries, and connected
+            # account state stay aligned across process boundaries.
+            id=kwargs.get("provider_id", ""),
             provider_type=ProviderType.GMAIL,
             user_id=user_id,
             status=ProviderStatus.HEALTHY,

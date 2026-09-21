@@ -317,6 +317,44 @@ class TestStartupRestoreSurfacesStatus:
         assert len(result["providers"]) == 1
         assert result["providers"][0]["status"] == "auth_failed"
 
+    def test_restore_active_account_reuses_persisted_provider_identity(self, monkeypatch):
+        """A valid connected account restores into both runtime registries
+        under the ID persisted by the OAuth transaction, not a new process
+        local provider ID.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        from services.communication import provider_startup
+        from services.communication.communication_store import store
+        from services.communication.provider_registry import get_provider
+        from services.outbound.outbound_registry import get_provider as get_outbound_provider
+
+        provider_id = "durable-gmail-provider"
+        user_id = "restore-owner-1"
+        row = {
+            "id": user_id,
+            "communication_provider_id": provider_id,
+            "google_provider_id": provider_id,
+            "google_refresh_token": SENTINEL,
+            "google_access_token": SENTINEL,
+            "email": "restore@example.com",
+            "account_id": "google-subject",
+            "google_client_id": "cid",
+            "google_client_secret": "sec",
+            "token_expiry": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+            "status": "active",
+        }
+        monkeypatch.setattr("services.platform.supabase.load_all_provider_credentials", lambda: [row])
+        monkeypatch.setattr("services.platform.supabase.reconcile_connected_account_duplicates", lambda *a, **k: 0)
+
+        provider_startup.restore_gmail_providers()
+
+        restored = store.get_provider(provider_id)
+        assert restored is not None
+        assert restored.user_id == user_id
+        assert get_provider(provider_id) is not None
+        assert get_outbound_provider(provider_id) is not None
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # 6. Backfill diagnostics removed (no TMP-DIAG, no traceback spam)

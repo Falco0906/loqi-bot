@@ -1313,7 +1313,7 @@ def load_all_provider_credentials() -> list[dict]:
     try:
         result = (
             client.table("connected_accounts")
-            .select("user_id, provider, email, display_name, account_id, access_token, refresh_token, token_expires_at, status, created_at")
+            .select("user_id, provider, email, display_name, account_id, access_token, refresh_token, token_expires_at, status, metadata, created_at")
             .neq("refresh_token", "")
             .neq("refresh_token", None)
             .is_("deleted_at", "null")
@@ -1323,6 +1323,10 @@ def load_all_provider_credentials() -> list[dict]:
         rows = getattr(result, "data", None) or []
         seen: dict[tuple[str, str], dict] = {}
         for r in rows:
+            metadata = r.get("metadata") or {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            communication_provider_id = str(metadata.get("communication_provider_id") or "")
             access_token = _decrypt_credential_field((r.get("access_token") or "").strip())
             refresh_token = _decrypt_credential_field((r.get("refresh_token") or "").strip())
             if refresh_token:
@@ -1348,7 +1352,13 @@ def load_all_provider_credentials() -> list[dict]:
             seen[key] = r
             canonical_rows.append({
                 "id": r.get("user_id", ""),
-                "google_provider_id": r.get("provider", "google") + "-" + (r.get("email") or r.get("display_name") or ""),
+                # Older rows without this metadata retain the deterministic
+                # legacy fallback.  Current OAuth connections persist the
+                # runtime ID explicitly and must restore that exact identity.
+                "google_provider_id": communication_provider_id or (
+                    r.get("provider", "google") + "-" + (r.get("email") or r.get("display_name") or "")
+                ),
+                "communication_provider_id": communication_provider_id,
                 "google_refresh_token": refresh_token,
                 "google_access_token": access_token,
                 "email": r.get("email") or r.get("display_name") or "",

@@ -81,9 +81,11 @@ def persist_outbound_message(item) -> bool:
         error=getattr(item, "error", "") or "",
         external_message_id=getattr(item, "external_message_id", "") or "",
     )
-    raw_id = getattr(item, "id", "") or ""
-    if raw_id:
-        entity.id = raw_id
+    # Provider-facing send-history IDs are short compatibility IDs, while
+    # outbound_messages.id is a database UUID.  Keep the provider result in
+    # external_message_id and let the canonical history entity retain its
+    # UUID identity; copying the short ID makes Postgres reject the insert
+    # after Gmail has already accepted the message.
     # OutboundExecutor invokes this synchronous boundary from ``to_thread``.
     # Complete the repository coroutine here so a successful send is never
     # reported before its durable history row exists.

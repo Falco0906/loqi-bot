@@ -198,6 +198,7 @@ class TestReauthState:
                                   refresh_token=SENTINEL_REFRESH)
         provider_registry.register_instance(record.id, provider)
         # First sync hits the doomed refresh and marks the provider.
+        provider._token_expiry = 0
         with pytest.raises(GmailReauthRequired):
             provider.sync(cursor="")
         assert provider._connected is False

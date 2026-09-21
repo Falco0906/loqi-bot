@@ -109,7 +109,11 @@ def restore_gmail_providers() -> None:
     for row in records:
         try:
             user_id = row.get("id", "")
-            provider_id = row.get("google_provider_id", "") or str(uuid.uuid4())
+            provider_id = (
+                row.get("communication_provider_id", "")
+                or row.get("google_provider_id", "")
+                or str(uuid.uuid4())
+            )
             refresh_token = row.get("google_refresh_token", "")
             access_token = row.get("google_access_token", "")
             email = row.get("email", "")
@@ -143,6 +147,7 @@ def restore_gmail_providers() -> None:
                 provider = GmailProvider()
                 record = provider.connect(
                     auth_token=access_token,
+                    provider_id=provider_id,
                     user_id=user_id,
                     email=email,
                     account_id=account_id,
@@ -184,6 +189,7 @@ def restore_gmail_providers() -> None:
                     provider = GmailProvider()
                     record = provider.connect(
                         auth_token=access_token,
+                        provider_id=provider_id,
                         user_id=user_id,
                         email=email,
                         refresh_token=refresh_token,
@@ -205,6 +211,7 @@ def restore_gmail_providers() -> None:
             provider = GmailProvider()
             record = provider.connect(
                 auth_token=access_token,
+                provider_id=provider_id,
                 user_id=user_id,
                 email=email,
                 account_id=account_id,

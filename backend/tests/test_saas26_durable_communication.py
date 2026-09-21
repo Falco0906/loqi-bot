@@ -16,7 +16,7 @@ Uses fake PostgREST clients. No production data touched.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -245,6 +245,8 @@ class TestCommunicationPersistenceHelpers:
         assert len(saved) == 1
         assert saved[0].workspace_id == "ws-A"
         assert saved[0].external_message_id == "message-1"
+        assert saved[0].id != item.id
+        UUID(saved[0].id)
 
     def test_list_outbound_history_is_tenant_scoped(self):
         from services.persistence import (

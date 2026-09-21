@@ -85,6 +85,8 @@ def _run(async_fn):
     def _observe(task):
         try:
             task.result()
+        except asyncio.CancelledError:
+            return
         except Exception as error:
             print(f"[workspace_state] fire-and-forget write failed: {error}", flush=True)
 
@@ -227,6 +229,15 @@ def append_event(user_id: str, event_type: str, payload: dict[str, Any]) -> bool
     except Exception as error:
         print(f"[workspace_state] append_event failed: {error}")
         return False
+
+
+def _append_compatibility_event_in_background(
+    user_id: str,
+    event_type: str,
+    payload: dict[str, Any],
+) -> None:
+    """Mirror canonical state without making a legacy event insert critical."""
+    _run(lambda: asyncio.to_thread(append_event, user_id, event_type, payload))
 
 
 # ─── Canonical writes (dual with events) ───────────────────────────────
@@ -684,7 +695,7 @@ async def persist_campaign_update_awaited(user_id: str, campaign_id: str, update
     # generation, and launch progress must survive a transient canonical-read
     # failure).
     try:
-        append_event(user_id, "campaign.updated", {
+        _append_compatibility_event_in_background(user_id, "campaign.updated", {
             "campaign_id": campaign_id,
             "updates": updates,
         })
@@ -759,7 +770,7 @@ async def persist_campaign_lead_awaited(user_id: str, campaign_id: str, lead: di
     # fallback projection stays consistent with the durable link (a transient
     # canonical-read failure must not hide an already-attached lead).
     try:
-        append_event(user_id, "campaign.lead_added", {
+        _append_compatibility_event_in_background(user_id, "campaign.lead_added", {
             "campaign_id": campaign_id,
             "lead": lead,
         })

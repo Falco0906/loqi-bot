@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 
 import pytest
@@ -349,6 +350,63 @@ async def test_approved_discovery_lead_attachment_does_not_block_the_event_loop(
 
     assert time.perf_counter() - started < 0.1
     assert (await attachment)["added"] is True
+
+
+async def test_campaign_attachment_does_not_wait_for_legacy_event_persistence(monkeypatch):
+    """The canonical campaign-lead write must not wait on its fallback event log."""
+    import services.campaigns.service as campaign_service
+    import services.workspace.state as workspace_state
+
+    campaign = {
+        "id": "campaign-1",
+        "workspace_id": "workspace-selected",
+        "objective": "",
+        "leads": [],
+    }
+    started = threading.Event()
+    completed = threading.Event()
+    completed_events = 0
+    completed_lock = threading.Lock()
+
+    async def persist_link(*_args, **_kwargs):
+        return True
+
+    async def persist_campaign_update(*_args, **_kwargs):
+        return True
+
+    def slow_append_event(*_args, **_kwargs):
+        nonlocal completed_events
+        started.set()
+        time.sleep(0.15)
+        with completed_lock:
+            completed_events += 1
+            if completed_events == 2:
+                completed.set()
+        return True
+
+    monkeypatch.setattr(campaign_service, "load_campaigns", lambda *_args, **_kwargs: [campaign])
+    monkeypatch.setattr(workspace_state, "_persist_campaign_lead_row", persist_link)
+    monkeypatch.setattr(workspace_state, "_update_campaign_row", persist_campaign_update)
+    monkeypatch.setattr(workspace_state, "append_event", slow_append_event)
+    monkeypatch.setattr(campaign_service, "publish", lambda *_args, **_kwargs: "event-1")
+
+    request_started = time.perf_counter()
+    response = await asyncio.wait_for(
+        campaign_service.add_campaign_lead(
+            "web-session-token",
+            "authenticated-user",
+            "workspace-selected",
+            "campaign-1",
+            {"id": "workspace-lead-1", "company": "Acme"},
+            "discovery-1",
+        ),
+        timeout=0.1,
+    )
+
+    assert response["added"] is True
+    assert time.perf_counter() - request_started < 0.1
+    assert await asyncio.to_thread(started.wait, 0.1)
+    assert await asyncio.to_thread(completed.wait, 0.75)
 
 
 async def test_create_search_run_keeps_explicit_workspace(monkeypatch):

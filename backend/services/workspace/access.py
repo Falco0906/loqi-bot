@@ -22,11 +22,16 @@ rather than silently picking an arbitrary tenant.
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 
 from fastapi import HTTPException, Request
 
 from services.platform.supabase import get_supabase_client
+from services.persistence.retry import classify_retryable, retry_async
+
+
+log = logging.getLogger(__name__)
 
 
 class WorkspaceAccessDenied(Exception):
@@ -171,13 +176,20 @@ async def resolve_selected_workspace_context(
     user_id: str,
 ) -> WorkspaceContext:
     """Resolve the membership-authorized workspace selected for a request."""
-    try:
+    async def _resolve() -> WorkspaceContext:
         return await asyncio.to_thread(
             resolve_workspace_context,
             None,
             user_id,
             requested_workspace_id(request),
         )
+
+    try:
+        # These are membership/workspace reads only, so bounded retries are
+        # safe when the shared synchronous Supabase transport is transiently
+        # unavailable. Keep the retry at the authorization-read boundary;
+        # route adapters must not each invent their own fallback policy.
+        return await retry_async(_resolve, category="workspace_access")
     except WorkspaceAccessDenied as error:
         raise HTTPException(status_code=404, detail="Workspace not found") from error
     except NoWorkspaceAvailable as error:
@@ -187,6 +199,17 @@ async def resolve_selected_workspace_context(
             status_code=409,
             detail="Multiple workspaces available; select one via the X-Workspace-Id header",
         ) from error
+    except Exception as error:  # noqa: BLE001
+        if classify_retryable(error):
+            log.warning(
+                "workspace_resolution_unavailable error_type=%s",
+                type(error).__name__,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Workspace access temporarily unavailable",
+            ) from error
+        raise
 
 
 async def resolve_selected_workspace_id(

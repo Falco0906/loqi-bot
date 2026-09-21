@@ -1,5 +1,6 @@
 """R2-A.1 behavior freeze for the current main/web-session and workspace boundaries."""
 import pytest
+import httpx
 from fastapi import HTTPException
 from starlette.requests import Request
 
@@ -45,6 +46,58 @@ async def test_request_workspace_selection_maps_the_authorized_context(monkeypat
 
     assert resolved == expected
     assert seen == {"user_id": "user-a", "requested_workspace_id": "workspace-a"}
+
+
+@pytest.mark.asyncio
+async def test_selected_workspace_retries_a_transient_supabase_read_error(monkeypatch):
+    """A transient membership read failure does not become a route-level 500."""
+    expected = workspace_context.WorkspaceContext(
+        user_id="user-a",
+        organization_id="org-a",
+        workspace_id="workspace-a",
+        workspace_name="A",
+    )
+    attempts = 0
+
+    def resolve(_client, _user_id, _requested_workspace_id):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ReadError("temporary transport failure")
+        return expected
+
+    async def no_delay(_seconds):
+        return None
+
+    monkeypatch.setattr(workspace_context, "resolve_workspace_context", resolve)
+    monkeypatch.setattr("services.persistence.retry._asleep_with_jitter", no_delay)
+
+    assert await workspace_context.resolve_selected_workspace_context(_request(), "user-a") == expected
+    assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_selected_workspace_transient_read_exhaustion_is_a_clear_503(monkeypatch):
+    """The authorization boundary preserves safe failure semantics after retry exhaustion."""
+    attempts = 0
+
+    def resolve(*_args):
+        nonlocal attempts
+        attempts += 1
+        raise httpx.ReadError("temporary transport failure")
+
+    async def no_delay(_seconds):
+        return None
+
+    monkeypatch.setattr(workspace_context, "resolve_workspace_context", resolve)
+    monkeypatch.setattr("services.persistence.retry._asleep_with_jitter", no_delay)
+
+    with pytest.raises(HTTPException) as error:
+        await workspace_context.resolve_selected_workspace_context(_request(), "user-a")
+
+    assert error.value.status_code == 503
+    assert error.value.detail == "Workspace access temporarily unavailable"
+    assert attempts == 3
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,7 @@ import asyncio
 import threading
 import time
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -196,6 +197,53 @@ def test_discovery_lead_decision_route_returns_http_200(monkeypatch):
         "lead": {"id": "workspace-lead-1", "company": "Acme"},
         "approved": True,
     }
+
+
+async def test_discovery_lead_decision_retries_transient_workspace_resolution(monkeypatch):
+    """The live decision route succeeds after a transient Supabase read error."""
+    from services.workspace import access as workspace_access
+    from services.workspace.access import WorkspaceContext
+
+    attempts = 0
+
+    async def resolve_user(_request):
+        return "authenticated-user", "web-session-token"
+
+    def resolve_workspace(_client, _user_id, _requested_workspace_id):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ReadError("temporary transport failure")
+        return WorkspaceContext(
+            user_id="authenticated-user",
+            organization_id="organization-selected",
+            workspace_id="workspace-selected",
+            workspace_name="Selected",
+        )
+
+    async def no_delay(_seconds):
+        return None
+
+    async def decide(_owner_id, workspace_id, _session_token, lead, approved):
+        assert workspace_id == "workspace-selected"
+        return {"ok": True, "lead": lead, "approved": approved}
+
+    monkeypatch.setattr(discovery_api.identity_dependencies, "resolve_web_session", resolve_user)
+    monkeypatch.setattr(workspace_access, "resolve_workspace_context", resolve_workspace)
+    monkeypatch.setattr("services.persistence.retry._asleep_with_jitter", no_delay)
+    monkeypatch.setattr(discovery_api, "decide_discovery_lead", decide)
+
+    response = await discovery_api.decide_discovery_lead_endpoint(
+        "_",
+        discovery_api.LeadDecisionRequest(
+            lead={"id": "workspace-lead-1", "company": "Acme"},
+            approved=True,
+        ),
+        _request(),
+    )
+
+    assert response["ok"] is True
+    assert attempts == 2
 
 
 async def test_discovery_lead_decision_persists_the_canonical_workspace_lead(monkeypatch):

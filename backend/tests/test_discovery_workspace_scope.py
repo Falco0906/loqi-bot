@@ -84,6 +84,7 @@ async def test_discovery_read_routes_keep_their_registered_http_contract(monkeyp
         "/api/discoveries",
         "/api/discoveries",
         "/api/discoveries/{discovery_id}",
+        "/api/web/session/{session_token}/leads/decision",
         "/api/jobs/{job_id}",
         "/api/jobs/{job_id}/results",
         "/api/jobs",
@@ -108,6 +109,128 @@ async def test_discovery_read_routes_keep_their_registered_http_contract(monkeyp
 
     assert error.value.status_code == 404
     assert error.value.detail == "Discovery not found"
+
+
+async def test_discovery_lead_decision_uses_selected_workspace_and_service(monkeypatch):
+    """The live Discovery card approval route must retain its durable API contract.
+
+    This failed after the route moved out of ``main.py`` without being
+    re-registered: the browser received a framework 404 before the canonical
+    workspace-lead decision operation could run.
+    """
+    captured: dict[str, object] = {}
+
+    async def resolve_user(_request):
+        return "authenticated-user", "web-session-token"
+
+    async def resolve_workspace(_request, owner_id):
+        assert owner_id == "authenticated-user"
+        return "workspace-selected"
+
+    async def decide(owner_id, workspace_id, session_token, lead, approved):
+        captured.update({
+            "owner_id": owner_id,
+            "workspace_id": workspace_id,
+            "session_token": session_token,
+            "lead": lead,
+            "approved": approved,
+        })
+        return {"ok": True, "lead": lead, "approved": approved}
+
+    monkeypatch.setattr(discovery_api.identity_dependencies, "resolve_web_session", resolve_user)
+    monkeypatch.setattr(discovery_api.workspace_access, "resolve_legacy_workspace_id", resolve_workspace)
+    monkeypatch.setattr(discovery_api, "decide_discovery_lead", decide)
+
+    response = await discovery_api.decide_discovery_lead_endpoint(
+        "_",
+        discovery_api.LeadDecisionRequest(
+            lead={"id": "workspace-lead-1", "company": "Acme"}, approved=True,
+        ),
+        _request(),
+    )
+
+    assert response == {
+        "ok": True,
+        "lead": {"id": "workspace-lead-1", "company": "Acme"},
+        "approved": True,
+    }
+    assert captured == {
+        "owner_id": "authenticated-user",
+        "workspace_id": "workspace-selected",
+        "session_token": "web-session-token",
+        "lead": {"id": "workspace-lead-1", "company": "Acme"},
+        "approved": True,
+    }
+
+
+async def test_discovery_lead_decision_persists_the_canonical_workspace_lead(monkeypatch):
+    """A decision is scoped to the persisted workspace lead, never a client id."""
+    import services.workspace.state as workspace_state
+    import services.world_model.publisher as world_model_publisher
+
+    persisted: list[tuple[str, dict, bool, str]] = []
+    published: list[tuple[str, object, dict, str]] = []
+
+    async def persist(owner_id, lead, approved, *, workspace_id):
+        persisted.append((owner_id, lead, approved, workspace_id))
+        return "workspace-lead-1"
+
+    def publish(session_token, event_type, data, actor="system"):
+        published.append((session_token, event_type, data, actor))
+        return "event-1"
+
+    monkeypatch.setattr(workspace_state, "persist_lead_decision_awaited", persist)
+    monkeypatch.setattr(world_model_publisher, "publish", publish)
+
+    lead = {"id": "workspace-lead-1", "company": "Acme"}
+    response = await discovery_service.decide_discovery_lead(
+        "authenticated-user", "workspace-selected", "web-session-token", lead, True,
+    )
+
+    assert response == {"ok": True, "lead": lead, "approved": True}
+    assert persisted == [(
+        "authenticated-user", lead, True, "workspace-selected",
+    )]
+    assert published[0][0] == "web-session-token"
+    assert published[0][2]["lead_id"] == "workspace-lead-1"
+
+
+async def test_approved_discovery_workspace_lead_attaches_to_campaign(monkeypatch):
+    """The same canonical lead ID flows from a Discovery decision to campaign link persistence."""
+    import services.campaigns.service as campaign_service
+    import services.workspace.state as workspace_state
+
+    campaign = {
+        "id": "campaign-1",
+        "workspace_id": "workspace-selected",
+        "objective": "Reach HR leaders",
+        "leads": [],
+    }
+    persisted: list[tuple[str, str, dict, str]] = []
+
+    monkeypatch.setattr(campaign_service, "load_campaigns", lambda *_args, **_kwargs: [campaign])
+
+    async def persist(owner_id, campaign_id, lead, *, workspace_id):
+        persisted.append((owner_id, campaign_id, lead, workspace_id))
+        return True
+
+    monkeypatch.setattr(workspace_state, "persist_campaign_lead_awaited", persist)
+    monkeypatch.setattr(campaign_service, "publish", lambda *_args, **_kwargs: "event-1")
+
+    lead = {"id": "workspace-lead-1", "company": "Acme", "title": "VP People"}
+    response = await campaign_service.add_campaign_lead(
+        "web-session-token",
+        "authenticated-user",
+        "workspace-selected",
+        "campaign-1",
+        lead,
+    )
+
+    assert response["ok"] is True
+    assert response["added"] is True
+    assert persisted == [(
+        "authenticated-user", "campaign-1", lead, "workspace-selected",
+    )]
 
 
 async def test_create_search_run_keeps_explicit_workspace(monkeypatch):

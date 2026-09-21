@@ -3,6 +3,8 @@
 from types import SimpleNamespace
 
 from services.conversations import persistence
+from services.conversations.conversation_models import Conversation
+from services.conversations.conversation_store import ConversationStore
 
 
 def test_conversation_snapshot_round_trip_uses_durable_table(monkeypatch):
@@ -61,3 +63,40 @@ def test_conversation_snapshot_round_trip_uses_durable_table(monkeypatch):
     assert restored is not None
     assert restored["conversations"][0]["conversation_id"] == "conv-1"
     assert restored["messages"][0]["message_id"] == "msg-1"
+
+
+def test_single_conversation_mutation_persists_only_that_conversation(monkeypatch):
+    """One Inbox mutation must not rewrite unrelated durable snapshots."""
+    captured: list[dict] = []
+
+    monkeypatch.setattr(
+        persistence,
+        "load_state",
+        lambda: (None, persistence.json_file.JsonFileStatus.ABSENT),
+    )
+
+    def save(snapshot):
+        captured.append(snapshot)
+        return {
+            conversation["conversation_id"]: 1
+            for conversation in snapshot["conversations"]
+        }
+
+    monkeypatch.setattr(persistence, "save", save)
+
+    store = ConversationStore()
+    first = Conversation(owner_id="owner-1", metadata={"workspace_id": "workspace-1"})
+    second = Conversation(owner_id="owner-1", metadata={"workspace_id": "workspace-1"})
+    store.create_conversation(first)
+    store.create_conversation(second)
+    captured.clear()
+
+    first.metadata["marker"] = "updated-only-this-conversation"
+    store.update_conversation(first)
+
+    assert len(captured) == 1
+    snapshot = captured[0]
+    assert [row["conversation_id"] for row in snapshot["conversations"]] == [
+        first.conversation_id
+    ]
+    assert second.conversation_id not in snapshot["timeline"]

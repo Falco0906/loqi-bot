@@ -30,6 +30,7 @@ class InboxSyncEngine:
     # and now run concurrently. The follow-up readiness pass scans ALL
     # conversations and stays globally single-flight.
     _PROVIDER_LOCKS_MAX = 256
+    _DEFAULT_READINESS_BATCH_SIZE = 25
 
     def __init__(self, interval_seconds: float | None = None) -> None:
         self.interval_seconds = interval_seconds or float(os.getenv("INBOX_SYNC_INTERVAL_SECONDS", "120"))
@@ -196,10 +197,19 @@ class InboxSyncEngine:
             logger.exception("[inbox-sync] webhook registration failed; polling remains active")
 
 
+def _readiness_batch_size() -> int:
+    """Return a bounded maintenance batch without making bad env values fatal."""
+    raw = os.getenv("FOLLOW_UP_READINESS_BATCH_SIZE", str(InboxSyncEngine._DEFAULT_READINESS_BATCH_SIZE))
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return InboxSyncEngine._DEFAULT_READINESS_BATCH_SIZE
+
+
 def maintain_follow_up_readiness() -> int:
-    """Promote due conversations to FOLLOW_UP_READY without sending anything."""
+    """Promote one bounded batch without monopolizing the runtime process."""
     transitioned = 0
-    for conversation in conversation_store.list_conversations(limit=10000):
+    for conversation in conversation_store.list_conversations(limit=_readiness_batch_size()):
         if conversation.status == ConversationStatus.FOLLOW_UP_SENT:
             continue
         try:

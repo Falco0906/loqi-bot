@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import threading
 from datetime import datetime, timedelta, timezone
 
 os.chdir(os.path.join(os.path.dirname(__file__), ".."))
@@ -49,6 +50,39 @@ def _old_conversation(status=ConversationStatus.SENT):
 
 
 class TestInboxSyncEngine:
+    def test_blocking_readiness_work_does_not_block_the_event_loop(self, monkeypatch):
+        """Periodic maintenance remains off the HTTP event-loop thread."""
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocking_readiness():
+            entered.set()
+            assert release.wait(timeout=1)
+            return 0
+
+        monkeypatch.setattr(
+            "services.communication.inbox_sync_engine.maintain_follow_up_readiness",
+            blocking_readiness,
+        )
+
+        async def run():
+            engine = InboxSyncEngine(interval_seconds=3600)
+            sync_task = asyncio.create_task(engine.sync_once())
+            assert await asyncio.to_thread(entered.wait, 1)
+
+            progressed = asyncio.Event()
+
+            async def unrelated_request_work():
+                await asyncio.sleep(0)
+                progressed.set()
+
+            await unrelated_request_work()
+            assert progressed.is_set()
+            release.set()
+            await sync_task
+
+        asyncio.run(run())
+
     def test_start_stop_without_providers_is_healthy(self):
         engine = InboxSyncEngine(interval_seconds=3600)
         asyncio.run(engine.start())
@@ -125,6 +159,19 @@ class TestInboxSyncEngine:
 
 
 class TestFollowUpReadiness:
+    def test_readiness_scan_is_bounded_by_configuration(self, monkeypatch):
+        seen: dict[str, int] = {}
+
+        def list_conversations(*, limit, **_kwargs):
+            seen["limit"] = limit
+            return []
+
+        monkeypatch.setenv("FOLLOW_UP_READINESS_BATCH_SIZE", "7")
+        monkeypatch.setattr(conversation_store, "list_conversations", list_conversations)
+
+        assert maintain_follow_up_readiness() == 0
+        assert seen == {"limit": 7}
+
     def test_due_outbound_conversation_becomes_ready_without_sending(self):
         conversation = _old_conversation()
         before_messages = conversation_store.get_messages_for_conversation(conversation.conversation_id)

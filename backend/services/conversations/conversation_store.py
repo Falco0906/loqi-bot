@@ -75,18 +75,39 @@ class ConversationStore:
 
     # ── Persistence ──
 
-    def to_snapshot(self) -> dict:
-        """Explicit JSON-safe snapshot built from the public serializers."""
+    def to_snapshot(self, conversation_ids: set[str] | None = None) -> dict:
+        """Build a JSON-safe snapshot for all or selected conversations.
+
+        Production persistence stores one independent snapshot row per
+        conversation.  Mutations therefore pass their changed conversation
+        ID so an Inbox update never rewrites unrelated rows (and never uses
+        their versions as an accidental write precondition).
+        """
+        selected_ids = set(conversation_ids) if conversation_ids is not None else None
+
+        def selected(conversation_id: str) -> bool:
+            return selected_ids is None or conversation_id in selected_ids
+
         return {
             "version": persistence.SNAPSHOT_VERSION,
             "saved_at": datetime.now(timezone.utc).isoformat(),
             "sequence": self._sequence,
-            "conversations": [c.to_dict() for c in self._conversations.values()],
-            "threads": [t.to_dict() for t in self._threads.values()],
-            "messages": [m.to_dict() for m in self._messages.values()],
+            "conversations": [
+                c.to_dict() for c in self._conversations.values()
+                if selected(c.conversation_id)
+            ],
+            "threads": [
+                t.to_dict() for t in self._threads.values()
+                if selected(t.conversation_id)
+            ],
+            "messages": [
+                m.to_dict() for m in self._messages.values()
+                if selected(m.conversation_id)
+            ],
             "timeline": {
                 cid: [e.to_dict() for e in events]
                 for cid, events in self._timeline.items()
+                if selected(cid)
             },
         }
 
@@ -168,11 +189,11 @@ class ConversationStore:
             len(self._conversations), len(self._threads), len(self._messages),
         )
 
-    def _persist(self) -> None:
+    def _persist(self, conversation_ids: set[str] | None = None) -> None:
         try:
             with self._persist_lock:
                 self._sequence += 1
-                versions = persistence.save(self.to_snapshot())
+                versions = persistence.save(self.to_snapshot(conversation_ids))
                 for conversation_id, version in versions.items():
                     conversation = self._conversations.get(conversation_id)
                     if conversation is not None:
@@ -202,7 +223,7 @@ class ConversationStore:
             metadata={"status": conversation.status.value},
         ))
         logger.info("[conversations] Created conversation %s", cid[:12])
-        self._persist()
+        self._persist({cid})
         return conversation
 
     def get_conversation(self, conversation_id: str) -> Optional[Conversation]:
@@ -229,7 +250,7 @@ class ConversationStore:
         else:
             self._conversations[cid] = conversation
             self._add_index(conversation)
-        self._persist()
+        self._persist({cid})
         return conversation
 
     def list_conversations(
@@ -268,14 +289,13 @@ class ConversationStore:
         for mid in msg_ids:
             self._messages.pop(mid, None)
         persistence.delete_conversation(conversation_id)
-        self._persist()
         return True
 
     # ── Thread CRUD ──
 
     def add_thread(self, thread: ConversationThread) -> ConversationThread:
         self._threads[thread.thread_id] = thread
-        self._persist()
+        self._persist({thread.conversation_id})
         return thread
 
     def get_thread(self, thread_id: str) -> Optional[ConversationThread]:
@@ -293,7 +313,7 @@ class ConversationStore:
             convo.message_count += 1
             convo.last_activity_at = message.sent_at or datetime.now(timezone.utc)
             convo.metadata["last_message_preview"] = (message.body_preview or message.body or "")[:160]
-        self._persist()
+        self._persist({message.conversation_id})
         return message
 
     def get_message(self, message_id: str) -> Optional[ConversationMessage]:
@@ -319,7 +339,7 @@ class ConversationStore:
             self._timeline[cid] = []
         self._timeline[cid].append(event)
         self._timeline[cid].sort(key=lambda e: e.timestamp)
-        self._persist()
+        self._persist({cid})
         return event
 
     def get_timeline(self, conversation_id: str) -> list[TimelineEvent]:

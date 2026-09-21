@@ -441,8 +441,13 @@ async def add_campaign_lead(
     from fastapi import HTTPException
     from services.workspace.state import persist_campaign_lead_awaited, persist_campaign_update_awaited
 
+    campaigns = await asyncio.to_thread(
+        load_campaigns,
+        owner_id,
+        workspace_id=workspace_id,
+    )
     target = next(
-        (campaign for campaign in load_campaigns(owner_id, workspace_id=workspace_id)
+        (campaign for campaign in campaigns
          if campaign.get("id") == campaign_id),
         None,
     )

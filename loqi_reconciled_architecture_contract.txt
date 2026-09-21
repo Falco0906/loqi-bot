@@ -146,17 +146,28 @@ backend/
       gmail.py                   Gmail OAuth, provider ownership, sync, and
                                   concrete provider projection.
 
-    inbox/
-      api.py                     Conversation/inbox HTTP adapters.
-      service.py                 Sync/read/reply/follow-up/reasoning use cases.
-      repository.py              Durable workspace-scoped conversation snapshot,
-                                  thread, message, and concurrency access.
+    communication/
+      api.py                     Connected-provider, sync, diagnostic, and
+                                  communication-intelligence HTTP adapters.
+      service.py                 Provider lifecycle, sync coordination, and
+                                  communication-intelligence use cases.
+      provider_*.py              Gmail runtime registration, normalization,
+                                  events, and provider infrastructure.
 
-    jobs/
-      api.py                     Job status/result/event HTTP adapters.
-      service.py                 Durable job create/status/result/cancel and
-                                  recovery/reconciliation use cases.
-      workers.py                 Discovery, strategy, and draft worker dispatch.
+    conversations/
+      api.py                     Conversation and legacy web-session HTTP
+                                  adapters.
+      service.py                 Durable conversation read/reply/follow-up,
+                                  reasoning, and legacy compatibility use cases.
+      conversation_store.py      Durable workspace-scoped conversation, thread,
+                                  message, and concurrency access.
+
+    job_engine/
+      models.py                  Durable job and job-payload models.
+      storage.py                 Durable job persistence and claim/lease access.
+      manager.py                 Job creation/status/recovery operations.
+      runner.py                  Discovery, strategy, and draft workflow dispatch.
+      registry.py                Registered job-type workflows.
 
     knowledge/
       api.py                     Knowledge/source HTTP adapters.
@@ -191,6 +202,19 @@ backend/
       service.py                 Compatibility facade over canonical domains.
       runtime.py                 The one remaining workflow state machine,
                                   locks, events, and recovery behavior.
+
+      Deferred async-native boundary
+                                `_run_async` remains in `workflows/service.py`.
+                                It is load-bearing for the synchronous web
+                                conversation/planner path: ConversationEngine
+                                → PlannerRouter → ExecutionEngine, and for
+                                legacy workflow operations that invoke async
+                                domain integrations. Do not relocate or remove
+                                it as part of workflow consolidation. Its
+                                removal requires the separately tracked
+                                async-native workflow execution migration in
+                                AGENTS.md, which must convert that call chain
+                                end-to-end rather than add another bridge.
 
     billing/
       api.py                     Existing billing HTTP routes.
@@ -230,9 +254,9 @@ Notes:
 
 Allowed explicit cross-domain calls:
 
-* campaigns.service → jobs.service for strategy/draft starts.
+* campaigns.service → job_engine.manager for strategy/draft starts.
 * drafts.service → outbound.service only after canonical Draft persistence.
-* inbox.service → outbound.service for an authorized, confirmed reply/follow-up.
+* conversations.service → outbound.service for an authorized, confirmed reply/follow-up.
 * mission_control.service → bounded read methods only; it never mutates a
   source domain while creating a briefing.
 * copilot.tools → named domain service operations, never route modules/main.py.
@@ -261,11 +285,12 @@ Workspace authorization       workspace.access
 Workspace projections         workspace.state
 Discovery/leads               discovery.service
 Lead providers                discovery.providers
-Durable jobs/recovery         jobs.service + jobs.workers
+Durable jobs/recovery         job_engine.manager + job_engine.runner
 Campaign lifecycle            campaigns.service
 Canonical Draft lifecycle     drafts.service
 Outbound/Gmail                outbound.service + outbound.gmail
-Inbox durability/operations   inbox.repository + inbox.service
+Provider/inbox integration    communication.service + communication.provider_*
+Conversation durability        conversations.conversation_store + conversations.service
 Knowledge                     knowledge.service
 Strategic updates             strategic.service
 Mission Control               mission_control.service + reasoning
@@ -279,8 +304,9 @@ Current concrete mappings to preserve while migrating:
   be renamed/moved to `services.workspace.access` only in the workspace phase,
   after all callers migrate; no alias remains afterward.
 * `services.workspace_state` is the current canonical workspace-read seed.
-* `services.job_engine` is the durable job seed; it becomes jobs.service and
-  jobs.workers by moving behavior, not by creating a second queue.
+* `services.job_engine` is the canonical durable job runtime; its manager,
+  runner, storage, registry, and models remain under that package rather than
+  being renamed to a second `jobs` package.
 * `services.knowledge.service` and `services.knowledge.api` are canonical
   Knowledge seeds.
 * `services.mission_control.api` and `briefing.py` are canonical Mission

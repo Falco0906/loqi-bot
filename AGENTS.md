@@ -86,6 +86,20 @@ Verify that:
 
 If a change makes the system harder to explain, stop and reconsider it.
 
+# Session Capacity
+
+When a task is large, prefer attempting it and letting compilation/tests
+reveal whether it's complete, rather than declining upfront based on a
+size estimate. A syntactically incomplete edit to a file nothing calls yet
+is low-risk (it fails its own compile check, not production). Only decline
+upfront when the very next edit would touch a live call path, delete an
+active implementation, or otherwise leave two competing authorities
+reachable at once — that specific situation is what checkpointing exists
+to prevent, not size alone.
+
+When a task must be checkpointed, checkpoint at the smallest safe unit,
+report exactly where you stopped, and prefer resuming in a new pass over
+leaving ambiguity about what state the code is in.
 ---
 
 # Architectural Principles

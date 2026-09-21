@@ -24,9 +24,7 @@ from services.conversations.conversation_store import conversation_store
 from services.conversations.integration import create_conversation_from_send, handle_reply
 from services.conversations.state_machine import transition as state_transition
 from services.conversations.timeline import TimelineEventType
-
-import main as main_module  # noqa: E402
-
+from services.conversations import api as conversations_api
 
 SESSION = "session-pr9"
 
@@ -60,14 +58,21 @@ class FakeOutboundExecutor:
         self.external_id = external_id
         self.calls = []
 
-    def execute(self, action_type, params):
-        self.calls.append((action_type, params))
+    def send_request(self, request, *, original_recipient_email=""):
+        params = {
+            "provider_id": request.provider_id,
+            "thread_id": request.thread_id,
+            "subject": request.subject,
+            "body": request.body,
+            "recipient": {"email": request.recipient.email},
+        }
+        self.calls.append(("send_reply", params))
         return {
             "ok": True,
             "send_result": {
                 "id": self.external_id,
                 "external_message_id": self.external_id,
-                "thread_id": params.get("thread_id", ""),
+                "thread_id": request.thread_id,
                 "status": "sent",
                 "error": "",
             },
@@ -125,10 +130,10 @@ def _inbound_reply(conversation_id: str, body: str = "We're interested — what 
 
 def _send_reply(conversation_id: str, body: str) -> dict:
     return asyncio.run(
-        main_module.send_conversation_reply_route(
+        conversations_api.send_conversation_reply_route(
             SESSION,
             conversation_id,
-            main_module.SendConversationReplyRequest(body=body),
+            conversations_api.SendConversationReplyRequest(body=body),
             _auth_request(),
         )
     )
@@ -139,7 +144,7 @@ class TestReplyLifecycle:
         _inbound_reply(convo.conversation_id)
 
         fake = FakeOutboundExecutor(external_id=f"sent_{uuid.uuid4().hex[:12]}")
-        monkeypatch.setattr(main_module, "outbound_executor", fake)
+        monkeypatch.setattr("services.conversations.service.outbound_executor", fake)
 
         edited = "Thanks for the interest! Here is our pricing — a quick call would help. Edited by human."
         result = _send_reply(convo.conversation_id, edited)
@@ -168,7 +173,7 @@ class TestReplyLifecycle:
         convo, _ = _make_conversation()
         _inbound_reply(convo.conversation_id)
         fake = FakeOutboundExecutor()
-        monkeypatch.setattr(main_module, "outbound_executor", fake)
+        monkeypatch.setattr("services.conversations.service.outbound_executor", fake)
 
         assert _send_reply(convo.conversation_id, "Sounds good.")["ok"] is True
 
@@ -249,7 +254,7 @@ class TestFollowUpInteraction:
         _register_provider()
         convo, _ = _make_conversation()
         _inbound_reply(convo.conversation_id)
-        monkeypatch.setattr(main_module, "outbound_executor", FakeOutboundExecutor())
+        monkeypatch.setattr("services.conversations.service.outbound_executor", FakeOutboundExecutor())
         _send_reply(convo.conversation_id, "Here is the pricing breakdown.")
 
         assert conversation_store.get_conversation(convo.conversation_id).status == ConversationStatus.SENT
@@ -258,9 +263,9 @@ class TestFollowUpInteraction:
 class TestConversationReplyTestRecipient:
     def _send_with_test_recipient(self, conversation_id: str, body: str, test_recipient: str = "") -> dict:
         return asyncio.run(
-            main_module.send_conversation_reply_route(
+            conversations_api.send_conversation_reply_route(
                 SESSION, conversation_id,
-                main_module.SendConversationReplyRequest(
+                conversations_api.SendConversationReplyRequest(
                     body=body,
                     test_recipient=test_recipient,
                     test_recipient_name="Test Recipient" if test_recipient else "",
@@ -275,7 +280,7 @@ class TestConversationReplyTestRecipient:
         convo, external_thread_id = _make_conversation()
         _inbound_reply(convo.conversation_id)
         fake = FakeOutboundExecutor(external_id=f"sent_{uuid.uuid4().hex[:12]}")
-        monkeypatch.setattr(main_module, "outbound_executor", fake)
+        monkeypatch.setattr("services.conversations.service.outbound_executor", fake)
 
         edited = "EDITED TEST REPLY - Hi Cheryl,"
         result = self._send_with_test_recipient(convo.conversation_id, edited, "tofu9262@gmail.com")
@@ -301,7 +306,7 @@ class TestConversationReplyTestRecipient:
         convo, external_thread_id = _make_conversation()
         _inbound_reply(convo.conversation_id)
         fake = FakeOutboundExecutor()
-        monkeypatch.setattr(main_module, "outbound_executor", fake)
+        monkeypatch.setattr("services.conversations.service.outbound_executor", fake)
 
         self._send_with_test_recipient(convo.conversation_id, "Normal reply.", "")
 
@@ -315,10 +320,22 @@ class TestConversationReplyTestRecipient:
         convo, _ = _make_conversation()
         _inbound_reply(convo.conversation_id)
         fake = FakeOutboundExecutor()
-        monkeypatch.setattr(main_module, "outbound_executor", fake)
+        from services.conversations import service as conversations_service
+        monkeypatch.setattr(conversations_service, "outbound_executor", fake)
 
         with pytest.raises(Exception) as exc_info:
-            self._send_with_test_recipient(convo.conversation_id, "Hi", "tofu9262@gmail.com")
+            asyncio.run(
+                conversations_api.send_conversation_reply_route(
+                    SESSION,
+                    convo.conversation_id,
+                    conversations_api.SendConversationReplyRequest(
+                        body="Hi",
+                        test_recipient="tofu9262@gmail.com",
+                        test_recipient_name="Test Recipient",
+                    ),
+                    _auth_request(),
+                )
+            )
         assert getattr(exc_info.value, "status_code", None) == 403
         assert fake.calls == []
 
@@ -328,7 +345,7 @@ class TestConversationReplyTestRecipient:
         convo, _ = _make_conversation()
         _inbound_reply(convo.conversation_id)
         fake = FakeOutboundExecutor()
-        monkeypatch.setattr(main_module, "outbound_executor", fake)
+        monkeypatch.setattr("services.conversations.service.outbound_executor", fake)
 
         assert self._send_with_test_recipient(convo.conversation_id, "First.", "tofu9262@gmail.com")["ok"] is True
         with pytest.raises(Exception) as exc_info:

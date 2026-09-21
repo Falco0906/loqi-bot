@@ -12,7 +12,9 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-import main as main_module
+import services.events.bus as bus
+from services.outbound import api as outbound_api
+import services.outbound.service as outbound_service
 
 OWNER = "3e-owner-0001"
 OTHER = "3e-owner-9999"
@@ -35,14 +37,14 @@ class _StubOutbound:
 def capture(monkeypatch):
     events: list[tuple[str, dict]] = []
 
-    async def fake_publish(self, user_id, event_type, data=None,
+    async def fake_publish(user_id, event_type, data=None,
                            job_id="", status="", progress=None):
         events.append((user_id, {"type": event_type, **(data or {})}))
         return True
 
     # Patch the singleton INSTANCE (not just the class): guarantees the
-    # helper's `from services.events_bus import event_bus` binding hits it.
-    import services.events_bus as eb
+    # helper's `from services.events.bus import event_bus` binding hits it.
+    import services.events.bus as eb
     monkeypatch.setattr(eb.EventBus, "publish_user_event", staticmethod(fake_publish))
     return events
 
@@ -51,28 +53,25 @@ def _wire_send_route(app, monkeypatch):
     """Minimal app exposing the send route with all externals stubbed."""
     from services.outbound import outbound_registry
     from services.communication import provider_registry as comm_registry
-    from services.outbound.draft_store import draft_store as outbound_draft_store
     from services.outbound.outbound_models import (
         DraftMessage, DraftStatus, ApprovalState, Recipient,
     )
 
-    # clear registries/stores
+    # Clear provider registries.
     comm_registry._instances.clear()
     outbound_registry._instances.clear()
-    if hasattr(outbound_draft_store, "_drafts"):
-        outbound_draft_store._drafts.clear()
 
     async def fake_owner(request=None, session_token=None):
         return OWNER
-    monkeypatch.setattr(main_module, "_workspace_owner", fake_owner)
-    monkeypatch.setattr(main_module, "_session_token_from_request", lambda r: SESSION)
-    monkeypatch.setattr(main_module, "_test_recipient_override_enabled", lambda: False)
-    monkeypatch.setattr(main_module, "_get_outbound_provider_for_draft", lambda d, o: "prov-1")
+    monkeypatch.setattr(outbound_api.identity_dependencies, "authenticated_user_id", fake_owner)
+    monkeypatch.setattr(outbound_api.identity_dependencies, "web_session_token", lambda r: SESSION)
+    monkeypatch.setattr(outbound_service, "test_recipient_override_enabled", lambda: False)
+    monkeypatch.setattr(outbound_service, "resolve_provider_for_draft", lambda d, o: "prov-1")
 
     class StubExecutor:
-        def execute(self, action, params):
+        def send_hydrated_draft(self, draft, *, provider_id, recipient_override=None):
             return {"ok": True, "send_result": {"thread_id": "t", "external_message_id": "m"}}
-    main_module.outbound_executor = StubExecutor()
+    monkeypatch.setattr(outbound_service, "outbound_executor", StubExecutor())
 
     draft = DraftMessage(
         id="draft-ev-1",
@@ -84,14 +83,32 @@ def _wire_send_route(app, monkeypatch):
         status=DraftStatus.APPROVED,
         approval_state=ApprovalState.APPROVED,
     )
-    outbound_draft_store.create(draft)
+    async def fake_canonical_draft(*_args, **_kwargs):
+        return OWNER, "workspace-events", {"id": draft.id, "status": "approved"}, draft
+
+    async def fake_persist(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr(outbound_service, "require_canonical_outbound_draft", fake_canonical_draft)
+    monkeypatch.setattr("services.workspace.state.persist_draft_update_awaited", fake_persist)
+    monkeypatch.setattr(
+        outbound_service,
+        "persist_outbound_projection",
+        lambda *_args, **_kwargs: asyncio.sleep(0, result=True),
+    )
 
     sess = type("S", (), {})
     sess.get = lambda _id: [d for d in []]  # legacy store empty → durable path unused
 
     @app.post("/api/web/session/{session_token}/drafts/{draft_id}/send")
     async def send(session_token: str, draft_id: str, request: Request, payload: dict = None):
-        return await main_module.send_draft(session_token, draft_id, request, payload)
+        from services.outbound.api import SendDraftRequest, send_draft
+        return await send_draft(
+            session_token,
+            draft_id,
+            request,
+            SendDraftRequest(**payload) if payload else None,
+        )
 
     return draft
 
@@ -114,14 +131,15 @@ def test_draft_sent_event_published_and_scoped(monkeypatch, capture):
 
     async def fake_resolve(request=None):
         return OWNER
-    monkeypatch.setattr(main_module, "_resolve_session_context", lambda r: asyncio.sleep(0, result=(OWNER, SESSION)))
+    monkeypatch.setattr(outbound_api.identity_dependencies, "resolve_web_session", lambda r: asyncio.sleep(0, result=(OWNER, SESSION)))
 
     # Drive the real route coroutine directly (TestClient's portal loop
     # interferes with the async event capture).
     request_stub = type("R", (), {"headers": {}})()
 
     async def run_send():
-        return await main_module.send_draft(SESSION, "draft-ev-1", request_stub, None)
+        from services.outbound.api import send_draft
+        return await send_draft(SESSION, "draft-ev-1", request_stub, None)
 
     resp = asyncio.run(run_send())
     assert resp.get("ok") is True, resp
@@ -140,8 +158,8 @@ def test_draft_sent_event_published_and_scoped(monkeypatch, capture):
 def test_event_helper_never_raises(monkeypatch):
     async def boom(*a, **k):
         raise RuntimeError("redis down")
-    monkeypatch.setattr("services.events_bus.EventBus.publish_user_event", boom)
+    monkeypatch.setattr("services.events.bus.EventBus.publish_user_event", boom)
 
     async def run():
-        await main_module._emit_draft_event(OWNER, "draft.approved", draft_id="d1")
+        await bus.publish_draft_event(OWNER, "draft.approved", draft_id="d1")
     asyncio.run(run())  # must not raise

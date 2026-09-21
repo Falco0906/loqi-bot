@@ -155,28 +155,45 @@ def durable(monkeypatch):
             rows[campaign_id] = meta
         return True
 
-    async def load(owner_id, campaign_id):
+    async def load(owner_id, campaign_id, **_kwargs):
         return rows.get(campaign_id)
 
-    import main as m
-    monkeypatch.setattr(m, "_persist_strategy_job_meta", persist)
-    monkeypatch.setattr(m, "_load_strategy_job_meta", load)
+    import services.campaigns.service as m
+    import services.job_engine as jobs
+    monkeypatch.setattr(m, "persist_strategy_job_meta", persist)
+    monkeypatch.setattr(m, "load_strategy_job_meta", load)
+
+    class Storage:
+        def __init__(self): self.jobs = {}
+        def list_active_jobs_by_type(self, type_):
+            return [job for job in self.jobs.values() if job.type == type_ and job.status.value in {"queued", "running"}]
+
+    class Manager:
+        def __init__(self): self._storage = Storage()
+        async def create_job(self, job, **_): self._storage.jobs[job.id] = job; return {"job_id": job.id, "status": "queued"}
+        def get_job(self, job_id):
+            job = self._storage.jobs.get(job_id)
+            return job.to_dict() if job else None
+
+    manager = Manager()
+    monkeypatch.setattr(jobs, "job_manager", manager)
 
     class Ctx:
         pass
     ctx = Ctx()
     ctx.rows = rows
+    ctx.manager = manager
     return ctx
 
 
 def test_enqueue_persists_queued_meta(durable, monkeypatch):
-    import main as m
+    import services.campaigns.service as m
 
     async def noop(*a, **k): return None
-    monkeypatch.setattr(m, "_run_strategy_job", noop)
+    monkeypatch.setattr(m, "run_strategy_job", noop)
 
     async def run():
-        job_id, status = await m._enqueue_strategy_job("sess", OWNER_A, "cmp-q", "obj", {})
+        job_id, status = await m.enqueue_strategy_job("sess", OWNER_A, "cmp-q", "obj", {})
         assert status == "queued"
         assert job_id in {r.get("id") for r in durable.rows.values()} or durable.rows.get("cmp-q"), (
             f"no durable meta persisted; rows={list(durable.rows.values())}"
@@ -186,61 +203,69 @@ def test_enqueue_persists_queued_meta(durable, monkeypatch):
     asyncio.run(run())
 
 
-def test_status_endpoint_reconciles_stale_running(durable, monkeypatch):
-    import main as m
+def test_status_endpoint_reports_durable_running_job(durable, monkeypatch):
+    from services.campaigns import api as campaigns_api
+    import services.campaigns.service as campaign_service
 
     async def owner(request=None, session_token=None):
         return OWNER_A
-    monkeypatch.setattr(m, "_workspace_owner", owner)
+    monkeypatch.setattr(campaigns_api.identity_dependencies, "authenticated_user_id", owner)
+    async def workspace(*_args, **_kwargs):
+        return "workspace-a"
+    monkeypatch.setattr(campaigns_api.workspace_access, "resolve_legacy_workspace_id", workspace)
+    async def load_meta(owner_id, campaign_id, **_kwargs):
+        return durable.rows.get(campaign_id)
+    monkeypatch.setattr(campaign_service, "load_strategy_job_meta", load_meta)
 
-    # Process died mid-generation: no in-memory job; durable says RUNNING.
-    durable.rows["cmp-stale"] = {
-        "id": "job-stale", "status": "running",
-        "started_at": "2026-01-01T00:00:00Z", "finished_at": None, "error": None,
-    }
+    from services.job_engine.models import Job, JobStatus
+    durable.manager._storage.jobs["job-stale"] = Job(id="job-stale", user_id=OWNER_A, type="strategy", workspace_id="workspace-a", campaign_id="cmp-stale", status=JobStatus.RUNNING)
 
     request = type("R", (), {"headers": {}})()
 
     async def run():
-        return await m.strategy_job_status("sess", "cmp-stale", "job-stale", request)
+        from services.campaigns.api import strategy_job_status
+        return await strategy_job_status("sess", "cmp-stale", "job-stale", request)
     result = asyncio.run(run())
-    assert result["status"] == "failed"
-    assert "interrupted" in (result["error"] or "").lower(), (
-        "stale RUNNING must become an actionable failure"
-    )
+    assert result["status"] == "running"
 
 
 def test_completed_durable_record_reports_completed(durable, monkeypatch):
-    import main as m
+    from services.campaigns import api as campaigns_api
 
     async def owner(request=None, session_token=None):
         return OWNER_A
-    monkeypatch.setattr(m, "_workspace_owner", owner)
-    durable.rows["cmp-ok"] = {
-        "id": "job-done", "status": "completed",
-        "started_at": "", "finished_at": "", "error": None,
-    }
+    monkeypatch.setattr(campaigns_api.identity_dependencies, "authenticated_user_id", owner)
+    async def workspace(*_args, **_kwargs):
+        return "workspace-a"
+    monkeypatch.setattr(campaigns_api.workspace_access, "resolve_legacy_workspace_id", workspace)
+    from services.job_engine.models import Job, JobStatus
+    durable.manager._storage.jobs["job-done"] = Job(id="job-done", user_id=OWNER_A, type="strategy", workspace_id="workspace-a", campaign_id="cmp-ok", status=JobStatus.COMPLETED)
     request = type("R", (), {"headers": {}})()
 
     async def run():
-        return await m.strategy_job_status("sess", "cmp-ok", "job-done", request)
+        from services.campaigns.api import strategy_job_status
+        return await strategy_job_status("sess", "cmp-ok", "job-done", request)
     result = asyncio.run(run())
     assert result["status"] == "completed"
 
 
 def test_tenant_isolation_strategy_status(durable, monkeypatch):
     """Owner B polling owner A's campaign/job gets 404 (no existence leak)."""
-    import main as m
+    from services.campaigns import api as campaigns_api
     from fastapi import HTTPException
 
     async def owner_b(request=None, session_token=None):
         return OWNER_B
-    monkeypatch.setattr(m, "_workspace_owner", owner_b)
+    monkeypatch.setattr(campaigns_api.identity_dependencies, "authenticated_user_id", owner_b)
+    async def workspace(*_args, **_kwargs):
+        return "workspace-b"
+    monkeypatch.setattr(campaigns_api.workspace_access, "resolve_legacy_workspace_id", workspace)
 
     request = type("R", (), {"headers": {}})()
 
     async def run():
-        return await m.strategy_job_status("sess", "cmp-private", "job-p", request)
+        from services.campaigns.api import strategy_job_status
+        return await strategy_job_status("sess", "cmp-private", "job-p", request)
 
     try:
         result = asyncio.run(run())
@@ -251,27 +276,17 @@ def test_tenant_isolation_strategy_status(durable, monkeypatch):
 
 
 def test_duplicate_execution_prevented_while_in_flight(durable, monkeypatch):
-    import main as m
+    import services.campaigns.service as m
 
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def stub_run(session_token, job, target, objective):
-        job["status"] = "running"
-        started.set()
-        await release.wait()
-        job["strategy"] = {"audience": "x"}
-        job["status"] = "completed"
-
-    async def noop(*a, **k):
-        return None
-    monkeypatch.setattr(m, "_run_strategy_job", stub_run)
-    monkeypatch.setattr(m, "_persist_strategy_job_meta", noop)
+    async def noop(*a, **k): return None
+    monkeypatch.setattr(m, "persist_strategy_job_meta", noop)
 
     async def run():
-        id1, s1 = await m._enqueue_strategy_job("sess", OWNER_A, "cmp-dup", "obj", {})
-        id2, s2 = await m._enqueue_strategy_job("sess", OWNER_A, "cmp-dup", "obj", {})
+        id1, s1 = await m.enqueue_strategy_job("sess", OWNER_A, "cmp-dup", "obj", {})
+        id2, s2 = await m.enqueue_strategy_job("sess", OWNER_A, "cmp-dup", "obj", {})
         assert id1 == id2 and s1 == s2, "in-flight generation must be reused"
         release.set()
-        await asyncio.sleep(0.05)
     asyncio.run(run())

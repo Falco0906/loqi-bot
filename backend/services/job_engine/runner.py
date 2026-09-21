@@ -1,9 +1,13 @@
 import asyncio
+import os
+import socket
 from datetime import datetime, timezone
 from typing import Optional
+from uuid import uuid4
 
 from services.job_engine.models import Job, JobStatus
 from services.job_engine.storage import JobStorage
+from services.job_engine.registry import get_registry
 
 
 def _log(msg: str) -> None:
@@ -14,8 +18,37 @@ class BackgroundRunner:
     def __init__(self, storage: JobStorage):
         self._storage = storage
         self._tasks: dict[str, asyncio.Task] = {}
+        self._worker_id = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex}"
+        self._lease_seconds = 120
 
-    def start_job(self, job: Job, runner_fn, on_update=None, on_complete=None) -> None:
+    @property
+    def worker_id(self) -> str:
+        return self._worker_id
+
+    @property
+    def lease_seconds(self) -> int:
+        return self._lease_seconds
+
+    def start_job(
+        self,
+        job: Job,
+        runner_fn=None,
+        on_update=None,
+        on_complete=None,
+        *,
+        claimed: bool = False,
+    ) -> None:
+        if job.run_at is not None and not claimed:
+            _log(f"start_job deferred for job={job.id}: delayed jobs require an atomic claim")
+            return
+        if job.type == "search" and not job.discovery_id:
+            _log(f"start_job rejected for job={job.id}: canonical discovery_id is required")
+            return
+        registration = get_registry().get(job.type)
+        runner_fn = runner_fn or (registration.runner_fn if registration else None)
+        if runner_fn is None:
+            _log(f"start_job rejected for job={job.id}: no workflow registered for type={job.type}")
+            return
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -28,11 +61,49 @@ class BackgroundRunner:
         if loop is None:
             _log(f"[kickoff] start_job ABORTED for job={job.id}: no running event loop")
             return
-        task = asyncio.create_task(self._run_wrapper(job, runner_fn, on_update, on_complete))
+        task = asyncio.create_task(
+            self._run_wrapper(job, runner_fn, on_update, on_complete, claimed=claimed)
+        )
         self._tasks[job.id] = task
         _log(f"[kickoff] start_job task created for job={job.id}")
 
-    async def _run_wrapper(self, job: Job, runner_fn, on_update=None, on_complete=None) -> None:
+    async def _renew_claim_lease(self, job_id: str) -> None:
+        """Keep a claimed delayed job reclaimable if this worker dies."""
+        while True:
+            await asyncio.sleep(max(1, self._lease_seconds // 3))
+            renewed = await asyncio.to_thread(
+                self._storage.renew_job_lease,
+                job_id,
+                self._worker_id,
+                lease_seconds=self._lease_seconds,
+            )
+            if not renewed:
+                _log(f"lease renewal stopped for job={job_id}: claim is no longer owned")
+                return
+
+    async def _run_wrapper(
+        self, job: Job, runner_fn, on_update=None, on_complete=None, *, claimed: bool = False,
+    ) -> None:
+        if job.type == "search" and not job.discovery_id:
+            error = "Canonical discovery_id is required"
+            _log(f"_run_wrapper rejected job={job.id}: {error}")
+            await asyncio.to_thread(
+                self._storage.update_job,
+                job.id,
+                status=JobStatus.FAILED,
+                stage="Failed",
+                error_message=error,
+                completed_at=datetime.now(timezone.utc),
+            )
+            if on_update:
+                on_update({
+                    "job_id": job.id,
+                    "status": "failed",
+                    "stage": "Failed",
+                    "progress": 0,
+                    "error": error,
+                })
+            return
         _log(f"[kickoff] _run_wrapper TASK STARTED job={job.id} discovery_id={job.discovery_id}")
         def notify(status: str, stage: str, progress: int, error: str = "") -> None:
             if on_update:
@@ -43,14 +114,16 @@ class BackgroundRunner:
             # (discovery progress/status). Run them off the event loop.
             await asyncio.to_thread(notify, status, stage, progress, error)
 
+        lease_task = asyncio.create_task(self._renew_claim_lease(job.id)) if claimed else None
         try:
-            await asyncio.to_thread(
-                self._storage.update_job,
-                job.id,
-                status=JobStatus.RUNNING,
-                stage="Starting...",
-                progress=0,
-            )
+            if not claimed:
+                await asyncio.to_thread(
+                    self._storage.update_job,
+                    job.id,
+                    status=JobStatus.RUNNING,
+                    stage="Starting...",
+                    progress=0,
+                )
             await notify_off_loop("running", "Starting...", 0)
 
             def on_progress(job_id: str, stage: str, progress: int) -> None:
@@ -99,6 +172,7 @@ class BackgroundRunner:
                     stage="Complete",
                     progress=100,
                     result_ready=True,
+                    result=dict(result.get("result") or {}),
                     completed_at=datetime.now(timezone.utc),
                 )
                 await notify_off_loop("completed", "Complete", 100)
@@ -124,6 +198,12 @@ class BackgroundRunner:
             )
             await notify_off_loop("failed", "Failed", 0, str(e))
         finally:
+            if lease_task:
+                lease_task.cancel()
+                try:
+                    await lease_task
+                except asyncio.CancelledError:
+                    pass
             self._tasks.pop(job.id, None)
 
     def _on_progress(self, job_id: str, stage: str, progress: int) -> None:

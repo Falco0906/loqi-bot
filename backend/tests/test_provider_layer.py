@@ -30,7 +30,7 @@ from services.communication.provider_events import (
 from services.communication.gmail_provider import GmailProvider
 from services.communication.gmail_sync import sync_all, sync_thread, sync_since_cursor
 from services.communication.gmail_webhooks import handle_notification, register_handler, clear_handlers, _handlers
-from services.conversation_models import ConversationMessage
+from services.conversation_intelligence.legacy_models import ConversationMessage
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -664,10 +664,10 @@ class TestIntegration:
         self.store._by_conversation.clear()
         self.store._seen_message_ids.clear()
         self.store._user_providers.clear()
-        from services.conversation_memory import memory_store
-        memory_store._store.clear()
-        from services.conversation_timeline import clear_all
-        clear_all()
+        from services.conversations import intelligence_memory
+        import os
+        if os.path.exists(intelligence_memory.STATE_FILE):
+            os.unlink(intelligence_memory.STATE_FILE)
 
     def _establish_loqi_relationship(self, provider, thread_id: str, ext_id: str = "out_1"):
         """Create a trusted Loqi conversation for the thread, as the outbound
@@ -687,6 +687,8 @@ class TestIntegration:
             campaign_id="campaign-1",
             workflow_id="campaign-1",
             lead_id="lead-1",
+            owner_id=getattr(provider, "_user_id", ""),
+            workspace_id="workspace-test-u1",
         )
 
     def test_full_pipeline(self):
@@ -706,13 +708,15 @@ class TestIntegration:
         cid = _process_provider_message(provider, pmsg)
         assert cid is not None
 
-        from services.conversation_memory import memory_store
-        mem = memory_store.get(cid)
+        from services.conversations.intelligence_memory import load_legacy_memory
+        mem = load_legacy_memory(
+            conversation_id=cid, owner_id="u1", workspace_id="workspace-test-u1",
+        )
         assert mem is not None
-        assert len(mem.buying_signals) > 0
+        assert len(mem.memory.buying_signals) > 0
 
-        from services.conversation_timeline import get_events
-        events = get_events(cid)
+        from services.conversations.compatibility import read_legacy_timeline_events
+        events = read_legacy_timeline_events(cid)
         assert len(events) >= 1
 
     def test_duplicate_message_skipped(self):
@@ -739,7 +743,6 @@ class TestIntegration:
         self._establish_loqi_relationship(provider, "shared_t")
 
         from services.communication.gmail_sync import _process_provider_message
-        from services.conversation_memory import memory_store
 
         pmsg1 = _make_gmail_provider_msg(ext_id="m1", thread_id="shared_t", body="First message")
         pmsg2 = _make_gmail_provider_msg(ext_id="m2", thread_id="shared_t", body="How much does it cost?")
@@ -748,9 +751,12 @@ class TestIntegration:
         cid2 = _process_provider_message(provider, pmsg2)
         assert cid1 == cid2  # same thread → same conversation
 
-        mem = memory_store.get(cid1)
+        from services.conversations.intelligence_memory import load_legacy_memory
+        mem = load_legacy_memory(
+            conversation_id=cid1, owner_id="u1", workspace_id="workspace-test-u1",
+        )
         assert mem is not None
-        assert len(mem.buying_signals) > 0
+        assert len(mem.memory.buying_signals) > 0
 
     def test_duplicate_thread_detection(self):
         """Same thread_id maps to the same conversation_id every time."""

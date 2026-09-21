@@ -20,7 +20,7 @@ All AI operations have deterministic fallback to ensure the system NEVER crashes
 
 ### AI Mode
 
-**File:** `backend/services/icp_extractor.py`
+**File:** `backend/services/discovery/icp.py`
 
 Uses OpenAI `gpt-4o-mini` via `/v1/responses` endpoint.
 
@@ -61,7 +61,7 @@ When OpenAI unavailable (quota, missing key, errors), uses deterministic rules:
 
 ### AI Mode
 
-**File:** `backend/services/search_expansion.py`
+**File:** `backend/services/discovery/search_expansion.py`
 
 Uses OpenAI to expand ICP into search queries.
 

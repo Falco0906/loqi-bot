@@ -359,7 +359,11 @@ class TestMessageSeenAfterSuccess:
             urgency=1,
             decision_confidence=0.5,
         )
-        monkeypatch.setattr(gmail_sync, "analyze_message", lambda **kwargs: (fake_intel, None))
+        monkeypatch.setattr(
+            gmail_sync,
+            "project_legacy_reply_intelligence",
+            lambda **_kwargs: (fake_intel, None),
+        )
         if fail_integration:
             import services.conversations.integration as integration_mod
             original = integration_mod.handle_reply
@@ -482,7 +486,7 @@ class TestBoundedRetry:
         assert secret not in caplog.text
 
     def test_sync_connected_account_no_false_success_on_permanent_failure(self, monkeypatch):
-        from services.supabase import sync_connected_account
+        from services.platform.supabase import sync_connected_account
 
         class FakeRepo:
             def __init__(self):
@@ -502,7 +506,7 @@ class TestBoundedRetry:
         assert ok is False
 
     def test_sync_connected_account_transient_then_success(self, monkeypatch):
-        from services.supabase import sync_connected_account
+        from services.platform.supabase import sync_connected_account
         calls = {"n": 0}
 
         class FakeRepo:
@@ -570,46 +574,6 @@ class TestOutboundPersistenceSafety:
         # so a duplicate reply request would be rejected with 409.
         assert convo.status in guard_set
         assert conversation_store.get_conversation(convo.conversation_id).status in guard_set
-
-    def test_no_auto_resend_on_persistence_failure(self, monkeypatch):
-        """A post-send persistence failure must never trigger a resend.
-
-        The only resend path is the outbound scheduler, and it dispatches
-        exclusively SCHEDULED drafts — a draft already marked SENT is never
-        re-sent regardless of any conversation-persistence failure.
-        """
-        from services.outbound.draft_store import draft_store
-        from services.outbound.outbound_models import (
-            DraftMessage,
-            DraftStatus,
-            Recipient,
-        )
-        from services.outbound.outbound_scheduler import outbound_scheduler
-        draft = DraftMessage(
-            id="d-sent-1",
-            provider_id="p108",
-            subject="never resend",
-            body="body",
-            recipient=Recipient(email="c@d.com", name="C"),
-            sender=Recipient(email="a@b.com", name="A"),
-            status=DraftStatus.SENT,
-            metadata={"send_at": "2000-01-01T00:00:00+00:00"},
-        )
-        draft_store.create(draft)
-        sent = [d for d in draft_store.list_all().drafts if d.status == DraftStatus.SENT]
-        assert len(sent) == 1
-        # The scheduler tick only selects SCHEDULED drafts.
-        tick = outbound_scheduler._tick
-        executed = []
-        monkeypatch.setattr(
-            outbound_scheduler, "_execute_scheduled",
-            lambda did, pid: executed.append(did),
-        )
-        tick()
-        assert executed == []
-        # Clean up the global draft store so no state leaks into other tests.
-        draft_store.delete("d-sent-1")
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # 6. Ownership boundaries
@@ -723,7 +687,7 @@ class TestRehydration:
         asyncio.run(_run())
 
     def test_lifecycle_ready_only_after_startup_completes(self):
-        from services import lifecycle
+        from services.platform import lifecycle
         lifecycle.set_starting()
         assert lifecycle.is_ready() is False
         lifecycle.set_ready()

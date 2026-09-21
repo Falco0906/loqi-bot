@@ -7,7 +7,7 @@ Full restaurant-style campaign loop against the real durable stack:
   generate drafts (playbook grounding + evidence tracing) →
   re-kickoff (no duplicates) → approve → state transitions
 
-Every OpenAI interaction is stubbed at ``services.ai._send_openai_request``
+Every OpenAI interaction is stubbed at ``services.intelligence.ai._send_openai_request``
 so the assertions target the *pipeline*, not the model.
 """
 
@@ -20,10 +20,14 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
+
+
+pytestmark = pytest.mark.requires_db
 from fastapi.testclient import TestClient
 
-import services.ai as ai_module
+import services.intelligence.ai as ai_module
 import main as main_module
+from services.campaigns import api as campaign_api
 from main import app
 from services.job_engine.storage import JobStorage
 
@@ -123,21 +127,8 @@ def client():
 
 
 @pytest.fixture()
-def authenticated_session(client, monkeypatch):
-    from services.supabase import get_supabase_client
-
-    user_id = str(uuid4())
-    db = get_supabase_client()
-    assert db is not None, "supabase client required"
-    db.table("identity_users").insert({
-        "id": user_id,
-        "display_name": "PR30 E2E Test",
-    }).execute()
-    db.table("users").insert({
-        "id": user_id,
-        "telegram_id": f"web:test-{user_id}",
-        "username": "PR30 E2E Test",
-    }).execute()
+def authenticated_session(client, monkeypatch, shared_test_identity):
+    user_id = shared_test_identity
 
     async def fake_auth(request):
         return user_id
@@ -204,19 +195,21 @@ async def _generate_strategy_direct(main_module, token, campaign_id) -> dict:
     async def _owner(request, session_token):
         return user_id
 
-    original = main_module._workspace_owner
-    main_module._workspace_owner = _owner
+    original = campaign_api.identity_dependencies.authenticated_user_id
+    campaign_api.identity_dependencies.authenticated_user_id = _owner
     try:
-        started = await main_module.generate_campaign_strategy(
+        from services.campaigns.api import generate_campaign_strategy
+        started = await generate_campaign_strategy(
             token, campaign_id, MagicMock())
     finally:
-        main_module._workspace_owner = original
+        campaign_api.identity_dependencies.authenticated_user_id = original
     assert started.get("ok") is True and started.get("job_id"), started
     job_id = started["job_id"]
 
     deadline = time.monotonic() + 90
     while time.monotonic() < deadline:
-        job = main_module.STRATEGY_JOBS.get(job_id)
+        from services.job_engine import job_manager
+        job = job_manager.get_job(job_id)
         if job and job.get("status") in ("queued", "running"):
             await asyncio.sleep(0.5)
             continue
@@ -224,9 +217,10 @@ async def _generate_strategy_direct(main_module, token, campaign_id) -> dict:
     else:
         pytest.fail("strategy job did not finish before timeout")
 
-    job = main_module.STRATEGY_JOBS.get(job_id)
+    from services.job_engine import job_manager
+    job = job_manager.get_job(job_id)
     assert job is not None and job["status"] == "completed", job
-    return job["strategy"]
+    return (job.get("result") or {}).get("strategy")
 
 
 async def _start_draft_batch(main_module, token, campaign_id, user_id):
@@ -242,13 +236,14 @@ async def _start_draft_batch(main_module, token, campaign_id, user_id):
     async def _owner(request, session_token):
         return user_id
 
-    original = main_module._workspace_owner
-    main_module._workspace_owner = _owner
+    original = campaign_api.identity_dependencies.authenticated_user_id
+    campaign_api.identity_dependencies.authenticated_user_id = _owner
     try:
-        return await main_module.generate_campaign_drafts(
+        from services.campaigns.api import generate_campaign_drafts
+        return await generate_campaign_drafts(
             token, campaign_id, MagicMock())
     finally:
-        main_module._workspace_owner = original
+        campaign_api.identity_dependencies.authenticated_user_id = original
 
 
 async def _await_batch_done(main_module, token, campaign_id, timeout=150):
@@ -265,8 +260,9 @@ async def _await_batch_done(main_module, token, campaign_id, timeout=150):
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        job = main_module.batch_jobs.get(batch_id)
-        if job and job.get("status") == "processing":
+        from services.job_engine import job_manager
+        job = await asyncio.to_thread(job_manager.get_job, batch_id)
+        if job and job.get("status") in ("queued", "running"):
             await asyncio.sleep(1)
             continue
         break
@@ -276,27 +272,15 @@ async def _await_batch_done(main_module, token, campaign_id, timeout=150):
     async def _owner(request, session_token):
         return user_id
 
-    original = main_module._workspace_owner
-    main_module._workspace_owner = _owner
+    original = campaign_api.identity_dependencies.authenticated_user_id
+    campaign_api.identity_dependencies.authenticated_user_id = _owner
     try:
-        status = await main_module.campaign_generation_status(
+        from services.campaigns.api import campaign_generation_status
+        status = await campaign_generation_status(
             token, campaign_id, MagicMock())
     finally:
-        main_module._workspace_owner = original
+        campaign_api.identity_dependencies.authenticated_user_id = original
     return batch_id, status
-
-
-@pytest.fixture(autouse=True)
-def _clean_batch_stores():
-    main_module.batch_jobs.clear()
-    main_module.STRATEGY_JOBS.clear()
-    main_module._draft_batch_tasks.clear()
-    main_module._strategy_job_tasks.clear()
-    yield
-    main_module.batch_jobs.clear()
-    main_module.STRATEGY_JOBS.clear()
-    main_module._draft_batch_tasks.clear()
-    main_module._strategy_job_tasks.clear()
 
 
 # ─────────────────────────────────────────────────────────────────────────

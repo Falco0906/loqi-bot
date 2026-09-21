@@ -11,13 +11,13 @@ sys.path.insert(0, ".")
 
 import pytest
 
-import services.icp_extractor as icp_extractor
-import services.lead_provider as lead_provider
-from services.commercial_qualifier import score_lead
-from services.discovery_context import retrieve_discovery_context
+import services.discovery.icp as icp
+import services.discovery.providers as providers
+from services.discovery.qualification import score_lead
+from services.discovery.context import retrieve_discovery_context
 from services.persistence.launch.models import WorkspaceLead
 from services.persistence.launch.repositories import WorkspaceLeadRepository
-from services.workspace_state import _qualification_metadata
+from services.workspace.state import _qualification_metadata
 
 
 def _knowledge_context():
@@ -63,7 +63,7 @@ def context(monkeypatch):
                 "evidence": [{"signal_id": "signal-1"}],
             }]
 
-    monkeypatch.setattr("services.discovery_context.retrieve_knowledge_context", fake_knowledge)
+    monkeypatch.setattr("services.discovery.context.retrieve_knowledge_context", fake_knowledge)
     monkeypatch.setattr("services.strategic.service.StrategicIntelligenceService", Strategic)
 
 
@@ -75,7 +75,7 @@ class TestDiscoveryContext:
             captured.append((owner_id, kwargs))
             return _knowledge_context()
 
-        monkeypatch.setattr("services.discovery_context.retrieve_knowledge_context", fake_knowledge)
+        monkeypatch.setattr("services.discovery.context.retrieve_knowledge_context", fake_knowledge)
         result = asyncio.run(retrieve_discovery_context("owner-a", "crm advisory"))
 
         assert captured[0][1]["categories"] == ["company", "icp", "messaging"]
@@ -99,7 +99,7 @@ class TestDiscoveryContext:
             async def list_updates(self, owner_id):
                 return []
 
-        monkeypatch.setattr("services.discovery_context.retrieve_knowledge_context", fake_knowledge)
+        monkeypatch.setattr("services.discovery.context.retrieve_knowledge_context", fake_knowledge)
         monkeypatch.setattr("services.strategic.service.StrategicIntelligenceService", EmptyStrategic)
         a = asyncio.run(retrieve_discovery_context("owner-a"))
         b = asyncio.run(retrieve_discovery_context("owner-b"))
@@ -116,7 +116,7 @@ class TestDiscoveryContext:
             async def list_updates(self, owner_id):
                 raise RuntimeError("unavailable")
 
-        monkeypatch.setattr("services.discovery_context.retrieve_knowledge_context", fail)
+        monkeypatch.setattr("services.discovery.context.retrieve_knowledge_context", fail)
         monkeypatch.setattr("services.strategic.service.StrategicIntelligenceService", EmptyStrategic)
         result = asyncio.run(retrieve_discovery_context("owner-a", "query"))
 
@@ -127,8 +127,8 @@ class TestDiscoveryContext:
 
 class TestDiscoveryPlanAndQualification:
     def test_deterministic_icp_uses_knowledge_without_replacing_user_input(self, monkeypatch, context):
-        monkeypatch.setattr(icp_extractor, "OPENAI_API_KEY", "")
-        from services.discovery_plan import derive_discovery_plan
+        monkeypatch.setattr(icp, "OPENAI_API_KEY", "")
+        from services.discovery.plan import derive_discovery_plan
 
         plan = derive_discovery_plan(
             "crm for startups",
@@ -190,13 +190,13 @@ class TestDiscoveryPlanAndQualification:
                     "company": "Advisory Firm",
                 }]}
 
-        monkeypatch.setattr(lead_provider, "get_provider", lambda: Provider())
-        monkeypatch.setattr(icp_extractor, "OPENAI_API_KEY", "")
-        monkeypatch.setattr("services.search_expansion.expand_search_intent", lambda service, target, icp: {"keywords": ["Managing Partner advisory firms"]})
-        monkeypatch.setattr(lead_provider, "_filter_and_rank_leads", lambda leads, icp, context=None: (leads, {"total_found": 1, "excluded_count": 0, "scored_count": 1, "average_score": 1, "excluded_reasons": {}, "drift_detected": 0}))
-        monkeypatch.setattr(lead_provider, "_filter_and_rank_leads_soft", lead_provider._filter_and_rank_leads)
+        monkeypatch.setattr(providers, "get_provider", lambda: Provider())
+        monkeypatch.setattr(icp, "OPENAI_API_KEY", "")
+        monkeypatch.setattr("services.discovery.search_expansion.expand_search_intent", lambda service, target, icp: {"keywords": ["Managing Partner advisory firms"]})
+        monkeypatch.setattr(providers, "_filter_and_rank_leads", lambda leads, icp, context=None: (leads, {"total_found": 1, "excluded_count": 0, "scored_count": 1, "average_score": 1, "excluded_reasons": {}, "drift_detected": 0}))
+        monkeypatch.setattr(providers, "_filter_and_rank_leads_soft", providers._filter_and_rank_leads)
         discovery_context = asyncio.run(retrieve_discovery_context("owner-a"))
-        result = lead_provider.search_with_expansion(
+        result = providers.search_with_expansion(
             "crm", "startups", context=discovery_context,
         )
 

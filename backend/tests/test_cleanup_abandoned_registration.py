@@ -169,7 +169,7 @@ class TestApply:
                 def table(self, name):
                     return _Fake(name)
             return C()
-        monkeypatch.setattr("services.supabase.get_supabase_client", fake_client)
+        monkeypatch.setattr("services.platform.supabase.get_supabase_client", fake_client)
 
         summary = apply_abandoned_plan(plan, dry_run=False)
         assert summary["applied_updates"] >= 3
@@ -183,7 +183,7 @@ class TestApply:
 
         def _boom(*a, **k):
             raise AssertionError("dry-run must not touch Supabase")
-        monkeypatch.setattr("services.supabase.get_supabase_client", _boom)
+        monkeypatch.setattr("services.platform.supabase.get_supabase_client", _boom)
 
         summary = apply_abandoned_plan(plan, dry_run=True)
         assert "applied_updates" not in summary
@@ -195,7 +195,7 @@ class TestApply:
 
         def _boom(*a, **k):
             raise AssertionError("refused plan must not touch Supabase")
-        monkeypatch.setattr("services.supabase.get_supabase_client", _boom)
+        monkeypatch.setattr("services.platform.supabase.get_supabase_client", _boom)
         summary = apply_abandoned_plan(plan, dry_run=False)
         assert "applied_updates" not in summary
         assert plan.delete == {}

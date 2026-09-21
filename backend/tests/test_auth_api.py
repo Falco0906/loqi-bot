@@ -56,6 +56,10 @@ def _reset():
 
 @pytest.fixture
 def client():
+    # HTTP characterization exercises the auth API, not the configured
+    # production email transport. Keep this test client on the same
+    # deterministic in-memory service used by the lifecycle tests.
+    _fresh_service()
     from main import app
     return TestClient(app)
 
@@ -116,8 +120,8 @@ class TestRegistrationLifecycle:
     ):
         """Email signup must bridge its identity before workspace/session use."""
         from services.persistence.config import RepositoryProvider
-        from services import supabase
-        from services import workspace_state
+        from services.platform import supabase
+        from services.workspace import state as workspace_state
 
         svc = _fresh_service()
         bridge_calls: list[tuple[str, str]] = []
@@ -160,7 +164,7 @@ class TestRegistrationLifecycle:
         self, monkeypatch,
     ):
         from services.persistence.config import RepositoryProvider
-        from services import supabase
+        from services.platform import supabase
 
         svc = _fresh_service()
         deleted_ids: list[str] = []

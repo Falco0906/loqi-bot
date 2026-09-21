@@ -76,21 +76,21 @@ class TestHealthEndpoint:
 class TestReadinessEndpoint:
 
     def test_ready_returns_503_before_startup(self, client):
-        from services import lifecycle
+        from services.platform import lifecycle
         lifecycle.set_starting()
         resp = client.get("/ready")
         assert resp.status_code == 503
         assert resp.json() == {"status": "starting"}
 
     def test_ready_returns_200_after_startup(self, client):
-        from services import lifecycle
+        from services.platform import lifecycle
         lifecycle.set_ready()
         resp = client.get("/ready")
         assert resp.status_code == 200
         assert resp.json() == {"status": "ready"}
 
     def test_ready_returns_503_during_shutdown(self, client):
-        from services import lifecycle
+        from services.platform import lifecycle
         lifecycle.set_shutting_down()
         resp = client.get("/ready")
         assert resp.status_code == 503
@@ -98,7 +98,7 @@ class TestReadinessEndpoint:
 
     def test_ready_does_not_depend_on_optional_integrations(self, client, monkeypatch):
         # Readiness is lifecycle-driven: no Supabase/DB probe, no external call.
-        from services import lifecycle
+        from services.platform import lifecycle
         lifecycle.set_ready()
         calls = []
         import services.persistence.database as db_module

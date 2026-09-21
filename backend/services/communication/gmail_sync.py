@@ -23,8 +23,12 @@ from services.communication.provider_normalizer import normalize_to_conversation
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from services.communication.gmail_provider import GmailProvider
-from services.reply_intelligence import analyze_message
-from services.conversation_memory import memory_store as conversation_memory
+from services.conversation_intelligence.legacy_reply_projection import project_legacy_reply_intelligence
+from services.conversations.intelligence_memory import (
+    canonical_memory_scope,
+    load_legacy_memory,
+    persist_legacy_memory,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -229,7 +233,16 @@ def _process_provider_message(
         return None
 
     # ── ANALYZE MESSAGE (Conversation Intelligence) ──
-    existing_memory = conversation_memory.get(conversation_id)
+    memory_scope = canonical_memory_scope(conversation_id)
+    existing_record = None
+    if memory_scope is not None:
+        owner_id, workspace_id = memory_scope
+        existing_record = load_legacy_memory(
+            conversation_id=conversation_id,
+            owner_id=owner_id,
+            workspace_id=workspace_id,
+        )
+    existing_memory = existing_record.memory if existing_record else None
     logger.info(
         "[Sync]   ANALYZE | existing_memory=%s conversation_id=%s",
         "found" if existing_memory else "none",
@@ -237,11 +250,20 @@ def _process_provider_message(
     )
 
     try:
-        intelligence, memory = analyze_message(
+        intelligence, memory = project_legacy_reply_intelligence(
             message=conversation_msg,
             conversation_id=conversation_id,
             existing_memory=existing_memory,
         )
+        if memory_scope is not None:
+            persist_legacy_memory(
+                conversation_id=conversation_id,
+                owner_id=owner_id,
+                workspace_id=workspace_id,
+                memory=memory,
+                source_message_id=external_id,
+                expected_version=existing_record.version if existing_record else 0,
+            )
         logger.info(
             "[Sync]   ANALYZE | OK | intents=%d signals=%d stage=%s urgency=%s confidence=%d",
             len(intelligence.intents),

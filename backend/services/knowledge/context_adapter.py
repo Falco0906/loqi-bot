@@ -52,6 +52,7 @@ async def retrieve_knowledge_context(
     query: str = "",
     categories: list[str] | None = None,
     limit: int = DEFAULT_KNOWLEDGE_LIMIT,
+    workspace_id: str = "",
 ) -> KnowledgePromptContext:
     """Retrieve Knowledge through the canonical owner-scoped service.
 
@@ -66,6 +67,7 @@ async def retrieve_knowledge_context(
             query=query.strip(),
             categories=categories,
             limit=limit,
+            workspace_id=workspace_id,
         )
     except Exception:
         return KnowledgePromptContext(query=query, categories=tuple(categories or ()))

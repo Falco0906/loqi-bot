@@ -4,30 +4,24 @@ Covers intent detection, buying signals, memory, reply intelligence,
 follow-up reasoner, summary, and timeline.
 """
 
-from services.conversation_models import (
+from services.conversation_intelligence.legacy_models import (
     ConversationMessage, IntentCategory, SignalStrength,
     ConversationStage, FollowupAction, TimelineEventType,
 )
-from services.intent_detector import detect_intents
-from services.buying_signal import detect_signals
-from services.conversation_classifier import classify_stage
-from services.conversation_memory import memory_store, create_or_update_memory, MemoryStore
-from services.followup_reasoner import recommend_followup
-from services.reply_summary import generate_summary
-from services.conversation_timeline import create_event, get_events, clear_events, clear_all
-from services.reply_intelligence import analyze_message
+from services.conversation_intelligence.intent_extractor import detect_intents
+from services.conversation_intelligence.buying_signal_detector import detect_signals
+from services.conversation_intelligence.stage_classifier import classify_stage
+from services.conversations.intelligence_memory import build_legacy_memory
+from services.conversation_intelligence.followup_reasoner import recommend_followup
+from services.communication.reply_summary import generate_summary
+from services.conversations.compatibility import read_legacy_timeline_events
+from services.conversation_intelligence.legacy_reply_projection import project_legacy_reply_intelligence
 
 
 # ── Fixtures ──
 
 def _msg(text: str, sender: str = "lead") -> ConversationMessage:
     return ConversationMessage(text=text, sender=sender)
-
-
-def _cleanup():
-    memory_store._store.clear()
-    clear_all()
-
 
 # ═══════════════════════════════════════════════════════════════════
 # 1. Intent Detection
@@ -149,14 +143,11 @@ class TestBuyingSignals:
 # ═══════════════════════════════════════════════════════════════════
 
 class TestConversationMemory:
-    def setup_method(self):
-        _cleanup()
-
     def test_memory_creation(self):
         msg = _msg("How much does this cost?")
         intents = detect_intents(msg.text)
         signals = detect_signals(msg.text)
-        mem = create_or_update_memory(
+        mem = build_legacy_memory(
             conversation_id="test-1",
             message=msg,
             intents=intents,
@@ -171,7 +162,7 @@ class TestConversationMemory:
         msg1 = _msg("How much does this cost?")
         intents1 = detect_intents(msg1.text)
         sigs1 = detect_signals(msg1.text)
-        mem = create_or_update_memory(
+        mem = build_legacy_memory(
             conversation_id="test-2", message=msg1,
             intents=intents1, buying_signals=sigs1,
             stage=ConversationStage.ENGAGED, stage_reasoning="Test",
@@ -181,7 +172,7 @@ class TestConversationMemory:
         msg2 = _msg("Can you tell me about implementation?")
         intents2 = detect_intents(msg2.text)
         sigs2 = detect_signals(msg2.text)
-        mem2 = create_or_update_memory(
+        mem2 = build_legacy_memory(
             conversation_id="test-2", message=msg2,
             intents=intents2, buying_signals=sigs2,
             stage=ConversationStage.EVALUATION, stage_reasoning="Test 2",
@@ -193,31 +184,29 @@ class TestConversationMemory:
         msg1 = _msg("We are struggling with scaling our infrastructure")
         intents = detect_intents(msg1.text)
         sigs = detect_signals(msg1.text)
-        mem = create_or_update_memory(
+        mem = build_legacy_memory(
             conversation_id="test-3", message=msg1,
             intents=intents, buying_signals=sigs,
             stage=ConversationStage.DISCOVERY, stage_reasoning="Test",
         )
         assert len(mem.pain_points) > 0
 
-    def test_memory_store(self):
+    def test_memory_projection(self):
         msg = _msg("Hello")
         intents = detect_intents(msg.text)
         sigs = detect_signals(msg.text)
-        mem = create_or_update_memory(
+        mem = build_legacy_memory(
             conversation_id="store-1", message=msg,
             intents=intents, buying_signals=sigs,
             stage=ConversationStage.ENGAGED, stage_reasoning="Test",
         )
-        stored = memory_store.get("store-1")
-        assert stored is not None
-        assert stored.conversation_id == "store-1"
+        assert mem.conversation_id == "store-1"
 
     def test_key_risks_populated(self):
         msg = _msg("This is too expensive and not in our budget")
         intents = detect_intents(msg.text)
         sigs = detect_signals(msg.text)
-        mem = create_or_update_memory(
+        mem = build_legacy_memory(
             conversation_id="test-risks", message=msg,
             intents=intents, buying_signals=sigs,
             stage=ConversationStage.EVALUATION, stage_reasoning="Test",
@@ -231,12 +220,9 @@ class TestConversationMemory:
 # ═══════════════════════════════════════════════════════════════════
 
 class TestReplyIntelligence:
-    def setup_method(self):
-        _cleanup()
-
     def test_aggregation(self):
         msg = _msg("How much does this cost? I'd like a demo too")
-        intel, mem = analyze_message(msg, conversation_id="ri-1")
+        intel, mem = project_legacy_reply_intelligence(msg, conversation_id="ri-1")
         assert intel.conversation_id == "ri-1"
         assert len(intel.intents) >= 2
         assert len(intel.buying_signals) >= 1
@@ -246,29 +232,29 @@ class TestReplyIntelligence:
 
     def test_missing_fields(self):
         msg = _msg("")
-        intel, mem = analyze_message(msg, conversation_id="ri-empty")
+        intel, mem = project_legacy_reply_intelligence(msg, conversation_id="ri-empty")
         assert intel.intents == []
         assert intel.buying_signals == []
         assert intel.executive_summary
 
     def test_empty_conversation(self):
         msg = _msg("Hi there")
-        intel, mem = analyze_message(msg, conversation_id="ri-hi")
+        intel, mem = project_legacy_reply_intelligence(msg, conversation_id="ri-hi")
         assert intel is not None
         assert mem is not None
 
     def test_multiple_messages(self):
         msg1 = _msg("Tell me more about your product")
-        intel1, mem1 = analyze_message(msg1, conversation_id="ri-multi")
+        intel1, mem1 = project_legacy_reply_intelligence(msg1, conversation_id="ri-multi")
 
         msg2 = _msg("How does pricing work?")
-        intel2, mem2 = analyze_message(msg2, conversation_id="ri-multi", existing_memory=mem1)
+        intel2, mem2 = project_legacy_reply_intelligence(msg2, conversation_id="ri-multi", existing_memory=mem1)
         assert len(intel2.intents) >= 1
         assert intel2.conversation_stage
 
     def test_urgency_computed(self):
         msg = _msg("Can we schedule a meeting for next week?")
-        intel, mem = analyze_message(msg, conversation_id="ri-urgent")
+        intel, mem = project_legacy_reply_intelligence(msg, conversation_id="ri-urgent")
         assert intel.urgency == "high"
 
 
@@ -345,45 +331,7 @@ class TestFollowupReasoner:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 6. Timeline
-# ═══════════════════════════════════════════════════════════════════
-
-class TestTimeline:
-    def setup_method(self):
-        clear_all()
-
-    def test_correct_event_creation(self):
-        ev = create_event("conv-1", TimelineEventType.LEAD_REPLIED, "Lead replied")
-        assert ev.event_type == TimelineEventType.LEAD_REPLIED
-        assert ev.message == "Lead replied"
-        assert ev.timestamp
-
-    def test_correct_ordering(self):
-        from datetime import datetime, timezone, timedelta
-        import time
-        e1 = create_event("conv-2", TimelineEventType.LEAD_REPLIED, "First")
-        time.sleep(0.01)
-        e2 = create_event("conv-2", TimelineEventType.PRICING_REQUESTED, "Second")
-        events = get_events("conv-2")
-        assert len(events) == 2
-        assert events[0].message == "First"
-        assert events[1].message == "Second"
-
-    def test_multiple_conversations(self):
-        create_event("conv-a", TimelineEventType.LEAD_REPLIED, "A1")
-        create_event("conv-b", TimelineEventType.PRICING_REQUESTED, "B1")
-        create_event("conv-a", TimelineEventType.DEMO_REQUESTED, "A2")
-        assert len(get_events("conv-a")) == 2
-        assert len(get_events("conv-b")) == 1
-
-    def test_clear_events(self):
-        create_event("conv-c", TimelineEventType.LEAD_REPLIED, "Test")
-        clear_events("conv-c")
-        assert get_events("conv-c") == []
-
-
-# ═══════════════════════════════════════════════════════════════════
-# 7. Classification / Stage
+# 6. Classification / Stage
 # ═══════════════════════════════════════════════════════════════════
 
 class TestStageClassification:
@@ -417,7 +365,7 @@ class TestStageClassification:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 8. Summary
+# 7. Summary
 # ═══════════════════════════════════════════════════════════════════
 
 class TestSummary:
@@ -446,51 +394,41 @@ class TestSummary:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 9. Integration: End-to-end flow
+# 8. Integration: End-to-end flow
 # ═══════════════════════════════════════════════════════════════════
 
 class TestEndToEnd:
-    def setup_method(self):
-        _cleanup()
-
     def test_full_flow(self):
         cid = "e2e-1"
 
         msg1 = _msg("Your product looks interesting")
-        intel1, mem1 = analyze_message(msg1, conversation_id=cid)
+        intel1, mem1 = project_legacy_reply_intelligence(msg1, conversation_id=cid)
         assert intel1.decision_confidence >= 0
         assert intel1.urgency
         assert intel1.suggested_workflow_objective
 
         msg2 = _msg("How much does it cost? I need to understand pricing")
-        intel2, mem2 = analyze_message(msg2, conversation_id=cid, existing_memory=mem1)
+        intel2, mem2 = project_legacy_reply_intelligence(msg2, conversation_id=cid, existing_memory=mem1)
         assert len(intel2.intents) >= 1
         assert len(mem2.buying_signals) > 0
 
         msg3 = _msg("Can you walk me through a demo?")
-        intel3, mem3 = analyze_message(msg3, conversation_id=cid, existing_memory=mem2)
+        intel3, mem3 = project_legacy_reply_intelligence(msg3, conversation_id=cid, existing_memory=mem2)
         assert intel3.recommended_next_step in (
             FollowupAction.SCHEDULE_DEMO, FollowupAction.REPLY_IMMEDIATELY
         )
 
-        events = get_events(cid)
-        assert len(events) >= 3
-        event_types = {e.event_type for e in events}
-        assert TimelineEventType.LEAD_REPLIED in event_types
+        # ``cid`` has no canonical Conversations record. Legacy timeline
+        # events are intentionally no longer retained in process memory for
+        # such analysis-only ids; the intelligence result remains unchanged.
+        assert read_legacy_timeline_events(cid) == []
 
     def test_workflow_objective_mapping(self):
-        from services.conversation_models import FollowupAction
-        from services.reply_intelligence import _map_to_workflow_objective
-        from services.conversation_models import IntentCategory, IntentPrediction
+        from services.conversation_intelligence.legacy_models import FollowupAction
+        from services.conversation_intelligence.legacy_reply_projection import _workflow_objective_for_followup
 
-        result = _map_to_workflow_objective(
-            FollowupAction.SEND_PRICING,
-            [IntentPrediction(intent=IntentCategory.PRICING_REQUEST, confidence=80, reason="test")]
-        )
+        result = _workflow_objective_for_followup(FollowupAction.SEND_PRICING)
         assert result == "Generate Pricing Email"
 
-        result = _map_to_workflow_objective(
-            FollowupAction.SCHEDULE_DEMO,
-            []
-        )
+        result = _workflow_objective_for_followup(FollowupAction.SCHEDULE_DEMO)
         assert result == "Schedule Demo"

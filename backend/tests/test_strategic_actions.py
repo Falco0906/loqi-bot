@@ -17,9 +17,15 @@ from services.persistence import reset_connection_manager, set_connection_manage
 from services.persistence.database import SupabaseConnectionManager
 from services.persistence.launch import StrategicUpdate, StrategicUpdateRepository
 from services.strategic.actions import StrategicActionError, StrategicActionService
+from services.strategic.api import (
+    approve_strategic_action,
+    execute_strategic_action,
+    propose_strategic_action,
+)
 
 from tests.test_knowledge_service import FakeSupabaseClient  # noqa: E402
 import main as main_module  # noqa: E402
+from services.strategic import api as strategic_api
 
 
 OWNER_A = "action-owner-a"
@@ -72,7 +78,7 @@ def _reset():
 def setup(monkeypatch):
     store = {}
     _install(store)
-    monkeypatch.setattr("services.workspace_state._async_workspace", _workspace)
+    monkeypatch.setattr("services.workspace.state._async_workspace", _workspace)
     return store
 
 
@@ -164,9 +170,9 @@ class TestActionExecution:
             persisted.append((owner_id, campaign))
             return True
 
-        monkeypatch.setattr("services.workspace_state.persist_campaign_row", fake_persist)
+        monkeypatch.setattr("services.workspace.state.persist_campaign_row", fake_persist)
         monkeypatch.setattr(
-            "services.workspace_state.load_workspace_state",
+            "services.workspace.state.load_workspace_state",
             lambda owner_id, include_details=False: {"campaigns": []},
         )
         completed = asyncio.run(service.execute(OWNER_A, action["id"]))
@@ -190,9 +196,9 @@ class TestActionExecution:
         async def fail_persist(owner_id, campaign):
             return False
 
-        monkeypatch.setattr("services.workspace_state.persist_campaign_row", fail_persist)
+        monkeypatch.setattr("services.workspace.state.persist_campaign_row", fail_persist)
         monkeypatch.setattr(
-            "services.workspace_state.load_workspace_state",
+            "services.workspace.state.load_workspace_state",
             lambda owner_id, include_details=False: {"campaigns": []},
         )
         failed = asyncio.run(service.execute(OWNER_A, action["id"]))
@@ -202,7 +208,7 @@ class TestActionExecution:
         async def succeed_persist(owner_id, campaign):
             return True
 
-        monkeypatch.setattr("services.workspace_state.persist_campaign_row", succeed_persist)
+        monkeypatch.setattr("services.workspace.state.persist_campaign_row", succeed_persist)
         completed = asyncio.run(service.execute(OWNER_A, action["id"]))
         assert completed["status"] == "completed"
 
@@ -242,13 +248,13 @@ class TestActionRoutes:
         async def owner(request, session_token):
             return OWNER_A
 
-        monkeypatch.setattr(main_module, "_workspace_owner", owner)
-        proposal = asyncio.run(main_module.propose_strategic_action(
+        monkeypatch.setattr(strategic_api.identity_dependencies, "authenticated_user_id", owner)
+        proposal = asyncio.run(propose_strategic_action(
             "session", update.id, object(), {"action_type": "update_messaging"}))
         action_id = proposal["action"]["id"]
         assert proposal["action"]["status"] == "proposed"
 
         with pytest.raises(Exception):
-            asyncio.run(main_module.execute_strategic_action("session", action_id, object()))
-        approved = asyncio.run(main_module.approve_strategic_action("session", action_id, object()))
+            asyncio.run(execute_strategic_action("session", action_id, object()))
+        approved = asyncio.run(approve_strategic_action("session", action_id, object()))
         assert approved["action"]["status"] == "approved"

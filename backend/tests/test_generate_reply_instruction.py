@@ -32,6 +32,7 @@ from services.reasoning.reasoning_models import (
 from services.conversation_intelligence.intelligence_models import ConversationIntelligence
 from services.conversations.conversation_store import conversation_store
 from services.conversations.integration import create_conversation_from_send, handle_reply
+from services.conversations.api import generate_reply_route
 
 import main as main_module  # noqa: E402
 def _auth_request(token="session-x"):
@@ -146,7 +147,7 @@ class TestGenerateReplyInstructionRoute:
         )
         cid = _make_conversation_with_reply()
         result = asyncio.run(
-            main_module.generate_reply_route(
+            generate_reply_route(
                 "session-x",
                 cid,
                 {"styles": ["professional"], "variant_count": 1, "instruction": "make it shorter"},
@@ -166,7 +167,7 @@ class TestGenerateReplyInstructionRoute:
         )
         cid = _make_conversation_with_reply()
         result = asyncio.run(
-            main_module.generate_reply_route(
+            generate_reply_route(
                 "session-x",
                 cid,
                 {"styles": ["professional"], "variant_count": 1},

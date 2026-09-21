@@ -5,26 +5,26 @@ All tests are deterministic — no API calls, no mocks.
 
 from datetime import datetime, timezone
 
-from services.workflow_models import (
+from services.workflows.models import (
     WorkflowPlan, WorkflowStep, WorkflowStep, ActionType,
     RiskLevel, StepStatus,
 )
-from services.workflow_runtime import (
+from services.workflows.runtime import (
     RuntimeStatus, RuntimeEntry,
     create_runtime, get_runtime, update_status,
     add_log, set_current_step, record_completed_step,
     record_failed_step, set_pending_step, clear as clear_runtime,
     get_active_runtimes, get_all_runtimes,
 )
-from services.workflow_progress import calculate_progress
-from services.workflow_events import (
+from services.workflows.progress import calculate_progress
+from services.workflows.events import (
     EventType, emit, get_events, get_all_events,
     emit_workflow_started, emit_step_started, emit_step_finished,
     emit_approval_required, emit_approval_granted,
     clear as clear_events,
 )
-from services.workflow_registry import dispatch, EXECUTOR_REGISTRY
-from services.workflow_executor import execute, approve
+from services.workflows.registry import dispatch, EXECUTOR_REGISTRY
+from services.workflows.executor import execute, approve
 
 
 def _make_plan(steps: list[WorkflowStep] | None = None) -> WorkflowPlan:
@@ -288,7 +288,7 @@ class TestEvents:
 
 class TestRegistry:
     def test_all_action_types_have_executors(self):
-        from services.workflow_models import ActionType
+        from services.workflows.models import ActionType
         for action in ActionType:
             assert action in EXECUTOR_REGISTRY, f"Missing executor for {action}"
 
@@ -309,12 +309,12 @@ class TestRegistry:
         assert result.get("requires_approval") is True
 
     def test_dispatch_invalid_action_returns_error(self):
-        from services.workflow_models import ActionType
+        from services.workflows.models import ActionType
         result = dispatch("nonexistent", WorkflowStep(title="X", action_type=ActionType.WAIT_FOR_USER), "s1")
         assert result["ok"] is False
 
     def test_dispatch_all_action_types_succeed(self):
-        from services.workflow_models import ActionType
+        from services.workflows.models import ActionType
         for action in ActionType:
             step = WorkflowStep(title=action.value, action_type=action)
             result = dispatch(action, step, "s1")

@@ -16,12 +16,13 @@ os.chdir(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ".")
 
 import pytest
+from services.communication import api as provider_api
 
 SENTINEL = "PR1082LIVE_SENTINEL_SECRET"
 
 
 @pytest.fixture(autouse=True)
-def _clean_runtime_state():
+def _clean_runtime_state(monkeypatch):
     from services.communication import provider_registry as pr
     from services.communication.communication_store import store as comm_store
     from services.outbound import outbound_registry as or_reg
@@ -37,6 +38,22 @@ def _clean_runtime_state():
     comm_store._seen_message_ids.clear()
     comm_store._user_providers.clear()
     comm_store._sequence = 0
+
+    def durable_rows(user_id, provider="google"):
+        assert provider == "google"
+        return [
+            {
+                "row_id": f"test-{record.id}",
+                "communication_provider_id": record.id,
+                "email": record.metadata.get("email", ""),
+                "status": record.status.value,
+                "created_at": record.created_at,
+                "last_synced_at": record.last_sync,
+            }
+            for record in comm_store.get_user_providers(user_id)
+        ]
+
+    monkeypatch.setattr("services.platform.supabase.get_durable_providers_for_user", durable_rows)
     yield
 
 
@@ -100,7 +117,7 @@ class TestStoreLogicalAccount:
         assert len(store.list_providers()) == 2
 
     def test_remove_existing_gmail_provider_cleans_store(self):
-        import main as main_module
+        from services.communication import service as communication_service
         from services.communication.communication_store import store
         from services.communication.gmail_provider import GmailProvider
         from services.communication import provider_registry
@@ -111,7 +128,7 @@ class TestStoreLogicalAccount:
         provider_registry.register_instance(record.id, provider)
         assert len(store.get_user_providers("owner-1")) == 1
 
-        main_module._remove_existing_gmail_provider("owner-1")
+        communication_service.remove_existing_gmail_provider("owner-1")
         # The communication store is cleaned too — no stale entry remains.
         assert len(store.get_user_providers("owner-1")) == 0
         assert record.id not in store._providers
@@ -132,13 +149,25 @@ class TestSettingsApiCanonical:
         store._providers["p-new"] = _provider_record("p-new", "faisal96kp@gmail.com", account_id="sub-1")
         store._user_providers["owner-1"] = ["p-old", "p-new"]
 
-        monkeypatch.setattr(main_module, "_workspace_owner", AsyncMock(return_value="owner-1"))
+        monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-1"))
 
         def _fake_get(pid):
             return _fake_instance("healthy")
 
-        monkeypatch.setattr(main_module, "get_provider", _fake_get)
-        result = asyncio.run(main_module.provider_list("token", MagicMock()))
+        from services.communication import service as provider_service
+        monkeypatch.setattr(provider_service, "get_provider", _fake_get)
+        monkeypatch.setattr(
+            "services.platform.supabase.get_durable_providers_for_user",
+            lambda *_args: [{
+                "row_id": "durable-p-new",
+                "communication_provider_id": "p-new",
+                "email": "faisal96kp@gmail.com",
+                "status": "active",
+                "created_at": "",
+                "last_synced_at": "",
+            }],
+        )
+        result = asyncio.run(provider_api.provider_list("token", MagicMock()))
         assert result["ok"] is True
         assert len(result["providers"]) == 1
         assert result["providers"][0]["email"] == "faisal96kp@gmail.com"
@@ -150,13 +179,14 @@ class TestSettingsApiCanonical:
         store._providers["p-auth"] = _provider_record("p-auth", "a@b.com", account_id="s1",
                                                       status="auth_failed")
         store._user_providers["owner-1"] = ["p-auth"]
-        monkeypatch.setattr(main_module, "_workspace_owner", AsyncMock(return_value="owner-1"))
+        monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-1"))
 
         def _fake_get(pid):
             return _fake_instance("auth_failed")
 
-        monkeypatch.setattr(main_module, "get_provider", _fake_get)
-        result = asyncio.run(main_module.provider_list("token", MagicMock()))
+        from services.communication import service as provider_service
+        monkeypatch.setattr(provider_service, "get_provider", _fake_get)
+        result = asyncio.run(provider_api.provider_list("token", MagicMock()))
         assert result["providers"][0]["status"] == "auth_failed"
 
     def test_settings_api_response_has_no_session_token(self, monkeypatch):
@@ -164,9 +194,10 @@ class TestSettingsApiCanonical:
         from services.communication.communication_store import store
         store._providers["p1"] = _provider_record("p1", "a@b.com", account_id="s1")
         store._user_providers["owner-1"] = ["p1"]
-        monkeypatch.setattr(main_module, "_workspace_owner", AsyncMock(return_value="owner-1"))
-        monkeypatch.setattr(main_module, "get_provider", lambda pid: _fake_instance("healthy"))
-        result = asyncio.run(main_module.provider_list("token", MagicMock()))
+        monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-1"))
+        from services.communication import service as provider_service
+        monkeypatch.setattr(provider_service, "get_provider", lambda pid: _fake_instance("healthy"))
+        result = asyncio.run(provider_api.provider_list("token", MagicMock()))
         assert "session_token" not in result
         assert "session_token" not in result["providers"][0]
 
@@ -243,6 +274,7 @@ class TestStartupRestoreSurfacesStatus:
         """Simulate the startup restore of an auth_failed account (as observed
         live: 'Provider restoration complete: 0 restored, 3 reauth-required')."""
         import main as main_module
+        from services.communication import provider_startup
         from services.communication.communication_store import store
         from services.communication.gmail_provider import GmailProvider
 
@@ -258,19 +290,30 @@ class TestStartupRestoreSurfacesStatus:
             "token_expiry": "",
             "status": "auth_failed",
         }
-        monkeypatch.setattr("services.supabase.load_all_provider_credentials", lambda: [row])
-        monkeypatch.setattr("services.supabase.reconcile_connected_account_duplicates", lambda *a, **k: 0)
-        main_module._restore_providers_on_startup()
+        monkeypatch.setattr("services.platform.supabase.load_all_provider_credentials", lambda: [row])
+        monkeypatch.setattr("services.platform.supabase.reconcile_connected_account_duplicates", lambda *a, **k: 0)
+        provider_startup.restore_gmail_providers()
 
         providers = store.get_user_providers("7de769b4-0000-0000-0000-000000000000")
         assert len(providers) == 1
         assert providers[0].status.value == "auth_failed"
         # The API surfaces auth_failed (never a stale healthy).
-        monkeypatch.setattr(main_module, "_workspace_owner",
+        monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id",
                             AsyncMock(return_value="7de769b4-0000-0000-0000-000000000000"))
-        monkeypatch.setattr(main_module, "get_provider",
+        monkeypatch.setattr(
+            "services.platform.supabase.get_durable_providers_for_user",
+            lambda *_args: [{
+                "communication_provider_id": providers[0].id,
+                "status": "auth_failed",
+                "email": row["email"],
+                "created_at": None,
+                "last_synced_at": None,
+            }],
+        )
+        from services.communication import service as provider_service
+        monkeypatch.setattr(provider_service, "get_provider",
                             lambda pid: _fake_instance("auth_failed"))
-        result = asyncio.run(main_module.provider_list("tok", MagicMock()))
+        result = asyncio.run(provider_api.provider_list("tok", MagicMock()))
         assert len(result["providers"]) == 1
         assert result["providers"][0]["status"] == "auth_failed"
 
@@ -348,19 +391,25 @@ class TestForcedDuplicatePrevention:
     def test_connect_twice_yields_exactly_one_provider_everywhere(self):
         """Reconnect twice for the same user → ONE provider in the store,
         ONE in provider_registry, ONE outbound — the exact live scenario."""
-        import main as main_module
+        import asyncio
+        from services.communication import service as communication_service
         from services.communication.communication_store import store
         from services.communication import provider_registry
         from services.outbound import outbound_registry as or_reg
         from services.communication.gmail_provider import GmailProvider
 
-        for i in range(2):
-            with main_module._GMAIL_PROVIDER_CONNECT_LOCK:
-                main_module._remove_existing_gmail_provider("owner-1")
-                p = GmailProvider()
-                rec = p.connect(auth_token=f"t{i}", user_id="owner-1",
-                                email="faisal96kp@gmail.com", refresh_token=f"r{i}")
-                provider_registry.register_instance(rec.id, p)
+        provider_registry.register_provider(GmailProvider)
+
+        async def connect_twice():
+            for index in range(2):
+                await communication_service.connect_legacy_raw_token_provider(
+                    user_id="owner-1",
+                    provider_type="gmail",
+                    auth_token=f"t{index}",
+                    email="faisal96kp@gmail.com",
+                )
+
+        asyncio.run(connect_twice())
 
         assert len(store.get_user_providers("owner-1")) == 1
         assert len([p for p in provider_registry.list_providers().values()
@@ -377,34 +426,27 @@ class TestForcedDuplicatePrevention:
         assert len(or_gmail) <= 1
 
     def test_concurrent_connects_race_yields_one(self):
-        """Two threads connect the same user concurrently — the store lock +
-        the connect lock converge on ONE provider."""
-        import threading
-        import main as main_module
+        """Concurrent same-user raw-token connects converge on one provider."""
+        import asyncio
+        from services.communication import service as communication_service
         from services.communication.communication_store import store
         from services.communication import provider_registry
         from services.communication.gmail_provider import GmailProvider
 
-        results = []
+        provider_registry.register_provider(GmailProvider)
 
-        def worker(n):
-            try:
-                with main_module._GMAIL_PROVIDER_CONNECT_LOCK:
-                    main_module._remove_existing_gmail_provider("racer")
-                    p = GmailProvider()
-                    rec = p.connect(auth_token=f"t{n}", user_id="racer",
-                                    email="faisal96kp@gmail.com", refresh_token=f"r{n}")
-                    provider_registry.register_instance(rec.id, p)
-                results.append("ok")
-            except Exception as e:  # noqa: BLE001
-                results.append(f"err:{type(e).__name__}")
+        async def connect(index):
+            return await communication_service.connect_legacy_raw_token_provider(
+                user_id="racer",
+                provider_type="gmail",
+                auth_token=f"t{index}",
+                email="faisal96kp@gmail.com",
+            )
 
-        threads = [threading.Thread(target=worker, args=(i,)) for i in range(6)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-        assert results == ["ok"] * 6
+        async def connect_all():
+            return await asyncio.gather(*(connect(index) for index in range(6)))
+
+        assert len(asyncio.run(connect_all())) == 6
         assert len(store.get_user_providers("racer")) == 1
         gmail_instances = [
             pid for pid, inst in provider_registry.list_providers().items()
@@ -421,16 +463,29 @@ class TestForcedDuplicatePrevention:
         store._providers["p-h"] = _provider_record("p-h", "faisal96kp@gmail.com",
                                                    account_id="s1", status="healthy")
         store._user_providers["owner-1"] = ["p-h"]
-        monkeypatch.setattr(main_module, "_workspace_owner", AsyncMock(return_value="owner-1"))
-        monkeypatch.setattr(main_module, "get_provider", lambda pid: _fake_instance("healthy"))
-        monkeypatch.setattr("services.supabase.is_connected_account_reauth_required",
+        monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-1"))
+        from services.communication import service as provider_service
+        monkeypatch.setattr(provider_service, "get_provider", lambda pid: _fake_instance("healthy"))
+        monkeypatch.setattr("services.platform.supabase.is_connected_account_reauth_required",
                             lambda *a, **k: True)
-        result = asyncio.run(main_module.provider_list("tok", MagicMock()))
+        monkeypatch.setattr(
+            "services.platform.supabase.get_durable_providers_for_user",
+            lambda *_args: [{
+                "row_id": "durable-p-h",
+                "communication_provider_id": "p-h",
+                "email": "faisal96kp@gmail.com",
+                "status": "auth_failed",
+                "created_at": "",
+                "last_synced_at": "",
+            }],
+        )
+        result = asyncio.run(provider_api.provider_list("tok", MagicMock()))
         assert result["providers"][0]["status"] == "auth_failed"
 
     def test_reconnect_after_auth_failed_yields_one_active(self, monkeypatch):
         """auth_failed persisted -> successful reconnect -> one active provider."""
-        import main as main_module
+        import asyncio
+        from services.communication import service as communication_service
         from services.communication.communication_store import store
         from services.communication import provider_registry
         from services.communication.gmail_provider import GmailProvider
@@ -441,12 +496,15 @@ class TestForcedDuplicatePrevention:
         provider_registry.register_instance(rec.id, p)
         p.mark_reauth_required()
 
-        with main_module._GMAIL_PROVIDER_CONNECT_LOCK:
-            main_module._remove_existing_gmail_provider("owner-1")
-            fresh = GmailProvider()
-            fresh_rec = fresh.connect(auth_token="new", user_id="owner-1", email="a@b.com",
-                                      refresh_token="new-refresh")
-            provider_registry.register_instance(fresh_rec.id, fresh)
+        provider_registry.register_provider(GmailProvider)
+        fresh_rec = asyncio.run(
+            communication_service.connect_legacy_raw_token_provider(
+                user_id="owner-1",
+                provider_type="gmail",
+                auth_token="new",
+                email="a@b.com",
+            )
+        )
 
         providers = store.get_user_providers("owner-1")
         assert len(providers) == 1
@@ -465,7 +523,7 @@ class TestStartupRuntimeReconciliation:
         """If a process accumulated two store records for the same user, the
         startup reconciliation keeps the newest healthy one and removes the
         rest from the store + provider registry + outbound registry."""
-        import main as main_module
+        from services.communication import provider_startup
         from services.communication.communication_store import store
         from services.communication import provider_registry
         from services.outbound import outbound_registry as or_reg
@@ -483,7 +541,7 @@ class TestStartupRuntimeReconciliation:
         or_reg.register_instance("p-new", object())
         assert len(store.get_user_providers("owner-1")) == 2
 
-        main_module._reconcile_runtime_providers()
+        provider_startup.reconcile_runtime_providers()
 
         providers = store.get_user_providers("owner-1")
         assert len(providers) == 1
@@ -494,7 +552,7 @@ class TestStartupRuntimeReconciliation:
         assert len(or_reg.list_providers()) == 1
 
     def test_reconcile_prefers_healthy_over_auth_failed(self):
-        import main as main_module
+        from services.communication import provider_startup
         from services.communication.communication_store import store
 
         store._providers["p-auth"] = _provider_record("p-auth", "a@b.com", account_id="s1",
@@ -503,7 +561,7 @@ class TestStartupRuntimeReconciliation:
                                                          status="healthy")
         store._user_providers["owner-1"] = ["p-auth", "p-healthy"]
 
-        main_module._reconcile_runtime_providers()
+        provider_startup.reconcile_runtime_providers()
         remaining = store.get_user_providers("owner-1")
         assert len(remaining) == 1
         assert remaining[0].id == "p-healthy"

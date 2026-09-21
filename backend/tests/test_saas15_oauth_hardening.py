@@ -68,7 +68,7 @@ def _reset():
     reset_auth_service()
     reset_oauth_session_repo()
     reset_provider_registry()
-    from services import oauth_state
+    from services.identity import oauth_state
     oauth_state.reset_store()
     from services.persistence.config import set_repository_provider, RepositoryProvider
     set_repository_provider(RepositoryProvider.IN_MEMORY)
@@ -145,7 +145,7 @@ class TestOAuthStateLifecycle:
 
     @pytest.mark.asyncio
     async def test_issue_and_consume_returns_bound_identity(self):
-        from services import oauth_state
+        from services.identity import oauth_state
         token = await oauth_state.issue_state("user-A", {"channel": "web"})
         assert token and token != "user-A"
         user_id, context = await oauth_state.consume_state(token)
@@ -154,7 +154,7 @@ class TestOAuthStateLifecycle:
 
     @pytest.mark.asyncio
     async def test_state_is_single_use(self):
-        from services import oauth_state
+        from services.identity import oauth_state
         token = await oauth_state.issue_state("user-A")
         user_id, _ = await oauth_state.consume_state(token)
         assert user_id == "user-A"
@@ -163,7 +163,7 @@ class TestOAuthStateLifecycle:
 
     @pytest.mark.asyncio
     async def test_expired_state_rejected(self):
-        from services import oauth_state
+        from services.identity import oauth_state
         token = await oauth_state.issue_state("user-A")
         repo = oauth_state._repo()
         session = await repo.find_by_state(token)
@@ -174,7 +174,7 @@ class TestOAuthStateLifecycle:
 
     @pytest.mark.asyncio
     async def test_malformed_and_empty_state_rejected(self):
-        from services import oauth_state
+        from services.identity import oauth_state
         assert (await oauth_state.consume_state("")) == (None, None)
         assert (await oauth_state.consume_state("not-issued")) == (None, None)
 
@@ -182,7 +182,7 @@ class TestOAuthStateLifecycle:
     async def test_state_binding_cannot_switch_users(self):
         """A state issued for user A always resolves to A — it can never be
         reinterpreted as another user."""
-        from services import oauth_state
+        from services.identity import oauth_state
         token_a = await oauth_state.issue_state("user-A")
         token_b = await oauth_state.issue_state("user-B")
         user_a, _ = await oauth_state.consume_state(token_a)
@@ -192,7 +192,7 @@ class TestOAuthStateLifecycle:
 
     @pytest.mark.asyncio
     async def test_anonymous_state_is_rejected(self):
-        from services import oauth_state
+        from services.identity import oauth_state
         token = await oauth_state.issue_state("gmail_user")
         user_id, _ = await oauth_state.consume_state(token)
         # The gmail callback treats the anonymous marker as invalid.
@@ -207,7 +207,7 @@ class TestOAuthStateDurableWiring:
     def test_supabase_provider_selects_durable_repo(self):
         from services.persistence.config import set_repository_provider, RepositoryProvider
         from services.persistence.repositories import SupabaseOAuthSessionRepository
-        from services import oauth_state
+        from services.identity import oauth_state
 
         set_repository_provider(RepositoryProvider.SUPABASE)
         try:
@@ -221,7 +221,7 @@ class TestOAuthStateDurableWiring:
     def test_in_memory_provider_uses_in_memory_repo(self):
         from services.persistence.config import set_repository_provider, RepositoryProvider
         from services.identity.repositories import InMemoryOAuthSessionRepository
-        from services import oauth_state
+        from services.identity import oauth_state
 
         set_repository_provider(RepositoryProvider.IN_MEMORY)
         assert isinstance(oauth_state._repo(), InMemoryOAuthSessionRepository)
@@ -238,7 +238,7 @@ class TestCallbackFailClosed:
         assert "Invalid or expired OAuth state" in resp.text
 
     def test_gmail_callback_rejects_anonymous_state(self, client):
-        from services import oauth_state
+        from services.identity import oauth_state
         token = asyncio.run(oauth_state.issue_state("gmail_user"))
         resp = client.get("/api/auth/gmail/callback", params={"code": "x", "state": token})
         assert resp.status_code == 200

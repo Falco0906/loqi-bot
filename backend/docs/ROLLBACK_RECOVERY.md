@@ -156,7 +156,7 @@ that it works. Live dependency health is verified separately (section 3/6).
   - Numbered, additive SQL files in `backend/supabase/migrations/`
     (`003_...` → `021_identity_sessions.sql`), applied by hand via the
     Supabase **SQL Editor** (or `psql`/`DATABASE_URL`).
-  - `services/migration.py::apply_migrations()` runs at startup only when
+  - `services/platform/migration.py::apply_migrations()` runs at startup only when
     `DATABASE_URL` is set and applies a separate embedded core bundle
     (`jobs`, `search_results`, `discoveries`, ... plus additive guards).
     When the core tables already exist and `DATABASE_URL` is absent it is a
@@ -216,7 +216,7 @@ restore runbook, a migration-status/version table check, and a DR plan.
 
 ### 4.1 What happens when an env var or secret is wrong/missing
 
-Startup validation (`services/config_validation.py` + `services/operations/
+Startup validation (`services/platform/config_validation.py` + `services/operations/
 diagnostics.py`) is fail-fast **and redundant** at startup:
 
 - **Required in production** (missing → startup error → crash loop):
@@ -225,8 +225,6 @@ diagnostics.py`) is fail-fast **and redundant** at startup:
   placeholder rejected).
 - **Conditional requirements:**
   - `EMAIL_PROVIDER=resend` in production → `RESEND_API_KEY` required.
-  - `TELEGRAM_BOT_TOKEN` set → `TELEGRAM_WEBHOOK_SECRET` required (the
-    `/webhook` endpoint is otherwise unauthenticated).
   - `BILLING_PROVIDER_MODE=mock` → rejected in production.
   - `RATE_LIMIT_ENABLED` → must be enabled (truthy) in production.
   - `LOG_LEVEL=DEBUG` → rejected in production.
@@ -372,8 +370,6 @@ After any rollback or recovery, confirm each item before calling it done:
    offline review.
 
 ### S7. Webhook appears unauthenticated
-1. If `TELEGRAM_BOT_TOKEN` is set, production requires
-   `TELEGRAM_WEBHOOK_SECRET`; a `webhook_unauth` warning means it's unset.
 2. Set the secret in Railway variables, redeploy, re-register the webhook
    with the same `secret_token`.
 3. Verify a webhook POST with an invalid header returns 403.

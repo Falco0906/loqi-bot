@@ -465,7 +465,7 @@ ExecutionEngine
 
 | Component | Path | Lines | Purpose |
 |---|---|---|---|
-| `reply_intelligence.py` | Legacy | 198 | 14-step monolithic function — being superseded by pipeline |
+| `conversation_intelligence/legacy_reply_projection.py` | Compatibility | — | Legacy ReplyIntelligence projection over canonical primitives |
 | `buying_signal.py` | Legacy | 39 | Thin wrapper delegating to knowledge layer |
 | `lead_intelligence.py` | `services/intelligence/` | 337 | Fit score, buying stage, urgency, objection risk |
 | `account_intelligence.py` | `services/intelligence/` | — | Account tier classification, buying intent |
@@ -800,16 +800,16 @@ The legacy synchronous workflow system is being superseded by the Execution Engi
 
 | File | Purpose |
 |---|---|
-| `services/ai.py` | OpenAI generation/personalization |
-| `services/lead_provider.py` | Lead sourcing |
+| `services/intelligence/ai.py` | OpenAI generation/personalization |
+| `services/discovery/providers.py` | Lead sourcing |
 | `services/job_engine/` | Background job manager |
 | `services/enrichment/` | Apollo + synthetic enrichers |
 | `services/providers/` | Apollo + synthetic lead providers |
 | `services/security/crypto/` | Encryption/hashing utilities |
-| `services/supabase.py` | Supabase client (legacy — connection test only) |
+| `services/platform/supabase.py` | Supabase client (legacy — connection test only) |
 | `services/persistence/` | Production persistence layer (M2.1 — Identity only) |
-| `services/google_auth.py` | Google OAuth token exchange |
-| `services/migration.py` | Data migration runner |
+| `services/communication/google_auth.py` | Google OAuth token exchange |
+| `services/platform/migration.py` | Data migration runner |
 
 ---
 
@@ -824,7 +824,7 @@ main.py
   ├── Capability Platform (wired via register_deps)
   ├── ConversationEngine
   │     └── workflows.run_workflow (sync via ThreadPoolExecutor)
-  │           ├── services.ai (OpenAI)
+  │           ├── services.intelligence.ai (OpenAI)
   │           ├── services.conversational_response_generator
   │           └── services.outbound.*
   ├── ExecutionEngine

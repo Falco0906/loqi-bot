@@ -200,6 +200,52 @@ class TestProviderEventRepository:
 
 class TestCommunicationPersistenceHelpers:
 
+    def test_persistence_runner_accepts_sync_or_async_repository_writes(self):
+        from services.persistence.launch import communication_persistence
+        calls: list[str] = []
+
+        communication_persistence._run_threaded(lambda: calls.append("sync"))
+
+        async def async_write():
+            calls.append("async")
+
+        communication_persistence._run_threaded(async_write)
+
+        assert calls == ["sync", "async"]
+
+    def test_outbound_history_write_awaits_the_repository_save(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from services.persistence.launch import communication_persistence
+        from services.persistence.launch import repositories
+
+        saved = []
+
+        class FakeRepository:
+            async def save(self, entity):
+                saved.append(entity)
+                return entity
+
+        monkeypatch.setattr(communication_persistence, "_workspace_for_provider", lambda _provider_id: "ws-A")
+        monkeypatch.setattr(repositories, "OutboundMessageRepository", FakeRepository)
+        item = SimpleNamespace(
+            id="history-1",
+            provider_id="provider-1",
+            external_message_id="message-1",
+            conversation_id="conversation-1",
+            thread_id="thread-1",
+            subject="Hello",
+            recipient=SimpleNamespace(email="lead@example.com", name="Lead"),
+            status="sent",
+            draft_id="draft-1",
+            error="",
+        )
+
+        assert communication_persistence.persist_outbound_message(item) is True
+        assert len(saved) == 1
+        assert saved[0].workspace_id == "ws-A"
+        assert saved[0].external_message_id == "message-1"
+
     def test_list_outbound_history_is_tenant_scoped(self):
         from services.persistence import (
             set_connection_manager, reset_connection_manager,

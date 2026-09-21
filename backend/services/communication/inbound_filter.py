@@ -79,7 +79,7 @@ def _conversations_for_known_lead(provider_user_id: str, sender_email: str) -> l
 
         from services.conversations.conversation_store import conversation_store
         from services.persistence.launch.repositories import WorkspaceLeadRepository
-        from services.workspace_state import _async_workspace
+        from services.workspace.state import _async_workspace
 
         workspace_id = asyncio.run(_async_workspace(provider_user_id))
         if not workspace_id:

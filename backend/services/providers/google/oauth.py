@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import secrets
@@ -126,7 +127,10 @@ class GoogleOAuthFlow(OAuthFlow):
             "redirect_uri": uri,
             "grant_type": "authorization_code",
         }
-        resp = requests.post(TOKEN_URI, data=data, timeout=15)
+        # ``exchange_code`` is part of the async OAuthFlow contract. Keep the
+        # established requests transport for compatibility, but run the whole
+        # blocking call off the request event loop.
+        resp = await asyncio.to_thread(requests.post, TOKEN_URI, data=data, timeout=15)
         resp.raise_for_status()
         body = resp.json()
         return self._parse_token_response(body)
@@ -141,7 +145,7 @@ class GoogleOAuthFlow(OAuthFlow):
             "refresh_token": token.refresh_token,
             "grant_type": "refresh_token",
         }
-        resp = requests.post(TOKEN_URI, data=data, timeout=15)
+        resp = await asyncio.to_thread(requests.post, TOKEN_URI, data=data, timeout=15)
         resp.raise_for_status()
         body = resp.json()
         new_token = self._parse_token_response(body)
@@ -149,7 +153,8 @@ class GoogleOAuthFlow(OAuthFlow):
         return new_token
 
     async def revoke_token(self, token: OAuthToken) -> None:
-        requests.post(
+        await asyncio.to_thread(
+            requests.post,
             "https://oauth2.googleapis.com/revoke",
             params={"token": token.access_token},
             timeout=10,

@@ -542,7 +542,7 @@ async def revoke_session(
     # PR-3A: drop any cached session identity for this user immediately so
     # revocation is reflected across workers without waiting for TTL.
     try:
-        from services.session_cache import session_cache
+        from services.identity.session_cache import session_cache
         await session_cache.invalidate_user(session.user_id)
     except Exception:
         pass

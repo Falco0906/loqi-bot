@@ -29,7 +29,7 @@ The entire adapter foundation plus three production adapters and the email compo
 - **Purpose:** Establish initial project structure, FastAPI app, Supabase integration, Telegram bot
 - **Major components built:** `main.py`, Telegram webhook, basic Gmail send, Supabase client, conversation engine
 - **Key architectural decisions:** FastAPI as web framework, Supabase as persistence layer, OpenAI for AI generation
-- **Created:** `main.py`, `services/agent.py`, `services/ai.py`, `services/gmail.py`, `services/google_auth.py`, `services/supabase.py`, `services/telegram.py`, `services/conversation_engine.py`
+- **Created:** `main.py`, `services/agent.py`, `services/intelligence/ai.py`, `services/gmail.py`, `services/communication/google_auth.py`, `services/platform/supabase.py`, `services/telegram.py`, `services/conversation_engine.py`
 - **Status:** Complete. Replaced by later iterations.
 
 ### Phase 2 — Workflow System (v0.3–v0.4)
@@ -54,7 +54,7 @@ The entire adapter foundation plus three production adapters and the email compo
 
 ### Phase 4 — Lead Sourcing & Enrichment (v0.4–v0.5)
 - **Purpose:** Build provider-agnostic lead sourcing with Apollo integration
-- **Major components built:** `services/providers/` (base_provider, apollo_provider, synthetic_provider, provider_factory), `services/enrichment/` (base_enricher, apollo_enricher, synthetic_enricher, enrichment_factory), `services/lead_provider.py`, `services/search_expansion.py`, `services/icp_extractor.py`, `services/commercial_qualifier.py`
+- **Major components built:** `services/providers/` (base_provider, apollo_provider, synthetic_provider, provider_factory), `services/enrichment/` (base_enricher, apollo_enricher, synthetic_enricher, enrichment_factory), `services/discovery/providers.py`, `services/discovery/search_expansion.py`, `services/discovery/icp.py`, `services/discovery/qualification.py`
 - **Key architectural decisions:** Provider abstraction via factory pattern. Synthetic provider exists for testing. ICP extraction uses AI. Commercial qualifier filters vendors/junk with multi-dimensional scoring. Search expansion uses OpenAI for query broadening.
 - **Status:** Complete.
 
@@ -314,11 +314,11 @@ backend/
 │   ├── conversation_store.py   # Supabase CRUD for sessions/messages
 │   ├── conversation_models.py  # Pydantic models for intelligence
 │   ├── conversation_memory.py  # Structured fact storage per conversation
-│   ├── conversation_timeline.py# Event log per conversation
-│   ├── conversation_classifier.py # Conversation stage classification
+│   ├── conversations/timeline.py # Durable event log per conversation
+│   ├── conversation_intelligence/stage_classifier.py # Legacy sales-stage classification
 │   ├── conversational_response_generator.py # AI response generation (963 lines)
-│   ├── reply_intelligence.py   # Reply Intelligence aggregator
-│   ├── reply_summary.py        # Executive summaries
+│   ├── conversation_intelligence/legacy_reply_projection.py # Legacy ReplyIntelligence projection
+│   ├── communication/reply_summary.py # Legacy executive-summary formatter
 │   ├── intent_detector.py      # Intent classification
 │   ├── buying_signal.py        # Purchase intent detection
 │   ├── followup_reasoner.py    # Next-action recommendation
@@ -335,9 +335,9 @@ backend/
 │   ├── objection_predictor.py  # Objection prediction
 │   ├── company_context.py      # Company maturity/context analysis
 │   ├── strategy_comparison.py  # Messaging comparison engine
-│   ├── draft_intelligence.py   # Cold email quality scoring (399 lines)
-│   ├── draft_comparison.py     # Draft version diff
-│   ├── rewrite_engine.py       # Strategy-aware rewrite (177 lines)
+│   ├── drafts/intelligence.py  # Cold email quality scoring (399 lines)
+│   ├── drafts/comparison.py    # Draft version diff
+│   ├── drafts/rewrite.py       # Strategy-aware rewrite (177 lines)
 │   ├── rewrite_history.py      # Multi-level undo for rewrites
 │   ├── executive_brief.py      # Workspace AI summary
 │   ├── recommendation_engine.py# Next-action recommendations
@@ -445,11 +445,10 @@ backend/
 │   │   ├── outbound_models.py
 │   │   ├── outbound_registry.py
 │   │   ├── outbound_executor.py
-│   │   ├── outbound_scheduler.py
 │   │   ├── outbound_persistence.py
 │   │   ├── outbound_events.py
 │   │   ├── gmail_outbound.py
-│   │   └── draft_store.py
+│   │   └── service.py
 │   │
 │   ├── providers/              # Lead data providers
 │   │   ├── base_provider.py
@@ -773,7 +772,6 @@ backend/
 |---|---|---|---|---|---|---|
 | `/` | GET | Health check | None | `"Loqi backend running"` | None | Operational |
 | `/health` | GET | Detailed health | None | JSON with uptime, DB, providers | Supabase | Operational |
-| `/webhook` | POST | Telegram webhook | Telegram Update | `{"ok": true}` | conversation_engine | Operational |
 | `/api/auth/gmail/url` | GET | Gmail OAuth URL | None | `{"url": "...", "state": "..."}` | google_auth | Operational |
 | `/api/auth/gmail/callback` | GET | Gmail OAuth callback | code, state | Redirect | google_auth, gmail_provider | Operational |
 | `/api/web/session` | POST | Create web session | None | `{"session_token": "..."}` | conversation_store | Operational |
@@ -817,9 +815,9 @@ None implemented. The web chat uses polling (`batch-status`) for async job resul
 |---|---|
 | **Engine** | Supabase (PostgreSQL) |
 | **ORM** | None — raw SQL via `supabase-py` client |
-| **Client** | `services/supabase.py` — wraps Supabase client |
+| **Client** | `services/platform/supabase.py` — wraps Supabase client |
 | **Migrations** | Manual SQL files in `supabase/` |
-| **Runtime migrations** | `services/migration.py` creates `jobs` and `search_results` tables on startup |
+| **Runtime migrations** | `services/platform/migration.py` creates `jobs` and `search_results` tables on startup |
 
 ### Existing Tables
 
@@ -862,9 +860,9 @@ Additional tables from schema:
 | Detail | Value |
 |---|---|
 | **OAuth Provider** | Google OAuth 2.0 only |
-| **Flow** | `services/google_auth.py` — generate auth URL → user authorizes → exchange code for tokens → refresh as needed |
+| **Flow** | `services/communication/google_auth.py` — generate auth URL → user authorizes → exchange code for tokens → refresh as needed |
 | **Endpoints** | `/api/auth/gmail/url` (GET URL), `/api/auth/gmail/callback` (OAuth callback) |
-| **Token Storage** | `services/supabase.py` — `save_google_tokens()`, `update_google_access_token()` |
+| **Token Storage** | `services/platform/supabase.py` — `save_google_tokens()`, `update_google_access_token()` |
 | **Provider Credentials** | `save_provider_credentials()`, `load_all_provider_credentials()` — persisted for startup recovery |
 | **Adapter Credentials** | `services/adapters/credentials.py` — credential models; `credential_resolver.py` injects tokens at execution time |
 | **HTTP Auth** | `services/adapters/http/auth.py` — Bearer token, Basic Auth, API Key header handlers |
@@ -926,7 +924,7 @@ If starting a new phase, the following would need to be done:
 | Item | Location | Issue |
 |---|---|---|
 | Legacy Gmail send | `services/gmail.py` | Pre-adapter implementation still exists alongside new GmailAdapter. Should be replaced by adapter calls. |
-| Legacy Google Auth | `services/google_auth.py` | Pre-adapter OAuth flow. The credential framework can potentially replace this. |
+| Legacy Google Auth | `services/communication/google_auth.py` | Pre-adapter OAuth flow. The credential framework can potentially replace this. |
 | In-memory BrandKit/Mailbox storage | `services/email/branding.py`, `mailbox.py` | Brand kits and mailboxes are registered in memory only — no persistence across restarts. |
 | JSON file-based workflow persistence | `services/workflow_persistence.py` | Does not scale beyond single-instance. Should use database for multi-instance deployments. |
 
@@ -960,7 +958,7 @@ If starting a new phase, the following would need to be done:
 | Refactor | Why |
 |---|---|
 | Replace `services/gmail.py` with GmailAdapter | Legacy code should be removed once the adapter is wired into the conversation engine |
-| Replace `services/google_auth.py` with Credential Resolver | Auth flow should use the new credential framework |
+| Replace `services/communication/google_auth.py` with Credential Resolver | Auth flow should use the new credential framework |
 | Remove `services/workflow_persistence.py` file-based persistence | Replace with database-backed persistence for multi-instance |
 | Consolidate conversation services | Multiple conversation files (`conversation_*.py`) have overlapping responsibilities |
 
@@ -1054,10 +1052,10 @@ Implementation stopped after **Phase 5.5 — Email Composition Engine v1.0** was
 
 10. **Conversation Engine** (`services/conversation_engine.py`) — multi-client orchestrator (1161 lines)
 11. **Workflow System** (`services/workflow_*.py`, 14 files) — deterministic plan execution
-12. **AI Generation** (`services/ai.py`) — OpenAI integration
+12. **AI Generation** (`services/intelligence/ai.py`) — OpenAI integration
 13. **Legacy Gmail** (`services/gmail.py`) — pre-adapter Gmail send (should eventually be replaced)
-14. **Google Auth** (`services/google_auth.py`) — OAuth flow (should eventually use credential framework)
-15. **Supabase Client** (`services/supabase.py`) — all DB operations
+14. **Google Auth** (`services/communication/google_auth.py`) — OAuth flow (should eventually use credential framework)
+15. **Supabase Client** (`services/platform/supabase.py`) — all DB operations
 16. **Conversation Intelligence** (`services/conversation_intelligence/`) — knowledge registry, detection pipelines
 17. **Reply Generation** (`services/reply_generation/`) — multi-provider AI replies (OpenAI, Anthropic, Gemini, DeepSeek)
 18. **Lead Sourcing** (`services/providers/`, `services/enrichment/`) — Apollo provider + factory pattern
@@ -1140,7 +1138,6 @@ class CalendarAdapter(ExecutionAdapter):
 The `.env` file contains:
 - `SUPABASE_URL` / `SUPABASE_KEY` — Supabase credentials
 - `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` — AI provider keys
-- `TELEGRAM_TOKEN` — Telegram bot token
 - `GMAIL_CREDENTIALS` / `GMAIL_TOKEN` — Gmail OAuth config
 - `SERPAPI_KEY` — SerpAPI for lead sourcing
 - `APOLLO_API_KEY` — Apollo.io for lead data

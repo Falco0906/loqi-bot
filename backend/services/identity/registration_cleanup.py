@@ -60,7 +60,7 @@ def abandoned_cleanup_runtime_enabled() -> tuple[bool, str]:
     Returns (enabled, reason). The operator CLI is NOT gated by this — it is
     an explicit human action with its own dry-run/--apply contract.
     """
-    from services.config_validation import is_production
+    from services.platform.config_validation import is_production
 
     if not is_production():
         return False, "not an explicitly production environment"
@@ -84,7 +84,7 @@ def resolve_automatic_cleanup_client() -> Any:
     enabled, _reason = abandoned_cleanup_runtime_enabled()
     if not enabled:
         return None
-    from services.supabase import get_supabase_client
+    from services.platform.supabase import get_supabase_client
     return get_supabase_client()
 
 
@@ -222,7 +222,7 @@ def apply_abandoned_plan(
         return summary  # never mutate on refusal
 
     if client is None:
-        from services.supabase import get_supabase_client
+        from services.platform.supabase import get_supabase_client
         client = get_supabase_client()
     if client is None:
         raise RuntimeError("Supabase client unavailable")
@@ -300,7 +300,7 @@ def _get_row(client: Any, table: str, row_id: str) -> dict[str, Any] | None:
 
 def _load_snapshot(client: Any | None = None, email: str | None = None):
     if client is None:
-        from services.supabase import get_supabase_client
+        from services.platform.supabase import get_supabase_client
         client = get_supabase_client()
     if client is None:
         raise RuntimeError("Supabase client unavailable")
@@ -364,7 +364,7 @@ def run_abandoned_cleanup(
     """Scan all registrations and clean every SAFE-TO-CLEAN expired abandoned
     one. Returns counts; never logs emails/tokens. Idempotent + race-safe."""
     if client is None:
-        from services.supabase import get_supabase_client
+        from services.platform.supabase import get_supabase_client
         client = get_supabase_client()
     if client is None:
         raise RuntimeError("Supabase client unavailable")

@@ -177,18 +177,25 @@ _FUTURE = _iso(datetime.now(timezone.utc) + timedelta(minutes=5))
 
 @pytest.fixture(autouse=True)
 def _reset():
+    import services.platform.supabase as platform_supabase
+
     reset_repository_provider()
     reset_connection_manager()
+    platform_supabase._client = None
     yield
     reset_repository_provider()
     reset_connection_manager()
+    platform_supabase._client = None
 
 
 def _attach_client(db):
     """Point the global launch repos + workspace_state reads at a fake DB."""
+    import services.platform.supabase as platform_supabase
+
     cm = SupabaseConnectionManager(url="http://test", key="test-key")
     cm._client = db
     set_connection_manager(cm)
+    platform_supabase._client = db
 
 
 def _durable_repos(db):
@@ -281,7 +288,7 @@ class TestWorkspaceIdentity:
 
     @pytest.mark.asyncio
     async def test_workspace_gets_own_durable_uuid_not_workflow_session_id(self):
-        from services.workspace_state import ensure_workspace
+        from services.workspace.state import ensure_workspace
         db = FakeClient({
             "workflow_sessions": [
                 {"id": "ws-session-1", "user_id": "u1", "channel": "workspace", "session_key": "u1"},
@@ -290,7 +297,7 @@ class TestWorkspaceIdentity:
         _attach_client(db)
         set_repository_provider(RepositoryProvider.SUPABASE)
         from unittest.mock import patch
-        with patch("services.workspace_state.get_supabase_client", return_value=db):
+        with patch("services.workspace.state.get_supabase_client", return_value=db):
             ws_id = ensure_workspace("u1", organization_id="org-1")
         UUID(ws_id)  # a real uuid
         assert ws_id != "ws-session-1"
@@ -300,7 +307,7 @@ class TestWorkspaceIdentity:
 
     @pytest.mark.asyncio
     async def test_recreating_workflow_session_does_not_change_workspace_id(self):
-        from services.workspace_state import ensure_workspace
+        from services.workspace.state import ensure_workspace
         db = FakeClient({
             "workflow_sessions": [
                 {"id": "ws-old", "user_id": "u1", "channel": "workspace", "session_key": "u1"},
@@ -309,7 +316,7 @@ class TestWorkspaceIdentity:
         _attach_client(db)
         set_repository_provider(RepositoryProvider.SUPABASE)
         from unittest.mock import patch
-        with patch("services.workspace_state.get_supabase_client", return_value=db):
+        with patch("services.workspace.state.get_supabase_client", return_value=db):
             first = ensure_workspace("u1", organization_id="org-1")
         # Simulate a workflow-session recreation (new id) + restart.
         db.tables["workflow_sessions"] = [
@@ -317,19 +324,19 @@ class TestWorkspaceIdentity:
         ]
         reset_connection_manager()
         _attach_client(db)
-        with patch("services.workspace_state.get_supabase_client", return_value=db):
+        with patch("services.workspace.state.get_supabase_client", return_value=db):
             second = ensure_workspace("u1", organization_id="org-1")
         assert second == first
         assert len(db.tables["workspaces"]) == 1
 
     @pytest.mark.asyncio
     async def test_recreated_repository_resolves_same_workspace(self):
-        from services.workspace_state import ensure_workspace
+        from services.workspace.state import ensure_workspace
         db = FakeClient()
         _attach_client(db)
         set_repository_provider(RepositoryProvider.SUPABASE)
         from unittest.mock import patch
-        with patch("services.workspace_state.get_supabase_client", return_value=db):
+        with patch("services.workspace.state.get_supabase_client", return_value=db):
             ws_id = ensure_workspace("u1", organization_id="org-1")
         # A brand-new repository instance (restart/redeploy) resolves the same
         # workspace through the durable owner relationship.
@@ -346,12 +353,12 @@ class TestOrganizationWorkspaceRelationship:
 
     @pytest.mark.asyncio
     async def test_canonical_organization_owns_workspace(self):
-        from services.workspace_state import ensure_workspace
+        from services.workspace.state import ensure_workspace
         db = FakeClient()
         _attach_client(db)
         set_repository_provider(RepositoryProvider.SUPABASE)
         from unittest.mock import patch
-        with patch("services.workspace_state.get_supabase_client", return_value=db):
+        with patch("services.workspace.state.get_supabase_client", return_value=db):
             ws_id = ensure_workspace("u1", organization_id="org-123")
         ws = db.tables["workspaces"][0]
         assert ws["id"] == ws_id
@@ -361,7 +368,7 @@ class TestOrganizationWorkspaceRelationship:
 
     @pytest.mark.asyncio
     async def test_workspace_resolves_org_from_membership_when_not_supplied(self):
-        from services.workspace_state import ensure_workspace
+        from services.workspace.state import ensure_workspace
         db = FakeClient({
             "memberships": [
                 {"user_id": "u1", "organization_id": "org-from-membership", "status": "active"},
@@ -370,7 +377,7 @@ class TestOrganizationWorkspaceRelationship:
         _attach_client(db)
         set_repository_provider(RepositoryProvider.SUPABASE)
         from unittest.mock import patch
-        with patch("services.workspace_state.get_supabase_client", return_value=db):
+        with patch("services.workspace.state.get_supabase_client", return_value=db):
             ws_id = ensure_workspace("u1")
         assert db.tables["workspaces"][0]["organization_id"] == "org-from-membership"
         assert db.tables["workspaces"][0]["id"] == ws_id
@@ -412,7 +419,7 @@ class TestOrganizationWorkspaceRelationship:
 
         calls = []
         monkeypatch.setattr(
-            "services.workspace_state.ensure_workspace",
+            "services.workspace.state.ensure_workspace",
             lambda *a, **kw: calls.append((a, kw)) or "ws-reused",
         )
         result = await onboarding.create_workspace_and_finalize("u1", {
@@ -452,7 +459,7 @@ class TestOrganizationWorkspaceRelationship:
         )
         await user_svc.save_user(User(id="u1", display_name="Ada"))
         monkeypatch.setattr(
-            "services.workspace_state.ensure_workspace",
+            "services.workspace.state.ensure_workspace",
             lambda *a, **kw: "ws-1",
         )
         first = await onboarding.create_workspace_and_finalize("u1", {"workspace_name": "Acme"})
@@ -472,7 +479,7 @@ class TestSignupCreatesSingleTenant:
         _attach_client(db)
         set_repository_provider(RepositoryProvider.SUPABASE)
         from unittest.mock import patch
-        with patch("services.workspace_state.get_supabase_client", return_value=db):
+        with patch("services.workspace.state.get_supabase_client", return_value=db):
             svc = _build_auth_service(db)
             completed = await _complete_signup(svc)
 
@@ -492,7 +499,7 @@ class TestSignupCreatesSingleTenant:
         _attach_client(db)
         set_repository_provider(RepositoryProvider.SUPABASE)
         from unittest.mock import patch
-        with patch("services.workspace_state.get_supabase_client", return_value=db):
+        with patch("services.workspace.state.get_supabase_client", return_value=db):
             svc = _build_auth_service(db)
             reg = await svc.begin_registration(EMAIL)
             await svc.verify_email(reg.raw_token)
@@ -521,7 +528,7 @@ class TestRestartResolution:
         _attach_client(db)
         set_repository_provider(RepositoryProvider.SUPABASE)
         from unittest.mock import patch
-        with patch("services.workspace_state.get_supabase_client", return_value=db):
+        with patch("services.workspace.state.get_supabase_client", return_value=db):
             completed = await _complete_signup(_build_auth_service(db))
             org_id = db.tables["organizations"][0]["id"]
             ws_id = db.tables["workspaces"][0]["id"]
@@ -530,8 +537,8 @@ class TestRestartResolution:
         reset_connection_manager()
         _attach_client(db)
         set_repository_provider(RepositoryProvider.SUPABASE)
-        from services.workspace_state import _async_workspace
-        with patch("services.workspace_state.get_supabase_client", return_value=db):
+        from services.workspace.state import _async_workspace
+        with patch("services.workspace.state.get_supabase_client", return_value=db):
             resolved_ws = await _async_workspace(completed.user.id)
         assert resolved_ws == ws_id
 
@@ -548,7 +555,7 @@ class TestIsolationFoundation:
 
     @pytest.mark.asyncio
     async def test_workspace_lookup_is_tied_to_owner_not_workflow_session(self):
-        from services.workspace_state import ensure_workspace
+        from services.workspace.state import ensure_workspace
         db = FakeClient({
             "workspaces": [
                 {"id": "ws-b-owner", "owner_user_id": "user-b", "organization_id": "org-b"},
@@ -560,7 +567,7 @@ class TestIsolationFoundation:
         _attach_client(db)
         set_repository_provider(RepositoryProvider.SUPABASE)
         from unittest.mock import patch
-        with patch("services.workspace_state.get_supabase_client", return_value=db):
+        with patch("services.workspace.state.get_supabase_client", return_value=db):
             # User A resolves their OWN workspace (a new one), NOT the workspace
             # belonging to user B — even though a workflow_sessions row shares B's
             # workspace id. A workflow-session id is never tenant authority.

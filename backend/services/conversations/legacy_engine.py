@@ -1,0 +1,1241 @@
+from datetime import datetime, timezone
+from uuid import uuid4
+import random
+
+from services.conversations.compatibility import (
+    create_lightweight_web_session,
+    ensure_workflow_session,
+    get_channel_user,
+    get_or_create_channel_user,
+    get_web_session,
+    list_conversation_messages,
+    list_workflow_sessions,
+    record_workflow_event,
+    record_workflow_message,
+    touch_workflow_session,
+)
+from services.communication.google_auth import get_google_auth_url
+from services.platform.supabase import (
+    clear_session_context,
+    get_lead_by_id,
+    get_pending_leads,
+    get_selected_lead,
+    get_session_context,
+    has_connected_account,
+    log_conversation,
+    select_lead,
+    update_user_telegram_chat_id,
+    get_user_preferences,
+    save_user_preference,
+)
+from services.enrichment.enrichment_factory import get_enricher
+from services.intelligence.lead_intelligence import generate_lead_intelligence
+from services.workflows.service import run_workflow
+from services.conversations.legacy_responses import (
+    RESPONSE_VARIATIONS,
+    generate_conversational_response,
+    detect_preferences_from_refinement,
+    build_classification_context,
+    _classify_natural_action as classify_natural_action,
+    _extract_single_message_fields as extract_single_message_fields,
+    _get_service_prompt_variation,
+    _get_target_prompt_variation,
+    _get_after_leads_variation,
+    _get_after_draft_variation,
+    _get_after_send_variation,
+    _get_refine_options_variation,
+)
+from services.planner.planner_router import PlannerRouter, is_schedule_intent
+from services.planner.planning_models import PlanGoal
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _message(
+    *,
+    role: str,
+    message_type: str,
+    text: str,
+    data: dict | None = None,
+) -> dict:
+    return {
+        "id": str(uuid4()),
+        "role": role,
+        "type": message_type,
+        "text": text,
+        "data": data or {},
+        "created_at": _utc_now(),
+    }
+
+
+def _extract_previous_outreach(assistant_messages: list[str]) -> str:
+    for message in reversed(assistant_messages):
+        if "Draft ready:" not in message or "---" not in message:
+            continue
+
+        parts = message.split("---")
+        if len(parts) < 3:
+            continue
+
+        return parts[1].strip()
+
+    return ""
+
+
+def _parse_draft_message(message: str) -> str | None:
+    if "Draft ready:" not in message or "---" not in message:
+        return None
+
+    parts = message.split("---")
+    if len(parts) < 3:
+        return None
+
+    return parts[1].strip()
+
+
+def _format_selected_lead(lead: dict) -> str:
+    name = (lead.get("name") or "Unknown").strip()
+    title = (lead.get("title") or "").strip()
+    company = (lead.get("company") or "Unknown Company").strip()
+    role_part = f" — {title}" if title else ""
+    return f"Selected: {name}{role_part} @ {company}"
+
+
+def _assistant_bundle(
+    *,
+    workflow_session_id: str,
+    text: str,
+    message_type: str = "text",
+    data: dict | None = None,
+) -> list[dict]:
+    message = _message(role="assistant", message_type=message_type, text=text, data=data)
+    record_workflow_message(
+        session_id=workflow_session_id,
+        role="assistant",
+        message_type=message_type,
+        content=text,
+        metadata=data,
+    )
+    return [message]
+
+
+class ConversationEngine:
+    def _finish_response(
+        self,
+        *,
+        user_id: str,
+        messages: list[dict],
+        events: list[dict],
+    ) -> dict:
+        import time; _t0 = time.time()
+        print(f"[TRACE] 9 | SERIALIZATION STARTED | _finish_response | +0ms")
+        for message in messages:
+            if message.get("role") != "assistant":
+                continue
+            text = (message.get("text") or "").strip()
+            if not text:
+                continue
+            log_conversation(user_id, "assistant", text)
+
+        return {"ok": True, "messages": messages, "events": events}
+
+    def create_web_session(
+        self,
+        display_name: str | None = None,
+        *,
+        user_id: str | None = None,
+    ) -> dict:
+        created = create_lightweight_web_session(
+            display_name=display_name,
+            user_id=user_id,
+        )
+        if created is None:
+            raise ValueError("Unable to create web session")
+
+        user = created["user"]
+        workflow_session_id = ensure_workflow_session(
+            user_id=user["id"],
+            channel="web",
+            session_key=created["session_token"],
+        )
+        record_workflow_event(
+            session_id=workflow_session_id,
+            event_type="session.created",
+            payload={"channel": "web"},
+        )
+
+        welcome_text = generate_conversational_response(
+            user_message="",
+            stage="session_start",
+            context={"user_id": user["id"]},
+            recent_assistant_messages=[],
+        )
+
+        welcome_message = _message(
+            role="assistant",
+            message_type="text",
+            text=welcome_text,
+        )
+        record_workflow_message(
+            session_id=workflow_session_id,
+            role="assistant",
+            message_type="text",
+            content=welcome_message["text"],
+        )
+
+        prompt_text = _get_service_prompt_variation([])
+
+        prompt_message = _message(
+            role="assistant",
+            message_type="prompt",
+            text=prompt_text,
+        )
+        record_workflow_message(
+            session_id=workflow_session_id,
+            role="assistant",
+            message_type="prompt",
+            content=prompt_message["text"],
+        )
+
+        log_conversation(user["id"], "assistant", welcome_message["text"])
+        log_conversation(user["id"], "assistant", prompt_message["text"])
+
+        return {
+            "ok": True,
+            "session_token": created["session_token"],
+            "user_id": user["id"],
+            "display_name": user.get("username"),
+            "gmail_connected": has_connected_account(user["id"]),
+            "initial_messages": [welcome_message, prompt_message],
+        }
+
+    def get_web_session_user_id(self, session_token: str) -> str | None:
+        """PR-P1.1: minimal identity resolution for callers that only need the
+        owning user id (e.g. rate limiting). Unlike ``get_web_session_summary``
+        this never loads workflow sessions, messages, or provider state —
+        1-3 cheap queries instead of ~9-10."""
+        user = get_web_session(session_token)
+        if user is None:
+            return None
+        return str(user.get("id") or "") or None
+
+    def get_web_session_identity(self, session_token: str) -> dict | None:
+        """PR-2B: minimal identity for hot paths — 2-4 queries instead of the
+        full summary's ~9-10. Returns {user_id, display_name, gmail_connected};
+        never loads workflow sessions or messages. Pairs with
+        services.identity.session_cache for short-TTL caching."""
+        user = get_web_session(session_token)
+        if user is None:
+            return None
+        return {
+            "user_id": user["id"],
+            "display_name": user.get("username"),
+            "gmail_connected": has_connected_account(user["id"]),
+        }
+
+    def get_web_session_summary(self, session_token: str) -> dict | None:
+        user = get_web_session(session_token)
+        if user is None:
+            return None
+
+        session_key = session_token
+        sessions = list_workflow_sessions(user["id"], "web", session_key)
+        messages = self.list_messages(channel="web", external_user_id=session_token)
+        return {
+            "ok": True,
+            "session_token": session_token,
+            "user_id": user["id"],
+            "display_name": user.get("username"),
+            "gmail_connected": has_connected_account(user["id"]),
+            "workflow_sessions": sessions,
+            "messages": messages,
+        }
+
+    def list_messages(self, *, channel: str, external_user_id: str) -> list[dict]:
+        user = get_channel_user(channel=channel, external_user_id=external_user_id)
+        if user is None:
+            return []
+
+        rows = list_conversation_messages(user["id"])
+        return [
+            _message(
+                role=row.get("role") or "assistant",
+                message_type="text",
+                text=(row.get("message") or "").strip(),
+                data={"created_at": row.get("created_at")},
+            )
+            for row in rows
+            if (row.get("message") or "").strip()
+        ]
+
+    def get_gmail_connect_url(self, *, channel: str, external_user_id: str) -> str:
+        user = get_channel_user(channel=channel, external_user_id=external_user_id)
+        if user is None:
+            raise ValueError("Session not found")
+
+        # Server-issued, single-use, expiring OAuth state bound to the user and
+        # flow context (channel + transport id). The callback consumes it and
+        # derives ownership from the state — never from a client-constructed
+        # user_id (SaaS-1.5).
+        from services.identity.oauth_state import issue_state
+        from services.platform.supabase import _run_blocking
+        state = _run_blocking(issue_state(
+            str(user["id"]),
+            {"channel": channel, "transport_id": str(external_user_id)},
+        ))
+        return get_google_auth_url(state=state)
+
+    def _get_dynamic_prompt(
+        self,
+        stage: str,
+        context: dict,
+        recent_messages: list[str],
+        service: str | None = None,
+        user_preferences: dict | None = None,
+    ) -> str:
+        """Get dynamic conversational prompt based on stage and context."""
+        prefs = user_preferences or {}
+
+        if stage == "ask_service":
+            return _get_service_prompt_variation(recent_messages)
+
+        if stage == "ask_target":
+            return _get_target_prompt_variation(recent_messages, service or "")
+
+        if stage == "after_leads":
+            lead_count = context.get("lead_count", 0)
+            return _get_after_leads_variation(recent_messages, lead_count)
+
+        if stage == "after_draft":
+            lead_name = context.get("lead_name", "")
+            return _get_after_draft_variation(recent_messages, lead_name, prefs)
+
+        if stage == "after_send":
+            return _get_after_send_variation()
+
+        if stage == "refining":
+            return _get_refine_options_variation()
+
+        return generate_conversational_response(
+            user_message="",
+            stage=stage,
+            context=context,
+            recent_assistant_messages=recent_messages,
+        )
+
+    def _parse_natural_send_intent(self, user_message: str) -> bool:
+        """Check if message indicates sending intent in natural language."""
+        msg = user_message.lower().strip()
+
+        send_phrases = [
+            "send it", "send", "go", "go ahead", "do it", "yes", "yeah", "yep",
+            "sure", "ok", "fire", "ship", "drop it", "hit send", "dispatch",
+            "looks good", "this works", "good enough", "that works", "perfect",
+            "works for me", "send as is", "send as-is",
+        ]
+
+        if msg in send_phrases:
+            return True
+
+        # Multi-word phrases: longest-first substring match
+        multi = sorted([p for p in send_phrases if ' ' in p], key=len, reverse=True)
+        for phrase in multi:
+            if phrase in msg and len(msg) < 50:
+                return True
+
+        # Single-word phrases (except "go"): word-boundary regex
+        # "go" is excluded to avoid false positives like "go with 5"
+        import re
+        single = [p for p in send_phrases if ' ' not in p and p != "go"]
+        for phrase in single:
+            if re.search(r'\b' + re.escape(phrase) + r'\b', msg) and len(msg) < 50:
+                return True
+
+        return False
+
+    def _parse_natural_refine_intent(self, user_message: str) -> tuple[bool, str]:
+        """Check if message indicates refinement intent. Returns (is_refine, instruction)."""
+        msg = user_message.lower().strip()
+
+        refine_indicators = [
+            "shorter", "longer", "more casual", "less salesy", "more formal",
+            "different", "try again", "change", "tweak", "adjust", "rewrite",
+            "make it", "keep it", "less", "more",
+        ]
+
+        for indicator in refine_indicators:
+            if indicator in msg:
+                return True, user_message
+
+        if any(word in msg for word in ["refine", "edit", "modify", "revise"]):
+            return True, user_message
+
+        return False, ""
+
+    def _is_greeting(self, user_message: str) -> bool:
+        """Check if message is a greeting or casual opener."""
+        msg = user_message.lower().strip()
+
+        pure_greetings = ["hi", "hello", "hey", "yo", "sup", "hiya", "greetings"]
+        if msg in pure_greetings:
+            return True
+
+        greeting_prefixes = [
+            "hi ", "hi,", "hi.", "hi!", "hello ", "hello,", "hello.",
+            "hey ", "hey,", "hey.", "hey!", "yo ", "yo,",
+            "good morning", "good afternoon", "good evening",
+            "good day", "greetings", "howdy", "what's up", "whassup",
+            "wassup", "wazzup", "how's it going", "how are you",
+        ]
+        for prefix in greeting_prefixes:
+            if msg.startswith(prefix):
+                return True
+
+        casual_acknowledgements = [
+            "thanks", "thank you", "thank u", "thx", "ty",
+            "cool", "nice", "okay", "ok", "alright", "alrighty",
+            "sure", "sounds good", "great", "perfect", "awesome",
+            "no problem", "np", "no worries", "cheers",
+            "got it", "understood", "understood.",
+        ]
+        if msg in casual_acknowledgements:
+            return True
+
+        short_social = ["ok", "cool", "nice", "sure", "yeah", "yep", "nah"]
+        if len(msg) <= 5 and msg in short_social:
+            return True
+
+        return False
+
+    def _get_greeting_response(self, recent_messages: list[str]) -> str:
+        """Get a natural greeting response with variation."""
+        pool = RESPONSE_VARIATIONS.get("greeting", [])
+        recent_lower = [m.lower() for m in (recent_messages or [])]
+        available = [p for p in pool if p.lower() not in recent_lower]
+        if available:
+            return random.choice(available)
+        return pool[0] if pool else "Hey — what are you looking to promote today?"
+
+    def _get_onboarding_prompt(self, recent_messages: list[str]) -> str:
+        """Get a conversational onboarding prompt."""
+        pool = RESPONSE_VARIATIONS.get("onboarding", [])
+        recent_lower = [m.lower() for m in (recent_messages or [])]
+        available = [p for p in pool if p.lower() not in recent_lower]
+        if available:
+            return random.choice(available)
+        return pool[0] if pool else "Who are you trying to reach?"
+
+    def handle_message(
+        self,
+        *,
+        channel: str,
+        external_user_id: str,
+        text: str,
+        username: str | None = None,
+        transport_metadata: dict | None = None,
+    ) -> dict:
+        import time; _t0 = time.time()
+        print(f"[TRACE] 2 | ENTERED ENGINE | handle_message | +0ms")
+        user = get_or_create_channel_user(
+            channel=channel,
+            external_user_id=external_user_id,
+            username=username,
+        )
+        print(f"[TRACE] 3 | SESSION LOOKUP DONE | get_or_create_channel_user | +{int((time.time()-_t0)*1000)}ms")
+        if user is None:
+            return {
+                "ok": False,
+                "messages": [
+                    _message(
+                        role="assistant",
+                        message_type="error",
+                        text="Something hiccupped on my end. Mind saying that again?",
+                    )
+                ],
+                "events": [],
+            }
+
+        if channel == "telegram":
+            chat_id = (transport_metadata or {}).get("chat_id")
+            if chat_id is not None:
+                update_user_telegram_chat_id(user["id"], int(chat_id))
+
+        workflow_session_id = ensure_workflow_session(
+            user_id=user["id"],
+            channel=channel,
+            session_key=external_user_id,
+        )
+        touch_workflow_session(workflow_session_id)
+
+        normalized_text = text.strip()
+        existing_context = get_session_context(user["id"])
+        log_conversation(user["id"], "user", normalized_text)
+        record_workflow_message(
+            session_id=workflow_session_id,
+            role="user",
+            message_type="text",
+            content=normalized_text,
+            metadata={"channel": channel},
+        )
+        outputs: list[dict] = []
+        events: list[dict] = []
+
+        if normalized_text.lower() == "/restart":
+            clear_session_context(user["id"], since_timestamp=existing_context.get("started_at"))
+            welcome_text = generate_conversational_response(
+                user_message="",
+                stage="session_start",
+                context={"user_id": user["id"]},
+                recent_assistant_messages=[],
+            )
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=welcome_text,
+                )
+            )
+            prompt_text = _get_service_prompt_variation([])
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=prompt_text,
+                    message_type="prompt",
+                )
+            )
+            events.append({"type": "session.reset"})
+            record_workflow_event(
+                session_id=workflow_session_id,
+                event_type="session.reset",
+                payload={},
+            )
+            return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+        if normalized_text.lower() == "/connect":
+            auth_url = self.get_gmail_connect_url(
+                channel=channel,
+                external_user_id=external_user_id,
+            )
+            connect_text = f"Gmail isn't connected yet.\n\nConnect it once and I'll be able to send outreach directly from Loqi.\n\n{auth_url}"
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=connect_text,
+                    message_type="action",
+                    data={"label": "Connect Gmail", "url": auth_url},
+                )
+            )
+            events.append({"type": "gmail.connect.requested", "url": auth_url})
+            record_workflow_event(
+                session_id=workflow_session_id,
+                event_type="gmail.connect.requested",
+                payload={"url": auth_url},
+            )
+            return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+        if normalized_text.lower() == "/start":
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text="Hey — I'm Loqi. I help you find the right buyers and craft outreach that actually sounds like you.",
+                )
+            )
+            if existing_context["service"] and existing_context["target"]:
+                workflow_result = run_workflow(
+                    {
+                        "type": "generate_leads",
+                        "service": existing_context["service"],
+                        "target": existing_context["target"],
+                        "user_id": user["id"],
+                        "workflow_session_id": workflow_session_id,
+                    }
+                )
+                outputs.extend(
+                    self._render_workflow_result(
+                        workflow_session_id=workflow_session_id,
+                        workflow_result=workflow_result,
+                    )
+                )
+                return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+            if existing_context["service"]:
+                prompt_text = _get_target_prompt_variation([], existing_context["service"])
+                outputs.extend(
+                    _assistant_bundle(
+                        workflow_session_id=workflow_session_id,
+                        text=prompt_text,
+                        message_type="prompt",
+                    )
+                )
+                return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+            prompt_text = _get_service_prompt_variation([])
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=prompt_text,
+                    message_type="prompt",
+                )
+            )
+            return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+        # Planner fast-path — scheduling intent routes through BookingStrategy
+        if is_schedule_intent(normalized_text):
+            print(f"[PLANNER] Scheduling intent detected: '{normalized_text}'")
+            goal = PlanGoal(
+                outcome="Schedule an event",
+                target_action="schedule_event",
+            )
+            ctx: dict = {
+                "conversation_id": workflow_session_id,
+                "summary": normalized_text,
+                "user_id": user["id"],
+            }
+            router = PlannerRouter()
+            planner_result = router.route(goal, ctx)
+            if planner_result is not None:
+                outputs.extend(
+                    self._render_workflow_result(
+                        workflow_session_id=workflow_session_id,
+                        workflow_result=planner_result,
+                    )
+                )
+                return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+            print(f"[PLANNER] Router returned None — falling back to legacy path")
+
+        context = get_session_context(user["id"])
+        user_messages = context["user_messages"]
+        assistant_messages = context.get("assistant_messages", [])
+        conversation_context = (user_messages + assistant_messages)[-10:]
+        service = context["service"]
+        target = context["target"]
+        started_at = context["started_at"]
+        selected_lead_id = context.get("selected_lead_id")
+        previous_message = _extract_previous_outreach(assistant_messages)
+        has_draft = bool(previous_message)
+
+        user_prefs = get_user_preferences(user["id"]) or {}
+
+        print(f"[DEBUG] service={service}, target={target}, selected_lead_id={selected_lead_id}, has_draft={has_draft}")
+
+        parsed_service, parsed_target, signals = extract_single_message_fields(normalized_text)
+        print(f"[TRACE] 4 | FIELD EXTRACTION DONE | extract_single_message_fields | +{int((time.time()-_t0)*1000)}ms")
+        print(f"[DEBUG] parsed_service={parsed_service}, parsed_target={parsed_target}, signals={signals}")
+
+        if self._is_greeting(normalized_text) and not parsed_service and not parsed_target:
+            print(f"[GREETING] Casual message detected — responding conversationally")
+            greeting_response = self._get_greeting_response(assistant_messages[-3:])
+            onboarding_prompt = self._get_onboarding_prompt(assistant_messages[-3:])
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=greeting_response,
+                )
+            )
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=onboarding_prompt,
+                    message_type="prompt",
+                )
+            )
+            return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+        if parsed_service and not service:
+            service = parsed_service
+            print(f"[CONTEXT] Inferred service from single message: {service}")
+            if parsed_target:
+                target = parsed_target
+                print(f"[CONTEXT] Inferred target from single message: {target}")
+
+        if parsed_target and not target and service:
+            target = parsed_target
+            print(f"[CONTEXT] Inferred target from single message: {target}")
+
+        if parsed_service and parsed_target and not service:
+            print(f"[CONTEXT] Combined message detected — proceeding to lead search")
+
+        if parsed_service and not service:
+            service = parsed_service
+            print(f"[CONTEXT] Inferred service from single message: {service}")
+            if parsed_target:
+                target = parsed_target
+                print(f"[CONTEXT] Inferred target from single message: {target}")
+
+        if parsed_target and not target and service:
+            target = parsed_target
+            print(f"[CONTEXT] Inferred target from single message: {target}")
+
+        if parsed_service and parsed_target and not service:
+            print(f"[CONTEXT] Combined message detected — skipping redundant questions")
+
+        if not service:
+            prompt_text = self._get_dynamic_prompt(
+                stage="ask_service",
+                context=context,
+                recent_messages=assistant_messages[-3:],
+            )
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=prompt_text,
+                    message_type="prompt",
+                )
+            )
+            return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+        if not target:
+            prompt_text = self._get_dynamic_prompt(
+                stage="ask_target",
+                context=context,
+                recent_messages=assistant_messages[-3:],
+                service=service,
+            )
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=prompt_text,
+                    message_type="prompt",
+                )
+            )
+            return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+        print(f"[WORKFLOW] Proceeding with service='{service}', target='{target}'")
+
+        if not target:
+            prompt_text = self._get_dynamic_prompt(
+                stage="ask_target",
+                context=context,
+                recent_messages=assistant_messages[-3:],
+                service=service,
+            )
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=prompt_text,
+                    message_type="prompt",
+                )
+            )
+            return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+        lead_list_active = (
+            assistant_messages
+            and "Reply with a number to pick one" in (assistant_messages[-1] or "")
+        )
+
+        is_send_intent = self._parse_natural_send_intent(normalized_text)
+        is_refine, refine_instruction = self._parse_natural_refine_intent(normalized_text)
+
+        if is_send_intent and selected_lead_id:
+            print(f"[INTENT] Natural send intent detected from: {normalized_text}")
+            selected_lead = get_lead_by_id(selected_lead_id)
+            if selected_lead is None:
+                outputs.extend(
+                    _assistant_bundle(
+                        workflow_session_id=workflow_session_id,
+                        text="I couldn't find that lead — it may have been cleared in a previous session. Try selecting a different one.",
+                        message_type="error",
+                    )
+                )
+                return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+            workflow_result = run_workflow(
+                {
+                    "type": "send_outreach",
+                    "lead": selected_lead,
+                    "user_id": user["id"],
+                }
+            )
+            outputs.extend(
+                self._render_workflow_result(
+                    workflow_session_id=workflow_session_id,
+                    workflow_result=workflow_result,
+                )
+            )
+            next_text = _get_after_send_variation()
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=next_text,
+                    message_type="status",
+                )
+            )
+            events.append({"type": "outreach.sent"})
+            return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+        if is_refine and previous_message:
+            prefs_from_refine = detect_preferences_from_refinement(normalized_text)
+            for key, value in prefs_from_refine.items():
+                save_user_preference(user["id"], key, value)
+            print(f"[PREFERENCES] Detected from refinement: {prefs_from_refine}")
+
+            selected_lead = get_lead_by_id(selected_lead_id) if selected_lead_id else None
+            if selected_lead is None:
+                outputs.extend(
+                    _assistant_bundle(
+                        workflow_session_id=workflow_session_id,
+                        text="I couldn't find that lead — it may have been cleared in a previous session. Try selecting a different one.",
+                        message_type="error",
+                    )
+                )
+                return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+            workflow_result = run_workflow(
+                {
+                    "type": "draft_message",
+                    "service": service,
+                    "target": target,
+                    "lead": selected_lead,
+                    "edit_request": refine_instruction,
+                    "previous_message": previous_message,
+                    "conversation_context": conversation_context,
+                }
+            )
+            refine_confirmation = _get_refine_confirmation(refine_instruction)
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=refine_confirmation,
+                    message_type="status",
+                )
+            )
+            outputs.extend(
+                self._render_workflow_result(
+                    workflow_session_id=workflow_session_id,
+                    workflow_result=workflow_result,
+                )
+            )
+            next_text = self._get_dynamic_prompt(
+                stage="after_draft",
+                context={"lead_name": selected_lead.get("name", "")},
+                recent_messages=assistant_messages[-3:],
+                user_preferences=prefs_from_refine,
+            )
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=next_text,
+                    message_type="status",
+                )
+            )
+            events.append({"type": "draft.refined"})
+            return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+        if is_refine and not previous_message:
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text="No draft to refine yet. Let me draft something first.",
+                    message_type="status",
+                )
+            )
+            return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+        if selected_lead_id:
+            print(f"[WORKFLOW] selected_lead_id={selected_lead_id} — skipping lead search pipeline")
+            if normalized_text.isdigit():
+                print(f"[WORKFLOW] numeric reply with selected_lead — treating as lead re-selection")
+        elif not normalized_text.isdigit() and not is_send_intent:
+            print(f"[TRACE] 5 | LEAD SEARCH STARTED | run_workflow(generate_leads) | +{int((time.time()-_t0)*1000)}ms")
+            print(f"[WORKFLOW] no selected_lead and non-send text — triggering lead search")
+            transition_text = _get_pre_lead_search_transition()
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=transition_text,
+                    message_type="status",
+                )
+            )
+            workflow_result = run_workflow(
+                {
+                    "type": "generate_leads",
+                    "service": service,
+                    "target": target,
+                    "user_id": user["id"],
+                    "workflow_session_id": workflow_session_id,
+                }
+            )
+            if not workflow_result.get("ok"):
+                error_msg = workflow_result.get("error", "")
+                print(f"[WORKFLOW] Lead search failed: {error_msg}")
+
+                recovery_messages = [
+                    f"That search came up empty — let me try a broader approach with \"{target}\".",
+                    f"I couldn't find strong matches — trying a wider search.",
+                    f"That's a bit narrow, so I'm widening the search. Give me a moment.",
+                ]
+                import random
+                recovery_text = random.choice(recovery_messages)
+
+                outputs.extend(
+                    _assistant_bundle(
+                        workflow_session_id=workflow_session_id,
+                        text=recovery_text,
+                        message_type="status",
+                    )
+                )
+                outputs.extend(
+                    self._render_workflow_result(
+                        workflow_session_id=workflow_session_id,
+                        workflow_result=workflow_result,
+                    )
+                )
+                return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+            outputs.extend(
+                self._render_workflow_result(
+                    workflow_session_id=workflow_session_id,
+                    workflow_result=workflow_result,
+                )
+            )
+            return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+        try:
+            from services.intelligence.ai import classify_intent, OpenAIError
+
+            enriched_context = build_classification_context(
+                user_message=normalized_text,
+                session_context=context,
+                workflow_state={"stage": "awaiting_action"},
+            )
+            print(f"[TRACE] 4b | INTENT CLASSIFICATION STARTED | classify_intent | +{int((time.time()-_t0)*1000)}ms")
+            classified_intent = classify_intent(
+                normalized_text,
+                {
+                    "service": service,
+                    "target": target,
+                    "selected_lead_id": selected_lead_id,
+                    "lead_list_active": lead_list_active,
+                    "has_draft": has_draft,
+                    "user_message_count": len(user_messages),
+                },
+            )
+            print(f"[TRACE] 4c | INTENT CLASSIFICATION DONE | classify_intent | +{int((time.time()-_t0)*1000)}ms | intent={classified_intent}")
+        except Exception as e:
+            print(f"[WORKFLOW] Intent classification failed: {e} — using natural action parsing")
+            action, detail = classify_natural_action(
+                normalized_text,
+                {
+                    "service": service,
+                    "target": target,
+                    "selected_lead_id": selected_lead_id,
+                    "has_draft": has_draft,
+                },
+            )
+
+            if action in ("send", "send_it"):
+                classified_intent = "send"
+            elif action in ("select_number", "select_recent"):
+                classified_intent = "select_lead"
+            elif action in ("refine", "refine_shorter", "refine_longer", "refine_casual", "refine_another"):
+                classified_intent = "refine_message"
+            elif action == "new_search":
+                classified_intent = "new_search"
+            elif action == "defer":
+                classified_intent = "defer"
+            else:
+                classified_intent = "unknown"
+
+            print(f"[WORKFLOW] Natural action parsed: '{action}', detail='{detail}'")
+
+        print(f"[WORKFLOW] intent classified: '{classified_intent}' (user_input='{normalized_text}')")
+
+        if classified_intent == "send":
+            selected_lead = get_lead_by_id(selected_lead_id) if selected_lead_id else None
+            if selected_lead is None:
+                outputs.extend(
+                    _assistant_bundle(
+                        workflow_session_id=workflow_session_id,
+                        text="I couldn't find that lead — it may have been cleared in a previous session. Try selecting a different one.",
+                        message_type="error",
+                    )
+                )
+                return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+            workflow_result = run_workflow(
+                {
+                    "type": "send_outreach",
+                    "lead": selected_lead,
+                    "user_id": user["id"],
+                }
+            )
+            outputs.extend(
+                self._render_workflow_result(
+                    workflow_session_id=workflow_session_id,
+                    workflow_result=workflow_result,
+                )
+            )
+            next_text = _get_after_send_variation()
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=next_text,
+                    message_type="status",
+                )
+            )
+            events.append({"type": "outreach.sent"})
+            return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+        if classified_intent == "select_lead" or normalized_text.isdigit():
+            selected_lead = select_lead(
+                user["id"],
+                normalized_text,
+                since_timestamp=started_at,
+            )
+            if selected_lead is None:
+                print(f"[WORKFLOW] select_lead returned None — regenerating lead list")
+                workflow_result = run_workflow(
+                    {
+                        "type": "generate_leads",
+                        "service": service,
+                        "target": target,
+                        "user_id": user["id"],
+                        "workflow_session_id": workflow_session_id,
+                    }
+                )
+                outputs.extend(
+                    self._render_workflow_result(
+                        workflow_session_id=workflow_session_id,
+                        workflow_result=workflow_result,
+                    )
+                )
+                return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+            print(f"[WORKFLOW] lead selected: id={selected_lead.get('id')}, name={selected_lead.get('name')}")
+
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=_format_selected_lead(selected_lead),
+                    message_type="lead_selected",
+                    data={"lead": selected_lead},
+                )
+            )
+            print(f"[WORKFLOW] transitioning to draft_generation for lead_id={selected_lead.get('id')}")
+            draft_transition = _get_pre_draft_transition()
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=draft_transition,
+                    message_type="status",
+                )
+            )
+            workflow_result = run_workflow(
+                {
+                    "type": "draft_message",
+                    "service": service,
+                    "target": target,
+                    "lead": selected_lead,
+                    "conversation_context": conversation_context,
+                    "user_id": user["id"],
+                }
+            )
+            print(f"[WORKFLOW] draft_generation complete: ok={workflow_result.get('ok')}")
+            outputs.extend(
+                self._render_workflow_result(
+                    workflow_session_id=workflow_session_id,
+                    workflow_result=workflow_result,
+                )
+            )
+            next_text = self._get_dynamic_prompt(
+                stage="after_draft",
+                context={"lead_name": selected_lead.get("name", "")},
+                recent_messages=assistant_messages[-3:],
+                user_preferences=user_prefs,
+            )
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=next_text,
+                    message_type="status",
+                )
+            )
+            events.append({"type": "lead.selected", "lead_id": selected_lead.get("id")})
+            return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+        if classified_intent == "new_search":
+            clear_session_context(user["id"], since_timestamp=started_at)
+            workflow_result = run_workflow(
+                {
+                    "type": "generate_leads",
+                    "service": service,
+                    "target": normalized_text,
+                    "user_id": user["id"],
+                    "workflow_session_id": workflow_session_id,
+                }
+            )
+            outputs.extend(
+                self._render_workflow_result(
+                    workflow_session_id=workflow_session_id,
+                    workflow_result=workflow_result,
+                )
+            )
+            events.append({"type": "lead_search.ran"})
+            return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+        if classified_intent == "refine_message" and previous_message:
+            selected_lead = get_lead_by_id(selected_lead_id) if selected_lead_id else None
+            if selected_lead is None:
+                outputs.extend(
+                    _assistant_bundle(
+                        workflow_session_id=workflow_session_id,
+                        text="I couldn't find that lead — it may have been cleared in a previous session. Try selecting a different one.",
+                        message_type="error",
+                    )
+                )
+                return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+            prefs_from_refine = detect_preferences_from_refinement(normalized_text)
+            for key, value in prefs_from_refine.items():
+                save_user_preference(user["id"], key, value)
+
+            workflow_result = run_workflow(
+                {
+                    "type": "draft_message",
+                    "service": service,
+                    "target": target,
+                    "lead": selected_lead,
+                    "edit_request": normalized_text,
+                    "previous_message": previous_message,
+                    "conversation_context": conversation_context,
+                }
+            )
+            refine_confirmation = _get_refine_confirmation(normalized_text)
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=refine_confirmation,
+                    message_type="status",
+                )
+            )
+            outputs.extend(
+                self._render_workflow_result(
+                    workflow_session_id=workflow_session_id,
+                    workflow_result=workflow_result,
+                )
+            )
+            next_text = self._get_dynamic_prompt(
+                stage="after_draft",
+                context={"lead_name": selected_lead.get("name", "")},
+                recent_messages=assistant_messages[-3:],
+                user_preferences=prefs_from_refine,
+            )
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=next_text,
+                    message_type="status",
+                )
+            )
+            events.append({"type": "draft.refined"})
+            return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+        if classified_intent == "refine_message":
+            next_text = _get_refine_options_variation()
+            outputs.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=next_text,
+                    message_type="status",
+                )
+            )
+            return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+        outputs.extend(
+            _assistant_bundle(
+                workflow_session_id=workflow_session_id,
+                text="I didn't quite catch that. You can pick a lead number, say 'send' to send the draft, or tell me how you'd like to change the message.",
+                message_type="error",
+            )
+        )
+        return self._finish_response(user_id=user["id"], messages=outputs, events=events)
+
+    def _render_workflow_result(
+        self,
+        *,
+        workflow_session_id: str,
+        workflow_result: dict,
+    ) -> list[dict]:
+        output: list[dict] = []
+        workflow_ok = workflow_result.get("ok", True)
+        message_text = workflow_result.get("message", "")
+        workflow_type = workflow_result.get("type", "workflow")
+        workflow_error = workflow_result.get("error")
+
+        if not workflow_ok:
+            output.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=message_text or "Operation failed. Please try again.",
+                    message_type="error",
+                    data={"error": workflow_error},
+                )
+            )
+            return output
+
+        if workflow_type == "generate_leads":
+            output.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=message_text,
+                    message_type="lead_list",
+                    data={
+                        "leads": workflow_result.get("leads", []),
+                        "source": workflow_result.get("source"),
+                    },
+                )
+            )
+            return output
+
+        if workflow_type == "draft_message":
+            draft_body = _parse_draft_message(message_text)
+            message_type = "draft_preview" if draft_body else "send_confirmation"
+            output.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=message_text,
+                    message_type=message_type,
+                    data={
+                        "lead": workflow_result.get("lead"),
+                        "draft": draft_body,
+                        "tone": workflow_result.get("tone"),
+                        "length": workflow_result.get("length"),
+                        "lead_intelligence": workflow_result.get("lead_intelligence"),
+                        "company_intelligence": workflow_result.get("company_intelligence"),
+                    },
+                )
+            )
+            return output
+
+        if workflow_type == "send_outreach":
+            output.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=message_text,
+                    message_type="send_result",
+                    data=workflow_result.get("result") or {},
+                )
+            )
+            return output
+
+        if workflow_type == "planner_result":
+            output.extend(
+                _assistant_bundle(
+                    workflow_session_id=workflow_session_id,
+                    text=message_text,
+                    message_type="planner_result",
+                    data=workflow_result.get("result") or {},
+                )
+            )
+            return output
+
+        output.extend(
+            _assistant_bundle(
+                workflow_session_id=workflow_session_id,
+                text=message_text,
+                message_type="text",
+                data=workflow_result,
+            )
+        )
+        return output

@@ -9,9 +9,73 @@ Tests that:
 import pytest
 from datetime import datetime, timezone
 
-from services.workspace_memory import clear as clear_memory, record, record_search
-from services.workspace_timeline import clear as clear_timeline
-from services.workspace_snapshot import invalidate_cache, build_snapshot
+from services.workspace.memory import clear as clear_memory, record, record_search
+from services.workspace.timeline import clear as clear_timeline
+from services.workspace.snapshot import invalidate_cache, build_snapshot
+
+
+# The end-to-end session fixture creates the canonical durable identity and
+# workspace graph, so this suite belongs to the database-backed gate.
+pytestmark = pytest.mark.requires_db
+
+
+class _MissionControlSummaryService:
+    """Route-boundary double; Mission Control data is canonical, not session state."""
+
+    def __init__(self, campaigns: list[dict], drafts: list[dict]) -> None:
+        self.campaigns = campaigns
+        self.drafts = drafts
+        self.calls: list[tuple[str, str, str, str]] = []
+        self.briefing_calls: list[tuple[str, str, str, str, str | None]] = []
+
+    async def get_summary(
+        self, *, owner_id: str, workspace_id: str, actor_user_id: str, session_token: str,
+    ) -> dict:
+        self.calls.append((owner_id, workspace_id, actor_user_id, session_token))
+        campaign_name = self.campaigns[0]["name"] if self.campaigns else "campaign"
+        return {
+            "ok": True,
+            "campaigns": self.campaigns,
+            "draft_counts": {"total": len(self.drafts), "pending": 2, "approved": 1},
+            "needs_attention": [],
+            "live_activity": [],
+            "campaign_count": len(self.campaigns),
+            "active_jobs": [],
+            "initial_research": None,
+            "initial_research_result_count": None,
+            "recommendations": [{"observation": f"Review {campaign_name} drafts"}],
+            "kpis": {},
+            "total_leads": sum(campaign.get("lead_count", 0) for campaign in self.campaigns),
+            "brief": {"lines": [f"{campaign_name} needs attention."]},
+            "workspace_memory": {},
+            "delta": {},
+            "workspace_analysis": {
+                "current_focus": {},
+                "recommended_next_action": {},
+                "campaign_priorities": [],
+                "workspace_health": {},
+                "cross_campaign_insights": [],
+                "workflow_continuation": {},
+            },
+        }
+
+    async def get_workspace_briefing(
+        self,
+        *,
+        owner_id: str,
+        workspace_id: str,
+        actor_user_id: str,
+        session_token: str,
+        user_timezone: str | None,
+    ) -> dict:
+        self.briefing_calls.append((owner_id, workspace_id, actor_user_id, session_token, user_timezone))
+        return {"ok": True, "briefing": {"greeting": "Good morning"}}
+
+
+def _use_mission_control_summary(monkeypatch, campaigns: list[dict], drafts: list[dict]):
+    service = _MissionControlSummaryService(campaigns, drafts)
+    monkeypatch.setattr("services.mission_control.api.get_service", lambda: service)
+    return service
 
 
 @pytest.fixture
@@ -77,6 +141,29 @@ def session_with_data(client):
         "campaigns": campaigns,
         "drafts": drafts,
     }
+
+
+def _use_copilot_workspace(monkeypatch, campaigns: list[dict], drafts: list[dict]) -> None:
+    """Bind Copilot integration tests to the canonical workspace projection."""
+    from types import SimpleNamespace
+    import services.workspace.state as workspace_state
+
+    async def selected_workspace(_request, _owner_id):
+        return SimpleNamespace(workspace_id="workspace-reasoner")
+
+    def load_workspace_state(_owner_id, include_details=False, workspace_id="", canonical_only=False):
+        assert workspace_id == "workspace-reasoner"
+        assert canonical_only is True
+        return {"campaigns": campaigns, "drafts": drafts}
+
+    from services.copilot import service as copilot_service
+
+    monkeypatch.setattr(
+        copilot_service.workspace_access,
+        "resolve_selected_workspace_context",
+        selected_workspace,
+    )
+    monkeypatch.setattr(workspace_state, "load_workspace_state", load_workspace_state)
 
 
 class TestWorkspaceSnapshot:
@@ -174,16 +261,10 @@ class TestWorkspaceReasoner:
 
 
 class TestMissionControlIntegration:
-    def test_mc_endpoint_returns_campaigns(self, client, session_with_data):
+    def test_mc_endpoint_returns_campaigns(self, client, session_with_data, monkeypatch):
         s = session_with_data
         token = s["token"]
-
-        existing = client.app.dependency_overrides if hasattr(client.app, "dependency_overrides") else {}
-
-        from main import campaign_store
-        campaign_store[token] = s["campaigns"]
-        from main import draft_store
-        draft_store[token] = s["drafts"]
+        service = _use_mission_control_summary(monkeypatch, s["campaigns"], s["drafts"])
 
         resp = client.get(f"/api/web/session/{token}/mission-control")
         assert resp.status_code == 200
@@ -191,14 +272,12 @@ class TestMissionControlIntegration:
         assert data["ok"] is True
         assert data["campaign_count"] == 2
         assert len(data["campaigns"]) == 2
+        assert service.calls and service.calls[0][-1] == token
 
-    def test_mc_contains_workspace_analysis(self, client, session_with_data):
+    def test_mc_contains_workspace_analysis(self, client, session_with_data, monkeypatch):
         s = session_with_data
         token = s["token"]
-
-        from main import campaign_store, draft_store
-        campaign_store[token] = s["campaigns"]
-        draft_store[token] = s["drafts"]
+        _use_mission_control_summary(monkeypatch, s["campaigns"], s["drafts"])
 
         resp = client.get(f"/api/web/session/{token}/mission-control")
         data = resp.json()
@@ -210,13 +289,10 @@ class TestMissionControlIntegration:
         assert "cross_campaign_insights" in analysis
         assert "workflow_continuation" in analysis
 
-    def test_mc_recommendations_reference_campaign(self, client, session_with_data):
+    def test_mc_recommendations_reference_campaign(self, client, session_with_data, monkeypatch):
         s = session_with_data
         token = s["token"]
-
-        from main import campaign_store, draft_store
-        campaign_store[token] = s["campaigns"]
-        draft_store[token] = s["drafts"]
+        _use_mission_control_summary(monkeypatch, s["campaigns"], s["drafts"])
 
         resp = client.get(f"/api/web/session/{token}/mission-control")
         data = resp.json()
@@ -225,13 +301,10 @@ class TestMissionControlIntegration:
         titles = " ".join(r.get("observation", "") for r in recs)
         assert any(name in titles for name in ["Tech Founders", "draft"])
 
-    def test_mc_brief_mentions_campaign(self, client, session_with_data):
+    def test_mc_brief_mentions_campaign(self, client, session_with_data, monkeypatch):
         s = session_with_data
         token = s["token"]
-
-        from main import campaign_store, draft_store
-        campaign_store[token] = s["campaigns"]
-        draft_store[token] = s["drafts"]
+        _use_mission_control_summary(monkeypatch, s["campaigns"], s["drafts"])
 
         resp = client.get(f"/api/web/session/{token}/mission-control")
         data = resp.json()
@@ -240,15 +313,29 @@ class TestMissionControlIntegration:
         text = " ".join(lines)
         assert any(name in text for name in ["Tech Founders", "Outreach", "campaign"])
 
+    def test_briefing_route_delegates_timezone_to_mission_control_service(
+        self, client, session_with_data, monkeypatch
+    ):
+        s = session_with_data
+        service = _use_mission_control_summary(monkeypatch, s["campaigns"], s["drafts"])
+
+        response = client.get(
+            f"/api/web/session/{s['token']}/briefing",
+            headers={"x-timezone": "Asia/Kolkata"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["briefing"]["greeting"] == "Good morning"
+        assert service.briefing_calls and service.briefing_calls[0][-2:] == (
+            s["token"], "Asia/Kolkata"
+        )
+
 
 class TestCopilotIntegration:
-    def test_copilot_responds_with_campaign_context(self, client, session_with_data):
+    def test_copilot_responds_with_campaign_context(self, client, session_with_data, monkeypatch):
         s = session_with_data
         token = s["token"]
-
-        from main import campaign_store, draft_store
-        campaign_store[token] = s["campaigns"]
-        draft_store[token] = s["drafts"]
+        _use_copilot_workspace(monkeypatch, s["campaigns"], s["drafts"])
 
         resp = client.post(
             f"/api/web/session/{token}/messages",
@@ -271,13 +358,10 @@ class TestCopilotIntegration:
             f"Copilot response should reference workspace context, got: {text[:200]}"
         )
 
-    def test_copilot_does_not_ask_for_context(self, client, session_with_data):
+    def test_copilot_does_not_ask_for_context(self, client, session_with_data, monkeypatch):
         s = session_with_data
         token = s["token"]
-
-        from main import campaign_store, draft_store
-        campaign_store[token] = s["campaigns"]
-        draft_store[token] = s["drafts"]
+        _use_copilot_workspace(monkeypatch, s["campaigns"], s["drafts"])
 
         resp = client.post(
             f"/api/web/session/{token}/messages",

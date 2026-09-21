@@ -149,7 +149,7 @@ class TestInboundFilter:
             async def list_by_email(self, workspace_id, email):
                 return [FakeWorkspaceLead()]
 
-        monkeypatch.setattr("services.workspace_state._async_workspace", lambda user_id: "ws-1")
+        monkeypatch.setattr("services.workspace.state._async_workspace", lambda user_id: "ws-1")
         monkeypatch.setattr(
             "services.persistence.launch.repositories.WorkspaceLeadRepository",
             lambda: FakeRepo(),

@@ -68,7 +68,7 @@ If OpenAI unavailable:
 
 ## 2. ICP Extraction Workflow
 
-**Location:** `backend/services/icp_extractor.py`
+**Location:** `backend/services/discovery/icp.py`
 
 ### Input
 ```python
@@ -131,7 +131,7 @@ extract_structured_icp("CRM for startups")
 
 ## 3. Semantic Search Expansion
 
-**Location:** `backend/services/search_expansion.py`
+**Location:** `backend/services/discovery/search_expansion.py`
 
 ### Input
 ```python

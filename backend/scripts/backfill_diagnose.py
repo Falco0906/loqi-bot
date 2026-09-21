@@ -63,7 +63,7 @@ def snapshot(client, tag: str) -> None:
 
 
 def main() -> int:
-    from services.supabase import SUPABASE_URL, get_supabase_client
+    from services.platform.supabase import SUPABASE_URL, get_supabase_client
 
     log(f"target supabase: {SUPABASE_URL}")
     client = get_supabase_client()

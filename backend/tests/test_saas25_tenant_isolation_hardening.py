@@ -91,7 +91,7 @@ class TestGetDiscoveryWorkspaceScoping:
 
     @pytest.mark.asyncio
     async def test_foreign_discovery_returns_none_at_query_layer(self, monkeypatch):
-        from services import discovery
+        from services.discovery import service as discovery
         db = FakeClient({"discoveries": [
             {"id": "disc-A", "workspace_id": "ws-A", "created_at": _iso(),
              "updated_at": _iso(), "status": "completed"},
@@ -121,7 +121,7 @@ class TestWorkspaceContextProviderScoping:
         )
 
     def test_only_own_providers_surfaced(self, monkeypatch):
-        import main as main_module
+        from services.workspace import context as context_owner
         from enum import Enum
 
         class _H(Enum):
@@ -134,26 +134,14 @@ class TestWorkspaceContextProviderScoping:
         prov_a = self._prov("p-A", "user-A", "a@loqi.ai")
         prov_b = self._prov("p-B", "user-B", "b@loqi.ai")
 
-        # Stub the heavy workspace helpers to empty, and the provider store to
-        # two tenants' providers.
-        monkeypatch.setattr(main_module, "campaign_store", _StubDict())
-        monkeypatch.setattr(main_module, "draft_store", _StubDict())
-        monkeypatch.setattr(main_module, "build_snapshot",
-                            lambda *a, **k: {"campaigns": [], "campaign_count": 0,
-                                             "campaigns_ready": 0, "campaigns_draft_review": 0,
-                                             "drafts": {}, "total_leads": 0, "jobs": {},
-                                             "memory": {}, "timeline": []})
-        monkeypatch.setattr(main_module, "get_active_runtimes", lambda *a, **k: [])
-        monkeypatch.setattr(main_module, "calculate_progress", lambda *a, **k: 0)
-
         class _Store:
             def list_providers(self):
                 return [prov_a, prov_b]
-        monkeypatch.setattr(main_module, "communication_store", _Store())
-        monkeypatch.setattr(main_module, "get_provider", lambda pid: _Health() if pid == "p-A" else _Health())
+        monkeypatch.setattr(context_owner, "communication_store", _Store())
+        monkeypatch.setattr(context_owner, "get_provider", lambda pid: _Health() if pid == "p-A" else _Health())
 
-        ctx = main_module._build_copilot_workspace_context(
-            "token", user_id="user-A",
+        ctx = context_owner.build_workspace_context(
+            "token", user_id="user-A", workspace_id="workspace-a",
         )
         provider_ids = [p["id"] for p in ctx.get("providers", [])]
         assert provider_ids == ["p-A"]
@@ -162,17 +150,8 @@ class TestWorkspaceContextProviderScoping:
         assert all(p["email"] == "a@loqi.ai" for p in ctx["providers"])
 
     def test_conversation_intelligence_gated_by_ownership(self, monkeypatch):
-        import main as main_module
-        monkeypatch.setattr(main_module, "campaign_store", _StubDict())
-        monkeypatch.setattr(main_module, "draft_store", _StubDict())
-        monkeypatch.setattr(main_module, "build_snapshot",
-                            lambda *a, **k: {"campaigns": [], "campaign_count": 0,
-                                             "campaigns_ready": 0, "campaigns_draft_review": 0,
-                                             "drafts": {}, "total_leads": 0, "jobs": {},
-                                             "memory": {}, "timeline": []})
-        monkeypatch.setattr(main_module, "get_active_runtimes", lambda *a, **k: [])
-        monkeypatch.setattr(main_module, "calculate_progress", lambda *a, **k: 0)
-        monkeypatch.setattr(main_module, "communication_store", _StubStore([]))
+        from services.workspace import context as context_owner
+        monkeypatch.setattr(context_owner, "communication_store", _StubStore([]))
 
         class _Mem:
             buying_signals = []
@@ -192,32 +171,32 @@ class TestWorkspaceContextProviderScoping:
             decision_confidence = 0
             top_objection = ""
 
-        # memory store has data for the foreign conversation id.
-        monkeypatch.setattr(main_module, "memory_store", _MemStore({"conv-9": _Mem()}))
-        monkeypatch.setattr(main_module, "get_conversation_events", lambda cid: [])
-
+        # A foreign conversation must be rejected before the durable memory
+        # boundary is consulted.
+        monkeypatch.setattr(
+            context_owner,
+            "load_legacy_memory",
+            lambda **_kwargs: pytest.fail("foreign conversation reached memory read"),
+        )
         class _Convo:
             owner_id = "user-other"
 
         # The conversation provably belongs to a DIFFERENT owner -> denied.
-        monkeypatch.setattr(main_module, "_conversation_owned_by", lambda convo, owner: False)
+        monkeypatch.setattr(context_owner, "conversation_owned_by", lambda convo, owner: False)
 
         class _ConvStore:
             def get_conversation(self, cid):
                 return _Convo()
         # The function imports conversation_store from the module, not main.
         import services.conversations.conversation_store as conv_module
-        monkeypatch.setattr(conv_module, "conversation_store", _ConvStore())
+        conversation_store = _ConvStore()
+        monkeypatch.setattr(conv_module, "conversation_store", conversation_store)
+        monkeypatch.setattr(context_owner, "conversation_store", conversation_store)
 
-        ctx = main_module._build_copilot_workspace_context(
-            "token", conversation_id="conv-9", user_id="user-A",
+        ctx = context_owner.build_workspace_context(
+            "token", conversation_id="conv-9", user_id="user-A", workspace_id="workspace-a",
         )
         assert "conversation_intelligence" not in ctx
-
-
-class _StubDict:
-    def get(self, *a, **k):
-        return []
 
 
 class _StubStore:

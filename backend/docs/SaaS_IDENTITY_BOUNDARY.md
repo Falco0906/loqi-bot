@@ -77,7 +77,7 @@ actor identity.
 | Auth entry points | `/api/v1/auth/signup/email`, `/signup/email/verify`, `/signup/email/complete`, `/signup/email/status/{id}`, `/login`, `/refresh`, `/logout`, `/password-reset/request`, `/password-reset/confirm` |
 | OAuth entry | `/api/v1/auth/oauth/google`, `/api/v1/auth/oauth/google/callback` |
 | Gmail connect | `/api/auth/gmail/url`, `/api/auth/gmail/callback` |
-| Callback / webhook | `POST /webhook` (Telegram; secret-authenticated when `TELEGRAM_WEBHOOK_SECRET` is set), `/api/v1/billing/webhooks/stripe` |
+| Callback / webhook | `/api/v1/billing/webhooks/stripe` |
 | Public catalogs | `/api/v1/billing/plans`, `/api/v1/capabilities` (definition catalog only) |
 | Web-session bootstrap | `POST /api/web/session` |
 
@@ -262,7 +262,7 @@ identity boundary.
   expiry/revocation are enforced against the sessions table.
 - `IDENTITY_PEPPER` / `IDENTITY_SIGNING_KEY_*` default to development values
   when unset; production must set real values (see
-  `services/config_validation.py`).
+  `services/platform/config_validation.py`).
 
 ---
 

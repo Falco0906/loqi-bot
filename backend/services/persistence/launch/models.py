@@ -581,6 +581,29 @@ class OutboundMessage:
 
 
 @dataclass
+class CampaignLaunch:
+    """Durable identity for one accepted campaign-send invocation."""
+
+    id: str = ""
+    workspace_id: str = ""
+    campaign_id: str = ""
+    actor_user_id: str = ""
+    started_at: datetime | None = None
+
+
+@dataclass
+class CampaignLaunchFailure:
+    """One safe, generic draft failure within a durable campaign launch."""
+
+    id: str = ""
+    campaign_launch_id: str = ""
+    workspace_id: str = ""
+    campaign_id: str = ""
+    draft_id: str = ""
+    occurred_at: datetime | None = None
+
+
+@dataclass
 class ProviderEvent:
     """Durable provider lifecycle/communication event (workspace-owned)."""
 

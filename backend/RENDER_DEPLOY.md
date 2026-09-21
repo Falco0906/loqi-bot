@@ -12,7 +12,6 @@ uvicorn main:app --host 0.0.0.0 --port $PORT
 
 Set these in Render:
 
-- `BOT_TOKEN`
 - `APOLLO_API_KEY`
 - `OPENAI_API_KEY`
 - `SUPABASE_URL`
@@ -36,7 +35,6 @@ uvicorn main:app --host 0.0.0.0 --port $PORT
 ```
 
 7. Add the environment variables:
-   `BOT_TOKEN`
    `APOLLO_API_KEY`
    `FRONTEND_ORIGIN`
 8. Deploy the service.
@@ -47,20 +45,6 @@ Copy the Render URL. It will look like:
 
 ```text
 https://loqi-backend.onrender.com
-```
-
-### Telegram webhook
-
-Set the webhook with:
-
-```text
-https://api.telegram.org/bot<BOT_TOKEN>/setWebhook?url=<RENDER_URL>/webhook
-```
-
-Example:
-
-```text
-https://api.telegram.org/bot123456:ABCDEF/setWebhook?url=https://loqi-backend.onrender.com/webhook
 ```
 
 ### Validation
@@ -77,14 +61,10 @@ It should return:
 Loqi backend running
 ```
 
-2. Open the Telegram bot.
-3. Send `/start`.
 
-### If the bot does not respond
+### Troubleshooting
 
 - Check Render logs.
-- Make sure the webhook is set correctly.
-- Make sure `BOT_TOKEN` and `APOLLO_API_KEY` are correct in Render.
-- Make sure `OPENAI_API_KEY`, `SUPABASE_URL`, and `SUPABASE_KEY` are set correctly.
+- Make sure `APOLLO_API_KEY`, `OPENAI_API_KEY`, `SUPABASE_URL`, and `SUPABASE_KEY` are correct in Render.
 - Make sure `FRONTEND_ORIGIN` matches the deployed web app origin.
 - Make sure the service is binding to Render's `PORT` env var, not a hard-coded port.

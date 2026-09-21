@@ -1,3 +1,11 @@
+"""Discovery search workflow registration for the durable Job Engine.
+
+This module is not part of the legacy web-workflow state machine under
+``services.workflows``. Despite its historical name, it owns the registered
+``search`` job-engine runner and belongs with Discovery/Job Engine ownership.
+Do not merge it into the legacy workflow runtime during cleanup.
+"""
+
 import asyncio
 from typing import Callable, Optional
 
@@ -9,7 +17,7 @@ from services.job_engine.registry import (
     get_registry,
 )
 from services.job_engine.storage import JobStorage
-from services.lead_provider import search_with_expansion
+from services.discovery.providers import search_with_expansion
 
 
 def _log(msg: str) -> None:
@@ -46,20 +54,20 @@ def _search_with_progress(
     on_stage(0)
 
     if plan:
-        from services.discovery_plan import icp_from_plan
+        from services.discovery.plan import icp_from_plan
         icp = icp_from_plan(plan)
         on_stage(1)
     else:
         combined = f"{service} {target}".strip() if target else service
 
-        from services.icp_extractor import extract_structured_icp
+        from services.discovery.icp import extract_structured_icp
         try:
             icp = extract_structured_icp(combined)
             on_stage(1)
         except Exception:
             icp = None
 
-    from services.search_expansion import expand_search_intent
+    from services.discovery.search_expansion import expand_search_intent
     try:
         expand_search_intent(service, target, icp)
         on_stage(2)
@@ -91,14 +99,14 @@ async def run_search_workflow(job: Job, on_progress) -> dict:
 
     discovery_context: dict = {}
     try:
-        from services.discovery_context import retrieve_discovery_context
+        from services.discovery.context import retrieve_discovery_context
         discovery_context = await retrieve_discovery_context(job.user_id, query=query)
     except Exception as e:
         _log(f"workspace context retrieval failed, continuing without it: {e}")
 
     plan = None
     try:
-        from services.discovery_plan import derive_discovery_plan
+        from services.discovery.plan import derive_discovery_plan
         # PR-P1.2: derive_discovery_plan performs a synchronous OpenAI HTTP
         # call (20s timeout via extract_structured_icp). This coroutine runs
         # on the event loop, so offload to a worker thread.
@@ -119,7 +127,7 @@ async def run_search_workflow(job: Job, on_progress) -> dict:
             target = pl_target
         if job.discovery_id:
             try:
-                from services.discovery import store_discovery_plan
+                from services.discovery.service import store_discovery_plan
                 context_provenance = discovery_context.get("provenance") or {}
                 _log(
                     f"discovery context provenance job={job.id} discovery={job.discovery_id} "
@@ -149,7 +157,7 @@ async def run_search_workflow(job: Job, on_progress) -> dict:
     def persist_partial(leads: list) -> None:
         """Runs INSIDE the executor thread (no event loop) — sync by design."""
         try:
-            from services.discovery import update_discovery_progress
+            from services.discovery.service import update_discovery_progress
             ranked = []
             for lead in leads:
                 rank_offset["n"] += 1
@@ -167,7 +175,7 @@ async def run_search_workflow(job: Job, on_progress) -> dict:
             # PR-4: notify the SSE/event layer (best-effort). We're on a
             # worker thread with no loop; hand off to the main loop if one
             # is running, otherwise publish inline via a fresh loop.
-            from services.events_bus import EventBus
+            from services.events.bus import EventBus
             bus = EventBus()
 
             async def _publish():

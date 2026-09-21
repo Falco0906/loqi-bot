@@ -53,7 +53,7 @@ Full suite: **3707 passed, 7 failed** (all 7 pre-existing branch WIP, down from 
 |---|---|
 | `backend/main.py` | Lifespan: startup backfill task (`backfill_all` via `asyncio.to_thread`). Dual-write call sites for drafts/campaigns (`persist_draft`/`persist_draft_update` at lines ~995, 1650, 1693, 1761, 1908, 1943, 2397, 2443). `ensure_workspace` on web session creation (~1439). |
 | `backend/services/persistence/config.py` | `REPOSITORY_PROVIDER` env override; defaults to `SUPABASE` when `APP_ENV=production`, else `IN_MEMORY`. Identity `users` aggregate always persisted via Supabase regardless. |
-| `backend/services/supabase.py` | `sync_connected_account()` (line 266) — canonical `connected_accounts` dual-write of OAuth tokens. `save_google_tokens()` — canonical sync + legacy-column retry, `finally` cleanup. `load_all_provider_credentials()` (line 824) — canonical-first read, legacy `users` fallback, rows flagged `_canonical`. |
+| `backend/services/platform/supabase.py` | `sync_connected_account()` (line 266) — canonical `connected_accounts` dual-write of OAuth tokens. `save_google_tokens()` — canonical sync + legacy-column retry, `finally` cleanup. `load_all_provider_credentials()` (line 824) — canonical-first read, legacy `users` fallback, rows flagged `_canonical`. |
 | `backend/services/identity/api.py` | OAuth callback: replay-detection cache keyed by `(state, code)`, session cleanup; auth dependency uses Supabase user repository. |
 | `backend/services/identity/services/auth_service.py` | `_sync_external_identity()` (line 426) — best-effort canonical upsert into `external_identities` on `oauth_login`. |
 | `backend/services/onboarding/services.py` | `create_workspace_and_finalize()` calls `ensure_workspace` (line 528) with org binding. |
@@ -61,7 +61,7 @@ Full suite: **3707 passed, 7 failed** (all 7 pre-existing branch WIP, down from 
 | `backend/services/operations/diagnostics.py` | `get_required_vars()` — resend email vars (`EMAIL_API_KEY`, `EMAIL_FROM`, `EMAIL_REPLY_TO`) required only when `ENVIRONMENT=production` **and** `EMAIL_PROVIDER=resend`. |
 | `backend/services/operations/router.py` | `GET /ready` probe now targets `workflow_sessions` (migration-guaranteed) instead of `_dummy` (which tripped PGRST205 schema cache). |
 | `backend/services/conversation_engine.py`, `conversation_store.py` | Working-tree integration for canonical session/workspace routing. |
-| `backend/services/mission_control/briefing.py`, `reasoning/coordinator.py`, `reasoning/recommendation_reasoner.py`, `narrative_engine.py`, `workspace_memory.py`, `workspace_snapshot.py`, `world_model/snapshot_adapter.py`, `world_model/store.py`, `job_engine/manager.py`, `job_engine/storage.py`, `persistence/repositories/user_repository.py`, `services/migration.py` | Same working tree as above — canonical-state awareness in reads/reporting (event-log + canonical). |
+| `backend/services/mission_control/briefing.py`, `reasoning/coordinator.py`, `reasoning/recommendation_reasoner.py`, `narrative_engine.py`, `workspace_memory.py`, `workspace_snapshot.py`, `world_model/snapshot_adapter.py`, `world_model/store.py`, `job_engine/manager.py`, `job_engine/storage.py`, `persistence/repositories/user_repository.py`, `services/platform/migration.py` | Same working tree as above — canonical-state awareness in reads/reporting (event-log + canonical). |
 | `backend/tests/test_operations.py` | `test_ready_with_no_db` rewritten to simulate no-DB via `SupabaseConnectionManager(url="", key="")` (a lazy real client from env would make `reset_connection_manager()` probes succeed). `test_ready_with_mock_db` covered by the router probe fix. |
 | `backend/tests/test_onboarding.py` | New `test_finalize_creates_personal_workspace_in_org` — asserts `ensure_workspace` fires with org id/name/slug. |
 
@@ -88,7 +88,7 @@ Full suite: **3707 passed, 7 failed** (all 7 pre-existing branch WIP, down from 
 
 | Migration | Tables | Notes |
 |---|---|---|
-| `003_job_engine.sql` | `jobs`, `search_results` | Pre-existing (also embedded in `services/migration.py`). |
+| `003_job_engine.sql` | `jobs`, `search_results` | Pre-existing (also embedded in `services/platform/migration.py`). |
 | `004_identity_platform.sql` | `identity_users` | User aggregate of record; always written through Supabase. Review: `email` (partial unique `lower(email)` where `deleted_at is null`), `metadata`, `last_login_at`, `version`, deleted_at index (idempotent alters). |
 | `005_external_identity.sql` | `external_identities`, `connected_accounts` | Unique `(provider, provider_subject)` where `deleted_at is null`; canonical OAuth token store. Review: `last_verified_at`, `deleted_at`, `connected_accounts.last_synced_at`/`version`, status CHECK (active/pending/expired/revoked/error), sync index. |
 | `006_workspaces.sql` | `organizations`, `workspaces`, `workspace_members` | Unique org slug/name (partial), workspace org-slug, member `(workspace_id, user_id)`. Review: `updated_by`, `metadata`, `version`, status CHECK; `workspaces.owner_user_id` now `on delete set null` (owner leaving no longer destroys the workspace); member role/status CHECKs. |
@@ -100,7 +100,7 @@ Full suite: **3707 passed, 7 failed** (all 7 pre-existing branch WIP, down from 
 
 All new migrations use `create table if not exists` — additive and re-runnable.
 
-**Important:** `apply_migrations()` in `services/migration.py` only auto-applies `jobs`/
+**Important:** `apply_migrations()` in `services/platform/migration.py` only auto-applies `jobs`/
 `search_results`/onboarding columns. **Migrations 004–010 are NOT auto-applied** — see
 Manual SQL.
 

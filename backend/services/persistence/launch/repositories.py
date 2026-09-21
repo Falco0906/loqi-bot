@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
 from services.persistence.base_repository import SupabaseRepository
@@ -34,10 +35,22 @@ from .models import (
     WorkspaceLead,
     WorkspaceMember,
     OutboundMessage,
+    CampaignLaunch,
+    CampaignLaunchFailure,
     ProviderEvent,
 )
 
 T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class CampaignRevisionResult:
+    """Verified result of the live, locked campaign mutation RPC."""
+
+    campaign: Campaign
+    was_updated: bool
+    was_status_changed: bool
+    previous_status: str
 
 
 class LaunchRepository(SupabaseRepository, Generic[T]):
@@ -411,6 +424,51 @@ class CampaignRepository(LaunchRepository[Campaign]):
             ("workspace_id", "eq", workspace_id),
         ])
 
+    async def update_for_workspace_with_revision(
+        self,
+        campaign_id: str,
+        workspace_id: str,
+        updates: dict[str, Any],
+        *,
+        touch: bool = False,
+    ) -> CampaignRevisionResult:
+        """Atomically update one workspace campaign and return locked facts.
+
+        This deliberately does not use the repository's generic retry helper:
+        an unknown-response retry could represent a second real mutation and
+        therefore allocate a second revision.
+        """
+        client = self._client()
+        if client is None:
+            raise RuntimeError("Campaign persistence is unavailable")
+        unknown = set(updates) - {"name", "objective", "status"}
+        if unknown:
+            raise ValueError(f"Unsupported revisioned campaign fields: {sorted(unknown)}")
+        arguments = {
+            "p_campaign_id": campaign_id,
+            "p_workspace_id": workspace_id,
+            "p_name": updates.get("name"),
+            "p_name_provided": "name" in updates,
+            "p_objective": updates.get("objective"),
+            "p_objective_provided": "objective" in updates,
+            "p_status": updates.get("status"),
+            "p_status_provided": "status" in updates,
+            "p_touch": touch,
+        }
+        result = await asyncio.to_thread(
+            lambda: client.rpc("update_workspace_campaign_with_revision_v2", arguments).execute(),
+        )
+        rows = getattr(result, "data", None) or []
+        if not rows:
+            raise RuntimeError("Campaign revision write was not confirmed")
+        row = rows[0]
+        return CampaignRevisionResult(
+            campaign=self._from_row(row),
+            was_updated=bool(row.get("was_updated") or False),
+            was_status_changed=bool(row.get("was_status_changed") or False),
+            previous_status=str(row.get("previous_status") or ""),
+        )
+
 
 class CampaignLeadRepository(LaunchRepository[CampaignLead]):
     _table_name = "campaign_leads"
@@ -721,6 +779,117 @@ class OutboundMessageRepository(LaunchRepository[OutboundMessage]):
             ("id", "eq", entity_id),
             ("workspace_id", "eq", workspace_id),
         ])
+
+
+class CampaignLaunchRepository(LaunchRepository[CampaignLaunch]):
+    """Create database-identified campaign launches in an authorized workspace."""
+
+    _table_name = "campaign_launches"
+
+    @classmethod
+    def _entity_type(cls) -> type[CampaignLaunch]:
+        return CampaignLaunch
+
+    async def create_for_workspace(
+        self,
+        *,
+        workspace_id: str,
+        campaign_id: str,
+        actor_user_id: str,
+    ) -> CampaignLaunch:
+        """Insert one launch without retrying an unknown-response mutation.
+
+        The database, not the application, allocates the immutable launch ID.
+        This operation intentionally has no automatic retry: the launch API has
+        no request idempotency key, so retrying an unknown response could create
+        a second accepted launch.
+        """
+        if not workspace_id or not campaign_id:
+            raise ValueError("Canonical workspace_id and campaign_id are required")
+        client = self._client()
+        if client is None:
+            raise RuntimeError("Campaign launch persistence is unavailable")
+        import asyncio
+
+        row = {
+            "workspace_id": workspace_id,
+            "campaign_id": campaign_id,
+            "actor_user_id": actor_user_id or None,
+        }
+        result = await asyncio.to_thread(
+            lambda: client.table(self._table_name).insert(row).select("*").execute(),
+        )
+        rows = getattr(result, "data", None) or []
+        if not rows:
+            raise RuntimeError("Campaign launch creation was not confirmed")
+        launch = self._from_row(rows[0])
+        if not launch.id:
+            raise RuntimeError("Campaign launch did not return a database ID")
+        return launch
+
+
+class CampaignLaunchFailureRepository(LaunchRepository[CampaignLaunchFailure]):
+    """Persist and read safe failure facts scoped to one campaign launch."""
+
+    _table_name = "campaign_launch_failures"
+
+    @classmethod
+    def _entity_type(cls) -> type[CampaignLaunchFailure]:
+        return CampaignLaunchFailure
+
+    async def record_for_launch(
+        self,
+        *,
+        campaign_launch_id: str,
+        workspace_id: str,
+        campaign_id: str,
+        draft_id: str,
+        occurred_at: str | None = None,
+    ) -> tuple[CampaignLaunchFailure, bool]:
+        """Idempotently record one generic failure after launch progress persists."""
+        if not all((campaign_launch_id, workspace_id, campaign_id, draft_id)):
+            raise ValueError("Canonical launch, workspace, campaign, and draft IDs are required")
+        client = self._client()
+        if client is None:
+            raise RuntimeError("Campaign launch failure persistence is unavailable")
+        arguments = {
+            "p_campaign_launch_id": campaign_launch_id,
+            "p_workspace_id": workspace_id,
+            "p_campaign_id": campaign_id,
+            "p_draft_id": draft_id,
+            "p_occurred_at": occurred_at,
+        }
+        result = await asyncio.to_thread(
+            lambda: client.rpc("record_campaign_launch_failure", arguments).execute(),
+        )
+        rows = getattr(result, "data", None) or []
+        if not rows:
+            raise RuntimeError("Campaign launch failure write was not confirmed")
+        row = rows[0]
+        return CampaignLaunchFailure(
+            id=str(row.get("failure_id") or ""),
+            campaign_launch_id=campaign_launch_id,
+            workspace_id=workspace_id,
+            campaign_id=campaign_id,
+            draft_id=draft_id,
+            occurred_at=row.get("occurred_at"),
+        ), bool(row.get("was_created") or False)
+
+    async def list_for_campaign(
+        self,
+        *,
+        workspace_id: str,
+        campaign_id: str,
+        limit: int = 1000,
+    ) -> list[CampaignLaunchFailure]:
+        if not workspace_id or not campaign_id:
+            return []
+        return await self._list(
+            [("workspace_id", "eq", workspace_id), ("campaign_id", "eq", campaign_id)],
+            order="occurred_at",
+            desc=False,
+            limit=limit,
+        )
 
 
 class ProviderEventRepository(LaunchRepository[ProviderEvent]):

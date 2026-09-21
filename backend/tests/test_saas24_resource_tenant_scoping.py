@@ -214,7 +214,7 @@ class TestDuplicateCampaignScoping:
 
     @pytest.mark.asyncio
     async def test_foreign_campaign_cannot_be_duplicated(self):
-        from services.workspace_state import duplicate_campaign
+        from services.workspace.state import duplicate_campaign
         from services.persistence import (
             set_connection_manager, reset_connection_manager,
             set_repository_provider, reset_repository_provider, RepositoryProvider,
@@ -228,8 +228,8 @@ class TestDuplicateCampaignScoping:
         try:
             from unittest.mock import patch
             # user B resolves to workspace ws-B; A's campaign is in ws-A.
-            with patch("services.workspace_state._async_workspace", return_value="ws-B"), \
-                 patch("services.workspace_state.get_supabase_client", return_value=db):
+            with patch("services.workspace.state._async_workspace", return_value="ws-B"), \
+                 patch("services.workspace.state.get_supabase_client", return_value=db):
                 result = await duplicate_campaign("user-B", "campaign-A")
             assert result is None
             # No copy was created.
@@ -240,7 +240,7 @@ class TestDuplicateCampaignScoping:
 
     @pytest.mark.asyncio
     async def test_own_campaign_can_be_duplicated(self):
-        from services.workspace_state import duplicate_campaign
+        from services.workspace.state import duplicate_campaign
         from services.persistence import (
             set_connection_manager, reset_connection_manager,
             set_repository_provider, reset_repository_provider, RepositoryProvider,
@@ -253,8 +253,8 @@ class TestDuplicateCampaignScoping:
         set_repository_provider(RepositoryProvider.SUPABASE)
         try:
             from unittest.mock import patch
-            with patch("services.workspace_state._async_workspace", return_value="ws-A"), \
-                 patch("services.workspace_state.get_supabase_client", return_value=db):
+            with patch("services.workspace.state._async_workspace", return_value="ws-A"), \
+                 patch("services.workspace.state.get_supabase_client", return_value=db):
                 result = await duplicate_campaign("user-A", "campaign-A")
             assert result is not None
             assert len(db.tables["campaigns"]) == 3
@@ -271,7 +271,7 @@ class TestUpdateScoping:
 
     @pytest.mark.asyncio
     async def test_foreign_campaign_update_is_noop(self):
-        from services.workspace_state import _update_campaign_row
+        from services.workspace.state import _update_campaign_row
         from services.persistence import (
             set_connection_manager, reset_connection_manager,
             set_repository_provider, reset_repository_provider, RepositoryProvider,
@@ -284,8 +284,8 @@ class TestUpdateScoping:
         set_repository_provider(RepositoryProvider.SUPABASE)
         try:
             from unittest.mock import patch
-            with patch("services.workspace_state._async_workspace", return_value="ws-B"), \
-                 patch("services.workspace_state.get_supabase_client", return_value=db):
+            with patch("services.workspace.state._async_workspace", return_value="ws-B"), \
+                 patch("services.workspace.state.get_supabase_client", return_value=db):
                 await _update_campaign_row("user-B", "campaign-A", {"name": "Hijacked"})
             row = [c for c in db.tables["campaigns"] if c["id"] == "campaign-A"][0]
             assert row["name"] == "A's Campaign"
@@ -295,7 +295,7 @@ class TestUpdateScoping:
 
     @pytest.mark.asyncio
     async def test_foreign_draft_update_is_noop(self):
-        from services.workspace_state import _update_draft_row
+        from services.workspace.state import _update_draft_row
         from services.persistence import (
             set_connection_manager, reset_connection_manager,
             set_repository_provider, reset_repository_provider, RepositoryProvider,
@@ -308,8 +308,8 @@ class TestUpdateScoping:
         set_repository_provider(RepositoryProvider.SUPABASE)
         try:
             from unittest.mock import patch
-            with patch("services.workspace_state._async_workspace", return_value="ws-B"), \
-                 patch("services.workspace_state.get_supabase_client", return_value=db):
+            with patch("services.workspace.state._async_workspace", return_value="ws-B"), \
+                 patch("services.workspace.state.get_supabase_client", return_value=db):
                 await _update_draft_row("user-B", "draft-A", {"status": "approved"})
             row = [d for d in db.tables["drafts"] if d["id"] == "draft-A"][0]
             assert row["status"] == "pending"

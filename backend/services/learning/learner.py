@@ -4,14 +4,13 @@ Flow:
   1. PreferenceLearner evaluates behavior evidence
   2. PatternDetector finds temporal patterns
   3. For each new/higher-confidence preference:
-     a. Check if it already exists in World Model
-     b. Only emit PREFERENCE_LEARNED if confidence > existing
-     c. Update the stored preference
+     a. Read the canonical workspace preference record
+     b. Only persist when confidence exceeds the stored value
 
 Usage:
     learner = Learner()
     events = learner.run(session_id)
-    # events is a list of PREFERENCE_LEARNED WorkspaceEvents
+    # returns durable preference record IDs
 
 Learning is deterministic, conservative, and idempotent.
 Running it twice with the same evidence produces the same result.
@@ -27,14 +26,13 @@ from services.learning.models import LearnedPreference, PreferenceKey
 from services.learning.pattern_detector import PatternDetector
 from services.learning.preference_learner import PreferenceLearner
 from services.learning.preference_store import PreferenceStore
-from services.world_model import EventType, publish
 
 
 class Learner:
     """Orchestrates the deterministic learning pipeline.
 
     Idempotent: running twice with the same tracker state produces
-    the same number of PREFERENCE_LEARNED events.
+    the same number of durable preference writes.
     """
 
     def __init__(self) -> None:
@@ -43,13 +41,29 @@ class Learner:
         self.preference_learner = PreferenceLearner(tracker)
         self.pattern_detector = PatternDetector(tracker)
 
-    def run(self, session_id: str) -> list[str]:
+    def run(
+        self,
+        session_id: str,
+        *,
+        workspace_id: str = "",
+        actor_user_id: str = "",
+    ) -> list[str]:
         """Run the full learning pipeline for a session.
 
-        Returns a list of event IDs for newly emitted PREFERENCE_LEARNED events.
+        Returns durable preference record IDs for newly persisted preferences.
+
+        Learned preferences require canonical workspace scope. Calls without
+        it remain analysis-only rather than falling back to session-keyed
+        process-local preference state.
         """
+        if not workspace_id:
+            return []
         emitted: list[str] = []
-        store = PreferenceStore(session_id)
+        store = PreferenceStore(
+            session_id,
+            workspace_id=workspace_id,
+            actor_user_id=actor_user_id,
+        )
 
         all_new = self.preference_learner.evaluate(session_id)
         all_new.extend(self.pattern_detector.detect(session_id))

@@ -18,7 +18,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from services.supabase import get_supabase_client
+from services.platform.supabase import get_supabase_client
 
 from .legacy_workspace_migration import (
     CHILD_WORKSPACE_TABLES,

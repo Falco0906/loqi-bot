@@ -98,7 +98,7 @@ class ReplyAnalysisAdapter(ExecutionAdapter):
         from_address: str,
     ) -> dict[str, Any]:
         """Call OpenAI to classify the reply text."""
-        from services.ai import _send_openai_request, OpenAIError
+        from services.intelligence.ai import _send_openai_request, OpenAIError
 
         user_text = f"From: {from_address}\nSubject: {subject}\n\nBody:\n{reply_text}"
         raw = _send_openai_request(CLASSIFICATION_SYSTEM_PROMPT, user_text)

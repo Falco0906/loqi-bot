@@ -247,6 +247,8 @@ export async function copilotMessage(
     pageContext?: Record<string, unknown>;
     availableActions?: string[];
     messageHistory?: Array<{ role: string; text: string }>;
+    conversationId?: string;
+    requestId?: string;
     activeSearch?: {
       industry: string[];
       location: string[];
@@ -290,6 +292,8 @@ export async function copilotMessage(
             page_context: params.pageContext,
             available_actions: params.availableActions,
             message_history: params.messageHistory,
+            conversation_id: params.conversationId,
+            request_id: params.requestId,
             active_search: params.activeSearch,
           },
         }),

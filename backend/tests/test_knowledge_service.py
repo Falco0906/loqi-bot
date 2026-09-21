@@ -40,7 +40,7 @@ from services.persistence import (
 from services.persistence.database import SupabaseConnectionManager
 from services.knowledge.service import KnowledgeService, get_knowledge_context
 
-import main as main_module  # noqa: E402
+from services.knowledge import api as knowledge_api  # noqa: E402
 
 
 # ─── In-memory Supabase client (chainable query builder over row dicts) ──
@@ -178,12 +178,32 @@ def db(monkeypatch):
     return store
 
 
+@pytest.fixture(autouse=True)
+def _knowledge_route_workspace_scope(monkeypatch):
+    """Keep Knowledge route contracts hermetic at their imported resolver seam."""
+    async def selected_workspace(_request, owner_id: str) -> str | None:
+        return OWNER_WS.get(owner_id)
+
+    def forbid_supabase(*_args, **_kwargs):
+        raise AssertionError("Knowledge route tests must not access Supabase")
+
+    monkeypatch.setattr(
+        knowledge_api.workspace_access,
+        "resolve_legacy_workspace_id",
+        selected_workspace,
+    )
+    # The resolver above is the route's active dependency. These guards make
+    # any accidental regression back to its live Supabase lookup fail locally.
+    monkeypatch.setattr("services.platform.supabase.get_supabase_client", forbid_supabase)
+    monkeypatch.setattr("services.workspace.access.get_supabase_client", forbid_supabase)
+
+
 @pytest.fixture
 def auth(monkeypatch, db):
     """Resolves session ownership for route-level tests."""
-    monkeypatch.setattr(main_module, "_workspace_owner", _fake_owner("user-1"))
+    monkeypatch.setattr(knowledge_api.identity_dependencies, "authenticated_user_id", _fake_owner("user-1"))
     monkeypatch.setattr(
-        "services.workspace_state._async_workspace", _fake_workspace)
+        "services.workspace.state._async_workspace", _fake_workspace)
     return {"owner": "user-1", "workspace": "ws-k1"}
 
 
@@ -194,6 +214,38 @@ def svc():
 
 async def _r(route, *args, **kwargs):
     return await route(*args, **kwargs)
+
+
+def test_knowledge_routes_are_registered_once_on_the_application():
+    """The extracted router remains the sole HTTP owner of Knowledge routes."""
+    from main import app
+
+    included = [
+        route for route in app.routes
+        if getattr(route, "original_router", None) is knowledge_api.router
+    ]
+    assert len(included) == 1
+
+    route_counts: dict[tuple[str, str], int] = {}
+    for route in knowledge_api.router.routes:
+        path = route.path
+        for method in getattr(route, "methods", set()):
+            key = (method, path)
+            route_counts[key] = route_counts.get(key, 0) + 1
+
+    expected = {
+        ("GET", "/api/web/session/{session_token}/knowledge"),
+        ("POST", "/api/web/session/{session_token}/knowledge"),
+        ("GET", "/api/web/session/{session_token}/knowledge/sources"),
+        ("POST", "/api/web/session/{session_token}/knowledge/sources"),
+        ("PUT", "/api/web/session/{session_token}/knowledge/sources/{source_id}"),
+        ("DELETE", "/api/web/session/{session_token}/knowledge/sources/{source_id}"),
+        ("GET", "/api/web/session/{session_token}/knowledge/{item_id}"),
+        ("PUT", "/api/web/session/{session_token}/knowledge/{item_id}"),
+        ("DELETE", "/api/web/session/{session_token}/knowledge/{item_id}"),
+    }
+    assert set(route_counts) == expected
+    assert all(count == 1 for count in route_counts.values())
 
 
 class TestCreateRead:
@@ -370,17 +422,17 @@ class TestIsolation:
         assert await svc.archive_item("user-1", "ws-k1", b_item_id) is None
 
     async def test_6b_route_level_isolation(self, db, monkeypatch, svc):
-        monkeypatch.setattr(main_module, "_workspace_owner", _fake_owner("user-2"))
+        monkeypatch.setattr(knowledge_api.identity_dependencies, "authenticated_user_id", _fake_owner("user-2"))
         monkeypatch.setattr(
-            "services.workspace_state._async_workspace", _fake_workspace)
-        await _r(main_module.create_knowledge_item, "tok", main_module.KnowledgeItemCreateRequest(
+            "services.workspace.state._async_workspace", _fake_workspace)
+        await _r(knowledge_api.create_knowledge_item, "tok", knowledge_api.KnowledgeItemCreateRequest(
             category="icp", title="User B's ICP",
         ), MagicMock())
         # user-1 owns a different workspace and must never see it
-        monkeypatch.setattr(main_module, "_workspace_owner", _fake_owner("user-1"))
+        monkeypatch.setattr(knowledge_api.identity_dependencies, "authenticated_user_id", _fake_owner("user-1"))
         monkeypatch.setattr(
-            "services.workspace_state._async_workspace", _fake_workspace)
-        res = await _r(main_module.list_knowledge, "tok", MagicMock(), category="", q="", limit=200)
+            "services.workspace.state._async_workspace", _fake_workspace)
+        res = await _r(knowledge_api.list_knowledge, "tok", MagicMock(), category="", q="", limit=200)
         assert res["items"] == []
         assert res["ok"] is True
 
@@ -520,47 +572,47 @@ class TestRetrievalContext:
 class TestApiValidation:
     async def test_11_create_requires_valid_category(self, db, auth):
         with pytest.raises(Exception) as exc:
-            await _r(main_module.create_knowledge_item, "tok",
-                     main_module.KnowledgeItemCreateRequest(
+            await _r(knowledge_api.create_knowledge_item, "tok",
+                     knowledge_api.KnowledgeItemCreateRequest(
                          category="bogus", title="X"), MagicMock())
         assert getattr(exc.value, "status_code", None) == 400
 
     async def test_11b_create_requires_title(self, db, auth):
         with pytest.raises(Exception) as exc:
-            await _r(main_module.create_knowledge_item, "tok",
-                     main_module.KnowledgeItemCreateRequest(
+            await _r(knowledge_api.create_knowledge_item, "tok",
+                     knowledge_api.KnowledgeItemCreateRequest(
                          category="company", title="   "), MagicMock())
         assert getattr(exc.value, "status_code", None) == 400
 
     async def test_11c_oversized_title_rejected(self, db, auth):
         with pytest.raises(Exception) as exc:
-            await _r(main_module.create_knowledge_item, "tok",
-                     main_module.KnowledgeItemCreateRequest(
+            await _r(knowledge_api.create_knowledge_item, "tok",
+                     knowledge_api.KnowledgeItemCreateRequest(
                          category="company", title="x" * 500), MagicMock())
         assert getattr(exc.value, "status_code", None) == 400
 
     async def test_11d_update_unknown_item_404(self, db, auth):
         with pytest.raises(Exception) as exc:
-            await _r(main_module.update_knowledge_item, "tok", "missing",
-                     main_module.KnowledgeItemUpdateRequest(title="X"),
+            await _r(knowledge_api.update_knowledge_item, "tok", "missing",
+                     knowledge_api.KnowledgeItemUpdateRequest(title="X"),
                      MagicMock())
         assert getattr(exc.value, "status_code", None) == 404
 
     async def test_11e_source_validation(self, db, auth):
         with pytest.raises(Exception) as exc:
-            await _r(main_module.create_knowledge_source, "tok",
-                     main_module.KnowledgeSourceCreateRequest(
+            await _r(knowledge_api.create_knowledge_source, "tok",
+                     knowledge_api.KnowledgeSourceCreateRequest(
                          title="Doc", source_type="bogus"), MagicMock())
         assert getattr(exc.value, "status_code", None) == 400
 
     async def test_12_route_create_writes_durable_row(self, db, auth):
-        res = await _r(main_module.create_knowledge_item, "tok",
-                       main_module.KnowledgeItemCreateRequest(
+        res = await _r(knowledge_api.create_knowledge_item, "tok",
+                       knowledge_api.KnowledgeItemCreateRequest(
                            category="messaging", title="Approved angle",
                            summary="Lead with outcomes"), MagicMock())
         assert res["ok"] is True
         item_id = res["item"]["id"]
-        fetched = await _r(main_module.get_knowledge_item, "tok", item_id, MagicMock())
+        fetched = await _r(knowledge_api.get_knowledge_item, "tok", item_id, MagicMock())
         assert fetched["item"]["summary"] == "Lead with outcomes"
         row = next(r for r in db["knowledge_items"] if r["id"] == item_id)
         assert row["workspace_id"] == "ws-k1"

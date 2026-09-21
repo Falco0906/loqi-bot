@@ -145,7 +145,7 @@ class StrategicIntelligenceService:
     async def _workspace_for_owner(self, owner_id: str) -> str | None:
         if not owner_id:
             return None
-        from services.workspace_state import _async_workspace
+        from services.workspace.state import _async_workspace
         return await _async_workspace(owner_id)
 
     async def _list_for_workspace(

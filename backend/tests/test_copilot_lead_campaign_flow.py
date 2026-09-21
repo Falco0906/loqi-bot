@@ -3,11 +3,14 @@
 from types import SimpleNamespace
 
 import pytest
+import main as main_module
+from services.copilot import service as copilot_service
+from services.conversations import api as conversations_api
 
 
 @pytest.mark.asyncio
 async def test_lead_save_normalizes_provider_status_and_returns_workspace_lead_id(monkeypatch):
-    from services import workspace_state
+    from services.workspace import state as workspace_state
 
     captured = []
 
@@ -44,7 +47,7 @@ async def test_lead_save_normalizes_provider_status_and_returns_workspace_lead_i
 
 @pytest.mark.asyncio
 async def test_campaign_create_returns_authoritative_campaign_and_attached_ids(monkeypatch):
-    import main as main_module
+    from services.copilot import runners
 
     persisted = {}
 
@@ -58,9 +61,9 @@ async def test_campaign_create_returns_authoritative_campaign_and_attached_ids(m
             for index in range(1, 6)
         }.get(lead["email"])
 
-    monkeypatch.setattr(main_module, "_maybe_auto_strategy", _noop_async)
+    monkeypatch.setattr("services.campaigns.service.maybe_auto_strategy", _noop_async)
     monkeypatch.setattr(
-        "services.discovery.get_discovery",
+        "services.discovery.service.get_discovery",
         lambda *_args, **_kwargs: {
             "id": "discovery-1",
             "discovery_leads": [
@@ -69,12 +72,12 @@ async def test_campaign_create_returns_authoritative_campaign_and_attached_ids(m
             ],
         },
     )
-    monkeypatch.setattr("services.workspace_state.persist_campaign_row", persist_row)
-    monkeypatch.setattr("services.workspace_state.persist_campaign_lead_id_awaited", attach)
-    monkeypatch.setattr("services.workspace_state.load_campaign_state", lambda _u, _c, workspace_id="": persisted)
-    monkeypatch.setattr("services.workspace_state.append_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("services.workspace.state.persist_campaign_row", persist_row)
+    monkeypatch.setattr("services.workspace.state.persist_campaign_lead_id_awaited", attach)
+    monkeypatch.setattr("services.workspace.state.load_campaign_state", lambda _u, _c, workspace_id="": persisted)
+    monkeypatch.setattr("services.workspace.state.append_event", lambda *_args, **_kwargs: None)
 
-    result = await main_module._run_copilot_campaign(
+    result = await runners.run_campaign(
         "campaign.create",
         "owner-1",
         "workspace-1",
@@ -95,7 +98,7 @@ async def test_campaign_create_returns_authoritative_campaign_and_attached_ids(m
 
 @pytest.mark.asyncio
 async def test_campaign_attach_returns_canonical_lead_ids_without_new_discovery(monkeypatch):
-    from services import copilot_tools
+    from services.copilot import tools as copilot_tools
 
     monkeypatch.setattr(
         copilot_tools,
@@ -109,9 +112,9 @@ async def test_campaign_attach_returns_canonical_lead_ids_without_new_discovery(
             "discovery_companies": [],
         }),
     )
-    monkeypatch.setattr("services.workspace_state.load_campaign_state", lambda *_args, **_kwargs: {"id": "campaign-1"})
+    monkeypatch.setattr("services.workspace.state.load_campaign_state", lambda *_args, **_kwargs: {"id": "campaign-1"})
     monkeypatch.setattr(
-        "services.workspace_state.persist_campaign_lead_id_awaited",
+        "services.workspace.state.persist_campaign_lead_id_awaited",
         lambda *_args, **_kwargs: _async_value("workspace-lead-a"),
     )
 
@@ -148,7 +151,7 @@ def test_campaign_result_exposes_active_campaign_context():
 
 
 def test_campaign_create_uses_selected_ranked_leads_not_entire_discovery():
-    from services.copilot_tools import _requested_leads
+    from services.copilot.tools import _requested_leads
 
     discovery = {
         "discovery_leads": [
@@ -172,8 +175,6 @@ def test_campaign_create_uses_selected_ranked_leads_not_entire_discovery():
 
 @pytest.mark.asyncio
 async def test_endpoint_rank_then_campaign_stays_read_only_in_mvp(monkeypatch):
-    import main as main_module
-
     discovery = {
         "id": "discovery-1",
         "status": "completed",
@@ -191,44 +192,52 @@ async def test_endpoint_rank_then_campaign_stays_read_only_in_mvp(monkeypatch):
     ])
 
     monkeypatch.setattr(main_module.engine, "get_web_session_summary", lambda _token: {"user_id": "owner-1", "display_name": "Owner"})
-    monkeypatch.setattr(main_module, "_build_copilot_workspace_context", lambda *_args, **_kwargs: {"snapshot": {}, "analysis": {}})
-    monkeypatch.setattr("services.workspace_state.ensure_workspace", lambda _user: "workspace-1")
-    monkeypatch.setattr(main_module, "_copilot_tool_failure_reason", lambda tool: f"{tool} failed")
+    async def resolve_session(_request):
+        return "owner-1", "canonical-session-1"
+
+    async def resolve_workspace(_request, _user_id):
+        return SimpleNamespace(workspace_id="workspace-1")
+
+    monkeypatch.setattr(copilot_service.identity_dependencies, "resolve_web_session", resolve_session)
+    monkeypatch.setattr(copilot_service.workspace_access, "resolve_selected_workspace_context", resolve_workspace)
+    monkeypatch.setattr("services.workspace.context.build_workspace_context", lambda *_args, **_kwargs: {"snapshot": {}, "analysis": {}})
+    monkeypatch.setattr(copilot_service, "_tool_failure_reason", lambda tool: f"{tool} failed")
+    monkeypatch.setattr(copilot_service, "classify_copilot_read_question", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        "services.conversational_response_generator.decide_copilot_intent",
+        "services.copilot.service.decide_copilot_intent",
         lambda *_args, **_kwargs: next(decisions),
     )
     async def knowledge_context(*_args, **_kwargs):
         return SimpleNamespace(to_dict=lambda: {"items": [], "sources": []})
 
     monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", knowledge_context)
-    monkeypatch.setattr("services.discovery.get_discovery", lambda *_args, **_kwargs: discovery)
+    monkeypatch.setattr("services.discovery.service.get_discovery", lambda *_args, **_kwargs: discovery)
     async def persist_campaign(_u, campaign, workspace_id=""):
         persisted.update(campaign)
         return True
 
-    monkeypatch.setattr("services.workspace_state.persist_campaign_row", persist_campaign)
+    monkeypatch.setattr("services.workspace.state.persist_campaign_row", persist_campaign)
     async def persist_attachment(_u, _campaign, lead, workspace_id=""):
         attached.append(str(lead["id"]))
         return str(lead["id"])
 
-    monkeypatch.setattr("services.workspace_state.persist_campaign_lead_id_awaited", persist_attachment)
-    monkeypatch.setattr("services.workspace_state.load_campaign_state", lambda *_args, **_kwargs: {**persisted, "lead_count": len(attached)})
-    monkeypatch.setattr("services.workspace_state.append_event", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(main_module, "_maybe_auto_strategy", _noop_async)
+    monkeypatch.setattr("services.workspace.state.persist_campaign_lead_id_awaited", persist_attachment)
+    monkeypatch.setattr("services.workspace.state.load_campaign_state", lambda *_args, **_kwargs: {**persisted, "lead_count": len(attached)})
+    monkeypatch.setattr("services.workspace.state.append_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("services.campaigns.service.maybe_auto_strategy", _noop_async)
 
     request = SimpleNamespace(headers=SimpleNamespace(get=lambda key, default="": "Bearer session-1" if key == "authorization" else default))
-    rank_payload = main_module.SendWebMessageRequest(
+    rank_payload = conversations_api.SendWebMessageRequest(
         text="Pick the best 5",
-        copilot=main_module.CopilotContextModel(current_page="Discovery", page_context={"discovery_id": "discovery-1"}, message_history=[]),
+        copilot=conversations_api.CopilotContextModel(current_page="Discovery", page_context={"discovery_id": "discovery-1"}, message_history=[]),
     )
-    rank_response = await main_module.post_web_session_message("_", rank_payload, request)
+    rank_response = await conversations_api.post_web_session_message("_", rank_payload, request)
     ranked_ids = [lead["id"] for lead in rank_response["messages"][0]["data"]["result"]["leads"]]
     assert ranked_ids == [f"lead-{index}" for index in range(1, 5)]
 
-    campaign_payload = main_module.SendWebMessageRequest(
+    campaign_payload = conversations_api.SendWebMessageRequest(
         text="Create a campaign for them",
-        copilot=main_module.CopilotContextModel(
+        copilot=conversations_api.CopilotContextModel(
             current_page="Discovery",
             page_context={
                 "discovery_id": "discovery-1",
@@ -238,18 +247,16 @@ async def test_endpoint_rank_then_campaign_stays_read_only_in_mvp(monkeypatch):
             message_history=[],
         ),
     )
-    campaign_response = await main_module.post_web_session_message("_", campaign_payload, request)
+    campaign_response = await conversations_api.post_web_session_message("_", campaign_payload, request)
     assert campaign_response["messages"][0]["role"] == "assistant"
     assert campaign_response["messages"][0]["text"]
     assert attached == []
-    assert campaign_response["messages"][0]["data"]["status"] == "read_only_mvp"
+    assert campaign_response["messages"][0]["data"]["status"] == "unavailable"
 
 
 def test_database_failures_are_not_formatted_into_copilot_text():
-    import main as main_module
-
     raw = "PostgREST 23514: new row violates workspace_leads_lead_status_check"
-    safe = main_module._copilot_tool_failure_reason("campaign.create")
+    safe = copilot_service._tool_failure_reason("campaign.create")
     assert raw not in safe
     assert safe == "campaign.create could not be completed. Please try again."
 

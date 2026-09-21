@@ -28,7 +28,7 @@ import pytest
 
 from services.planner.planner_router import PlannerRouter, is_schedule_intent
 from services.planner.planning_models import PlanGoal, PlanStatus, Task, TaskType
-from workflows import _run_async
+from services.workflows.service import _run_async
 from services.planner.strategies.booking import BookingStrategy
 
 from services.execution import (
@@ -430,7 +430,7 @@ class TestBookingStrategyViaRouter:
 
         # The rendering check uses workflow_type for dispatching
         # _render_workflow_result checks: result["type"] == "planner_result"
-        from services.conversational_response_generator import RESPONSE_VARIATIONS
+        from services.conversations.legacy_responses import RESPONSE_VARIATIONS
 
         assert result["ok"] is True
 
@@ -482,7 +482,7 @@ class TestConversationEngineRendering:
 
     def test_planner_result_rendering(self) -> None:
         """_render_workflow_result handles planner_result type."""
-        from services.conversation_engine import ConversationEngine
+        from services.conversations.legacy_engine import ConversationEngine
 
         engine = ConversationEngine()
 
@@ -526,7 +526,7 @@ class TestConversationEngineRendering:
 
     def test_planner_result_failure_rendering(self) -> None:
         """_render_workflow_result handles planner_result with errors."""
-        from services.conversation_engine import ConversationEngine
+        from services.conversations.legacy_engine import ConversationEngine
 
         engine = ConversationEngine()
 
@@ -1051,13 +1051,13 @@ class TestConcurrentCredentialRefresh:
                 with results_lock:
                     errors.append(e)
 
-        monkeypatch.setattr("services.supabase.get_google_credentials", fake_get_google_credentials)
-        monkeypatch.setattr("services.supabase.update_google_access_token", fake_update_google_access_token)
-        monkeypatch.setattr("services.google_auth.refresh_access_token", fake_refresh_access_token)
+        monkeypatch.setattr("services.platform.supabase.get_google_credentials", fake_get_google_credentials)
+        monkeypatch.setattr("services.platform.supabase.update_google_access_token", fake_update_google_access_token)
+        monkeypatch.setattr("services.communication.google_auth.refresh_access_token", fake_refresh_access_token)
 
         # Use guarded check so that after the first thread refreshes,
         # subsequent threads see the new expiry and skip the lock path.
-        monkeypatch.setattr("services.supabase.is_token_expired", guarded_is_token_expired)
+        monkeypatch.setattr("services.platform.supabase.is_token_expired", guarded_is_token_expired)
 
         threads = [threading.Thread(target=call_factory, args=(i,)) for i in range(3)]
         for t in threads:
@@ -1149,10 +1149,10 @@ class TestConcurrentCredentialRefresh:
         task_b = ExecutionTask(id="b1", plan_task=plan_b, max_attempts=1)
         ctx_b = ExecutionContext(session_id="s_b")
 
-        monkeypatch.setattr("services.supabase.get_google_credentials", fake_get_google_credentials)
-        monkeypatch.setattr("services.supabase.is_token_expired", fake_is_token_expired)
-        monkeypatch.setattr("services.google_auth.refresh_access_token", counting_refresh)
-        monkeypatch.setattr("services.supabase.update_google_access_token", fake_update)
+        monkeypatch.setattr("services.platform.supabase.get_google_credentials", fake_get_google_credentials)
+        monkeypatch.setattr("services.platform.supabase.is_token_expired", fake_is_token_expired)
+        monkeypatch.setattr("services.communication.google_auth.refresh_access_token", counting_refresh)
+        monkeypatch.setattr("services.platform.supabase.update_google_access_token", fake_update)
 
         results: list[dict | None] = [None, None]
         errors: list[Exception] = []
@@ -1220,9 +1220,9 @@ class TestConcurrentCredentialRefresh:
             refresh_called = True
             return {}
 
-        monkeypatch.setattr("services.supabase.get_google_credentials", fake_get_google_credentials)
-        monkeypatch.setattr("services.supabase.is_token_expired", fake_is_token_expired)
-        monkeypatch.setattr("services.google_auth.refresh_access_token", fake_refresh)
+        monkeypatch.setattr("services.platform.supabase.get_google_credentials", fake_get_google_credentials)
+        monkeypatch.setattr("services.platform.supabase.is_token_expired", fake_is_token_expired)
+        monkeypatch.setattr("services.communication.google_auth.refresh_access_token", fake_refresh)
 
         plan_task = Task(type=TaskType.SEND_EMAIL, label="t")
         plan_task.params["credential_user_id"] = "fast_user"

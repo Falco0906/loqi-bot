@@ -60,11 +60,11 @@ def pipeline(monkeypatch):
 
     monkeypatch.setattr(wd, "search_with_expansion", fake_search_with_expansion)
 
-    import services.search_expansion as se_mod
+    import services.discovery.search_expansion as se_mod
     monkeypatch.setattr(se_mod, "expand_search_intent",
                         lambda service, target, icp: {"search_queries": ["q"]})
-    import services.search_expansion as se_mod  # noqa: F401 (patched above)
-    import services.discovery_plan as dp_mod
+    import services.discovery.search_expansion as se_mod  # noqa: F401 (patched above)
+    import services.discovery.plan as dp_mod
     monkeypatch.setattr(dp_mod, "derive_discovery_plan",
                         lambda query, existing_context=None: None)
     # follow-up readiness pass is irrelevant here
@@ -105,7 +105,7 @@ def pipeline(monkeypatch):
         })
         return True
 
-    from services import events_bus as eb
+    from services.events import bus as eb
     monkeypatch.setattr(eb.EventBus, "publish_user_event", staticmethod(fake_publish))
 
     # ── discovery metadata writes capture ──
@@ -115,7 +115,7 @@ def pipeline(monkeypatch):
         meta_calls.append((discovery_id, stage, pct))
         return True
 
-    import services.discovery as disc
+    import services.discovery.service as disc
     monkeypatch.setattr(disc, "update_discovery_progress", fake_update_progress)
 
     return {"captured": captured, "meta": meta_calls}
@@ -152,7 +152,7 @@ def test_vertical_slice_lifecycle(pipeline, monkeypatch):
     # Wire the same notify chain main.py uses: on_update → publish events.
     # The workflow emits progress through the passed callback; events flow
     # through on_update which we wire exactly like _create_search_run does:
-    from services.discovery import (
+    from services.discovery.service import (
         create_discovery, get_discovery_by_job_id, mark_discovery_status,
         get_discovery_id_for_job, update_discovery_progress,
     )
@@ -207,7 +207,7 @@ def test_provider_success_returns_results_to_workflow(monkeypatch):
     The following vertical-slice test verifies those leads persist and the
     workflow reaches completion.
     """
-    import services.lead_provider as lead_provider
+    import services.discovery.providers as providers
 
     leads = [
         {"lead_id": "restaurant-1", "name": "Restaurant Lead", "provider": "fake"},
@@ -216,18 +216,18 @@ def test_provider_success_returns_results_to_workflow(monkeypatch):
     class FakeProvider:
         pass
 
-    monkeypatch.setattr(lead_provider, "get_provider", lambda: FakeProvider())
+    monkeypatch.setattr(providers, "get_provider", lambda: FakeProvider())
     monkeypatch.setattr(
-        lead_provider,
+        providers,
         "_apply_discovery_context",
         lambda icp, context: icp,
     )
     monkeypatch.setattr(
-        "services.icp_extractor.extract_structured_icp",
+        "services.discovery.icp.extract_structured_icp",
         lambda query: None,
     )
     monkeypatch.setattr(
-        "services.search_expansion.expand_search_intent",
+        "services.discovery.search_expansion.expand_search_intent",
         lambda service, target, icp: {"search_queries": ["restaurant owner"]},
     )
     monkeypatch.setattr(
@@ -239,7 +239,7 @@ def test_provider_success_returns_results_to_workflow(monkeypatch):
         },
     )
 
-    result = lead_provider.search_with_expansion("restaurant leads", "")
+    result = providers.search_with_expansion("restaurant leads", "")
 
     assert result["ok"] is True
     assert result["source"] == "fake"

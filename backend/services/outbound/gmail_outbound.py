@@ -22,7 +22,7 @@ from services.outbound.outbound_models import (
     Recipient,
 )
 from services.communication.gmail_provider import GMAIL_API_BASE, TOKEN_URL
-from services.gmail_auth_failure import (
+from services.communication.gmail_auth_failure import (
     GmailReauthRequired,
     raise_for_token_response,
 )
@@ -101,7 +101,7 @@ class GmailOutboundProvider(OutboundProviderBase):
             raise GmailReauthRequired("No refresh token available — Gmail re-auth required")
         if self._user_id:
             try:
-                from services.supabase import is_connected_account_reauth_required
+                from services.platform.supabase import is_connected_account_reauth_required
                 if is_connected_account_reauth_required(self._user_id, "google"):
                     raise GmailReauthRequired("Gmail account requires re-authentication")
             except GmailReauthRequired:
@@ -132,7 +132,7 @@ class GmailOutboundProvider(OutboundProviderBase):
         if self._user_id:
             try:
                 from datetime import datetime, timezone
-                from services.supabase import update_google_access_token
+                from services.platform.supabase import update_google_access_token
                 update_google_access_token(
                     self._user_id,
                     access_token=self._access_token,

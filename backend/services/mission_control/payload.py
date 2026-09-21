@@ -2,17 +2,15 @@
 workspace state, served to both ``/mission-control`` and ``/briefing``.
 
 Without this, every Mission Control page visit fired the narrative LLM steps
-twice (one per endpoint) AND re-ran them on the next visit because the World
-Model acknowledgement consumes the delta that the brief caches key on.
+twice (one per endpoint). Durable activity is read with an authorized
+workspace/user cursor; the legacy session-keyed World Model is not consulted.
 
 Semantics:
-  * Key = (owner, content fingerprint, delta fingerprint, user timezone,
+  * Key = (owner, workspace, content fingerprint, delta fingerprint, user timezone,
     greeting period, narrative mode).
   * Content fingerprint covers campaign/draft identity + status — changes only
     when the workspace actually changes.
-  * Delta fingerprint covers the "what's new since last view" counts — changes
-    once when new events arrive, and once when they are acknowledged, then
-    stabilises (no ack-churn).
+  * Delta fingerprint includes the durable cursor/delivered event range.
   * Greeting period lets the greeting rotate at the user's local boundaries.
   * In-flight futures dedupe concurrent calls (the frontend fires both
     endpoints in parallel), so the second caller waits on the first instead of
@@ -26,13 +24,36 @@ import json
 import time
 from typing import Any
 
-from services.executive_brief import greeting_for_timezone, normalize_timezone
-from services.world_model.store import WorkspaceDelta
+from services.mission_control.narrative import greeting_for_timezone, normalize_timezone
+from services.world_model.activity_repository import WorkspaceActivityEvent, get_activity_repository
+from services.world_model.state import CampaignState, DraftState, WorkspaceDelta
 
 
 _payload_cache: dict[tuple, dict[str, Any]] = {}
 _inflight: dict[tuple, asyncio.Future] = {}
 _MAX_ENTRIES = 8
+
+
+def embed_delta_into_snapshot(snapshot: dict, delta: WorkspaceDelta) -> None:
+    """Add World Model delta metadata required by the executive brief."""
+    snapshot["_delta"] = {
+        "first_visit": delta.first_visit,
+        "event_count": delta.event_count,
+        "event_range": list(delta.event_range),
+        "new_campaigns": len(delta.new_campaigns),
+        "changed_campaigns": len(delta.changed_campaigns),
+        "new_drafts": len(delta.new_drafts),
+        "scheduled_drafts": len(delta.scheduled_drafts),
+        "sent_outreach": len(delta.sent_outreach),
+        "new_leads": len(delta.new_leads),
+        "new_providers": len(delta.new_providers),
+        "new_conversations": len(delta.new_conversations),
+        "escalated_conversations": len(delta.escalated_conversations),
+        "completed_jobs": len(delta.completed_jobs),
+        "learned_preferences": len(delta.learned_preferences),
+        "new_insights": len(delta.new_insights),
+        "has_delta": not delta.is_empty(),
+    }
 
 
 def _content_fingerprint(campaigns: list[dict], drafts: list[dict]) -> str:
@@ -57,7 +78,9 @@ def _content_fingerprint(campaigns: list[dict], drafts: list[dict]) -> str:
 
 def _delta_fingerprint(delta: WorkspaceDelta) -> str:
     meta = (
+        delta.first_visit,
         delta.event_count,
+        *delta.event_range,
         len(delta.new_campaigns),
         len(delta.changed_campaigns),
         len(delta.new_drafts),
@@ -68,6 +91,62 @@ def _delta_fingerprint(delta: WorkspaceDelta) -> str:
     return ":".join(str(m) for m in meta)
 
 
+def _durable_activity_delta(events: list[WorkspaceActivityEvent], cursor: int) -> WorkspaceDelta:
+    """Project the bounded durable activity slice into the existing delta type."""
+    if not events:
+        return WorkspaceDelta(first_visit=cursor == 0, event_range=(0, 0) if cursor == 0 else (cursor + 1, cursor))
+    delta = WorkspaceDelta(
+        first_visit=cursor == 0,
+        event_count=len(events),
+        event_range=(events[0].sequence, events[-1].sequence),
+    )
+    for event in events:
+        payload = event.payload
+        if event.event_type == "draft_generated":
+            delta.new_drafts.append(DraftState(
+                id=str(payload.get("draft_id") or ""),
+                campaign_id=str(payload.get("campaign_id") or ""),
+                lead_id=str(payload.get("lead_id") or ""),
+                status=str(payload.get("status") or "pending"),
+                created_at=event.occurred_at,
+            ))
+        elif event.event_type == "campaign_created":
+            delta.new_campaigns.append(CampaignState(
+                id=str(payload.get("campaign_id") or ""),
+                status=str(payload.get("status") or "planning"),
+                lead_count=int(payload.get("lead_count") or 0),
+                created_at=event.occurred_at,
+                updated_at=event.occurred_at,
+            ))
+        elif event.event_type == "campaign_status_changed":
+            delta.changed_campaigns.append(CampaignState(
+                id=str(payload.get("campaign_id") or ""),
+                status=str(payload.get("status") or "planning"),
+                created_at=event.occurred_at,
+                updated_at=event.occurred_at,
+            ))
+    return delta
+
+
+async def _read_durable_delta(workspace_id: str, actor_user_id: str) -> WorkspaceDelta:
+    """Read durable activity after this user's selected-workspace cursor."""
+    repository = get_activity_repository()
+    try:
+        cursor = await asyncio.to_thread(repository.read_cursor, workspace_id, actor_user_id)
+        events = await asyncio.to_thread(repository.read_events_after, workspace_id, cursor)
+        return _durable_activity_delta(events, cursor)
+    except Exception as error:
+        # Durable activity enriches an otherwise canonical snapshot. A failed
+        # read remains non-fatal, matching the former empty World Model delta.
+        import logging
+        logging.getLogger(__name__).warning(
+            "workspace_activity_read_failed workspace_id=%s error_type=%s",
+            workspace_id,
+            type(error).__name__,
+        )
+        return WorkspaceDelta()
+
+
 def _evict() -> None:
     while len(_payload_cache) > _MAX_ENTRIES:
         oldest = min(_payload_cache, key=lambda k: _payload_cache[k]["_ts"])
@@ -76,6 +155,7 @@ def _evict() -> None:
 
 def get_cached_payload(
     owner_id: str,
+    workspace_id: str,
     campaigns: list[dict],
     drafts: list[dict],
     delta: WorkspaceDelta,
@@ -85,6 +165,7 @@ def get_cached_payload(
     resolved_timezone = normalize_timezone(user_timezone)
     key = (
         owner_id,
+        workspace_id,
         _content_fingerprint(campaigns, drafts),
         _delta_fingerprint(delta),
         resolved_timezone,
@@ -96,6 +177,7 @@ def get_cached_payload(
 
 def cache_payload(
     owner_id: str,
+    workspace_id: str,
     campaigns: list[dict],
     drafts: list[dict],
     delta: WorkspaceDelta,
@@ -106,6 +188,7 @@ def cache_payload(
     resolved_timezone = normalize_timezone(user_timezone)
     key = (
         owner_id,
+        workspace_id,
         _content_fingerprint(campaigns, drafts),
         _delta_fingerprint(delta),
         resolved_timezone,
@@ -119,36 +202,41 @@ def cache_payload(
 
 async def compute_shared_payload(
     owner_id: str,
+    workspace_id: str,
+    actor_user_id: str,
     session_token: str,
-    db_user_id: str | None,
     include_narrative: bool = True,
     user_timezone: str | None = None,
 ) -> dict[str, Any]:
     """Load state once and compute {campaigns, drafts, snapshot, analysis,
     recommendations, brief}; dedupe concurrent callers per key."""
-    from main import _embed_delta_into_snapshot
-    from services.workspace_state import load_workspace_state
-    from services.workspace_snapshot import build_snapshot
-    from services.recommendation_engine import generate_recommendations
-    from services.executive_brief import generate_brief
-    from services.world_model import get_store as get_wm_store
+    from services.workspace.state import load_workspace_state
+    from services.workspace.snapshot import build_snapshot
+    from services.mission_control.recommendations import generate_recommendations
+    from services.mission_control.narrative import generate_brief
 
     loop = asyncio.get_running_loop()
 
     # State load is independent of the key — but on a cache hit we can serve
     # straight from the stored payload without touching Supabase again.
-    state = await asyncio.to_thread(load_workspace_state, owner_id, include_details=False)
+    state = await asyncio.to_thread(
+        load_workspace_state,
+        owner_id,
+        include_details=False,
+        workspace_id=workspace_id,
+        canonical_only=True,
+    )
     campaigns = state["campaigns"]
     drafts = state["drafts"]
     total_leads = sum(c.get("lead_count", 0) or 0 for c in campaigns)
 
-    wm = get_wm_store()
-    delta = wm.compute_delta(session_token)
+    delta = await _read_durable_delta(workspace_id, actor_user_id)
 
     resolved_timezone = normalize_timezone(user_timezone)
     greeting = greeting_for_timezone(resolved_timezone)
     key = (
         owner_id,
+        workspace_id,
         _content_fingerprint(campaigns, drafts),
         _delta_fingerprint(delta),
         resolved_timezone,
@@ -171,9 +259,14 @@ async def compute_shared_payload(
                 synchronous (Supabase + OpenAI, 30s timeouts). Run them on a
                 worker thread so a slow LLM cannot stall the event loop."""
                 snap = build_snapshot(
-                    session_token, campaigns, drafts, total_leads, user_id=db_user_id,
+                    session_token,
+                    campaigns,
+                    drafts,
+                    total_leads,
+                    user_id=actor_user_id,
+                    workspace_id=workspace_id,
                 )
-                _embed_delta_into_snapshot(snap, delta)
+                embed_delta_into_snapshot(snap, delta)
                 recs = generate_recommendations(snap, use_narrative=include_narrative)
                 if include_narrative:
                     brf = generate_brief(snap, recs, user_timezone=resolved_timezone)

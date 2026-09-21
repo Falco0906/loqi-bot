@@ -40,9 +40,9 @@ function eventLabel(e: TimelineEvent): string {
   const d = e.data || {};
   switch (e.type) {
     case "draft_sent":
-      return `Delivered to ${String(d.recipient_email || "recipient")}`;
+      return "Delivered";
     case "draft_failed":
-      return `Send failed — ${String(d.error || "unknown error")}`;
+      return "Send failed";
     case "draft_approved":
       return "Draft approved";
     case "draft_updated":
@@ -79,8 +79,8 @@ function formatClock(iso: string): string {
 /**
  * Live Execution Workspace. Appears the moment a launch begins and stays until
  * the user closes it. Progress comes from durable counters (queued/sending/
- * delivered/failed), the timeline from the World Model event log — both
- * polled (no WebSockets). On completion it turns into the terminal view with
+ * delivered/failed), and the timeline from durable/canonical execution
+ * records — both polled (no WebSockets). On completion it turns into the terminal view with
  * Open Inbox + Return to Campaign. Every campaigned section below stays fully
  * visible; nothing is hidden, nothing reloads.
  */

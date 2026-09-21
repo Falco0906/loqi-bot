@@ -92,7 +92,11 @@ class TestMissionControlService:
         svc2 = get_service()
         assert svc1 is svc2
 
-    def test_get_briefing_empty(self):
+    def test_get_briefing_empty(self, monkeypatch):
+        monkeypatch.setattr(
+            "services.mission_control.narrative_engine._send_openai_request",
+            lambda *_args, **_kwargs: '{"greeting":"Good morning","lines":[],"suggestion":""}',
+        )
         result = self.svc.get_briefing("test-token", [], [])
         assert isinstance(result, BriefingResponse)
         assert result.ok is True
@@ -104,7 +108,11 @@ class TestMissionControlService:
         assert result.upcoming == []
         assert isinstance(result.timeline, list)
 
-    def test_get_briefing_with_campaigns(self):
+    def test_get_briefing_with_campaigns(self, monkeypatch):
+        monkeypatch.setattr(
+            "services.mission_control.narrative_engine._send_openai_request",
+            lambda *_args, **_kwargs: '{"greeting":"Good morning","lines":[],"suggestion":""}',
+        )
         campaigns = [
             {"id": "c1", "name": "Campaign A", "status": "ready", "lead_count": 10},
             {"id": "c2", "name": "Campaign B", "status": "draft_review", "lead_count": 5},

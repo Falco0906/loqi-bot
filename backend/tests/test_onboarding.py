@@ -707,14 +707,14 @@ class TestDurableOnboardingCompletion:
     @pytest.mark.asyncio
     async def test_finalize_creates_personal_workspace_in_org(self, monkeypatch):
         from unittest.mock import MagicMock
-        from services.workspace_state import ensure_workspace
+        from services.workspace.state import ensure_workspace
         svc = self._wired_service()
         user_id = "finalize-ws-user"
         await svc._user_service.save_user(User(id=user_id, display_name="Final"))
 
         calls = []
         mock_ensure = MagicMock(side_effect=lambda *a, **kw: calls.append((a, kw)) or "wsid")
-        monkeypatch.setattr("services.workspace_state.ensure_workspace", mock_ensure)
+        monkeypatch.setattr("services.workspace.state.ensure_workspace", mock_ensure)
 
         result = await svc.create_workspace_and_finalize(user_id, {
             "workspace_name": "Acme",

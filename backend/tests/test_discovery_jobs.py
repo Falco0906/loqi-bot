@@ -18,6 +18,9 @@ from types import SimpleNamespace
 
 import pytest
 
+
+pytestmark = pytest.mark.requires_db
+
 from fastapi.testclient import TestClient
 from tests.conftest import _AuthTestClient
 from main import app
@@ -36,17 +39,14 @@ def client():
     return _AuthTestClient(app)
 
 
-@pytest.fixture(scope="module")
-def session_token(client):
-    resp = client.post("/api/web/session", json={})
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data.get("ok") is True
-    return data["session_token"]
+@pytest.fixture()
+def session_token(authenticated_session):
+    """Use the shared durable integration identity for every search job test."""
+    return authenticated_session
 
 
 @pytest.fixture()
-def authenticated_session(client, monkeypatch):
+def authenticated_session(client, monkeypatch, shared_test_identity):
     """A web session bound to a REAL identity user.
 
     Anonymous sessions only exist in the legacy ``users`` table, so
@@ -56,17 +56,7 @@ def authenticated_session(client, monkeypatch):
     bootstrap before the job engine's ``jobs.user_id`` foreign key is used.
     Seed only the identity row here so this test exercises that real bridge.
     """
-    from uuid import uuid4
-
-    from services.supabase import get_supabase_client
-
-    user_id = str(uuid4())
-    db = get_supabase_client()
-    assert db is not None, "supabase client required"
-    db.table("identity_users").insert({
-        "id": user_id,
-        "display_name": "Discovery Test",
-    }).execute()
+    user_id = shared_test_identity
     async def fake_auth(request):
         return user_id
 
@@ -139,8 +129,9 @@ class TestSearchPipelineCompletes:
     @pytest.mark.asyncio
     async def test_pipeline_completes_and_stores_leads(self, session_token):
         from main import engine
-        from services.job_engine.manager import JobManager
+        from services.discovery.service import create_search_run
         from services.job_engine.storage import JobStorage
+        from services.workspace.state import ensure_workspace
 
         summary = await asyncio.to_thread(
             engine.get_web_session_summary, session_token
@@ -148,8 +139,12 @@ class TestSearchPipelineCompletes:
         assert summary is not None and summary.get("user_id")
         user_id = summary["user_id"]
 
-        manager = JobManager()
-        created = await manager.create_search_job(user_id=user_id, query="AI startups")
+        workspace_id = await asyncio.to_thread(ensure_workspace, user_id)
+        created = await create_search_run(
+            user_id,
+            "AI startups",
+            workspace_id=workspace_id,
+        )
         assert created and created.get("job_id"), f"job creation failed: {created}"
         job_id = created["job_id"]
 
@@ -175,7 +170,7 @@ class TestDiscoveryEntity:
 
     @pytest.mark.asyncio
     async def test_create_list_get_discovery(self, client, authenticated_session):
-        from services.discovery import list_discoveries
+        from services.discovery.service import list_discoveries
         from services.job_engine.models import JobStatus
         from services.job_engine.storage import JobStorage
 
@@ -197,7 +192,7 @@ class TestDiscoveryEntity:
             engine.get_web_session_summary, authenticated_session
         )
         user_id = summary["user_id"]
-        from services.workspace_state import ensure_workspace
+        from services.workspace.state import ensure_workspace
 
         workspace_id = await asyncio.to_thread(ensure_workspace, user_id)
         assert workspace_id, "workspace must resolve"
@@ -247,7 +242,7 @@ class TestDiscoveryEntity:
         # Tidy up: the async worker is cancelled when the TestClient request
         # scope ends, so the discovery row can be left searching forever.
         # Mark it cancelled so the history list stays clean.
-        from services.discovery import mark_discovery_status
+        from services.discovery.service import mark_discovery_status
 
         await asyncio.to_thread(mark_discovery_status, discovery_id, "cancelled")
         storage = JobStorage()
@@ -263,7 +258,7 @@ class TestDiscoveryEntity:
         """When a discovery is tied to a job, job completion must finalize it:
         status -> completed, leads + companies linked, provenance recorded."""
         from main import engine
-        from services.discovery import (
+        from services.discovery.service import (
             create_discovery,
             finalize_discovery,
             get_discovery,
@@ -275,7 +270,7 @@ class TestDiscoveryEntity:
             engine.get_web_session_summary, authenticated_session
         )
         user_id = summary["user_id"]
-        from services.workspace_state import ensure_workspace
+        from services.workspace.state import ensure_workspace
 
         workspace_id = await asyncio.to_thread(ensure_workspace, user_id)
         assert workspace_id, "workspace must resolve"
@@ -339,7 +334,7 @@ class TestDiscoveryEntity:
         } == {l["lead_id"] for l in leads}, "lead links must survive refresh"
 
         # Tidy up: mark the discovery cancelled so the history list stays clean.
-        from services.discovery import mark_discovery_status
+        from services.discovery.service import mark_discovery_status
 
         await asyncio.to_thread(mark_discovery_status, discovery_id, "cancelled")
 
@@ -373,7 +368,7 @@ class TestDiscoveryEntity:
         campaign_id = campaign.get("id")
         assert campaign_id, "campaign must be created"
 
-        from services.supabase import get_supabase_client
+        from services.platform.supabase import get_supabase_client
 
         client_db = get_supabase_client()
         assert client_db is not None
@@ -394,7 +389,7 @@ class TestDiscoveryEntity:
         )
 
         # Tidy up: cancel the discovery + its job.
-        from services.discovery import mark_discovery_status
+        from services.discovery.service import mark_discovery_status
 
         await asyncio.to_thread(mark_discovery_status, discovery_id, "cancelled")
         from services.job_engine.storage import JobStorage
@@ -433,9 +428,9 @@ class TestDiscoveryPlan:
 
     def test_plan_derivation_is_structured(self, monkeypatch):
         monkeypatch.setattr(
-            "services.icp_extractor.extract_structured_icp", _fake_structured_icp
+            "services.discovery.icp.extract_structured_icp", _fake_structured_icp
         )
-        from services.discovery_plan import derive_discovery_plan
+        from services.discovery.plan import derive_discovery_plan
 
         plan = derive_discovery_plan("AI phone answering software for restaurants")
         d = plan.to_dict()
@@ -451,9 +446,9 @@ class TestDiscoveryPlan:
 
     def test_raw_objective_never_reaches_provider_inputs(self, monkeypatch):
         monkeypatch.setattr(
-            "services.icp_extractor.extract_structured_icp", _fake_structured_icp
+            "services.discovery.icp.extract_structured_icp", _fake_structured_icp
         )
-        from services.discovery_plan import derive_discovery_plan, icp_from_plan
+        from services.discovery.plan import derive_discovery_plan, icp_from_plan
 
         objective = (
             "Take AI phone answering software to restaurants to stop missing calls"
@@ -503,9 +498,9 @@ class TestDiscoveryPlan:
             }
 
         monkeypatch.setattr(
-            "services.icp_extractor.extract_structured_icp", _cafe_icp
+            "services.discovery.icp.extract_structured_icp", _cafe_icp
         )
-        from services.discovery_plan import derive_discovery_plan
+        from services.discovery.plan import derive_discovery_plan
 
         plan = derive_discovery_plan(
             "Sell AI automations and websites to cafe owners in the US"
@@ -598,8 +593,8 @@ class TestDiscoveryPlan:
                 "offer": {"type": "call", "detail": "15-min"},
             })
 
-        monkeypatch.setattr("services.ai._send_openai_request", _fake_openai)
-        from services.ai import generate_campaign_strategy
+        monkeypatch.setattr("services.intelligence.ai._send_openai_request", _fake_openai)
+        from services.intelligence.ai import generate_campaign_strategy
 
         strategy = generate_campaign_strategy("Sell AI automations to cafe owners", {
             "discovery_plan": {
@@ -666,8 +661,8 @@ class TestDiscoveryPlan:
                 "offer": {},
             })
 
-        monkeypatch.setattr("services.ai._send_openai_request", _fake_openai)
-        from services.ai import generate_campaign_strategy
+        monkeypatch.setattr("services.intelligence.ai._send_openai_request", _fake_openai)
+        from services.intelligence.ai import generate_campaign_strategy
 
         strategy = generate_campaign_strategy("Open conversations with HR platforms")
         assert "Discovery plan" not in captured["user"], "no plan → no plan block"

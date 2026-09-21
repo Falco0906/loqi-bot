@@ -1,7 +1,7 @@
 """PR-3A — Redis foundation tests.
 
 Uses ``fakeredis`` as the Redis backend (injected through
-``services.redis_client``) so the full production code path — pooling,
+``services.platform.redis_client``) so the full production code path — pooling,
 namespaced keys, Lua rate limiting, pub/sub, degraded fallbacks — runs
 hermetically. "Worker A / Worker B" = two independent client/service
 instances bound to the SAME fake server, which is exactly the multi-worker
@@ -35,8 +35,8 @@ def fake_redis_server():
 
 @pytest.fixture()
 def wire_redis(monkeypatch, fake_redis_server):
-    """Point services.redis_client at a fresh fakeredis server."""
-    from services import redis_client as rc
+    """Point services.platform.redis_client at a fresh fakeredis server."""
+    from services.platform import redis_client as rc
 
     monkeypatch.setenv("REDIS_URL", "redis://test:6379/0")
     async def fake_get_client():
@@ -58,7 +58,7 @@ def test_connectivity_and_health(wire_redis):
 
 
 def test_unconfigured_returns_none(monkeypatch):
-    from services import redis_client as rc
+    from services.platform import redis_client as rc
     monkeypatch.delenv("REDIS_URL", raising=False)
     async def run():
         assert await rc.get_client() is None
@@ -69,7 +69,7 @@ def test_unconfigured_returns_none(monkeypatch):
 # ─── cache: shared across workers ─────────────────────────────────────
 
 def test_session_identity_shared_across_workers(wire_redis):
-    from services.session_cache import SessionCache, SessionIdentity
+    from services.identity.session_cache import SessionCache, SessionIdentity
 
     async def run():
         worker_a = SessionCache()
@@ -88,8 +88,8 @@ def test_session_identity_shared_across_workers(wire_redis):
 
 
 def test_token_keys_are_hashed_not_raw(wire_redis):
-    from services.session_cache import SessionCache, SessionIdentity, _token_hash
-    from services.redis_client import k_session_identity
+    from services.identity.session_cache import SessionCache, SessionIdentity, _token_hash
+    from services.platform.redis_client import k_session_identity
 
     async def run():
         worker = SessionCache()
@@ -104,7 +104,7 @@ def test_token_keys_are_hashed_not_raw(wire_redis):
 
 
 def test_cache_ttl_expiry(wire_redis):
-    from services.session_cache import SessionCache, SessionIdentity
+    from services.identity.session_cache import SessionCache, SessionIdentity
 
     async def run():
         worker = SessionCache(ttl_seconds=1)
@@ -118,7 +118,7 @@ def test_cache_ttl_expiry(wire_redis):
 
 
 def test_cross_user_isolation_no_collision(wire_redis):
-    from services.session_cache import SessionCache, SessionIdentity
+    from services.identity.session_cache import SessionCache, SessionIdentity
 
     async def run():
         a, b = SessionCache(), SessionCache()
@@ -139,15 +139,15 @@ def test_redis_unavailable_falls_back_without_bypass(wire_redis, monkeypatch):
         mirror (documented degraded mode; ≤ TTL old, no auth bypass — durable
         enforcement stays in Supabase/touch_session)
       - the rate limiter keeps enforcing locally (fail-safe, not fail-open)"""
-    from services import redis_client as rc
-    from services.rate_limit import RateLimiter
+    from services.platform import redis_client as rc
+    from services.platform.rate_limit import RateLimiter
 
     async def dead_client():
         return None
     monkeypatch.setattr(rc, "get_client", dead_client)
 
     async def run():
-        from services.session_cache import SessionCache, SessionIdentity
+        from services.identity.session_cache import SessionCache, SessionIdentity
         cache = SessionCache()
         # Never cached → None even while Redis is down.
         assert await cache.get_identity("tok-unknown") is None
@@ -166,7 +166,7 @@ def test_redis_unavailable_falls_back_without_bypass(wire_redis, monkeypatch):
 # ─── distributed rate limiting ────────────────────────────────────────
 
 def _limiter():
-    from services.rate_limit import RateLimiter
+    from services.platform.rate_limit import RateLimiter
     return RateLimiter(enabled=True, limits={"ai": 3, "outbound": 5, "default": 10})
 
 
@@ -194,7 +194,7 @@ def test_rate_limit_window_expiry(wire_redis):
             assert (await rl.allow(key, 5))[0]
         assert (await rl.allow(key, 5))[0] is False
         # Simulate window rollover by deleting the underlying counter(s).
-        from services.redis_client import k_rate, hash_token
+        from services.platform.redis_client import k_rate, hash_token
         import time as _time
         client = await wire_redis.get_client()
         current = int(_time.time()) // rl.window_seconds * rl.window_seconds
@@ -234,8 +234,8 @@ def test_rate_limit_concurrent_requests_cannot_bypass(wire_redis):
 
 def test_rate_limit_redis_down_falls_back_local(wire_redis, monkeypatch):
     async def run():
-        from services.rate_limit import RateLimiter
-        from services import redis_client as rc
+        from services.platform.rate_limit import RateLimiter
+        from services.platform import redis_client as rc
 
         async def dead():
             return None
@@ -250,7 +250,7 @@ def test_rate_limit_redis_down_falls_back_local(wire_redis, monkeypatch):
 # ─── pub/sub ──────────────────────────────────────────────────────────
 
 def test_pubsub_user_event_delivery(wire_redis):
-    from services.events_bus import EventBus
+    from services.events.bus import EventBus
 
     async def run():
         bus = EventBus()
@@ -288,7 +288,7 @@ async def _drain(pubsub, queue: asyncio.Queue):
 
 
 def test_pubsub_strips_sensitive_keys(wire_redis):
-    from services.events_bus import EventBus
+    from services.events.bus import EventBus
 
     async def run():
         bus = EventBus()
@@ -311,8 +311,8 @@ def test_pubsub_strips_sensitive_keys(wire_redis):
 
 
 def test_pubsub_redis_down_is_best_effort(wire_redis, monkeypatch):
-    from services.events_bus import EventBus
-    from services import redis_client as rc
+    from services.events.bus import EventBus
+    from services.platform import redis_client as rc
 
     async def run():
         async def dead():

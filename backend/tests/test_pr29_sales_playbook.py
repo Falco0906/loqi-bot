@@ -18,32 +18,31 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import main as main_module
-import services.ai as ai_module
-from main import (
-    _create_batch_job,
-    _run_draft_with_retry,
-    batch_jobs,
-)
-
-from tests.test_draft_generation_recovery import _fake_owner
-
+import services.intelligence.ai as ai_module
+from services.campaigns import api as campaign_api
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _fake_owner(owner_id: str):
+    async def resolve_owner(_request, _session_token: str) -> str:
+        return owner_id
+
+    return resolve_owner
+
+
 @pytest.fixture
 def fake_persist(monkeypatch):
     """Persist campaign updates in-memory; assertable from the test."""
-    import services.workspace_state as workspace_state
+    import services.workspace.state as workspace_state
     updates: list[tuple[str, str, dict]] = []
 
-    def fake(user_id: str, campaign_id: str, payload: dict) -> bool:
+    def fake(user_id: str, campaign_id: str, payload: dict, **_kwargs) -> bool:
         updates.append((user_id, campaign_id, payload))
         return True
 
-    async def fake_awaited(user_id: str, campaign_id: str, payload: dict) -> bool:
+    async def fake_awaited(user_id: str, campaign_id: str, payload: dict, **_kwargs) -> bool:
         updates.append((user_id, campaign_id, payload))
         return True
 
@@ -155,13 +154,6 @@ PLAYBOOK_KEY_GROUPS = {
                  "outreach_sequence", "cta"],
     "confidence": ["confidence"],
 }
-
-
-@pytest.fixture(autouse=True)
-def _clean_stores():
-    batch_jobs.clear()
-    yield
-    batch_jobs.clear()
 
 
 class TestStrategyPlaybookContract:
@@ -299,14 +291,26 @@ class TestDraftBatchIdempotency:
             "started_at": _now(),
             "finished_at": _now(),
         }
-        monkeypatch.setattr(main_module, "_workspace_owner", _fake_owner("owner-1"))
-        monkeypatch.setattr(main_module, "_workspace_campaigns",
-                            lambda uid, tok="": [campaign])
+        monkeypatch.setattr(campaign_api.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
+        async def resolve_workspace(*_args, **_kwargs):
+            return "workspace-1"
+        monkeypatch.setattr(campaign_api.workspace_access, "resolve_legacy_workspace_id", resolve_workspace)
+        monkeypatch.setattr(campaign_api, "load_campaigns",
+                            lambda uid, **_kwargs: [campaign])
+        monkeypatch.setattr(
+            "services.workspace.state.load_campaign_state",
+            lambda *args, **_kwargs: campaign,
+        )
         launched: list = []
-        monkeypatch.setattr(main_module, "_launch_batch_task",
-                            lambda *args, **kwargs: launched.append(args))
 
-        result = await main_module.generate_campaign_drafts(
+        async def enqueue(*args, **kwargs):
+            launched.append((args, kwargs))
+            return {"batch_id": "unexpected", "total": 1, "status": "queued"}
+
+        monkeypatch.setattr("services.drafts.service.schedule_campaign_draft_batch", enqueue)
+
+        from services.campaigns.api import generate_campaign_drafts
+        result = await generate_campaign_drafts(
             "token", campaign["id"], MagicMock())
 
         assert result["ok"] is True
@@ -327,15 +331,26 @@ class TestDraftBatchIdempotency:
             "error": "interrupted",
             "started_at": _now(),
         }
-        monkeypatch.setattr(main_module, "_workspace_owner", _fake_owner("owner-1"))
-        monkeypatch.setattr(main_module, "_workspace_campaigns",
-                            lambda uid, tok="": [campaign])
-        monkeypatch.setattr(main_module, "_workspace_drafts", lambda uid, tok="": [])
+        monkeypatch.setattr(campaign_api.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
+        async def resolve_workspace(*_args, **_kwargs):
+            return "workspace-1"
+        monkeypatch.setattr(campaign_api.workspace_access, "resolve_legacy_workspace_id", resolve_workspace)
+        monkeypatch.setattr(campaign_api, "load_campaigns",
+                            lambda uid, **_kwargs: [campaign])
+        monkeypatch.setattr(
+            "services.workspace.state.load_campaign_state",
+            lambda *args, **_kwargs: campaign,
+        )
         launched: list = []
-        monkeypatch.setattr(main_module, "_launch_batch_task",
-                            lambda *args, **kwargs: launched.append(args))
 
-        result = await main_module.generate_campaign_drafts(
+        async def enqueue(*args, **kwargs):
+            launched.append((args, kwargs))
+            return {"batch_id": "batch-new", "total": 1, "status": "queued"}
+
+        monkeypatch.setattr("services.drafts.service.schedule_campaign_draft_batch", enqueue)
+
+        from services.campaigns.api import generate_campaign_drafts
+        result = await generate_campaign_drafts(
             "token", campaign["id"], MagicMock())
 
         assert result["ok"] is True

@@ -9,7 +9,7 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_manual_campaign_returns_after_four_selected_leads_are_durable(monkeypatch):
-    import main as main_module
+    from services.campaigns import api as campaign_api
 
     attached: list[str] = []
     persisted: dict = {}
@@ -17,8 +17,11 @@ async def test_manual_campaign_returns_after_four_selected_leads_are_durable(mon
     max_active_links = 0
     strategy_started = asyncio.Event()
     release_strategy = asyncio.Event()
+    ordering: list[str] = []
+    durable_activity: list[dict] = []
 
     async def persist_campaign(_owner, campaign, workspace_id=""):
+        ordering.append("campaign_persisted")
         persisted.update(campaign)
         return True
 
@@ -35,25 +38,35 @@ async def test_manual_campaign_returns_after_four_selected_leads_are_durable(mon
         strategy_started.set()
         await release_strategy.wait()
 
-    monkeypatch.setattr(main_module, "_session_token_from_request", lambda _request: "session-1")
-    monkeypatch.setattr(main_module, "_workspace_owner", lambda *_args, **_kwargs: _async_value("owner-1"))
-    monkeypatch.setattr(main_module, "_resolved_workspace_id_or_default", lambda *_args, **_kwargs: _async_value("workspace-1"))
-    monkeypatch.setattr("services.discovery.get_discovery", lambda discovery_id, workspace_id="": {
+    monkeypatch.setattr(campaign_api.identity_dependencies, "web_session_token", lambda _request: "session-1")
+    monkeypatch.setattr(campaign_api.identity_dependencies, "authenticated_user_id", lambda *_args, **_kwargs: _async_value("owner-1"))
+    monkeypatch.setattr(campaign_api.workspace_access, "resolve_legacy_workspace_id", lambda *_args, **_kwargs: _async_value("workspace-1"))
+    monkeypatch.setattr("services.discovery.service.get_discovery", lambda discovery_id, workspace_id="": {
         "id": discovery_id, "workspace_id": workspace_id,
     })
-    monkeypatch.setattr("services.workspace_state.persist_campaign_row", persist_campaign)
-    monkeypatch.setattr("services.workspace_state.persist_campaign_lead_awaited", persist_lead)
-    monkeypatch.setattr("services.workspace_state.load_campaign_state", lambda _owner, campaign_id, workspace_id="": {
-        **persisted, "id": campaign_id, "lead_count": len(attached), "leads": leads,
-    })
-    monkeypatch.setattr("services.workspace_state.append_event", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(main_module, "record_campaign_created", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(main_module, "publish", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(main_module, "_maybe_auto_strategy", blocked_strategy)
-    monkeypatch.setattr(main_module, "_get_feedback", lambda: SimpleNamespace(on_campaign_created=lambda *_args: None))
+    monkeypatch.setattr("services.workspace.state.persist_campaign_row", persist_campaign)
+    monkeypatch.setattr("services.workspace.state.persist_campaign_lead_awaited", persist_lead)
+    def load_verified_campaign(_owner, campaign_id, workspace_id=""):
+        ordering.append("campaign_verified")
+        return {
+            **persisted, "id": campaign_id, "lead_count": len(attached), "leads": leads,
+        }
+
+    monkeypatch.setattr("services.workspace.state.load_campaign_state", load_verified_campaign)
+    monkeypatch.setattr("services.workspace.state.append_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("services.workspace.timeline.record_campaign_created", lambda *_args, **_kwargs: None)
+    class ActivityRepository:
+        def append_campaign_created(self, **kwargs):
+            ordering.append("durable_activity")
+            durable_activity.append(kwargs)
+
+    monkeypatch.setattr("services.campaigns.service.get_activity_repository", lambda: ActivityRepository())
+    monkeypatch.setattr("services.campaigns.service.publish", lambda *_args, **_kwargs: ordering.append("legacy_projection"))
+    monkeypatch.setattr("services.campaigns.service.maybe_auto_strategy", blocked_strategy)
+    monkeypatch.setattr("services.campaigns.service._feedback", lambda: SimpleNamespace(on_campaign_created=lambda *_args: None))
 
     leads = [{"id": f"workspace-lead-{index}", "company": f"Cafe {index}"} for index in range(1, 5)]
-    payload = main_module.SaveCampaignRequest(
+    payload = campaign_api.SaveCampaignRequest(
         name="Hyderabad cafe owners",
         objective="Start outreach",
         discovery_id="discovery-1",
@@ -62,7 +75,7 @@ async def test_manual_campaign_returns_after_four_selected_leads_are_durable(mon
     )
     request = SimpleNamespace()
 
-    response = await main_module.save_campaign("_", payload, request)
+    response = await campaign_api.save_campaign("_", payload, request)
 
     assert response["ok"] is True
     assert response["campaign"]["lead_count"] == 4
@@ -70,6 +83,15 @@ async def test_manual_campaign_returns_after_four_selected_leads_are_durable(mon
     assert attached == [f"workspace-lead-{index}" for index in range(1, 5)]
     assert persisted["id"] == response["campaign"]["id"]
     assert max_active_links == 4
+    assert ordering.index("campaign_persisted") < ordering.index("campaign_verified") < ordering.index("durable_activity") < ordering.index("legacy_projection")
+    assert durable_activity == [{
+        "workspace_id": "workspace-1", "actor_user_id": "owner-1",
+        "source_key": f"campaign:{response['campaign']['id']}:created",
+        "payload": {
+            "campaign_id": response["campaign"]["id"], "status": "planning", "lead_count": 4,
+        },
+        "occurred_at": response["campaign"]["created_at"],
+    }]
 
     # The response is not held hostage by strategy setup.
     await asyncio.wait_for(strategy_started.wait(), timeout=0.2)
@@ -79,7 +101,7 @@ async def test_manual_campaign_returns_after_four_selected_leads_are_durable(mon
 
 @pytest.mark.asyncio
 async def test_manual_campaign_without_leads_returns_when_compatibility_event_is_slow(monkeypatch):
-    import main as main_module
+    from services.campaigns import api as campaign_api
 
     event_started = threading.Event()
     release_event = threading.Event()
@@ -94,21 +116,28 @@ async def test_manual_campaign_without_leads_returns_when_compatibility_event_is
         release_event.wait(timeout=2)
         return True
 
-    monkeypatch.setattr(main_module, "_session_token_from_request", lambda _request: "session-1")
-    monkeypatch.setattr(main_module, "_workspace_owner", lambda *_args, **_kwargs: _async_value("owner-1"))
-    monkeypatch.setattr(main_module, "_resolved_workspace_id_or_default", lambda *_args, **_kwargs: _async_value("workspace-1"))
-    monkeypatch.setattr("services.workspace_state.persist_campaign_row", persist_campaign)
-    monkeypatch.setattr("services.workspace_state.load_campaign_state", lambda _owner, campaign_id, workspace_id="": {
+    monkeypatch.setattr(campaign_api.identity_dependencies, "web_session_token", lambda _request: "session-1")
+    monkeypatch.setattr(campaign_api.identity_dependencies, "authenticated_user_id", lambda *_args, **_kwargs: _async_value("owner-1"))
+    monkeypatch.setattr(campaign_api.workspace_access, "resolve_legacy_workspace_id", lambda *_args, **_kwargs: _async_value("workspace-1"))
+    monkeypatch.setattr("services.workspace.state.persist_campaign_row", persist_campaign)
+    monkeypatch.setattr("services.workspace.state.load_campaign_state", lambda _owner, campaign_id, workspace_id="": {
         **persisted, "id": campaign_id, "lead_count": 0, "leads": [],
     })
-    monkeypatch.setattr("services.workspace_state.append_event", blocked_event)
-    monkeypatch.setattr(main_module, "record_campaign_created", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(main_module, "publish", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(main_module, "_get_feedback", lambda: SimpleNamespace(on_campaign_created=lambda *_args: None))
+    monkeypatch.setattr("services.workspace.state.append_event", blocked_event)
+    monkeypatch.setattr("services.workspace.timeline.record_campaign_created", lambda *_args, **_kwargs: None)
+    legacy_events = []
 
-    response = await main_module.save_campaign(
+    class FailingActivityRepository:
+        def append_campaign_created(self, **_kwargs):
+            raise RuntimeError("activity unavailable")
+
+    monkeypatch.setattr("services.campaigns.service.get_activity_repository", lambda: FailingActivityRepository())
+    monkeypatch.setattr("services.campaigns.service.publish", lambda *_args, **_kwargs: legacy_events.append(_args[1]))
+    monkeypatch.setattr("services.campaigns.service._feedback", lambda: SimpleNamespace(on_campaign_created=lambda *_args: None))
+
+    response = await campaign_api.save_campaign(
         "_",
-        main_module.SaveCampaignRequest(name="Empty campaign", objective="No leads yet"),
+        campaign_api.SaveCampaignRequest(name="Empty campaign", objective="No leads yet"),
         SimpleNamespace(),
     )
 
@@ -116,6 +145,7 @@ async def test_manual_campaign_without_leads_returns_when_compatibility_event_is
     assert response["campaign"]["lead_count"] == 0
     assert response["campaign"]["leads"] == []
     assert persisted["id"] == response["campaign"]["id"]
+    assert [event.value for event in legacy_events] == ["campaign_created"]
     await asyncio.to_thread(event_started.wait, 0.2)
     release_event.set()
     await asyncio.sleep(0)

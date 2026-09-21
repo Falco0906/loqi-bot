@@ -167,7 +167,7 @@ class TestDryRun:
 
         def _boom(*a, **k):
             raise AssertionError("dry-run must not touch Supabase")
-        monkeypatch.setattr("services.supabase.get_supabase_client", _boom)
+        monkeypatch.setattr("services.platform.supabase.get_supabase_client", _boom)
 
         summary = apply_cleanup_plan(plan, dry_run=True)
         assert "applied_updates" not in summary

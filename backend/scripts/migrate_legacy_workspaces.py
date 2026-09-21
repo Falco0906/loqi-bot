@@ -141,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
           else ("APPLY MODE" if (args.apply and args.confirm) else "DRY RUN (no writes)"))
     print("=" * 72)
 
-    from services.supabase import get_supabase_client
+    from services.platform.supabase import get_supabase_client
     client = get_supabase_client()
     if client is None:
         print("FATAL: Supabase client unavailable")

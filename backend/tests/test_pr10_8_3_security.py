@@ -5,12 +5,10 @@ Confirms the security fixes for confirmed findings:
 1. Session tokens are redacted from request logs (never logged in paths).
 2. Provider routes enforce ownership (IDOR: user A cannot act on user B's
    provider via disconnect/health/sync/status).
-3. The Telegram webhook is authenticated when a secret is configured.
-4. The legacy /providers/connect route is disabled in production.
-5. send_draft cannot send a draft owned by another user.
-6. Conversation reply/follow-up routes cannot act on another user's
+3. The legacy /providers/connect route is disabled in production.
+4. send_draft cannot send a draft owned by another user.
+5. Conversation reply/follow-up routes cannot act on another user's
    conversation.
-7. Production config requires TELEGRAM_WEBHOOK_SECRET when the bot is active.
 
 Deterministic sentinels only — never real credentials.
 """
@@ -24,6 +22,9 @@ os.chdir(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ".")
 
 import pytest
+from services.conversations import service as conversation_service
+from services.communication import api as provider_api
+from services.outbound import api as outbound_api
 
 SENTINEL = "PR1083_SENTINEL_SECRET_DO_NOT_LEAK"
 SENTINEL_SESSION = "PR1083_SENTINEL_SESSION_TOKEN"
@@ -51,8 +52,6 @@ def _clean_runtime_state(monkeypatch):
         conversation_store.reload()
 
     _reset()
-    monkeypatch.delenv("TELEGRAM_WEBHOOK_SECRET", raising=False)
-    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("ENVIRONMENT", raising=False)
     monkeypatch.delenv("APP_ENV", raising=False)
     yield
@@ -132,82 +131,45 @@ class TestSessionTokenRedaction:
 
 class TestProviderRouteOwnership:
     def _setup(self, monkeypatch):
-        import main as main_module
         from services.communication.communication_store import store
         # A provider owned by "owner-b" (the victim).
         store._providers["prov-b"] = _provider_record("prov-b", "victim@b.com", user_id="owner-b")
         store._user_providers["owner-b"] = ["prov-b"]
-        monkeypatch.setattr(main_module, "_workspace_owner", AsyncMock(return_value="owner-a"))
-        return main_module
+        monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-a"))
 
     def test_health_denied_for_another_users_provider(self, monkeypatch):
-        m = self._setup(monkeypatch)
+        self._setup(monkeypatch)
         with pytest.raises(Exception) as exc:
-            asyncio.run(m.provider_health("tok", "prov-b", MagicMock()))
+            asyncio.run(provider_api.provider_health("tok", "prov-b", MagicMock()))
         assert exc.value.status_code == 404
-
     def test_disconnect_denied_for_another_users_provider(self, monkeypatch):
-        m = self._setup(monkeypatch)
+        self._setup(monkeypatch)
         with pytest.raises(Exception) as exc:
-            asyncio.run(m.provider_disconnect("tok", "prov-b", MagicMock()))
+            asyncio.run(provider_api.provider_disconnect("tok", "prov-b", MagicMock()))
         assert exc.value.status_code == 404
 
     def test_sync_denied_for_another_users_provider(self, monkeypatch):
-        m = self._setup(monkeypatch)
+        self._setup(monkeypatch)
         with pytest.raises(Exception) as exc:
-            asyncio.run(m.provider_sync("tok", "prov-b", MagicMock()))
+            asyncio.run(provider_api.provider_sync("tok", "prov-b", MagicMock()))
         assert exc.value.status_code == 404
 
     def test_status_denied_for_another_users_provider(self, monkeypatch):
-        m = self._setup(monkeypatch)
+        self._setup(monkeypatch)
         with pytest.raises(Exception) as exc:
-            asyncio.run(m.provider_status("tok", "prov-b", MagicMock()))
+            asyncio.run(provider_api.provider_status("tok", "prov-b", MagicMock()))
         assert exc.value.status_code == 404
 
     def test_owner_can_access_own_provider(self, monkeypatch):
-        import main as m
         from services.communication.communication_store import store
-        m = self._setup(monkeypatch)
+        self._setup(monkeypatch)
         store._providers["prov-a"] = _provider_record("prov-a", "a@a.com", user_id="owner-a")
         store._user_providers["owner-a"] = ["prov-a"]
-        monkeypatch.setattr(m, "_workspace_owner", AsyncMock(return_value="owner-a"))
-        monkeypatch.setattr(m, "get_provider", lambda pid: _fake_instance("healthy"))
-        result = asyncio.run(m.provider_health("tok", "prov-a", MagicMock()))
+        monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-a"))
+        from services.communication import service as provider_service
+        monkeypatch.setattr(provider_service, "get_provider", lambda pid: _fake_instance("healthy"))
+        result = asyncio.run(provider_api.provider_health("tok", "prov-a", MagicMock()))
         assert result["ok"] is True
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# 3. Telegram webhook authentication
-# ═══════════════════════════════════════════════════════════════════════
-
-class TestTelegramWebhookAuth:
-    def test_webhook_rejected_without_secret_when_configured(self, monkeypatch):
-        from fastapi import HTTPException
-        import main as main_module
-        monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "webhook-secret-abc")
-        request = MagicMock()
-        request.headers.get = lambda *a, **k: ""
-        with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.telegram_webhook(request))
-        assert exc.value.status_code == 403
-
-    def test_webhook_accepted_with_matching_secret(self, monkeypatch):
-        import main as main_module
-        monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "webhook-secret-abc")
-        request = MagicMock()
-        request.headers.get = lambda *a, **k: "webhook-secret-abc"
-        request.json = AsyncMock(return_value={})
-        with patch.object(main_module, "process_message", lambda *a, **k: None):
-            result = asyncio.run(main_module.telegram_webhook(request))
-        assert result == {"status": "ok"}
-
-    def test_webhook_accepted_when_secret_not_configured(self):
-        import main as main_module
-        request = MagicMock()
-        request.json = AsyncMock(return_value={})
-        with patch.object(main_module, "process_message", lambda *a, **k: None):
-            result = asyncio.run(main_module.telegram_webhook(request))
-        assert result == {"status": "ok"}
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -216,7 +178,7 @@ class TestTelegramWebhookAuth:
 
 class TestLegacyConnectProductionGuard:
     def test_provider_connect_rejected_in_production(self, monkeypatch):
-        import main as main_module
+        from services.communication import api as provider_api
         monkeypatch.setenv("ENVIRONMENT", "production")
         payload = MagicMock()
         payload.provider_type = "gmail"
@@ -224,11 +186,12 @@ class TestLegacyConnectProductionGuard:
         payload.email = "a@a.com"
         payload.scope = ""
         with pytest.raises(Exception) as exc:
-            asyncio.run(main_module.provider_connect("tok", payload))
+            asyncio.run(provider_api.connect_legacy_raw_token_provider("tok", payload, MagicMock()))
         assert exc.value.status_code == 403
 
     def test_provider_connect_allowed_in_development(self, monkeypatch):
         import main as main_module
+        from services.communication import api as provider_api
         from services.communication.communication_store import store
         from services.communication import provider_registry
         from services.communication.gmail_provider import GmailProvider
@@ -242,7 +205,7 @@ class TestLegacyConnectProductionGuard:
         request = MagicMock()
         request.headers.get = lambda k, d="": "Bearer tok" if k == "authorization" else d
         # GmailProvider.connect stores a provider record; no network calls.
-        result = asyncio.run(main_module.provider_connect("_", payload, request))
+        result = asyncio.run(provider_api.connect_legacy_raw_token_provider("_", payload, request))
         assert result["ok"] is True
         assert len(store.get_user_providers("tok")) == 1
 
@@ -253,28 +216,22 @@ class TestLegacyConnectProductionGuard:
 
 class TestSendDraftOwnership:
     def test_send_denied_for_another_users_draft(self, monkeypatch):
-        import main as main_module
-        from services.outbound.draft_store import draft_store
-        from services.outbound.outbound_models import DraftMessage, Recipient
+        from services.outbound.api import send_draft
         from services.communication.communication_store import store
 
         store._providers["prov-b"] = _provider_record("prov-b", "victim@b.com", user_id="owner-b")
-        draft = DraftMessage(
-            id="draft-b-1",
-            provider_id="prov-b",
-            subject="Victim draft",
-            body="Secret body",
-            recipient=Recipient(email="victim-target@x.com", name="Target"),
-            sender=Recipient(email="victim@b.com", name="Victim"),
-        )
-        draft_store.create(draft)
-        monkeypatch.setattr(main_module, "_workspace_owner", AsyncMock(return_value="owner-a"))
+        monkeypatch.setattr(outbound_api.identity_dependencies, "authenticated_user_id", AsyncMock(return_value="owner-a"))
+        monkeypatch.setattr(outbound_api.identity_dependencies, "web_session_token", lambda request: "tok")
+
+        async def workspace(request, user_id):
+            return "workspace-owner-a"
+
+        monkeypatch.setattr(outbound_api.workspace_access, "resolve_legacy_workspace_id", workspace)
         request = MagicMock()
         with pytest.raises(Exception) as exc:
-            asyncio.run(main_module.send_draft("tok", "draft-b-1", request))
+            asyncio.run(send_draft("tok", "draft-b-1", request))
         # Safe not-found (no existence leak): a foreign draft is 404, not 403.
         assert exc.value.status_code == 404
-        draft_store.delete("draft-b-1")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -298,79 +255,43 @@ class TestConversationSendOwnership:
         )
 
     def test_reply_denied_for_another_users_conversation(self, monkeypatch):
-        import main as main_module
         convo = self._convo()
-        monkeypatch.setattr(main_module, "_workspace_owner", AsyncMock(return_value="owner-a"))
         payload = MagicMock()
         payload.body = "reply"
         payload.test_recipient = ""
         payload.thread_id = ""
         request = MagicMock()
         with pytest.raises(Exception) as exc:
-            asyncio.run(main_module.send_conversation_reply_route(
-                "tok", convo.conversation_id, payload, request,
+            asyncio.run(conversation_service.send_reply(
+                convo.conversation_id, "owner-a", payload,
             ))
         # Safe not-found (no existence leak): foreign conversation is 404.
         assert exc.value.status_code == 404
 
     def test_followup_denied_for_another_users_conversation(self, monkeypatch):
-        import main as main_module
         convo = self._convo()
-        monkeypatch.setattr(main_module, "_workspace_owner", AsyncMock(return_value="owner-a"))
         payload = MagicMock()
         payload.body = "follow-up"
         payload.test_recipient = ""
         payload.thread_id = ""
         request = MagicMock()
         with pytest.raises(Exception) as exc:
-            asyncio.run(main_module.send_conversation_followup_route(
-                "tok", convo.conversation_id, payload, request,
+            asyncio.run(conversation_service.send_follow_up(
+                convo.conversation_id, "owner-a", payload,
             ))
         # Safe not-found (no existence leak): foreign conversation is 404.
         assert exc.value.status_code == 404
 
     def test_timeline_denied_for_another_users_conversation(self, monkeypatch):
-        import main as main_module
+        from services.communication import api as communication_api
         convo = self._convo()
-        monkeypatch.setattr(main_module, "_workspace_owner", AsyncMock(return_value="owner-a"))
+        monkeypatch.setattr(
+            communication_api.identity_dependencies,
+            "authenticated_user_id",
+            AsyncMock(return_value="owner-a"),
+        )
         request = MagicMock()
         with pytest.raises(Exception) as exc:
-            asyncio.run(main_module.communication_timeline("tok", convo.conversation_id, request))
+            asyncio.run(communication_api.communication_timeline("tok", convo.conversation_id, request))
         # Safe not-found (no existence leak): foreign conversation is 404.
         assert exc.value.status_code == 404
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# 7. Production config: webhook secret
-# ═══════════════════════════════════════════════════════════════════════
-
-class TestWebhookSecretConfig:
-    def test_production_requires_webhook_secret_when_bot_active(self):
-        from services import config_validation as cv
-        errors, _ = cv.validate_config({
-            "ENVIRONMENT": "production",
-            "SUPABASE_URL": "https://x.supabase.co",
-            "SUPABASE_KEY": "k",
-            "OPENAI_API_KEY": "k",
-            "GOOGLE_CLIENT_ID": "c",
-            "GOOGLE_CLIENT_SECRET": "s",
-            "LOQI_CREDENTIAL_ENCRYPTION_KEY": "ab" * 32,
-            "TELEGRAM_BOT_TOKEN": "123:abc",
-            "TELEGRAM_WEBHOOK_SECRET": "",
-        })
-        assert any("TELEGRAM_WEBHOOK_SECRET" in e for e in errors)
-
-    def test_production_ok_with_webhook_secret(self):
-        from services import config_validation as cv
-        errors, _ = cv.validate_config({
-            "ENVIRONMENT": "production",
-            "SUPABASE_URL": "https://x.supabase.co",
-            "SUPABASE_KEY": "k",
-            "OPENAI_API_KEY": "k",
-            "GOOGLE_CLIENT_ID": "c",
-            "GOOGLE_CLIENT_SECRET": "s",
-            "LOQI_CREDENTIAL_ENCRYPTION_KEY": "ab" * 32,
-            "TELEGRAM_BOT_TOKEN": "123:abc",
-            "TELEGRAM_WEBHOOK_SECRET": "webhook-secret",
-        })
-        assert not any("TELEGRAM_WEBHOOK_SECRET" in e for e in errors)

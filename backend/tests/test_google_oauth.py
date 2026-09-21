@@ -288,7 +288,6 @@ class TestOAuthCallbackSuccess:
 
         user, ei, _ = asyncio_run(svc._user.create_user("Existing", "existing@example.com"))
         org, mem, _ = asyncio_run(svc._org.create_organization("Existing Org", user.id))
-        asyncio_run(svc._membership.add_member(user.id, org.id))
 
         registry = get_provider_registry()
         provider = registry.get("google")
@@ -324,7 +323,6 @@ class TestOAuthCallbackSuccess:
 
         user, ei, _ = asyncio_run(svc._user.create_user("Returning", "returning@example.com"))
         org, mem, _ = asyncio_run(svc._org.create_organization("Returning Org", user.id))
-        asyncio_run(svc._membership.add_member(user.id, org.id))
         from services.identity.models import ExternalIdentity as ExtIdModel
         from datetime import datetime, timezone
         ext = ExtIdModel(

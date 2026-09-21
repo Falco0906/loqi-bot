@@ -7,6 +7,8 @@ import resend
 from abc import ABC, abstractmethod
 from typing import Any
 
+from services.email.transactional_templates import render_subscription_renewed_email
+
 
 class EmailProvider(ABC):
 
@@ -123,6 +125,25 @@ class ConsoleEmailProvider(EmailProvider):
     ) -> None:
         print(f"[ConsoleEmailProvider] To: {to}")
         print(f"[ConsoleEmailProvider] Subscription cancelled: {plan_name}")
+
+    async def send_subscription_renewed(
+        self,
+        to: str,
+        recipient_name: str,
+        plan_name: str,
+        amount: str,
+        next_billing_date: str,
+    ) -> None:
+        """Print the same renewal content the production Resend provider sends."""
+        result = render_subscription_renewed_email(
+            recipient_name,
+            plan_name,
+            amount,
+            next_billing_date,
+        )
+        print(f"[ConsoleEmailProvider] To: {to}")
+        print(f"[ConsoleEmailProvider] Subject: {result.subject}")
+        print(f"[ConsoleEmailProvider] Body: {result.plain_text}")
 
 
 class ResendEmailProvider(EmailProvider):

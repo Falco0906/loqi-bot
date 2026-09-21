@@ -1,0 +1,41 @@
+LOQI R1-C — ADVERSARIAL CONTRACT REVIEW
+Date: 2026-08-27. Scope: characterization safety gate; no production behavior changed.
+
+VALIDATION RECONCILIATION
+• Conversation restart failures: TEST/ENVIRONMENT CONTAMINATION, not an R1 production regression. conftest rehydrated Supabase before test_conversation_store_restart's local persistence fixture selected its tmp state file. The test then saw pre-existing durable snapshots. Test-only isolation was fixed by reloading after its local backend is installed. Result: 6 passed.
+• Discovery long-running batch: NOT PROVABLE LOCALLY as a deterministic full end-to-end provider test. test_pipeline_completes_and_stores_leads polls a real asynchronous worker for up to 120 seconds and depends on configured provider/database/network execution. Immediate request→durable-job, workspace, finalization, and result contracts are covered by discovery_jobs, discovery_workspace_scope, and job storage tests. Provider completion must remain a staging/deployed integration check.
+• R1 did not alter production code; no failure can be attributed to an R1 production regression.
+
+CONTRACT | STATUS | EVIDENCE | REMAINING RISK
+Authentication/session binding | PASS | test_auth_api; test_pr10_8_3_security; R1 HTTP missing-bearer guards | Identity-provider/OAuth real callback configuration requires deployed test account.
+Selected workspace/tenant isolation | PASS | test_discovery_workspace_scope; SaaS tenant isolation suites; outbound ownership tests | Legacy owner-default compatibility fallback remains documented contract debt.
+HTTP public/protected/error boundary | PASS | test_r1_contract_safety_net (4 passed); identity route tests | Most legacy success responses remain untyped dict contracts.
+Campaign/lead persistence and attachment | PASS | test_manual_campaign_creation; test_workspace_lead_attach; discovery campaign flow tests | Full provider-backed selected-lead flow needs staging data.
+Discovery + durable jobs | PASS | test_discovery_jobs immediate/entity/finalization coverage; test_discovery_workspace_scope | Real provider execution is NOT PROVABLE LOCALLY without deterministic configured provider.
+Draft lifecycle | PASS | test_draft_lifecycle; test_phase2b_draft_send | Actual Gmail send remains provider integration risk.
+Outbound/Gmail ownership and side effects | PASS | test_outbound_endpoint_ownership; test_no_email_guard; Gmail provider tests | NOT PROVABLE LOCALLY: Gmail OAuth scopes, Gmail API delivery and provider outages.
+Inbox persistence/restart/workspace filtering | PASS | test_conversation_supabase_persistence; test_conversation_store_restart (6 passed after fixture isolation); conversation reply/follow-up tests | Supabase migration presence/deployed RLS requires environment check.
+Knowledge reads/tenant filtering | PASS | test_knowledge_service owner-scoped, bounded, route-level tests | Semantic retrieval provider quality is outside local contract proof.
+Mission Control reads | PASS | test_mission_control grounded briefing/activity tests | Live workspace signal availability is data-dependent.
+Copilot read/action/confirmation/idempotency | PASS | test_copilot_api; test_copilot_execution_ledger; orchestrator/memory tests | Current phase files/migrations are uncommitted; deployment cannot be inferred.
+SSE/job events | PASS | test_phase3d_sse and event bus tests | Redis multi-instance delivery is NOT PROVABLE LOCALLY without Redis/staging.
+Legacy Telegram/web workflow | PASS | test_pr10_8_3_security webhook checks; workflow phase/recovery tests | Telegram provider signature/callback delivery needs deployed bot validation.
+Route inventory/classification | PASS | 183 decorators = 128 direct + 55 mounted; 182 unique endpoints; every declaration has one classification in loqi_r1_route_reconciliation.txt | 154 routes are source-characterized but lack direct route tests; grouped by shared boundary/domain tests, not falsely claimed endpoint coverage.
+Duplicate GET /health | FAIL | main.py and operations/router.py both declare GET /health; FastAPI order chooses one | Explicit ownership/route cleanup required before architecture refactor; behavior currently equivalent.
+
+154 IMPLEMENTED-BUT-UNTESTED ROUTES — RISK DISPOSITION
+• Safe shared-boundary coverage: legacy session auth middleware, identity dependency, workspace resolution, organization role dependency, and generic FastAPI validation protect many variants. Their route-specific business response schemas remain untyped and are therefore not proven individually.
+• Require targeted tests before moving/refactoring: externally-mutating provider connect/disconnect/sync; outbound schedule/send/cancel; strategic action execute; campaign update/delete/duplicate; workflow approval/pause/resume/cancel; OAuth/Stripe callbacks; untyped knowledge/source and provider-list response bodies.
+• Do not add 154 shallow tests: add characterization only at the route/service boundary when that route is moved or its response shape is formalized.
+
+FINAL SAFETY-GATE FINDING
+R1 is adequate for incremental refactoring only after the duplicate /health ownership is explicitly resolved or frozen as an intentional compatibility route. Provider and deployed-infrastructure behavior remains explicitly NOT PROVABLE LOCALLY; it requires staging/deployed credentials, migrated Supabase schema/RLS, Redis, Gmail/Telegram/Stripe test integrations, and a bounded test search provider.
+
+VERDICT: R1 NOT COMPLETE — duplicate GET /health ownership remains an unexplained externally observable route ambiguity; real provider/deployed integration contracts are documented but not locally provable.
+
+FINAL RERUN UPDATE
+Focused suite command (R1 guards + restart + auth + workspace + campaigns + drafts + outbound) completed: 65 passed, 2 failed.
+FAIL | Email signup HTTP contract | backend/tests/test_auth_api.py::TestAuthAPI::test_signup_email and ::test_signup_status_pending | The configured identity API test service selected Resend and attempted api.resend.com. DNS/network failure yielded HTTP 500; the status test then observed no persisted registration. This is TEST/ENVIRONMENT CONFIGURATION CONTAMINATION, not an R1 production-code regression. The existing HTTP tests are not isolated from the email provider. Required test-only fix: inject ConsoleEmailProvider/fake EmailProvider in the API client fixture, preserving production provider behavior.
+The earlier conversation failures are resolved by the test-only local-persistence reload: test_conversation_store_restart.py = 6 passed.
+
+REVISED VERDICT: R1 NOT COMPLETE — the identity HTTP characterization tests are not provider-isolated and fail in the current environment; duplicate GET /health ownership remains an externally observable route ambiguity. Real provider/deployed checks also remain NOT PROVABLE LOCALLY.

@@ -4,17 +4,17 @@ Discovery recommendations are company-level (no person email). Attaching them
 to a campaign must persist a campaign_leads link so the canonical read reports
 lead_count > 0 and the lifecycle advances past research. These tests fake the
 repository layer in-memory (no Supabase) and drive the real normalization /
-canonical-read pipeline in services.workspace_state.
+canonical-read pipeline in services.workspace.state.
 """
 
 from __future__ import annotations
 
 import pytest
 
-import services.workspace_state as workspace_state
+import services.workspace.state as workspace_state
 from services.persistence.launch import Campaign, Company, Lead, WorkspaceLead
-from services.workspace_snapshot import enrich_campaigns
-from services.workspace_state import _normalize_lead, _persist_campaign_lead_row
+from services.workspace.snapshot import enrich_campaigns
+from services.workspace.state import _normalize_lead, _persist_campaign_lead_row
 
 
 class _Rows:

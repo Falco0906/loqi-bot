@@ -13,7 +13,7 @@ AI integration plugs in here; fallback is template-based.
 from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
-from services.conversation_models import ReplyIntelligence
+from services.conversation_intelligence.legacy_models import ReplyIntelligence
 from services.conversation_intelligence.intelligence_models import (
     SummaryLevel, ConversationSummaryResult,
     ConversationIntelligence, EntityType,

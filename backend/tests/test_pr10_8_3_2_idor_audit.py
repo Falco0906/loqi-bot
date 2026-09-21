@@ -24,8 +24,13 @@ sys.path.insert(0, ".")
 import pytest
 from fastapi import HTTPException
 
-import main as main_module
-from services.outbound.draft_store import draft_store as outbound_draft_store
+import services.discovery.api as discovery_api
+import services.drafts.service as draft_service
+import services.identity.dependencies as identity_dependencies
+import services.outbound.service as outbound_service
+import services.communication.api as provider_api
+import services.workflows.api as workflow_api
+from services.outbound import outbound_registry
 from services.outbound.outbound_models import DraftMessage, Recipient
 from services.communication.communication_store import store as comm_store
 from services.communication.gmail_provider import GmailProvider
@@ -40,6 +45,12 @@ class _FakeJobStorage:
         self.jobs = {}
         self.results = {}
         self.order = []
+
+    def list_active_jobs_by_type(self, job_type):
+        return [
+            job for job in self.jobs.values()
+            if job.type == job_type and job.status.value in {"queued", "running"}
+        ]
 
     def create_job(self, job):
         self.jobs[job.id] = job
@@ -76,6 +87,23 @@ TOKEN_A = "token-a"
 TOKEN_B = "token-b"
 
 _OWNERS = {TOKEN_A: OWNER_A, TOKEN_B: OWNER_B}
+_CANONICAL_DRAFTS: dict[str, list[dict]] = {}
+
+
+class _RuntimeCommunicationProvider:
+    provider_type = "gmail"
+
+    def __init__(self, user_id: str, email: str):
+        self._user_id = user_id
+        self._mailbox_email = email
+        self._connected = True
+
+
+class _RuntimeOutboundProvider:
+    provider_type = "gmail"
+
+    def __init__(self, provider_id: str):
+        self.id = provider_id
 
 
 @pytest.fixture(autouse=True)
@@ -94,26 +122,35 @@ def _clean_runtime_state(monkeypatch):
     comm_store._by_conversation.clear()
     comm_store._seen_message_ids.clear()
     conversation_store.reload()
-    outbound_draft_store._drafts.clear()
-    outbound_draft_store._versions.clear()
-    from services.workflow_runtime import _runtimes
+    _CANONICAL_DRAFTS.clear()
+    from services.workflows.runtime import _runtimes
     _runtimes.clear()
     from services.job_engine import job_manager
     job_manager._storage = _FakeJobStorage()
     # Deterministic per-token owner resolution for two-user tests.
     async def _resolve(request):
-        token = main_module._session_token_from_request(request)
+        token = identity_dependencies.web_session_token(request)
         if not token:
             raise HTTPException(status_code=401, detail="Authentication required")
         return _OWNERS.get(token, "test-owner"), token
-    monkeypatch.setattr(main_module, "_resolve_session_context", _resolve)
+    monkeypatch.setattr(identity_dependencies, "resolve_web_session", _resolve)
 
     async def _owner(request, session_token=""):
-        token = main_module._session_token_from_request(request)
+        token = identity_dependencies.web_session_token(request)
         if not token:
             raise HTTPException(status_code=401, detail="Authentication required")
         return _OWNERS.get(token, "test-owner")
-    monkeypatch.setattr(main_module, "_workspace_owner", _owner)
+    monkeypatch.setattr(identity_dependencies, "authenticated_user_id", _owner)
+
+    async def _workspace(_request, owner_id):
+        return f"workspace-{owner_id}"
+
+    def _load_drafts(owner_id, workspace_id=""):
+        assert workspace_id == f"workspace-{owner_id}"
+        return list(_CANONICAL_DRAFTS.get(owner_id, []))
+
+    monkeypatch.setattr(outbound_service.workspace_access, "resolve_legacy_workspace_id", _workspace)
+    monkeypatch.setattr(outbound_service.workspace_state, "load_drafts_only", _load_drafts)
     yield
 
 
@@ -132,6 +169,8 @@ def _provider(pid, user_id):
         status=ProviderStatus.HEALTHY,
         metadata={"email": f"{user_id}@x.com", "account_id": f"{user_id}@x.com"},
     )
+    provider_registry.register_instance(pid, _RuntimeCommunicationProvider(user_id, f"{user_id}@x.com"))
+    outbound_registry.register_instance(pid, _RuntimeOutboundProvider(pid))
 
 
 def _victim_draft(draft_id, provider_id="prov-b"):
@@ -141,7 +180,17 @@ def _victim_draft(draft_id, provider_id="prov-b"):
         recipient=Recipient(email="victim-target@x.com", name="Target"),
         sender=Recipient(email="victim@x.com", name="Victim"),
     )
-    outbound_draft_store.create(draft)
+    provider = comm_store.get_provider(provider_id)
+    if provider is not None:
+        _CANONICAL_DRAFTS.setdefault(provider.user_id, []).append({
+            "id": draft_id,
+            "provider": provider_id,
+            "status": "draft",
+            "campaign_id": "campaign-test",
+            "subject": draft.subject,
+            "text": draft.body,
+            "lead": {"email": draft.recipient.email, "name": draft.recipient.name},
+        })
     return draft
 
 
@@ -151,47 +200,59 @@ def _victim_draft(draft_id, provider_id="prov-b"):
 
 class TestOutboundDraftIdor:
     def test_get_victim_draft_denied(self):
+        from services.outbound.api import outbound_get_draft
+
         _provider("prov-b", OWNER_B)
         _victim_draft("draft-victim", "prov-b")
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.outbound_get_draft("_", "draft-victim", _req(TOKEN_A)))
+            asyncio.run(outbound_get_draft("_", "draft-victim", _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_approve_victim_draft_denied(self):
+        from services.outbound.api import outbound_approve_draft
+
         _provider("prov-b", OWNER_B)
         _victim_draft("draft-victim", "prov-b")
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.outbound_approve_draft("_", "draft-victim", False, _req(TOKEN_A)))
+            asyncio.run(outbound_approve_draft("_", "draft-victim", False, _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_reject_victim_draft_denied(self):
+        from services.outbound.api import outbound_reject_draft
+
         _provider("prov-b", OWNER_B)
         _victim_draft("draft-victim", "prov-b")
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.outbound_reject_draft("_", "draft-victim", _req(TOKEN_A)))
+            asyncio.run(outbound_reject_draft("_", "draft-victim", _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_cancel_victim_draft_schedule_denied(self):
+        from services.outbound.api import cancel_schedule_draft
+
         _provider("prov-b", OWNER_B)
         _victim_draft("draft-victim", "prov-b")
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.cancel_schedule_draft("_", "draft-victim", _req(TOKEN_A)))
+            asyncio.run(cancel_schedule_draft("_", "draft-victim", _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_owner_can_approve_own_draft(self):
+        from services.outbound.api import outbound_get_draft
+
         _provider("prov-a", OWNER_A)
         _victim_draft("draft-owner", "prov-a")
-        result = asyncio.run(main_module.outbound_get_draft("_", "draft-owner", _req(TOKEN_A)))
+        result = asyncio.run(outbound_get_draft("_", "draft-owner", _req(TOKEN_A)))
         assert result["ok"] is True
 
     def test_approve_all_only_touches_owner_drafts(self):
+        from services.outbound.api import outbound_approve_all
+
         _provider("prov-a", OWNER_A)
         _provider("prov-b", OWNER_B)
         _victim_draft("draft-a", "prov-a")
         _victim_draft("draft-b", "prov-b")
         payload = MagicMock()
         payload.auto = False
-        result = asyncio.run(main_module.outbound_approve_all("_", payload, _req(TOKEN_A)))
+        result = asyncio.run(outbound_approve_all("_", payload, _req(TOKEN_A)))
         result_ids = [r["draft_id"] for r in result.get("results", [])]
         assert "draft-b" not in result_ids
 
@@ -210,24 +271,24 @@ class TestJobIdor:
     def test_get_victim_job_denied(self):
         victim_job = self._create_job_for(OWNER_B)
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.get_job(victim_job, _req(TOKEN_A)))
+            asyncio.run(discovery_api.get_job(victim_job, _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_get_own_job_allowed(self):
         own_job = self._create_job_for(OWNER_A)
-        result = asyncio.run(main_module.get_job(own_job, _req(TOKEN_A)))
+        result = asyncio.run(discovery_api.get_job(own_job, _req(TOKEN_A)))
         assert str(result["id"]) == own_job
 
     def test_get_victim_job_results_denied(self):
         victim_job = self._create_job_for(OWNER_B)
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.get_job_results(victim_job, _req(TOKEN_A)))
+            asyncio.run(discovery_api.get_job_results(victim_job, _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_list_jobs_does_not_leak_other_user(self):
         self._create_job_for(OWNER_B)
         self._create_job_for(OWNER_A)
-        result = asyncio.run(main_module.list_jobs(_req(TOKEN_A)))
+        result = asyncio.run(discovery_api.list_jobs(_req(TOKEN_A)))
         job_ids = [str(j.get("id")) for j in result["jobs"]]
         from services.job_engine import job_manager
         victim_jobs = job_manager.list_recent_jobs(OWNER_B)
@@ -241,38 +302,60 @@ class TestJobIdor:
 
 class TestWorkflowIdor:
     def _victim_workflow(self):
-        from services.workflow_runtime import create_runtime
+        from services.workflows.runtime import create_runtime
         wf = create_runtime({"goal": "x"}, session_token=TOKEN_B, workflow_id="wf-b")
         return wf.workflow_id
 
     def test_get_victim_workflow_denied(self):
         wf_id = self._victim_workflow()
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.get_workflow_status("_", wf_id, _req(TOKEN_A)))
+            asyncio.run(workflow_api.get_workflow_status("_", wf_id, _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_approve_victim_workflow_denied(self):
         wf_id = self._victim_workflow()
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.approve_workflow_step("_", wf_id, _req(TOKEN_A)))
+            asyncio.run(workflow_api.approve_workflow_step("_", wf_id, _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_pause_victim_workflow_denied(self):
         wf_id = self._victim_workflow()
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.pause_workflow_endpoint("_", wf_id, _req(TOKEN_A)))
+            asyncio.run(workflow_api.pause_workflow_endpoint("_", wf_id, _req(TOKEN_A)))
+        assert exc.value.status_code == 404
+
+    def test_resume_victim_workflow_denied(self):
+        wf_id = self._victim_workflow()
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(workflow_api.resume_workflow_endpoint("_", wf_id, _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_cancel_victim_workflow_denied(self):
         wf_id = self._victim_workflow()
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.cancel_workflow_endpoint("_", wf_id, _req(TOKEN_A)))
+            asyncio.run(workflow_api.cancel_workflow_endpoint("_", wf_id, _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_owner_can_read_own_workflow(self):
         wf_id = self._victim_workflow()
-        result = asyncio.run(main_module.get_workflow_status("_", wf_id, _req(TOKEN_B)))
+        result = asyncio.run(workflow_api.get_workflow_status("_", wf_id, _req(TOKEN_B)))
         assert result["ok"] is True
+
+    def test_status_route_returns_status_envelope(self, client):
+        """The registered route must expose the status handler, not its guard."""
+        wf_id = self._victim_workflow()
+
+        response = client.get(
+            f"/api/web/session/ignored/workflows/{wf_id}",
+            headers={"Authorization": f"Bearer {TOKEN_B}"},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body) == {"ok", "runtime", "progress"}
+        assert body["ok"] is True
+        assert body["runtime"]["workflow_id"] == wf_id
+        assert isinstance(body["progress"], dict)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -283,18 +366,18 @@ class TestProviderDataIdor:
     def test_victim_provider_threads_denied(self):
         _provider("prov-b", OWNER_B)
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.provider_threads("_", "prov-b", _req(TOKEN_A)))
+            asyncio.run(provider_api.provider_threads("_", "prov-b", _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_victim_provider_messages_denied(self):
         _provider("prov-b", OWNER_B)
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.provider_messages("_", "prov-b", _req(TOKEN_A)))
+            asyncio.run(provider_api.provider_messages("_", "prov-b", _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_owner_provider_threads_allowed(self):
         _provider("prov-a", OWNER_A)
-        result = asyncio.run(main_module.provider_threads("_", "prov-a", _req(TOKEN_A)))
+        result = asyncio.run(provider_api.provider_threads("_", "prov-a", _req(TOKEN_A)))
         assert result["ok"] is True
 
 
@@ -307,21 +390,26 @@ class TestDraftHistoryAndBatchIdor:
         _provider("prov-b", OWNER_B)
         _victim_draft("draft-victim", "prov-b")
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.draft_rewrite_history("_", "draft-victim", _req(TOKEN_A)))
+            from services.drafts.api import draft_rewrite_history
+            asyncio.run(draft_rewrite_history("_", "draft-victim", _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_victim_batch_status_denied(self):
-        from main import batch_jobs
-        victim_campaign = "campaign-b"
         batch_id = f"batch-{uuid.uuid4().hex[:8]}"
-        batch_jobs[batch_id] = {"campaign_id": victim_campaign, "status": "processing"}
-        main_module._workspace_campaigns = lambda owner_id, session_token="": (
-            [{"id": "campaign-a"}] if owner_id == OWNER_A else []
-        )
+
+        async def inaccessible(owner_id, workspace_id, requested_batch_id):
+            assert owner_id == OWNER_A
+            assert workspace_id == f"workspace-{OWNER_A}"
+            assert requested_batch_id == batch_id
+            return None
+
+        original = draft_service.draft_batch_status
+        draft_service.draft_batch_status = inaccessible
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.batch_status("_", batch_id, _req(TOKEN_A)))
+            from services.drafts.api import batch_status
+            asyncio.run(batch_status("_", batch_id, _req(TOKEN_A)))
+        draft_service.draft_batch_status = original
         assert exc.value.status_code == 404
-        batch_jobs.pop(batch_id, None)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -330,11 +418,13 @@ class TestDraftHistoryAndBatchIdor:
 
 class TestChainedAndSubstitution:
     def test_draft_provider_chain_victim_denied(self):
+        from services.outbound.api import outbound_approve_draft
+
         # Victim draft references victim provider; attacker supplies both.
         _provider("prov-b", OWNER_B)
         _victim_draft("draft-victim", "prov-b")
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.outbound_approve_draft("_", "draft-victim", False, _req(TOKEN_A)))
+            asyncio.run(outbound_approve_draft("_", "draft-victim", False, _req(TOKEN_A)))
         assert exc.value.status_code == 404
 
     def test_list_jobs_ignores_client_supplied_user_id(self):
@@ -344,7 +434,7 @@ class TestChainedAndSubstitution:
         # Attacker lists with ?user_id=<victim> — must be ignored.
         request = _req(TOKEN_A)
         request.query_params = {"user_id": OWNER_B}
-        result = asyncio.run(main_module.list_jobs(request))
+        result = asyncio.run(discovery_api.list_jobs(request))
         job_ids = [str(j.get("id")) for j in result["jobs"]]
         victim_ids = {str(j.get("id")) for j in job_manager.list_recent_jobs(OWNER_B)}
         assert not (victim_ids & set(job_ids))

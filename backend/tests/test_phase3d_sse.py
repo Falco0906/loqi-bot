@@ -19,14 +19,16 @@ import json
 
 import pytest
 
+from services.platform import redis_client as rc
+
 fakeredis = pytest.importorskip("fakeredis")
 import fakeredis.aioredis  # noqa: E402
 
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-import main as main_module  # noqa: E402
-from services import redis_client as rc, events_bus  # noqa: E402
+from services.events import bus as events_bus  # noqa: E402
+from services.events import api as events_api  # noqa: E402
 
 USER_A = "sse-user-aaaaaaaa"
 TOKEN_A = "sse-token-aaaaaaaa"
@@ -49,10 +51,10 @@ def fake_redis(monkeypatch):
 def app(monkeypatch, fake_redis):
     async def fake_owner(request=None, session_token=None):
         return USER_A, TOKEN_A
-    monkeypatch.setattr(main_module, "_resolve_session_context", fake_owner)
+    monkeypatch.setattr(events_api.identity_dependencies, "resolve_web_session", fake_owner)
 
     application = FastAPI()
-    application.add_api_route("/api/events/stream", main_module.events_stream, methods=["GET"])
+    application.include_router(events_api.router)
     return application
 
 
@@ -73,17 +75,17 @@ def _stream_request(client, **kw):
 
 def test_a_unauthenticated_stream_rejected(app, fake_redis):
     async def none_owner(request=None, session_token=None):
-        raise main_module.HTTPException(status_code=401, detail="Authentication required")
+        raise events_api.HTTPException(status_code=401, detail="Authentication required")
 
     # Override the resolver to reject (simulates missing/invalid bearer).
-    original = main_module._resolve_session_context
-    main_module._resolve_session_context = none_owner
+    original = events_api.identity_dependencies.resolve_web_session
+    events_api.identity_dependencies.resolve_web_session = none_owner
     try:
-        with pytest.raises(main_module.HTTPException) as exc:
-            asyncio.run(main_module.events_stream(request=None))
+        with pytest.raises(events_api.HTTPException) as exc:
+            asyncio.run(events_api.events_stream(request=None))
         assert exc.value.status_code == 401
     finally:
-        main_module._resolve_session_context = original
+        events_api.identity_dependencies.resolve_web_session = original
 
 
 def test_b_user_isolation_channel_scoping(app, fake_redis, monkeypatch):
@@ -91,13 +93,13 @@ def test_b_user_isolation_channel_scoping(app, fake_redis, monkeypatch):
     seen: list[str] = []
 
     async def run():
-        bus = events_bus.EventBus()
-        pubsub = await bus.subscribe_user(USER_A)
-        await bus.publish_user_event("sse-user-BBBBBBBB", "job.completed", {"n": 1})
+        event_bus = events_bus.EventBus()
+        pubsub = await event_bus.subscribe_user(USER_A)
+        await event_bus.publish_user_event("sse-user-BBBBBBBB", "job.completed", {"n": 1})
         await asyncio.sleep(0.05)
         msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.5)
         assert msg is None, "user A must not receive user B's event"
-        await bus.publish_user_event(USER_A, "job.completed", {"n": 2})
+        await event_bus.publish_user_event(USER_A, "job.completed", {"n": 2})
         msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.5)
         assert msg is not None and msg["type"] == "message"
         seen.append(msg["data"])
@@ -112,8 +114,8 @@ def test_c_event_forwarding_shape(app, fake_redis):
     """Published events arrive as SSE data frames with the same JSON body."""
 
     async def run():
-        bus = events_bus.EventBus()
-        await bus.publish_user_event(
+        event_bus = events_bus.EventBus()
+        await event_bus.publish_user_event(
             USER_A, "provider.connected",
             {"provider": "gmail"}, status="connected",
         )
@@ -121,7 +123,7 @@ def test_c_event_forwarding_shape(app, fake_redis):
 
     # The route generator forwards whatever lands on the channel; validate the
     # framing contract directly against the producer output.
-    from services.redis_client import k_event_channel, hash_token
+    from services.platform.redis_client import k_event_channel, hash_token
     async def inspect():
         client = await rc.get_client()
         # Channel name derivation is opaque (hashed) but deterministic.
@@ -132,7 +134,7 @@ def test_c_event_forwarding_shape(app, fake_redis):
 
 
 def test_d_redis_down_degrades_to_heartbeat_stream(app, monkeypatch):
-    monkeypatch.setattr(main_module, "_SSE_HEARTBEAT_SECONDS", 0.2)
+    monkeypatch.setattr(events_api, "_SSE_HEARTBEAT_SECONDS", 0.2)
     async def dead_client():
         return None
     monkeypatch.setattr(rc, "get_client", dead_client)
@@ -140,12 +142,9 @@ def test_d_redis_down_degrades_to_heartbeat_stream(app, monkeypatch):
     async def run():
         # The generator must open and emit hello + heartbeat even when the
         # subscription backend is gone.
-        gen = main_module.events_stream.__wrapped__ if hasattr(main_module.events_stream, "__wrapped__") else None
-        # Call the underlying coroutine function through the route closure:
-        stream_coro = None
         # Directly drive the route with a stubbed request context.
         request = type("R", (), {})()
-        response = await main_module.events_stream(request=request)
+        response = await events_api.events_stream(request=request)
         iterator = response.body_iterator
         frames = []
         count = 0
@@ -169,17 +168,21 @@ def test_e_identity_loss_closes_stream(fake_redis, monkeypatch):
             return {"user_id": USER_A, "display_name": "", "gmail_connected": False}
         return None  # revocation / expiry
 
-    monkeypatch.setattr(main_module, "_cached_session_identity", flaky_identity)
-    monkeypatch.setattr(main_module, "_SSE_HEARTBEAT_SECONDS", 0.1)
-    monkeypatch.setattr(main_module, "_SSE_REVOCATION_CHECK_SECONDS", 0.3)
+    monkeypatch.setattr(
+        events_api.identity_dependencies,
+        "cached_web_session_identity",
+        flaky_identity,
+    )
+    monkeypatch.setattr(events_api, "_SSE_HEARTBEAT_SECONDS", 0.1)
+    monkeypatch.setattr(events_api, "_SSE_REVOCATION_CHECK_SECONDS", 0.3)
 
     async def fake_owner(request=None, session_token=None):
         return USER_A, TOKEN_A
-    monkeypatch.setattr(main_module, "_resolve_session_context", fake_owner)
+    monkeypatch.setattr(events_api.identity_dependencies, "resolve_web_session", fake_owner)
 
     async def run():
         request = type("R", (), {})()
-        response = await main_module.events_stream(request=request)
+        response = await events_api.events_stream(request=request)
         received = []
         async for chunk in response.body_iterator:
             received.append(chunk)
@@ -194,7 +197,7 @@ def test_e_identity_loss_closes_stream(fake_redis, monkeypatch):
 def test_f_malformed_channel_payload_does_not_crash(fake_redis):
     async def run():
         client = fake_redis  # hermetic: injected fakeredis client
-        from services.redis_client import k_event_channel, hash_token
+        from services.platform.redis_client import k_event_channel, hash_token
         channel = k_event_channel("user", hash_token(USER_A))
         pubsub = client.pubsub()
         await pubsub.subscribe(channel)

@@ -17,7 +17,7 @@ contract:
   G. Different users connect concurrently without blocking each other.
   H. Callback postMessage payload reflects the true persistence outcome.
 
-Supabase is faked at the ``services.supabase`` seam; everything above that
+Supabase is faked at the ``services.platform.supabase`` seam; everything above that
 seam (orchestration, locking, rollback, verification, /providers read path)
 is the real production code.
 """
@@ -31,7 +31,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import main as main_module
-import services.supabase as supabase_module
+import services.identity.dependencies as identity_dependencies
+from services.communication import api as provider_api
+from services.communication import service as provider_service
+import services.platform.supabase as supabase_module
 
 USER_A = "2a-user-aaaaaaaa"
 USER_B = "2a-user-bbbbbbbb"
@@ -119,7 +122,7 @@ class FakeDurableStore:
 
 @pytest.fixture()
 def durable(monkeypatch):
-    """Fresh fake store wired into the services.supabase seam each test."""
+    """Fresh fake store wired into the services.platform.supabase seam each test."""
     fake = FakeDurableStore()
     monkeypatch.setattr(supabase_module, "sync_connected_account", fake.sync_connected_account)
     monkeypatch.setattr(
@@ -136,21 +139,23 @@ def clean_runtime(monkeypatch):
     Also stubs GmailProvider.health so tests never make live Google/Supabase
     calls from status probes — the health *endpoint* is out of scope here.
     """
+    from services.communication.communication_store import store as communication_store
+    from services.communication.gmail_provider import GmailProvider
     from services.communication.provider_models import ProviderStatus
+    from services.communication.provider_registry import remove_instance
     monkeypatch.setattr(
-        main_module.GmailProvider, "health",
+        GmailProvider, "health",
         lambda self: ProviderStatus.HEALTHY,
     )
     yield
-    communication_store = main_module.communication_store
     for pid in list(communication_store._providers.keys()):
         try:
-            main_module.remove_instance(pid)
+            remove_instance(pid)
         except Exception:
             pass
     communication_store._providers.clear()
     communication_store._user_providers.clear()
-    main_module._gmail_connect_locks.clear()
+    provider_service._gmail_connect_locks.clear()
 
 
 @pytest.fixture()
@@ -160,11 +165,11 @@ def api(monkeypatch):
 
     @app.get("/api/auth/gmail/callback")
     async def callback(code: str = "", state: str = "", error: str = ""):
-        return await main_module.gmail_auth_callback(code=code, state=state, error=error)
+        return await provider_api.gmail_auth_callback(code=code, state=state, error=error)
 
     @app.get("/api/web/session/_/providers")
     async def providers(request: object = None):
-        return await main_module.provider_list(session_token="_", request=request)
+        return await provider_api.provider_list(session_token="_", request=request)
 
     client = TestClient(app, raise_server_exceptions=False)
     return client
@@ -173,14 +178,15 @@ def api(monkeypatch):
 def _set_owner(monkeypatch, user_id: str) -> None:
     async def fake_owner(request=None, session_token=None):
         return user_id
-    monkeypatch.setattr(main_module, "_workspace_owner", fake_owner)
+    monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id", fake_owner)
 
 
 def _wipe_memory_registries():
-    cs = main_module.communication_store
+    from services.communication.communication_store import store as cs
+    from services.communication.provider_registry import remove_instance
     for pid in list(cs._providers.keys()):
         try:
-            main_module.remove_instance(pid)
+            remove_instance(pid)
         except Exception:
             pass
     cs._providers.clear()
@@ -188,7 +194,7 @@ def _wipe_memory_registries():
 
 
 async def _connect(user_id: str, email: str = "owner@gmail.com") -> object:
-    return await main_module._perform_gmail_oauth_persistence(
+    return await provider_service.connect_gmail_oauth_provider(
         user_id=user_id,
         access_token="test-access-token",
         refresh_token="test-refresh-token",
@@ -203,9 +209,9 @@ async def _connect(user_id: str, email: str = "owner@gmail.com") -> object:
 
 def test_a_oauth_persistence_visible_via_providers(durable, api, monkeypatch, clean_runtime):
     _set_owner(monkeypatch, USER_A)
-    monkeypatch.setattr(main_module, "_resolve_oauth_state_user", _fake_resolve(USER_A))
+    monkeypatch.setattr(provider_service, "resolve_oauth_state_user", _fake_resolve(USER_A))
     monkeypatch.setattr(
-        "services.google_auth.exchange_code_for_tokens",
+        "services.communication.google_auth.exchange_code_for_tokens",
         lambda code: {
             "access_token": "at", "refresh_token": "rt",
             "email": "owner@gmail.com", "account_id": "owner",
@@ -235,9 +241,9 @@ def test_a_oauth_persistence_visible_via_providers(durable, api, monkeypatch, cl
 
 def test_h_success_payload_contract(durable, api, monkeypatch, clean_runtime):
     _set_owner(monkeypatch, USER_A)
-    monkeypatch.setattr(main_module, "_resolve_oauth_state_user", _fake_resolve(USER_A))
+    monkeypatch.setattr(provider_service, "resolve_oauth_state_user", _fake_resolve(USER_A))
     monkeypatch.setattr(
-        "services.google_auth.exchange_code_for_tokens",
+        "services.communication.google_auth.exchange_code_for_tokens",
         lambda code: {"access_token": "at", "refresh_token": "rt",
                       "email": "owner@gmail.com", "account_id": "owner"},
     )
@@ -247,14 +253,32 @@ def test_h_success_payload_contract(durable, api, monkeypatch, clean_runtime):
     assert payload["provider_id"]
     assert payload["email"] == "owner@gmail.com"
     assert payload["error"] == ""
+    assert "type: 'gmail-oauth'" in resp.text
+    assert "window.close()" in resp.text
+
+
+def test_h_popup_targets_configured_frontend_origin(durable, api, monkeypatch, clean_runtime):
+    _set_owner(monkeypatch, USER_A)
+    monkeypatch.setattr(provider_service, "resolve_oauth_state_user", _fake_resolve(USER_A))
+    monkeypatch.setattr(
+        "services.communication.google_auth.exchange_code_for_tokens",
+        lambda code: {"access_token": "at", "refresh_token": "rt",
+                      "email": "owner@gmail.com", "account_id": "owner"},
+    )
+    monkeypatch.setenv("FRONTEND_ORIGIN", "https://app.example.test")
+
+    resp = api.get("/api/auth/gmail/callback", params={"code": "c", "state": "s"})
+
+    assert resp.status_code == 200
+    assert '"https://app.example.test"' in resp.text
 
 
 def test_h_failure_payload_contract(durable, api, monkeypatch, clean_runtime):
     _set_owner(monkeypatch, USER_A)
-    monkeypatch.setattr(main_module, "_resolve_oauth_state_user", _fake_resolve(USER_A))
+    monkeypatch.setattr(provider_service, "resolve_oauth_state_user", _fake_resolve(USER_A))
     durable.fail_persist = True
     monkeypatch.setattr(
-        "services.google_auth.exchange_code_for_tokens",
+        "services.communication.google_auth.exchange_code_for_tokens",
         lambda code: {"access_token": "at", "refresh_token": "rt",
                       "email": "owner@gmail.com", "account_id": "owner"},
     )
@@ -300,7 +324,8 @@ def test_b_providers_survive_registry_wipe(durable, api, monkeypatch, clean_runt
 
     # Simulate a process boundary: wipe EVERY in-memory provider registry.
     _wipe_memory_registries()
-    assert main_module.communication_store.get_user_providers(USER_A) == []
+    from services.communication.communication_store import store as communication_store
+    assert communication_store.get_user_providers(USER_A) == []
 
     listed = api.get("/api/web/session/_/providers")
     body = listed.json()
@@ -345,7 +370,8 @@ def test_d_reconnect_replaces_not_duplicates(durable, monkeypatch, clean_runtime
     assert first["row_id"] == rows[0]["row_id"]
 
     # Exactly one active runtime+memory provider for the user.
-    comm = main_module.communication_store.get_user_providers(USER_A)
+    from services.communication.communication_store import store as communication_store
+    comm = communication_store.get_user_providers(USER_A)
     assert len(comm) == 1
 
 
@@ -357,9 +383,9 @@ def test_e_failed_persistence_reports_failure_and_rolls_back(
     durable, api, monkeypatch, clean_runtime,
 ):
     _set_owner(monkeypatch, USER_A)
-    monkeypatch.setattr(main_module, "_resolve_oauth_state_user", _fake_resolve(USER_A))
+    monkeypatch.setattr(provider_service, "resolve_oauth_state_user", _fake_resolve(USER_A))
     monkeypatch.setattr(
-        "services.google_auth.exchange_code_for_tokens",
+        "services.communication.google_auth.exchange_code_for_tokens",
         lambda code: {"access_token": "at", "refresh_token": "rt",
                       "email": "owner@gmail.com", "account_id": "owner"},
     )
@@ -371,7 +397,8 @@ def test_e_failed_persistence_reports_failure_and_rolls_back(
     assert "✗" in resp.text
 
     # Runtime rollback: no half-connected instance left behind.
-    assert main_module.communication_store.get_user_providers(USER_A) == []
+    from services.communication.communication_store import store as communication_store
+    assert communication_store.get_user_providers(USER_A) == []
 
     # And /providers reflects reality: nothing connected.
     listed = api.get("/api/web/session/_/providers")
@@ -396,7 +423,8 @@ def test_f_concurrent_same_user_connects_serialize(durable, clean_runtime):
     assert len(durable.rows) == 1, "same user must map to one active record"
     assert durable.max_concurrent == 1, "same-user connects must be serialized"
 
-    comm = main_module.communication_store.get_user_providers(USER_A)
+    from services.communication.communication_store import store as communication_store
+    comm = communication_store.get_user_providers(USER_A)
     assert len(comm) == 1, "no duplicate runtime providers after concurrent reconnect"
 
 

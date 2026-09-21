@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from services import supabase
+from services.platform import supabase
 
 
 def _fake_client(rows: list[dict]):

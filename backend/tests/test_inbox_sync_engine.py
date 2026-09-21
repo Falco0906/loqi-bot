@@ -56,7 +56,7 @@ class TestInboxSyncEngine:
         asyncio.run(engine.stop())
         assert engine._task is None
 
-    def test_provider_failures_are_isolated(self, monkeypatch):
+    def test_provider_failures_are_isolated(self, monkeypatch, caplog):
         provider_registry.register_instance("bad", FakeProvider("bad"))
         provider_registry.register_instance("good", FakeProvider("good"))
         calls = []
@@ -68,10 +68,12 @@ class TestInboxSyncEngine:
             return SyncResult(provider_id=provider.provider_id, messages_synced=2, cursor="cursor-2")
 
         monkeypatch.setattr("services.communication.inbox_sync_engine.sync_all", fake_sync)
-        result = asyncio.run(InboxSyncEngine(interval_seconds=3600).sync_once())
+        with caplog.at_level("WARNING", logger="services.communication.inbox_sync_engine"):
+            result = asyncio.run(InboxSyncEngine(interval_seconds=3600).sync_once())
 
         assert calls == ["bad", "good"]
         assert result["providers"] == 2
+        assert "provider=bad error_type=RuntimeError" in caplog.text
 
     def test_webhook_trigger_uses_same_sync_path(self, monkeypatch):
         provider_registry.register_instance("gmail-1", FakeProvider("gmail-1"))
@@ -84,6 +86,42 @@ class TestInboxSyncEngine:
         monkeypatch.setattr("services.communication.inbox_sync_engine.sync_all", fake_sync)
         asyncio.run(InboxSyncEngine(interval_seconds=3600).sync_once(["gmail-1"]))
         assert calls == ["gmail-1"]
+
+    def test_manual_sync_uses_the_provider_scoped_sync_boundary(self, monkeypatch):
+        provider_registry.register_instance("gmail-1", FakeProvider("gmail-1"))
+        calls = []
+
+        def fake_sync(provider):
+            calls.append(provider.provider_id)
+            return SyncResult(provider_id=provider.provider_id, cursor="cursor")
+
+        monkeypatch.setattr("services.communication.inbox_sync_engine.sync_all", fake_sync)
+
+        result = asyncio.run(
+            InboxSyncEngine(interval_seconds=3600).sync_provider_now("gmail-1")
+        )
+
+        assert result.provider_id == "gmail-1"
+        assert calls == ["gmail-1"]
+
+    def test_manual_cursor_sync_preserves_the_registry_contract(self, monkeypatch):
+        provider_registry.register_instance("gmail-1", FakeProvider("gmail-1"))
+        calls = []
+
+        def fake_registry_sync(provider_id, cursor=""):
+            calls.append((provider_id, cursor))
+            return SyncResult(provider_id=provider_id, cursor=cursor)
+
+        monkeypatch.setattr(provider_registry, "sync_provider", fake_registry_sync)
+
+        result = asyncio.run(
+            InboxSyncEngine(interval_seconds=3600).sync_provider_now(
+                "gmail-1", cursor="history-42"
+            )
+        )
+
+        assert result.cursor == "history-42"
+        assert calls == [("gmail-1", "history-42")]
 
 
 class TestFollowUpReadiness:

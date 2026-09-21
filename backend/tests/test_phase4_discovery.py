@@ -89,11 +89,11 @@ def test_first_result_hook_in_pipeline(monkeypatch):
     partial_calls: list[list] = []
 
     # Stub the expansion module so no LLM runs.
-    import services.search_expansion as se
+    import services.discovery.search_expansion as se
     monkeypatch.setattr(se, "expand_search_intent",
                         lambda service, target, icp: {"search_queries": ["q"]})
 
-    from services.lead_provider import search_with_expansion as _swe
+    from services.discovery.providers import search_with_expansion as _swe
     # Patch the dispatcher's own imported symbol so _search_with_progress
     # exercises its real callback plumbing.
     def fake_search_with_expansion(service, target, plan=None, context=None,
@@ -111,7 +111,7 @@ def test_first_result_hook_in_pipeline(monkeypatch):
     )
     # Prevent real OpenAI/Redis side effects from other pipeline stages.
     monkeypatch.setattr(
-        __import__("services.icp_extractor", fromlist=["x"]),
+        __import__("services.discovery.icp", fromlist=["x"]),
         "extract_structured_icp",
         lambda q, ctx=None: {"buyer_roles": ["cto"], "keywords": ["saas"]},
     )

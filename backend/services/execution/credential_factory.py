@@ -70,9 +70,9 @@ def resolve_google_credentials(
         )
         return {}
 
-    from services.supabase import get_google_credentials, is_token_expired
-    from services.google_auth import refresh_access_token
-    from services.supabase import update_google_access_token
+    from services.platform.supabase import get_google_credentials, is_token_expired
+    from services.communication.google_auth import refresh_access_token
+    from services.platform.supabase import update_google_access_token
 
     creds = get_google_credentials(user_id)
     if not creds:
@@ -109,7 +109,7 @@ def resolve_google_credentials(
             # Reauth-required: Google already rejected this credential. Do NOT
             # keep attempting the doomed refresh — surface the failure once
             # and return empty so callers fail cleanly (PR10.8.1).
-            from services.supabase import is_connected_account_reauth_required
+            from services.platform.supabase import is_connected_account_reauth_required
             if is_connected_account_reauth_required(user_id, "google"):
                 logger.warning(
                     "gmail_auth_reauth_required user_id=%s action=reauth_required skip_refresh=yes",

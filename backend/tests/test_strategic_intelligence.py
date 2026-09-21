@@ -26,9 +26,14 @@ from services.strategic.collector import collect_workspace_signals
 from services.strategic.models import StrategicSignal
 from services.strategic.patterns import detect_patterns
 from services.strategic.service import StrategicIntelligenceService
+from services.strategic.api import (
+    get_strategic_update,
+    list_strategic_updates,
+    refresh_strategic_updates,
+)
 
 from tests.test_knowledge_service import FakeSupabaseClient  # noqa: E402
-import main as main_module  # noqa: E402
+from services.strategic import api as strategic_api
 
 
 OWNER_A = "owner-a"
@@ -132,7 +137,7 @@ def activity(monkeypatch):
     async def workspace_for_owner(owner_id):
         return WORKSPACE_A if owner_id == OWNER_A else WORKSPACE_B
 
-    monkeypatch.setattr("services.workspace_state._async_workspace", workspace_for_owner)
+    monkeypatch.setattr("services.workspace.state._async_workspace", workspace_for_owner)
     return campaign, conversations
 
 
@@ -217,7 +222,7 @@ class TestStrategicUpdatePersistence:
         async def workspace_for_owner(owner_id):
             return WORKSPACE_A
 
-        monkeypatch.setattr("services.workspace_state._async_workspace", workspace_for_owner)
+        monkeypatch.setattr("services.workspace.state._async_workspace", workspace_for_owner)
         result = asyncio.run(StrategicIntelligenceService().refresh(OWNER_A))
         assert result["updates"] == []
         assert result["patterns_found"] == 0
@@ -266,14 +271,14 @@ class TestStrategicUpdateRoutes:
         async def owner_b(request, session_token):
             return OWNER_B
 
-        monkeypatch.setattr(main_module, "_workspace_owner", owner_a)
-        refresh = asyncio.run(main_module.refresh_strategic_updates("session", object()))
+        monkeypatch.setattr(strategic_api.identity_dependencies, "authenticated_user_id", owner_a)
+        refresh = asyncio.run(refresh_strategic_updates("session", object()))
         update_id = refresh["updates"][0]["id"]
 
-        monkeypatch.setattr(main_module, "_workspace_owner", owner_b)
-        listing = asyncio.run(main_module.list_strategic_updates("session", object()))
+        monkeypatch.setattr(strategic_api.identity_dependencies, "authenticated_user_id", owner_b)
+        listing = asyncio.run(list_strategic_updates("session", object()))
         with pytest.raises(Exception) as error:
-            asyncio.run(main_module.get_strategic_update("session", update_id, object()))
+            asyncio.run(get_strategic_update("session", update_id, object()))
 
         assert listing["updates"] == []
         assert getattr(error.value, "status_code", None) == 404

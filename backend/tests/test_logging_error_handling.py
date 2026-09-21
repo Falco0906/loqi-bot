@@ -14,8 +14,8 @@ sys.path.insert(0, ".")
 
 import pytest
 
-from services.config_validation import validate_config
-from services.logging_setup import (
+from services.platform.config_validation import validate_config
+from services.platform.logging_setup import (
     JsonFormatter,
     configure_logging,
     log_level_from_env,
@@ -154,7 +154,7 @@ class Test4xxBehaviorPreserved:
 
 class TestSecretSafetyInLogging:
     def test_ai_source_does_not_log_full_payloads(self):
-        path = os.path.join(os.path.dirname(__file__), "..", "services", "ai.py")
+        path = os.path.join(os.path.dirname(__file__), "..", "services", "intelligence", "ai.py")
         with open(path, "r", encoding="utf-8") as fh:
             text = fh.read()
         assert "exact response body" not in text
@@ -192,11 +192,12 @@ class TestProviderFailureLogging:
             raise RuntimeError("provider down")
 
         monkeypatch.setattr("services.communication.inbox_sync_engine.sync_all", boom)
-        with caplog.at_level(logging.ERROR):
+        with caplog.at_level(logging.WARNING):
             asyncio.run(InboxSyncEngine(interval_seconds=3600).sync_once())
         assert SENTINEL not in caplog.text
         assert any(
             "prov-fail" in record.getMessage()
+            and "error_type=RuntimeError" in record.getMessage()
             for record in caplog.records
             if record.name == "services.communication.inbox_sync_engine"
         )

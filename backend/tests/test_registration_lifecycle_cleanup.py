@@ -471,7 +471,7 @@ class TestResolveAutomaticCleanupClient:
 
         def _boom(*a, **k):
             raise AssertionError("must not resolve a client when the gate is off")
-        monkeypatch.setattr("services.supabase.get_supabase_client", _boom)
+        monkeypatch.setattr("services.platform.supabase.get_supabase_client", _boom)
 
         assert registration_cleanup.resolve_automatic_cleanup_client() is None
 
@@ -482,7 +482,7 @@ class TestResolveAutomaticCleanupClient:
 
         def _boom(*a, **k):
             raise AssertionError("must not resolve a client without the explicit flag")
-        monkeypatch.setattr("services.supabase.get_supabase_client", _boom)
+        monkeypatch.setattr("services.platform.supabase.get_supabase_client", _boom)
 
         assert registration_cleanup.resolve_automatic_cleanup_client() is None
 
@@ -492,7 +492,7 @@ class TestResolveAutomaticCleanupClient:
         from services.identity import registration_cleanup
 
         sentinel = object()
-        monkeypatch.setattr("services.supabase.get_supabase_client", lambda: sentinel)
+        monkeypatch.setattr("services.platform.supabase.get_supabase_client", lambda: sentinel)
         assert registration_cleanup.resolve_automatic_cleanup_client() is sentinel
 
     def test_automatic_execution_with_injected_fake_mutates_only_fake(self, monkeypatch):
@@ -505,7 +505,7 @@ class TestResolveAutomaticCleanupClient:
 
         def _boom(*a, **k):
             raise AssertionError("real get_supabase_client must not be used")
-        monkeypatch.setattr("services.supabase.get_supabase_client", _boom)
+        monkeypatch.setattr("services.platform.supabase.get_supabase_client", _boom)
 
         db = FakeSupabase(_base_tables())
         report = registration_cleanup.run_abandoned_cleanup(dry_run=False, client=db)

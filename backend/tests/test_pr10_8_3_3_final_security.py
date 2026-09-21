@@ -30,6 +30,11 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import main as main_module
+import services.identity.dependencies as identity_dependencies
+import services.conversations.api as conversation_api
+import services.discovery.api as discovery_api
+from services.communication import api as provider_api
+from services.outbound import api as outbound_api
 
 SENTINEL = "PR10833_FINAL_SENTINEL_DO_NOT_LEAK"
 
@@ -40,8 +45,7 @@ def _clean_state():
     from services.outbound import outbound_registry as or_reg
     from services.communication.communication_store import store as comm_store
     from services.conversations.conversation_store import conversation_store
-    from services.outbound.draft_store import draft_store as ods
-    from services.workflow_runtime import _runtimes
+    from services.workflows.runtime import _runtimes
 
     for pid in list(pr.list_providers().keys()):
         pr.remove_instance(pid)
@@ -53,8 +57,6 @@ def _clean_state():
     comm_store._by_conversation.clear()
     comm_store._seen_message_ids.clear()
     conversation_store.reload()
-    ods._drafts.clear()
-    ods._versions.clear()
     _runtimes.clear()
     yield
 
@@ -78,8 +80,8 @@ def _req_x_session(token=SENTINEL):
 class TestAuthenticationFinal:
     def test_url_token_alone_rejected(self):
         """A session token in the URL path (no Authorization header) -> 401."""
-        from tests.conftest import REAL_RESOLVE_SESSION_CONTEXT
-        main_module._resolve_session_context = REAL_RESOLVE_SESSION_CONTEXT
+        from tests.conftest import REAL_RESOLVE_WEB_SESSION
+        identity_dependencies.resolve_web_session = REAL_RESOLVE_WEB_SESSION
         app = FastAPI_WithAuth()
         with TestClient(app) as client:
             resp = client.get(f"/api/web/session/{SENTINEL}/providers")
@@ -87,28 +89,28 @@ class TestAuthenticationFinal:
 
     def test_x_session_token_alone_rejected(self):
         """The legacy x-session-token header must NOT authenticate anything."""
-        from tests.conftest import REAL_RESOLVE_SESSION_CONTEXT
-        main_module._resolve_session_context = REAL_RESOLVE_SESSION_CONTEXT
+        from tests.conftest import REAL_RESOLVE_WEB_SESSION
+        identity_dependencies.resolve_web_session = REAL_RESOLVE_WEB_SESSION
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.list_jobs(_req_x_session(SENTINEL)))
+            asyncio.run(discovery_api.list_jobs(_req_x_session(SENTINEL)))
         assert exc.value.status_code == 401
 
     def test_bearer_accepted(self):
-        from tests.conftest import REAL_RESOLVE_SESSION_CONTEXT
-        main_module._resolve_session_context = REAL_RESOLVE_SESSION_CONTEXT
+        from tests.conftest import REAL_RESOLVE_WEB_SESSION
+        identity_dependencies.resolve_web_session = REAL_RESOLVE_WEB_SESSION
         # A valid identity/web token resolves; a garbage token -> 401.
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.list_jobs(_req("garbage")))
+            asyncio.run(discovery_api.list_jobs(_req("garbage")))
         assert exc.value.status_code == 401
 
     def test_no_client_user_id_override(self):
         """list_jobs must ignore a client-supplied user_id query parameter."""
         async def _resolve(request):
             return "owner-a", "token"
-        main_module._resolve_session_context = _resolve
+        identity_dependencies.resolve_web_session = _resolve
         request = _req("token")
         request.query_params = {"user_id": "owner-b"}
-        result = asyncio.run(main_module.list_jobs(request))
+        result = asyncio.run(discovery_api.list_jobs(request))
         assert result == {"jobs": []}
 
 
@@ -121,7 +123,7 @@ def FastAPI_WithAuth():
         from fastapi.responses import JSONResponse
         if request.url.path.startswith("/api/web/session/"):
             try:
-                await main_module._resolve_session_context(request)
+                await identity_dependencies.resolve_web_session(request)
             except HTTPException as exc:
                 return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
         return await call_next(request)
@@ -142,50 +144,56 @@ class TestTenantIsolationFinal:
         owners = {"token-a": "owner-a", "token-b": "owner-b"}
 
         async def _resolve(request):
-            token = main_module._session_token_from_request(request)
+            token = identity_dependencies.web_session_token(request)
             if not token:
                 raise HTTPException(status_code=401, detail="Authentication required")
             return owners.get(token, "test-owner"), token
 
         async def _owner(request, session_token=""):
-            token = main_module._session_token_from_request(request)
+            token = identity_dependencies.web_session_token(request)
             if not token:
                 raise HTTPException(status_code=401, detail="Authentication required")
             return owners.get(token, "test-owner")
 
-        return _resolve, _owner
+        async def _workspace(request, user_id):
+            return f"workspace-{user_id}"
+
+        return _resolve, _owner, _workspace
 
     def _provider(self, pid, user_id):
+        from services.communication.communication_store import store as communication_store
         from services.communication.provider_models import (
             CommunicationProvider, ProviderType, ProviderStatus,
         )
-        main_module.communication_store._providers[pid] = CommunicationProvider(
+        communication_store._providers[pid] = CommunicationProvider(
             id=pid, provider_type=ProviderType.GMAIL, user_id=user_id,
             status=ProviderStatus.HEALTHY, metadata={"email": f"{user_id}@x.com"},
         )
 
     def test_cross_tenant_provider_sync_denied(self, monkeypatch):
-        resolve, owner = self._two_user_resolver()
-        monkeypatch.setattr(main_module, "_resolve_session_context", resolve)
-        monkeypatch.setattr(main_module, "_workspace_owner", owner)
+        resolve, owner, workspace = self._two_user_resolver()
+        monkeypatch.setattr(provider_api.identity_dependencies, "resolve_web_session", resolve)
+        monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id", owner)
+        monkeypatch.setattr(provider_api.workspace_access, "resolve_legacy_workspace_id", workspace)
         self._provider("prov-b", "owner-b")
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.provider_sync("_", "prov-b", _req("token-a")))
+            asyncio.run(provider_api.provider_sync("_", "prov-b", _req("token-a")))
         assert exc.value.status_code == 404
 
     def test_cross_tenant_provider_disconnect_denied(self, monkeypatch):
-        resolve, owner = self._two_user_resolver()
-        monkeypatch.setattr(main_module, "_resolve_session_context", resolve)
-        monkeypatch.setattr(main_module, "_workspace_owner", owner)
+        resolve, owner, workspace = self._two_user_resolver()
+        monkeypatch.setattr(provider_api.identity_dependencies, "resolve_web_session", resolve)
+        monkeypatch.setattr(provider_api.identity_dependencies, "authenticated_user_id", owner)
+        monkeypatch.setattr(provider_api.workspace_access, "resolve_legacy_workspace_id", workspace)
         self._provider("prov-b", "owner-b")
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.provider_disconnect("_", "prov-b", _req("token-a")))
+            asyncio.run(provider_api.provider_disconnect("_", "prov-b", _req("token-a")))
         assert exc.value.status_code == 404
 
     def test_unattributable_conversation_denied(self, monkeypatch):
-        resolve, owner = self._two_user_resolver()
-        monkeypatch.setattr(main_module, "_resolve_session_context", resolve)
-        monkeypatch.setattr(main_module, "_workspace_owner", owner)
+        resolve, owner, workspace = self._two_user_resolver()
+        monkeypatch.setattr(conversation_api.identity_dependencies, "resolve_web_session", resolve)
+        monkeypatch.setattr(conversation_api.identity_dependencies, "authenticated_user_id", owner)
         from services.conversations.integration import create_conversation_from_send
         convo = create_conversation_from_send(
             provider_id="", provider_type="gmail",
@@ -196,56 +204,20 @@ class TestTenantIsolationFinal:
             owner_id="",
         )
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.get_conversation_route("_", convo.conversation_id, _req("token-a")))
+            asyncio.run(conversation_api.get_conversation_route("_", convo.conversation_id, _req("token-a")))
         assert exc.value.status_code in (403, 404)
 
     def test_cross_tenant_outbound_draft_side_effect_denied(self, monkeypatch):
-        resolve, owner = self._two_user_resolver()
-        monkeypatch.setattr(main_module, "_resolve_session_context", resolve)
-        monkeypatch.setattr(main_module, "_workspace_owner", owner)
+        resolve, owner, workspace = self._two_user_resolver()
+        monkeypatch.setattr(outbound_api.identity_dependencies, "resolve_web_session", resolve)
+        monkeypatch.setattr(outbound_api.identity_dependencies, "authenticated_user_id", owner)
+        monkeypatch.setattr(outbound_api.workspace_access, "resolve_legacy_workspace_id", workspace)
         self._provider("prov-b", "owner-b")
-        from services.outbound.draft_store import draft_store as ods
-        from services.outbound.outbound_models import DraftMessage, Recipient
-        ods.create(DraftMessage(
-            id="draft-b", provider_id="prov-b", subject="s", body="b",
-            recipient=Recipient(email="t@x.com", name="T"),
-            sender=Recipient(email="s@x.com", name="S"),
-        ))
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.outbound_approve_draft("_", "draft-b", False, _req("token-a")))
+            asyncio.run(outbound_api.outbound_approve_draft("_", "draft-b", False, _req("token-a")))
         assert exc.value.status_code == 404
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# 3. Webhook authentication
-# ═══════════════════════════════════════════════════════════════════════
-
-class TestWebhookFinal:
-    def test_telegram_webhook_requires_secret_when_configured(self, monkeypatch):
-        monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "secret-abc")
-        request = MagicMock()
-        request.headers.get = lambda k, d="": ""
-        with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.telegram_webhook(request))
-        assert exc.value.status_code == 403
-
-    def test_telegram_webhook_accepts_matching_secret(self, monkeypatch):
-        from unittest.mock import patch
-        monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "secret-abc")
-        request = MagicMock()
-        request.headers.get = lambda k, d="": "secret-abc"
-        request.json = asyncio.coroutine(lambda: {}) if False else _AsyncJson({})
-        with patch.object(main_module, "process_message", lambda *a, **k: None):
-            result = asyncio.run(main_module.telegram_webhook(request))
-        assert result == {"status": "ok"}
-
-
-class _AsyncJson:
-    def __init__(self, data):
-        self._data = data
-
-    async def __call__(self):
-        return self._data
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -254,7 +226,7 @@ class _AsyncJson:
 
 class TestOAuthFinal:
     def test_state_single_use_and_user_bound(self):
-        from services.oauth_state import issue_state, consume_state
+        from services.identity.oauth_state import issue_state, consume_state
         import asyncio
         state = asyncio.run(issue_state("user-a"))
         user_a, _ = asyncio.run(consume_state(state))
@@ -301,6 +273,7 @@ class TestLeakageFinal:
         assert "openapi_url=None if _production_env else \"/openapi.json\"" in src
 
     def test_legacy_connect_gated_in_production(self, monkeypatch):
+        from services.communication import api as provider_api
         monkeypatch.setenv("ENVIRONMENT", "production")
         payload = MagicMock()
         payload.provider_type = "gmail"
@@ -308,5 +281,5 @@ class TestLeakageFinal:
         payload.email = "a@a.com"
         payload.scope = ""
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(main_module.provider_connect("_", payload, _req(SENTINEL)))
+            asyncio.run(provider_api.connect_legacy_raw_token_provider("_", payload, _req(SENTINEL)))
         assert exc.value.status_code == 403

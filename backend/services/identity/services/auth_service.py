@@ -184,7 +184,7 @@ class _CompletionTracker:
                 pass
         for uid in reversed(self._legacy_user_ids):
             try:
-                from services.supabase import delete_legacy_user_bridge
+                from services.platform.supabase import delete_legacy_user_bridge
                 await asyncio.to_thread(delete_legacy_user_bridge, uid)
             except Exception:  # noqa: BLE001
                 pass
@@ -275,7 +275,7 @@ class AuthService:
         if get_repository_provider() != RepositoryProvider.SUPABASE:
             return
 
-        from services.supabase import ensure_legacy_user_bridge_with_status
+        from services.platform.supabase import ensure_legacy_user_bridge_with_status
         row, created = await asyncio.to_thread(
             ensure_legacy_user_bridge_with_status,
             user.id,
@@ -501,7 +501,7 @@ class AuthService:
                     get_repository_provider,
                 )
                 if get_repository_provider() == RepositoryProvider.SUPABASE:
-                    from services.workspace_state import ensure_workspace
+                    from services.workspace.state import ensure_workspace
                     await asyncio.to_thread(
                         ensure_workspace,
                         user.id,
@@ -696,7 +696,7 @@ class AuthService:
     ) -> tuple[User, bool] | None:
         """Recover OAuth identities from the pre-identity-platform users table."""
         try:
-            from services.supabase import get_or_create_oauth_user
+            from services.platform.supabase import get_or_create_oauth_user
 
             row, is_new = await asyncio.to_thread(
                 get_or_create_oauth_user,

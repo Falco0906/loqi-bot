@@ -8,7 +8,7 @@ from typing import Any
 
 from services.conversations.conversation_store import conversation_store
 from services.conversations.timeline import TimelineEventType
-from services.workspace_state import load_workspace_state
+from services.workspace.state import load_workspace_state
 
 from .models import StrategicSignal
 

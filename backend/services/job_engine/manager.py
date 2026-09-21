@@ -1,6 +1,6 @@
 from typing import Optional
 
-from services.job_engine.models import Job, JobStatus
+from services.job_engine.models import BatchItem, Job, JobStatus
 from services.job_engine.storage import JobStorage
 from services.job_engine.runner import BackgroundRunner
 from services.job_engine.registry import get_registry
@@ -15,9 +15,88 @@ class JobManager:
         self._storage = JobStorage()
         self._runner = BackgroundRunner(self._storage)
 
+    async def create_job(self, job: Job, *, on_update=None, on_complete=None) -> Optional[dict]:
+        """Persist a typed job before its registered workflow can run."""
+        import asyncio
+        if job.type == "search" and not job.discovery_id:
+            return None
+        if get_registry().get(job.type) is None:
+            return None
+        created = await asyncio.to_thread(self._storage.create_job, job)
+        if not created:
+            return None
+        if job.run_at is None:
+            self._runner.start_job(job, on_update=on_update, on_complete=on_complete)
+        return {"job_id": job.id, "status": job.status.value}
+
+    async def create_batch_job(
+        self, job: Job, items: list[BatchItem], *, start: bool = True,
+    ) -> Optional[dict]:
+        """Persist a batch job and every resumable item before optionally starting work."""
+        import asyncio
+        if get_registry().get(job.type) is None:
+            return None
+
+        def persist() -> bool:
+            if not self._storage.create_job(job):
+                return False
+            if self._storage.create_batch_items(items):
+                return True
+            self._storage.delete_job(job.id)
+            return False
+
+        if not await asyncio.to_thread(persist):
+            return None
+        if start and job.run_at is None:
+            self._runner.start_job(job)
+        return {"job_id": job.id, "status": job.status.value}
+
+    def resume_job(self, job: Job) -> bool:
+        if get_registry().get(job.type) is None:
+            return False
+        if job.run_at is not None:
+            return False
+        self._runner.start_job(job)
+        return True
+
+    async def start_due_jobs(self, *, limit: int = 25) -> int:
+        """Atomically claim and start due delayed jobs for registered workflows.
+
+        The database claim is the single cross-worker authority. This method
+        is safe to call both from startup recovery and a future scheduler poll.
+        """
+        import asyncio
+
+        job_types = get_registry().list_types()
+        claimed = await asyncio.to_thread(
+            self._storage.claim_due_jobs,
+            self._runner.worker_id,
+            job_types,
+            limit=limit,
+            lease_seconds=self._runner.lease_seconds,
+        )
+        for job in claimed:
+            self._runner.start_job(job, claimed=True)
+        return len(claimed)
+
+    async def poll_due_jobs(self, *, interval_seconds: int = 15) -> None:
+        """Run the durable due-job claim loop until the lifespan cancels it."""
+        import asyncio
+
+        while True:
+            try:
+                await self.start_due_jobs()
+            except Exception as error:
+                _log(f"due-job poll failed: {error}")
+            await asyncio.sleep(interval_seconds)
+
     async def create_search_job(self, user_id: str, query: str, on_update=None, on_complete=None, discovery_id: str = "") -> Optional[dict]:
         import asyncio
         from services.job_engine.registry import STAGES_SEARCH
+
+        if not discovery_id:
+            _log("create_search_job rejected: canonical discovery_id is required")
+            return None
 
         job = Job(
             user_id=user_id,
@@ -62,6 +141,11 @@ class JobManager:
         return {"ok": True, "leads": leads}
 
     def cancel_job(self, job_id: str) -> bool:
+        job = self._storage.get_job(job_id)
+        if job and job.run_at is not None and job.status == JobStatus.QUEUED:
+            return self._storage.cancel_unclaimed_delayed_job(job_id)
+        # A remote worker cannot safely interrupt a provider call. A local
+        # running task is still cancellable through the existing runner path.
         return self._runner.cancel_job(job_id)
 
     def list_active_jobs(self, user_id: str) -> list[dict]:

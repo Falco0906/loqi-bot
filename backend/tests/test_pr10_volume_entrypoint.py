@@ -53,7 +53,10 @@ class TestDockerfileWiring:
         with open(os.path.join(BACKEND_DIR, "Dockerfile")) as f:
             content = f.read()
         assert "ENTRYPOINT [\"python\", \"/app/entrypoint.py\"]" in content
-        assert "COPY backend/main.py backend/workflows.py backend/workflow_dispatcher.py backend/entrypoint.py ./" in content
+        assert "COPY backend/main.py backend/workflow_dispatcher.py backend/entrypoint.py ./" in content
+        assert "COPY backend/app ./app" in content
+        assert "COPY backend/services ./services" in content
+        assert "backend/workflows.py" not in content
         assert "useradd --create-home --uid 10001 appuser" in content
         # No world-writable /data.
         assert "chmod 777" not in content

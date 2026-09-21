@@ -39,8 +39,11 @@ RUN pip install --no-cache-dir /wheels/*.whl \
 
 # Application code only (no tests, no venv, no local state).
 # The build context is the repository root so the provider-agnostic synthetic
-# dataset is present in the production image alongside the backend.
-COPY backend/main.py backend/workflows.py backend/workflow_dispatcher.py backend/entrypoint.py ./
+# dataset is present in the production image alongside the backend.  The
+# dispatcher and entrypoint remain live runtime modules; ``workflows.py`` was
+# retired when the workflow package moved under ``services``.
+COPY backend/main.py backend/workflow_dispatcher.py backend/entrypoint.py ./
+COPY backend/app ./app
 COPY backend/services ./services
 COPY synthetic ./synthetic
 

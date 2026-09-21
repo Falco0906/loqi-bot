@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-from services.workspace.state import load_workspace_state
+from services.workspace.state import load_campaign_state, load_workspace_state
 from services.world_model.activity_repository import get_activity_repository
 from services.world_model import EventType as WMEventType, publish
 
@@ -439,17 +439,20 @@ async def add_campaign_lead(
 ) -> dict[str, Any]:
     """Add one unique lead to a campaign through canonical lead links."""
     from fastapi import HTTPException
-    from services.workspace.state import persist_campaign_lead_awaited, persist_campaign_update_awaited
-
-    campaigns = await asyncio.to_thread(
-        load_campaigns,
-        owner_id,
-        workspace_id=workspace_id,
+    from services.workspace.state import (
+        persist_campaign_lead_awaited,
+        persist_campaign_update_awaited,
     )
-    target = next(
-        (campaign for campaign in campaigns
-         if campaign.get("id") == campaign_id),
-        None,
+
+    # Attachment needs one campaign's canonical links for duplicate detection,
+    # not the entire workspace graph. The latter loads every campaign's lead,
+    # profile, company, and strategy records and made concurrent Discovery
+    # selections exceed the browser request timeout.
+    target = await asyncio.to_thread(
+        load_campaign_state,
+        owner_id,
+        campaign_id,
+        workspace_id=workspace_id,
     )
     if not target:
         raise HTTPException(status_code=404, detail="Campaign not found")

@@ -291,7 +291,14 @@ async def test_approved_discovery_workspace_lead_attaches_to_campaign(monkeypatc
     }
     persisted: list[tuple[str, str, dict, str]] = []
 
-    monkeypatch.setattr(campaign_service, "load_campaigns", lambda *_args, **_kwargs: [campaign])
+    monkeypatch.setattr(campaign_service, "load_campaign_state", lambda *_args, **_kwargs: campaign)
+    monkeypatch.setattr(
+        campaign_service,
+        "load_campaigns",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("attachment must not load the full workspace graph"),
+        ),
+    )
 
     async def persist(owner_id, campaign_id, lead, *, workspace_id):
         persisted.append((owner_id, campaign_id, lead, workspace_id))
@@ -357,11 +364,10 @@ async def test_campaign_lead_attachment_route_forwards_the_approved_lead(monkeyp
 
 
 async def test_approved_discovery_lead_attachment_does_not_block_the_event_loop(monkeypatch):
-    """Campaign lookup must not stall the async attachment request.
+    """Single-campaign lookup must not stall the async attachment request.
 
-    ``load_campaigns`` is the legacy synchronous workspace-state read seam.
-    A slow canonical read used to execute directly inside ``add_campaign_lead``
-    and block the request loop before the canonical campaign-lead write began.
+    The scoped canonical reader remains synchronous internally, so the service
+    must isolate only that read while avoiding the full workspace graph.
     """
     import services.campaigns.service as campaign_service
     import services.workspace.state as workspace_state
@@ -373,15 +379,15 @@ async def test_approved_discovery_lead_attachment_does_not_block_the_event_loop(
         "leads": [],
     }
 
-    def slow_load_campaigns(*_args, **_kwargs):
+    def slow_load_campaign_state(*_args, **_kwargs):
         time.sleep(0.15)
-        return [campaign]
+        return campaign
 
     async def persist(*_args, **_kwargs):
         await asyncio.sleep(0)
         return True
 
-    monkeypatch.setattr(campaign_service, "load_campaigns", slow_load_campaigns)
+    monkeypatch.setattr(campaign_service, "load_campaign_state", slow_load_campaign_state)
     monkeypatch.setattr(workspace_state, "persist_campaign_lead_awaited", persist)
     monkeypatch.setattr(campaign_service, "publish", lambda *_args, **_kwargs: "event-1")
 
@@ -432,7 +438,7 @@ async def test_campaign_attachment_does_not_wait_for_legacy_event_persistence(mo
                 completed.set()
         return True
 
-    monkeypatch.setattr(campaign_service, "load_campaigns", lambda *_args, **_kwargs: [campaign])
+    monkeypatch.setattr(campaign_service, "load_campaign_state", lambda *_args, **_kwargs: campaign)
     monkeypatch.setattr(workspace_state, "_persist_campaign_lead_row", persist_link)
     monkeypatch.setattr(workspace_state, "_update_campaign_row", persist_campaign_update)
     monkeypatch.setattr(workspace_state, "append_event", slow_append_event)

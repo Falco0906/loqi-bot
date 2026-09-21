@@ -1518,14 +1518,16 @@ async def _load_canonical_state(
     company_repo = CompanyRepository()
     cl_repo = CampaignLeadRepository()
 
-    campaigns_rows = await campaign_repo.list_for_workspace(workspace_id)
+    if campaign_id is not None:
+        # This is the interactive single-campaign path (lead attachment,
+        # reload, and strategy metadata). Do not load every workspace
+        # campaign and then fan out across all of their linked entities.
+        selected_campaign = await campaign_repo.get_for_workspace(campaign_id, workspace_id)
+        campaigns_rows = [selected_campaign] if selected_campaign is not None else []
+    else:
+        campaigns_rows = await campaign_repo.list_for_workspace(workspace_id)
     if not campaigns_rows:
         return None  # not yet backfilled → keep event projection
-
-    if campaign_id is not None:
-        campaigns_rows = [c for c in campaigns_rows if c.id == campaign_id]
-        if not campaigns_rows:
-            return None
 
     # Fetch the remaining independent data with a single pass of parallel
     # reads instead of a per-campaign sequential chain:
@@ -1534,10 +1536,17 @@ async def _load_canonical_state(
     # coroutines runs the queries concurrently (one thread per query).
     # PR-3B: ONE IN-query replaces the per-campaign link fan-out (N+1).
     campaign_ids = [c.id for c in campaigns_rows]
-    drafts_rows, links_map = await asyncio.gather(
-        draft_repo.list_for_workspace(workspace_id),
-        cl_repo.list_for_campaigns(campaign_ids),
-    )
+    if campaign_id is not None:
+        # A single-campaign response does not include workspace drafts, and
+        # loading them here would reintroduce a workspace-wide read into the
+        # interactive attachment path.
+        drafts_rows = []
+        links_map = await cl_repo.list_for_campaigns(campaign_ids)
+    else:
+        drafts_rows, links_map = await asyncio.gather(
+            draft_repo.list_for_workspace(workspace_id),
+            cl_repo.list_for_campaigns(campaign_ids),
+        )
     links_by_campaign = [links_map.get(cid, []) for cid in campaign_ids]
 
     if not include_details:

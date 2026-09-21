@@ -290,6 +290,30 @@ async def test_direct_persist_returns_bool(env):
     assert await _persist_campaign_lead_row("user-1", "campaign-1", _company_attach()) is True
 
 
+async def test_single_campaign_state_does_not_load_the_workspace_graph(env, monkeypatch):
+    """Interactive campaign reads use the requested campaign, not every campaign."""
+    campaign = env["campaigns"].get("campaign-1")
+
+    class ScopedCampaignRepository:
+        async def get_for_workspace(self, campaign_id: str, workspace_id: str):
+            assert workspace_id == "ws-1"
+            return campaign if campaign_id == "campaign-1" else None
+
+        async def list_for_workspace(self, _workspace_id: str):
+            raise AssertionError("single-campaign reads must not list the workspace graph")
+
+    monkeypatch.setattr(workspace_state, "CampaignRepository", ScopedCampaignRepository)
+
+    loaded = await workspace_state._load_canonical_state(
+        "user-1",
+        campaign_id="campaign-1",
+        workspace_id="ws-1",
+    )
+
+    assert loaded is not None
+    assert loaded["id"] == "campaign-1"
+
+
 async def test_campaign_lead_uses_the_supplied_workspace_not_owner_default(env, monkeypatch):
     calls: list[str] = []
 

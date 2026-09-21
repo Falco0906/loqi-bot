@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
+
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 import main
+import services.campaigns.api as campaign_api
 import services.discovery.api as discovery_api
 import services.discovery.service as discovery_service
 
@@ -163,6 +168,35 @@ async def test_discovery_lead_decision_uses_selected_workspace_and_service(monke
     }
 
 
+def test_discovery_lead_decision_route_returns_http_200(monkeypatch):
+    """The restored browser route remains reachable through the registered app."""
+    async def resolve_user(_request):
+        return "authenticated-user", "web-session-token"
+
+    async def resolve_workspace(_request, _owner_id):
+        return "workspace-selected"
+
+    async def decide(_owner_id, _workspace_id, _session_token, lead, approved):
+        return {"ok": True, "lead": lead, "approved": approved}
+
+    monkeypatch.setattr(discovery_api.identity_dependencies, "resolve_web_session", resolve_user)
+    monkeypatch.setattr(discovery_api.workspace_access, "resolve_legacy_workspace_id", resolve_workspace)
+    monkeypatch.setattr(discovery_api, "decide_discovery_lead", decide)
+
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/api/web/session/_/leads/decision",
+            json={"lead": {"id": "workspace-lead-1", "company": "Acme"}, "approved": True},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "lead": {"id": "workspace-lead-1", "company": "Acme"},
+        "approved": True,
+    }
+
+
 async def test_discovery_lead_decision_persists_the_canonical_workspace_lead(monkeypatch):
     """A decision is scoped to the persisted workspace lead, never a client id."""
     import services.workspace.state as workspace_state
@@ -231,6 +265,90 @@ async def test_approved_discovery_workspace_lead_attaches_to_campaign(monkeypatc
     assert persisted == [(
         "authenticated-user", "campaign-1", lead, "workspace-selected",
     )]
+
+
+async def test_campaign_lead_attachment_route_forwards_the_approved_lead(monkeypatch):
+    """The browser's post-decision campaign request keeps its established envelope."""
+    captured: dict[str, object] = {}
+
+    async def authorized_workspace(_request):
+        return "authenticated-user", "web-session-token", "workspace-selected"
+
+    async def attach(session_token, owner_id, workspace_id, campaign_id, lead, discovery_id):
+        captured.update({
+            "session_token": session_token,
+            "owner_id": owner_id,
+            "workspace_id": workspace_id,
+            "campaign_id": campaign_id,
+            "lead": lead,
+            "discovery_id": discovery_id,
+        })
+        return {"ok": True, "campaign": {"id": campaign_id}, "added": True}
+
+    monkeypatch.setattr(campaign_api, "_authorized_workspace", authorized_workspace)
+    monkeypatch.setattr(campaign_api.service, "add_campaign_lead", attach)
+
+    lead = {"id": "workspace-lead-1", "company": "Acme"}
+    response = await campaign_api.add_campaign_lead(
+        "_",
+        "campaign-1",
+        campaign_api.AddCampaignLeadRequest(lead=lead, discovery_id="discovery-1"),
+        _request(),
+    )
+
+    assert response == {"ok": True, "campaign": {"id": "campaign-1"}, "added": True}
+    assert captured == {
+        "session_token": "web-session-token",
+        "owner_id": "authenticated-user",
+        "workspace_id": "workspace-selected",
+        "campaign_id": "campaign-1",
+        "lead": lead,
+        "discovery_id": "discovery-1",
+    }
+
+
+async def test_approved_discovery_lead_attachment_does_not_block_the_event_loop(monkeypatch):
+    """Campaign lookup must not stall the async attachment request.
+
+    ``load_campaigns`` is the legacy synchronous workspace-state read seam.
+    A slow canonical read used to execute directly inside ``add_campaign_lead``
+    and block the request loop before the canonical campaign-lead write began.
+    """
+    import services.campaigns.service as campaign_service
+    import services.workspace.state as workspace_state
+
+    campaign = {
+        "id": "campaign-1",
+        "workspace_id": "workspace-selected",
+        "objective": "",
+        "leads": [],
+    }
+
+    def slow_load_campaigns(*_args, **_kwargs):
+        time.sleep(0.15)
+        return [campaign]
+
+    async def persist(*_args, **_kwargs):
+        await asyncio.sleep(0)
+        return True
+
+    monkeypatch.setattr(campaign_service, "load_campaigns", slow_load_campaigns)
+    monkeypatch.setattr(workspace_state, "persist_campaign_lead_awaited", persist)
+    monkeypatch.setattr(campaign_service, "publish", lambda *_args, **_kwargs: "event-1")
+
+    started = time.perf_counter()
+    attachment = asyncio.create_task(campaign_service.add_campaign_lead(
+        "web-session-token",
+        "authenticated-user",
+        "workspace-selected",
+        "campaign-1",
+        {"id": "workspace-lead-1", "company": "Acme"},
+    ))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0.01)
+
+    assert time.perf_counter() - started < 0.1
+    assert (await attachment)["added"] is True
 
 
 async def test_create_search_run_keeps_explicit_workspace(monkeypatch):

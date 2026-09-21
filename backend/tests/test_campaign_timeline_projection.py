@@ -1,4 +1,4 @@
-"""Offline contracts for the safe hybrid campaign timeline projection."""
+"""Offline contracts for the durable/canonical campaign timeline projection."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,8 +7,8 @@ import pytest
 from fastapi import HTTPException
 
 from services.campaigns.timeline import CampaignTimelineService
+from services.persistence.launch import CampaignLaunchFailure
 from services.world_model.activity_repository import WorkspaceActivityEvent
-from services.world_model.events import EventType, WorkspaceEvent
 
 
 @dataclass
@@ -20,14 +20,6 @@ class _History:
     recipient_email: str = "secret@example.test"
     error: str = "raw provider failure"
     provider_id: str = "provider-secret"
-
-
-class _Store:
-    def __init__(self, events: list[WorkspaceEvent]):
-        self.events = events
-
-    def get_events(self, _session_token: str, *, after_sequence: int, limit: int):
-        return [event for event in self.events if event.sequence > after_sequence][:limit]
 
 
 def _activity(
@@ -46,7 +38,7 @@ def _activity(
     )
 
 
-def _configure_sources(monkeypatch, *, campaigns, activities, drafts, history, legacy):
+def _configure_sources(monkeypatch, *, campaigns, activities, drafts, history, launch_failures):
     import services.campaigns.timeline as timeline
 
     class _ActivityRepository:
@@ -55,11 +47,17 @@ def _configure_sources(monkeypatch, *, campaigns, activities, drafts, history, l
             assert after_sequence == 0
             return activities
 
+    class _LaunchFailureRepository:
+        async def list_for_campaign(self, *, workspace_id, campaign_id):
+            assert workspace_id == "workspace-a"
+            assert campaign_id == "campaign-a"
+            return launch_failures
+
     monkeypatch.setattr(timeline, "load_campaigns", lambda owner_id, *, workspace_id: campaigns)
     monkeypatch.setattr(timeline, "load_drafts_only", lambda owner_id, *, workspace_id: drafts)
     monkeypatch.setattr(timeline, "list_outbound_history", lambda workspace_id, _provider, _limit: history)
     monkeypatch.setattr(timeline, "get_activity_repository", lambda: _ActivityRepository())
-    monkeypatch.setattr(timeline, "get_wm_store", lambda: _Store(legacy))
+    monkeypatch.setattr(timeline, "CampaignLaunchFailureRepository", _LaunchFailureRepository)
 
 
 @pytest.mark.asyncio
@@ -82,29 +80,7 @@ async def test_denies_foreign_campaign_before_any_timeline_source_read(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_projects_durable_and_canonical_sources_with_redacted_legacy_fallback(monkeypatch):
-    legacy = [
-        WorkspaceEvent(
-            id="legacy-sent", type=EventType.DRAFT_SENT, session_id="session-a", sequence=9,
-            timestamp="2026-01-01T00:00:09+00:00",
-            data={"campaign_id": "campaign-a", "draft_id": "draft-a", "recipient_email": "leak@example.test"},
-        ),
-        WorkspaceEvent(
-            id="legacy-failure", type=EventType.DRAFT_FAILED, session_id="session-a", sequence=10,
-            timestamp="2026-01-01T00:00:10+00:00",
-            data={"campaign_id": "campaign-a", "draft_id": "draft-unrecorded", "error": "unsafe failure"},
-        ),
-        WorkspaceEvent(
-            id="legacy-update", type=EventType.DRAFT_UPDATED, session_id="session-a", sequence=11,
-            timestamp="2026-01-01T00:00:11+00:00",
-            data={"campaign_id": "campaign-a", "draft_id": "draft-a", "subject": "secret", "status": "pending"},
-        ),
-        WorkspaceEvent(
-            id="legacy-foreign", type=EventType.DRAFT_SENT, session_id="session-a", sequence=12,
-            timestamp="2026-01-01T00:00:12+00:00",
-            data={"campaign_id": "campaign-b", "draft_id": "draft-b", "recipient_email": "foreign@example.test"},
-        ),
-    ]
+async def test_projects_only_durable_and_canonical_execution_sources(monkeypatch):
     _configure_sources(
         monkeypatch,
         campaigns=[{"id": "campaign-a"}],
@@ -113,12 +89,27 @@ async def test_projects_durable_and_canonical_sources_with_redacted_legacy_fallb
             _activity("generated", "draft_generated", {"campaign_id": "campaign-a", "draft_id": "draft-a", "batch_job_id": "job-a", "status": "pending"}, 2, "2026-01-01T00:00:02+00:00"),
             _activity("foreign", "campaign_created", {"campaign_id": "campaign-b", "status": "planning", "lead_count": 1}, 3, "2026-01-01T00:00:03+00:00"),
         ],
-        drafts=[{"id": "draft-a", "campaign_id": "campaign-a"}, {"id": "draft-b", "campaign_id": "campaign-b"}],
+        drafts=[
+            {"id": "draft-a", "campaign_id": "campaign-a"},
+            {"id": "draft-failed", "campaign_id": "campaign-a"},
+            {"id": "draft-b", "campaign_id": "campaign-b"},
+        ],
         history=[
             _History("history-a", "draft-a", "sent", "2026-01-01T00:00:04+00:00"),
             _History("history-b", "draft-b", "failed", "2026-01-01T00:00:05+00:00"),
         ],
-        legacy=legacy,
+        launch_failures=[
+            CampaignLaunchFailure(
+                id="failure-a", campaign_launch_id="launch-a", workspace_id="workspace-a",
+                campaign_id="campaign-a", draft_id="draft-failed",
+                occurred_at="2026-01-01T00:00:10+00:00",
+            ),
+            CampaignLaunchFailure(
+                id="failure-foreign", campaign_launch_id="launch-b", workspace_id="workspace-a",
+                campaign_id="campaign-a", draft_id="draft-b",
+                occurred_at="2026-01-01T00:00:12+00:00",
+            ),
+        ],
     )
 
     result = await CampaignTimelineService().read(
@@ -127,27 +118,26 @@ async def test_projects_durable_and_canonical_sources_with_redacted_legacy_fallb
 
     assert result["campaign_id"] == "campaign-a"
     assert [event["type"] for event in result["events"]] == [
-        "campaign_created", "draft_generated", "draft_sent", "draft_failed", "draft_updated",
+        "campaign_created", "draft_generated", "draft_sent", "draft_failed",
     ]
     assert result["events"][0]["data"] == {"status": "planning"}
-    assert result["events"][-1]["data"] == {"status": "pending"}
+    assert result["events"][-1]["data"] == {}
     assert all(set(event) <= {"type", "timestamp", "data"} for event in result["events"])
-    assert "leak@example.test" not in str(result)
-    assert "unsafe failure" not in str(result)
-    assert "secret" not in str(result)
     assert "provider-secret" not in str(result)
     assert "session-a" not in str(result)
 
 
 @pytest.mark.asyncio
 async def test_only_recorded_canonical_failures_are_synthesized(monkeypatch):
+    from services.outbound.outbound_models import DeliveryStatus
+
     _configure_sources(
         monkeypatch,
         campaigns=[{"id": "campaign-a"}],
         activities=[],
         drafts=[{"id": "draft-a", "campaign_id": "campaign-a"}],
-        history=[_History("failed-a", "draft-a", "failed", "2026-01-01T00:00:04+00:00")],
-        legacy=[],
+        history=[_History("failed-a", "draft-a", DeliveryStatus.FAILED, "2026-01-01T00:00:04+00:00")],
+        launch_failures=[],
     )
 
     result = await CampaignTimelineService().read(
@@ -158,7 +148,45 @@ async def test_only_recorded_canonical_failures_are_synthesized(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_legacy_status_event_is_not_duplicated_when_its_durable_revision_exists(monkeypatch):
+async def test_later_launch_can_show_a_separate_failure_for_the_same_draft(monkeypatch):
+    _configure_sources(
+        monkeypatch,
+        campaigns=[{"id": "campaign-a"}],
+        activities=[],
+        drafts=[{"id": "draft-a", "campaign_id": "campaign-a"}],
+        history=[],
+        launch_failures=[
+            CampaignLaunchFailure(
+                id="failure-1", campaign_launch_id="launch-1", workspace_id="workspace-a",
+                campaign_id="campaign-a", draft_id="draft-a", occurred_at="2026-01-01T00:00:01+00:00",
+            ),
+            CampaignLaunchFailure(
+                id="failure-2", campaign_launch_id="launch-2", workspace_id="workspace-a",
+                campaign_id="campaign-a", draft_id="draft-a", occurred_at="2026-01-02T00:00:01+00:00",
+            ),
+        ],
+    )
+
+    result = await CampaignTimelineService().read(
+        owner_id="user-a", workspace_id="workspace-a", session_token="session-a", campaign_id="campaign-a",
+    )
+
+    assert result["events"] == [
+        {"type": "draft_failed", "timestamp": "2026-01-01T00:00:01+00:00", "data": {}},
+        {"type": "draft_failed", "timestamp": "2026-01-02T00:00:01+00:00", "data": {}},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_legacy_sources_are_never_read_after_cutover(monkeypatch):
+    import services.campaigns.timeline as timeline
+
+    monkeypatch.setattr(
+        timeline,
+        "get_wm_store",
+        lambda: (_ for _ in ()).throw(AssertionError("timeline must not read World Model")),
+        raising=False,
+    )
     _configure_sources(
         monkeypatch,
         campaigns=[{"id": "campaign-a"}],
@@ -170,14 +198,7 @@ async def test_legacy_status_event_is_not_duplicated_when_its_durable_revision_e
                 source_key="campaign:campaign-a:revision:7:status_changed",
             ),
         ],
-        drafts=[], history=[],
-        legacy=[
-            WorkspaceEvent(
-                type=EventType.CAMPAIGN_STATUS_CHANGED, session_id="session-a", sequence=10,
-                timestamp="2026-01-01T00:00:08+00:00",
-                data={"campaign_id": "campaign-a", "status": "completed", "revision": 7},
-            ),
-        ],
+        drafts=[], history=[], launch_failures=[],
     )
 
     result = await CampaignTimelineService().read(

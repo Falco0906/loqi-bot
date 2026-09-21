@@ -167,8 +167,14 @@ async def test_one_launch_id_reaches_every_progress_write(monkeypatch):
     monkeypatch.setattr(
         outbound_service,
         "update_campaign_launch_progress",
-        lambda *_args, launch_id, **_kwargs: progress_launch_ids.append(launch_id) or __import__("asyncio").sleep(0),
+        lambda *_args, launch_id, **_kwargs: progress_launch_ids.append(launch_id) or __import__("asyncio").sleep(0, result=True),
     )
+    failure_launch_ids: list[str] = []
+
+    async def persist_failure(*, launch_id, **_kwargs):
+        failure_launch_ids.append(launch_id)
+
+    monkeypatch.setattr(outbound_service, "persist_campaign_launch_failure", persist_failure)
     monkeypatch.setattr(
         outbound_service.outbound_executor,
         "send_hydrated_draft",
@@ -182,6 +188,7 @@ async def test_one_launch_id_reaches_every_progress_write(monkeypatch):
 
     assert result["failed"] == 2
     assert progress_launch_ids == ["database-launch-1", "database-launch-1"]
+    assert failure_launch_ids == ["database-launch-1", "database-launch-1"]
 
 
 def test_campaign_launch_migration_stores_only_safe_scope_fields():

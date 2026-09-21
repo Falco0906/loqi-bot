@@ -38,6 +38,7 @@ from .models import (
     WorkspaceMember,
     OutboundMessage,
     CampaignLaunch,
+    CampaignLaunchFailure,
     ProviderEvent,
 )
 from .repositories import (
@@ -70,6 +71,7 @@ from .repositories import (
     WorkspaceRepository,
     OutboundMessageRepository,
     CampaignLaunchRepository,
+    CampaignLaunchFailureRepository,
     ProviderEventRepository,
 )
 from .backfill import backfill_all, backfill_workspace
@@ -106,6 +108,7 @@ __all__ = [
     "WorkspaceMember",
     "OutboundMessage",
     "CampaignLaunch",
+    "CampaignLaunchFailure",
     "ProviderEvent",
     "AuditLogRepository",
     "CampaignLeadRepository",
@@ -135,5 +138,6 @@ __all__ = [
     "WorkspaceRepository",
     "OutboundMessageRepository",
     "CampaignLaunchRepository",
+    "CampaignLaunchFailureRepository",
     "ProviderEventRepository",
 ]

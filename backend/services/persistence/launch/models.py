@@ -592,6 +592,18 @@ class CampaignLaunch:
 
 
 @dataclass
+class CampaignLaunchFailure:
+    """One safe, generic draft failure within a durable campaign launch."""
+
+    id: str = ""
+    campaign_launch_id: str = ""
+    workspace_id: str = ""
+    campaign_id: str = ""
+    draft_id: str = ""
+    occurred_at: datetime | None = None
+
+
+@dataclass
 class ProviderEvent:
     """Durable provider lifecycle/communication event (workspace-owned)."""
 

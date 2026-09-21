@@ -68,6 +68,7 @@ def env(monkeypatch):
         "draft_updates": [],
     }
     calls: list[dict] = []
+    failure_writes: list[dict] = []
 
     async def fake_owner(session_token: str, request=None) -> str:
         return "owner-1"
@@ -145,6 +146,11 @@ def env(monkeypatch):
         lambda *_args, **_kwargs: asyncio.sleep(0, result=True),
     )
 
+    async def fake_persist_launch_failure(**kwargs):
+        failure_writes.append(kwargs)
+
+    monkeypatch.setattr(outbound_service, "persist_campaign_launch_failure", fake_persist_launch_failure)
+
     async def fake_route_owner(_request, _session_token: str) -> str:
         return "owner-1"
 
@@ -156,7 +162,7 @@ def env(monkeypatch):
     monkeypatch.setattr(campaign_api.workspace_access, "resolve_legacy_workspace_id", fake_workspace)
     monkeypatch.setattr(campaign_api, "load_campaigns", fake_campaigns)
 
-    return {"state": state, "calls": calls}
+    return {"state": state, "calls": calls, "failure_writes": failure_writes}
 
 
 def _launch_progress(state) -> dict:
@@ -226,6 +232,41 @@ async def test_dispatch_partial_failure_tracks_progress(env, monkeypatch):
     assert result["sent"] == 1
     assert result["failed"] == 1
     assert _launch_progress(env["state"])["status"] == "partial"
+    assert env["failure_writes"] == [{
+        "workspace_id": "workspace-test",
+        "campaign_id": "c-1",
+        "launch_id": "launch-test-1",
+        "draft_id": "d-2",
+        "outbound_history_id": "",
+    }]
+
+
+async def test_dispatch_exception_records_safe_failure_after_progress(env, monkeypatch):
+    env["state"]["drafts"] = [_draft("d-1")]
+    order: list[str] = []
+
+    def unavailable(*_args, **_kwargs):
+        raise RuntimeError("provider unavailable")
+
+    async def progress(*_args, **_kwargs):
+        order.append("progress")
+        return True
+
+    async def failure(**kwargs):
+        order.append("failure")
+        assert kwargs["draft_id"] == "d-1"
+        assert kwargs["outbound_history_id"] == ""
+
+    monkeypatch.setattr(outbound_service.outbound_executor, "send_hydrated_draft", unavailable)
+    monkeypatch.setattr(outbound_service, "update_campaign_launch_progress", progress)
+    monkeypatch.setattr(outbound_service, "persist_campaign_launch_failure", failure)
+
+    result = await outbound_service.dispatch_campaign_sends(
+        "tok-1", _campaign(), "owner-1", workspace_id="workspace-test", launch_id="launch-test-1",
+    )
+
+    assert result["failed"] == 1
+    assert order == ["progress", "failure"]
 
 
 async def test_launch_requires_approved_drafts(env):
@@ -265,42 +306,32 @@ async def test_launch_progress_endpoint_reads_durable_values(env):
     assert result["launch_complete"] is False
 
 
-async def test_campaign_timeline_endpoint_returns_redacted_legacy_fallback(env, monkeypatch):
-    """The route delegates to the active safe timeline projection seam."""
+async def test_campaign_timeline_endpoint_returns_durable_execution_events(env, monkeypatch):
+    """The route delegates only to durable/canonical timeline sources."""
     from services.campaigns import timeline as campaign_timeline
-    from services.world_model import EventType as WMET
-    from services.world_model.events import WorkspaceEvent
-
-    class _Store:
-        def get_events(self, _token, *, after_sequence, limit):
-            events = [
-                WorkspaceEvent(
-                    type=WMET.DRAFT_SENT, session_id="pr3b-tok-1", sequence=1,
-                    timestamp="2026-01-01T00:00:01+00:00",
-                    data={"draft_id": "d1", "campaign_id": "c-1", "recipient_email": "ada@acme.com"},
-                ),
-                WorkspaceEvent(
-                    type=WMET.DRAFT_FAILED, session_id="pr3b-tok-1", sequence=2,
-                    timestamp="2026-01-01T00:00:02+00:00",
-                    data={"draft_id": "d2", "campaign_id": "c-1", "error": "smtp refused"},
-                ),
-                WorkspaceEvent(
-                    type=WMET.DRAFT_SENT, session_id="pr3b-tok-1", sequence=3,
-                    timestamp="2026-01-01T00:00:03+00:00",
-                    data={"draft_id": "d3", "campaign_id": "c-9", "recipient_email": "zed@example.test"},
-                ),
-            ]
-            return [event for event in events if event.sequence > after_sequence][:limit]
+    from services.persistence.launch import CampaignLaunchFailure
 
     class _ActivityRepository:
         def read_events_after(self, _workspace_id, _after_sequence):
             return []
 
+    class _LaunchFailureRepository:
+        async def list_for_campaign(self, *, workspace_id, campaign_id):
+            assert (workspace_id, campaign_id) == ("workspace-test", "c-1")
+            return [CampaignLaunchFailure(
+                id="failure-1", campaign_launch_id="launch-1", workspace_id=workspace_id,
+                campaign_id=campaign_id, draft_id="d2", occurred_at="2026-01-01T00:00:02+00:00",
+            )]
+
     monkeypatch.setattr(campaign_timeline, "load_campaigns", lambda *_args, **_kwargs: env["state"]["campaigns"])
-    monkeypatch.setattr(campaign_timeline, "load_drafts_only", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(campaign_timeline, "list_outbound_history", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(campaign_timeline, "load_drafts_only", lambda *_args, **_kwargs: [
+        {"id": "d1", "campaign_id": "c-1"}, {"id": "d2", "campaign_id": "c-1"},
+    ])
+    monkeypatch.setattr(campaign_timeline, "list_outbound_history", lambda *_args, **_kwargs: [
+        SimpleNamespace(id="history-1", draft_id="d1", status="sent", sent_at="2026-01-01T00:00:01+00:00"),
+    ])
     monkeypatch.setattr(campaign_timeline, "get_activity_repository", lambda: _ActivityRepository())
-    monkeypatch.setattr(campaign_timeline, "get_wm_store", _Store)
+    monkeypatch.setattr(campaign_timeline, "CampaignLaunchFailureRepository", _LaunchFailureRepository)
 
     result = await campaign_api.campaign_timeline("_", "c-1", _auth_request("pr3b-tok-1"))
     assert result["ok"] is True

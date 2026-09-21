@@ -36,6 +36,7 @@ from .models import (
     WorkspaceMember,
     OutboundMessage,
     CampaignLaunch,
+    CampaignLaunchFailure,
     ProviderEvent,
 )
 
@@ -825,6 +826,70 @@ class CampaignLaunchRepository(LaunchRepository[CampaignLaunch]):
         if not launch.id:
             raise RuntimeError("Campaign launch did not return a database ID")
         return launch
+
+
+class CampaignLaunchFailureRepository(LaunchRepository[CampaignLaunchFailure]):
+    """Persist and read safe failure facts scoped to one campaign launch."""
+
+    _table_name = "campaign_launch_failures"
+
+    @classmethod
+    def _entity_type(cls) -> type[CampaignLaunchFailure]:
+        return CampaignLaunchFailure
+
+    async def record_for_launch(
+        self,
+        *,
+        campaign_launch_id: str,
+        workspace_id: str,
+        campaign_id: str,
+        draft_id: str,
+        occurred_at: str | None = None,
+    ) -> tuple[CampaignLaunchFailure, bool]:
+        """Idempotently record one generic failure after launch progress persists."""
+        if not all((campaign_launch_id, workspace_id, campaign_id, draft_id)):
+            raise ValueError("Canonical launch, workspace, campaign, and draft IDs are required")
+        client = self._client()
+        if client is None:
+            raise RuntimeError("Campaign launch failure persistence is unavailable")
+        arguments = {
+            "p_campaign_launch_id": campaign_launch_id,
+            "p_workspace_id": workspace_id,
+            "p_campaign_id": campaign_id,
+            "p_draft_id": draft_id,
+            "p_occurred_at": occurred_at,
+        }
+        result = await asyncio.to_thread(
+            lambda: client.rpc("record_campaign_launch_failure", arguments).execute(),
+        )
+        rows = getattr(result, "data", None) or []
+        if not rows:
+            raise RuntimeError("Campaign launch failure write was not confirmed")
+        row = rows[0]
+        return CampaignLaunchFailure(
+            id=str(row.get("failure_id") or ""),
+            campaign_launch_id=campaign_launch_id,
+            workspace_id=workspace_id,
+            campaign_id=campaign_id,
+            draft_id=draft_id,
+            occurred_at=row.get("occurred_at"),
+        ), bool(row.get("was_created") or False)
+
+    async def list_for_campaign(
+        self,
+        *,
+        workspace_id: str,
+        campaign_id: str,
+        limit: int = 1000,
+    ) -> list[CampaignLaunchFailure]:
+        if not workspace_id or not campaign_id:
+            return []
+        return await self._list(
+            [("workspace_id", "eq", workspace_id), ("campaign_id", "eq", campaign_id)],
+            order="occurred_at",
+            desc=False,
+            limit=limit,
+        )
 
 
 class ProviderEventRepository(LaunchRepository[ProviderEvent]):

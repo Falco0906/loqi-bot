@@ -79,8 +79,8 @@ function formatClock(iso: string): string {
 /**
  * Live Execution Workspace. Appears the moment a launch begins and stays until
  * the user closes it. Progress comes from durable counters (queued/sending/
- * delivered/failed), the timeline from the World Model event log — both
- * polled (no WebSockets). On completion it turns into the terminal view with
+ * delivered/failed), and the timeline from durable/canonical execution
+ * records — both polled (no WebSockets). On completion it turns into the terminal view with
  * Open Inbox + Return to Campaign. Every campaigned section below stays fully
  * visible; nothing is hidden, nothing reloads.
  */

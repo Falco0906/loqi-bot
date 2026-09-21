@@ -830,7 +830,7 @@ async def update_campaign_launch_progress(
     total_count: int,
     *,
     launch_id: str,
-) -> None:
+) -> bool:
     """Persist campaign send progress for the existing polling endpoint."""
     from services.workspace.state import persist_campaign_update_awaited
 
@@ -845,12 +845,77 @@ async def update_campaign_launch_progress(
         status = "failed"
     else:
         status = "partial"
-    await persist_campaign_update_awaited(owner_id, campaign_id, {"launch": {
+    return bool(await persist_campaign_update_awaited(owner_id, campaign_id, {"launch": {
         "total": total_count,
         "sent": sent_count,
         "failed": failed_count,
         "status": status,
-    }})
+    }}))
+
+
+async def persist_campaign_launch_failure(
+    *,
+    workspace_id: str,
+    campaign_id: str,
+    launch_id: str,
+    draft_id: str,
+    outbound_history_id: str = "",
+) -> None:
+    """Persist a safe fallback failure only when this attempt lacks history.
+
+    ``OutboundExecutor`` already records provider failures in canonical outbound
+    history. Its returned history ID identifies that exact attempt, avoiding a
+    broad draft-level lookup that could hide a later launch's separate failure.
+    """
+    from services.persistence.launch import (
+        CampaignLaunchFailureRepository,
+        OutboundMessageRepository,
+    )
+
+    if outbound_history_id:
+        history = await OutboundMessageRepository().get_for_workspace(
+            outbound_history_id, workspace_id,
+        )
+        history_status = getattr(history.status, "value", history.status) if history else ""
+        if history and history.draft_id == draft_id and str(history_status).lower() == "failed":
+            return
+    await CampaignLaunchFailureRepository().record_for_launch(
+        campaign_launch_id=launch_id,
+        workspace_id=workspace_id,
+        campaign_id=campaign_id,
+        draft_id=draft_id,
+    )
+
+
+async def _persist_campaign_launch_failure_after_progress(
+    *,
+    progress_persisted: bool,
+    workspace_id: str,
+    campaign_id: str,
+    launch_id: str,
+    draft_id: str,
+    outbound_history_id: str = "",
+) -> None:
+    """Keep non-fatal safe failure persistence after canonical progress."""
+    if not progress_persisted:
+        log.warning(
+            "campaign_launch_failure_not_recorded workspace_id=%s campaign_id=%s launch_id=%s draft_id=%s reason=progress_not_persisted",
+            workspace_id, campaign_id, launch_id, draft_id,
+        )
+        return
+    try:
+        await persist_campaign_launch_failure(
+            workspace_id=workspace_id,
+            campaign_id=campaign_id,
+            launch_id=launch_id,
+            draft_id=draft_id,
+            outbound_history_id=outbound_history_id,
+        )
+    except Exception as error:  # Best-effort timeline projection; launch remains canonical.
+        log.warning(
+            "campaign_launch_failure_persistence_failed workspace_id=%s campaign_id=%s launch_id=%s draft_id=%s error_type=%s",
+            workspace_id, campaign_id, launch_id, draft_id, type(error).__name__,
+        )
 
 
 async def dispatch_campaign_sends(
@@ -892,6 +957,8 @@ async def dispatch_campaign_sends(
     sent_count = 0
     failed_count = 0
     for draft in approved:
+        failure_occurred = False
+        failure_history_id = ""
         try:
             recipient = draft.recipient
             if not str((recipient.email if recipient else "") or "").strip():
@@ -899,9 +966,16 @@ async def dispatch_campaign_sends(
                 error = "This lead has no email address"
                 results.append({"draft_id": draft.id, "ok": False, "error": error})
                 publish(session_token, WMEventType.DRAFT_FAILED, {"draft_id": draft.id, "campaign_id": campaign_id, "error": error}, actor="system")
-                await update_campaign_launch_progress(
+                progress_persisted = await update_campaign_launch_progress(
                     owner_id, session_token, campaign_id, sent_count, failed_count,
                     len(approved), launch_id=launch_id,
+                )
+                await _persist_campaign_launch_failure_after_progress(
+                    progress_persisted=progress_persisted,
+                    workspace_id=workspace_id,
+                    campaign_id=campaign_id,
+                    launch_id=launch_id,
+                    draft_id=draft.id,
                 )
                 continue
             result = await asyncio.to_thread(
@@ -965,16 +1039,29 @@ async def dispatch_campaign_sends(
                     log.error("persistence_write_failed category=conversation operation=create_from_send draft_id=%s campaign_id=%s provider_id=%s error_type=%s", draft.id[:12], campaign_id[:12], provider_id[:12], type(conversation_error).__name__)
             else:
                 failed_count += 1
+                failure_occurred = True
                 publish(session_token, WMEventType.DRAFT_FAILED, {"draft_id": draft.id, "campaign_id": campaign_id, "error": result.get("error", "Send failed")}, actor="system")
+                failure_history_id = str((result.get("send_result") or {}).get("id") or "")
             results.append({"draft_id": draft.id, "ok": result.get("ok", False), "error": result.get("error")})
         except Exception as error:
             failed_count += 1
+            failure_occurred = True
             results.append({"draft_id": draft.id, "ok": False, "error": str(error)})
             publish(session_token, WMEventType.DRAFT_FAILED, {"draft_id": draft.id, "campaign_id": campaign_id, "error": str(error)}, actor="system")
-        await update_campaign_launch_progress(
+            failure_history_id = ""
+        progress_persisted = await update_campaign_launch_progress(
             owner_id, session_token, campaign_id, sent_count, failed_count,
             len(approved), launch_id=launch_id,
         )
+        if failure_occurred:
+            await _persist_campaign_launch_failure_after_progress(
+                progress_persisted=progress_persisted,
+                workspace_id=workspace_id,
+                campaign_id=campaign_id,
+                launch_id=launch_id,
+                draft_id=draft.id,
+                outbound_history_id=failure_history_id,
+            )
     total = len(approved)
     campaign.update({"total_sends": total, "sent_count": sent_count, "failed_count": failed_count})
     log.info("[campaign_launch] Complete: %d/%d sent, %d failed", sent_count, total, failed_count)

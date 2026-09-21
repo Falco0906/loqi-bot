@@ -27,6 +27,47 @@ async def test_enqueue_persists_items_before_queueing(monkeypatch):
     assert captured["items"][0].workspace_id == "workspace"
 
 
+async def test_campaign_generation_passes_campaign_and_leads_to_the_batch_in_order(monkeypatch):
+    """The canonical campaign ID and lead snapshots must not be swapped."""
+    from services.workspace import state as workspace_state
+
+    target = {
+        "id": "campaign-1",
+        "leads": [{"id": "workspace-lead-1", "company": "Acme"}],
+        "strategy": {},
+    }
+    scheduled: dict[str, object] = {}
+
+    monkeypatch.setattr(workspace_state, "load_campaign_state", lambda *_args, **_kwargs: target)
+    monkeypatch.setattr(drafts, "active_draft_batch", lambda *_args: asyncio.sleep(0, result=None))
+
+    async def schedule(*, session_token, owner_id, workspace_id, campaign_id, leads):
+        scheduled.update({
+            "session_token": session_token,
+            "owner_id": owner_id,
+            "workspace_id": workspace_id,
+            "campaign_id": campaign_id,
+            "leads": leads,
+        })
+        return {"batch_id": "batch-1", "total": len(leads), "status": "queued"}
+
+    monkeypatch.setattr(drafts, "schedule_campaign_draft_batch", schedule)
+    monkeypatch.setattr(drafts, "publish", lambda *_args, **_kwargs: None)
+
+    result = await drafts.start_campaign_draft_generation(
+        "session", "user", "workspace", "campaign-1",
+    )
+
+    assert result == {"ok": True, "batch_id": "batch-1", "total": 1}
+    assert scheduled == {
+        "session_token": "session",
+        "owner_id": "user",
+        "workspace_id": "workspace",
+        "campaign_id": "campaign-1",
+        "leads": [{"id": "workspace-lead-1", "company": "Acme"}],
+    }
+
+
 async def test_draft_batch_runner_completes_durable_item(monkeypatch):
     item = BatchItem("job", "workspace", "campaign", 0, {"id": "lead-1", "name": "Ada"}, "0:lead-1")
     updates = []

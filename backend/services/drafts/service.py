@@ -585,11 +585,11 @@ async def start_campaign_draft_generation(
         raise HTTPException(status_code=400, detail="No leads found in campaign")
 
     batch = await schedule_campaign_draft_batch(
-        session_token,
-        owner_id,
-        workspace_id,
-        leads,
-        campaign_id,
+        session_token=session_token,
+        owner_id=owner_id,
+        workspace_id=workspace_id,
+        campaign_id=campaign_id,
+        leads=leads,
     )
     batch_id, total = batch["batch_id"], batch["total"]
     target["updated_at"] = datetime.now(timezone.utc).isoformat()

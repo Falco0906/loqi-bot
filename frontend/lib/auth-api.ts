@@ -35,7 +35,7 @@ export async function authFetch<T>(
     clearTimeout(timeoutId);
     if (err instanceof AuthApiError) throw err;
     if (err instanceof DOMException && err.name === "AbortError") {
-      throw new AuthApiError("Request timed out", 0, "TIMEOUT");
+      throw new AuthApiError("This request is taking longer than expected. Please wait a moment and try again.", 0, "TIMEOUT");
     }
     throw new AuthApiError(
       `${err instanceof Error ? err.message : "Network error"} (${API_BASE})`,

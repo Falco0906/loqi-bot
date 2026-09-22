@@ -307,6 +307,30 @@ def resolve_provider_for_draft(outbound_draft: object, owner_id: str = "") -> st
     return resolved
 
 
+async def gmail_provider_unavailable_error(owner_id: str) -> str:
+    """Explain a missing runtime projection without confusing it with logout.
+
+    ``connected_accounts`` is authoritative. When Gmail has explicitly
+    rejected its durable refresh credential, the runtime provider is removed
+    from normal selection and Send must ask for reauthorization—not claim the
+    account was never connected. A missing durable account remains a separate
+    actionable condition.
+    """
+    if owner_id:
+        try:
+            from services.platform.supabase import is_connected_account_reauth_required
+
+            if await asyncio.to_thread(is_connected_account_reauth_required, owner_id, "google"):
+                return "Gmail authorization expired. Reconnect Gmail to send."
+        except Exception as error:
+            log.warning(
+                "gmail_provider_status_lookup_failed user_id=%s error_type=%s",
+                owner_id[:8],
+                type(error).__name__,
+            )
+    return "No Gmail outbound provider registered"
+
+
 async def enqueue_scheduled_outbound_send(
     owner_id: str,
     workspace_id: str,
@@ -509,7 +533,7 @@ async def send_outbound_draft(
         return {"ok": False, "error": "This lead has no email address"}
     provider_id = resolve_provider_for_draft(draft, owner_id)
     if not provider_id:
-        return {"ok": False, "error": "No Gmail outbound provider registered"}
+        return {"ok": False, "error": await gmail_provider_unavailable_error(owner_id)}
 
     claimed = await workspace_state.claim_draft_for_send(
         draft_id,
@@ -579,7 +603,7 @@ async def schedule_outbound_draft(request: Request, draft_id: str, send_at: str)
         return {"ok": False, "error": "This lead has no email address"}
     provider_id = resolve_provider_for_draft(draft, owner_id)
     if not provider_id:
-        return {"ok": False, "error": "No Gmail outbound provider registered"}
+        return {"ok": False, "error": await gmail_provider_unavailable_error(owner_id)}
     result = await enqueue_scheduled_outbound_send(owner_id, workspace_id, canonical, draft, send_at)
     if result.get("ok"):
         await publish_draft_event(owner_id, "draft.scheduled", draft_id=draft_id)

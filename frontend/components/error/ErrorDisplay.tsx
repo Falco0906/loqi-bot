@@ -36,8 +36,8 @@ const errorConfig: Record<ErrorKind, { icon: string; title: string; hint: string
   },
   openai_timeout: {
     icon: "timer",
-    title: "OpenAI Timeout",
-    hint: "The AI took too long to respond. Try again in a moment.",
+    title: "AI response still processing",
+    hint: "The AI is taking longer than expected. Check back in a moment.",
   },
   campaign_generation: {
     icon: "warning",

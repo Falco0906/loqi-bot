@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { approveDraft, listCampaignDrafts } from "../../lib/api";
+import { approveDraft, listCampaignDrafts, TimeoutError } from "../../lib/api";
 import { onServerEvent, type ServerEvent } from "../../lib/event-client";
 
 type CampaignDraft = {
@@ -45,6 +45,7 @@ function CampaignDraftsSection({
   const [drafts, setDrafts] = useState<CampaignDraft[]>([]);
   const [loading, setLoading] = useState(true);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [approvalLockedIds, setApprovalLockedIds] = useState<Set<string>>(new Set());
   // PR-P1.4: prevents overlapping polls when a fetch outlives its interval.
   const fetchInFlight = useRef(false);
 
@@ -89,7 +90,8 @@ function CampaignDraftsSection({
   }, [generating, fetchDrafts]);
 
   async function toggleApprove(draft: CampaignDraft) {
-    if (!token) return;
+    if (!token || approvalLockedIds.has(draft.id)) return;
+    const expectedStatus = draft.status === "approved" ? "pending" : "approved";
     setTogglingId(draft.id);
     try {
       const res = await approveDraft(token, draft.id);
@@ -101,8 +103,30 @@ function CampaignDraftsSection({
           ),
         );
       }
-    } catch {
-      /* silent */
+    } catch (error) {
+      if (error instanceof TimeoutError) {
+        // Approve is a toggle, so replaying it after a lost response could
+        // undo an already-committed change. Reconcile the durable campaign
+        // drafts once, then keep the control locked when the outcome is
+        // still unknown.
+        try {
+          await new Promise((resolve) => window.setTimeout(resolve, 3500));
+          const durable = await listCampaignDrafts(token, campaignId);
+          const persisted = (durable.drafts as CampaignDraft[]).find(
+            (item) => item.id === draft.id,
+          );
+          if (persisted?.status === expectedStatus) {
+            setDrafts((prev) => prev.map((item) =>
+              item.id === draft.id ? { ...item, status: persisted.status } : item,
+            ));
+            return;
+          }
+        } catch {
+          // Preserve the unknown state below; this component intentionally
+          // has no second mutation/retry path.
+        }
+        setApprovalLockedIds((locked) => new Set(locked).add(draft.id));
+      }
     } finally {
       setTogglingId(null);
     }
@@ -172,7 +196,7 @@ function CampaignDraftsSection({
                   key={d.id}
                   draft={d}
                   onToggle={locked ? undefined : () => void toggleApprove(d)}
-                  toggling={togglingId === d.id}
+                  toggling={togglingId === d.id || approvalLockedIds.has(d.id)}
                 />
               ))}
             </div>
@@ -187,7 +211,7 @@ function CampaignDraftsSection({
                   key={d.id}
                   draft={d}
                   onToggle={locked ? undefined : () => void toggleApprove(d)}
-                  toggling={togglingId === d.id}
+                  toggling={togglingId === d.id || approvalLockedIds.has(d.id)}
                 />
               ))}
             </div>

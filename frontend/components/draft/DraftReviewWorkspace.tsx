@@ -98,7 +98,7 @@ function describeDraftActionError(err: unknown, fallback: string): string {
     if (err.status >= 500) return "The server couldn't complete this action — please retry.";
     return err.message ? `${fallback}: ${err.message}` : fallback;
   }
-  if (err instanceof TimeoutError) return "The request timed out — please retry.";
+  if (err instanceof TimeoutError) return "This is taking longer than expected. Check the latest draft status before taking another action.";
   return `${fallback} (connection issue)`;
 }
 
@@ -116,6 +116,8 @@ export default function DraftReviewWorkspace() {
   const [editSubject, setEditSubject] = useState("");
   const [editBody, setEditBody] = useState("");
   const [refining, setRefining] = useState<string | null>(null);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [approvalLockedIds, setApprovalLockedIds] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState<string | null>(null);
 
   const [filterCampaign, setFilterCampaign] = useState<string>(campaignParam || "__all__");
@@ -133,6 +135,7 @@ export default function DraftReviewWorkspace() {
   const [showSchedulePicker, setShowSchedulePicker] = useState(false);
   const [scheduleTime, setScheduleTime] = useState("");
   const [schedulingId, setSchedulingId] = useState<string | null>(null);
+  const [scheduleLockedIds, setScheduleLockedIds] = useState<Set<string>>(new Set());
   const [cancellingScheduleId, setCancellingScheduleId] = useState<string | null>(null);
   const { query: searchQuery } = useWorkspaceSearch();
   const [testRecipient, setTestRecipient] = useState("");
@@ -464,10 +467,17 @@ export default function DraftReviewWorkspace() {
 
   async function handleApprove() {
     if (!selected || !sessionToken) return;
+    if (approvingId === selected.id || approvalLockedIds.has(selected.id)) {
+      setMessage("Approval is still being checked. Refresh before changing this draft again.");
+      return;
+    }
     if (selected.status === "sent" || selected.status === "sending") {
       setMessage("This draft was already sent");
       return;
     }
+    const draftId = selected.id;
+    const expectedStatus = selected.status === "approved" ? "pending" : "approved";
+    setApprovingId(draftId);
     try {
       const res = await approveDraft(sessionToken, selected.id);
       if (res.ok) {
@@ -487,7 +497,32 @@ export default function DraftReviewWorkspace() {
         }
       }
     } catch (err) {
+      if (err instanceof TimeoutError) {
+        setMessage("Approval is taking longer than expected. Checking the latest draft status…");
+        try {
+          await new Promise((resolve) => window.setTimeout(resolve, 3500));
+          const durable = await listDrafts(sessionToken);
+          const persisted = (durable.drafts as DraftEntry[]).find((draft) => draft.id === draftId);
+          if (persisted?.status === expectedStatus) {
+            setDrafts((prev) => prev.map((draft) =>
+              draft.id === draftId ? { ...draft, status: persisted.status } : draft,
+            ));
+            invalidateDraftCaches();
+            setMessage(expectedStatus === "approved" ? "Approved" : "Marked pending");
+            return;
+          }
+        } catch {
+          // A response timeout does not prove the toggle was rejected. Do not
+          // replay a non-idempotent approval toggle until the canonical draft
+          // can be read.
+        }
+        setApprovalLockedIds((locked) => new Set(locked).add(draftId));
+        setMessage("Approval status could not be confirmed. Refresh before changing this draft again.");
+        return;
+      }
       setMessage(describeDraftActionError(err, "Failed to update"));
+    } finally {
+      setApprovingId(null);
     }
   }
 
@@ -620,11 +655,16 @@ export default function DraftReviewWorkspace() {
 
   async function handleSchedule() {
     if (!selected || !sessionToken || !scheduleTime) return;
+    if (scheduleLockedIds.has(selected.id)) {
+      setMessage("Scheduling is still being checked. Refresh before scheduling this draft again.");
+      return;
+    }
     if (noRecipientEmail) {
       setMessage("This lead has no email address");
       return;
     }
-    setSchedulingId(selected.id);
+    const draftId = selected.id;
+    setSchedulingId(draftId);
     try {
       const res = await scheduleDraft(sessionToken, selected.id, new Date(scheduleTime).toISOString());
       if (res.ok) {
@@ -640,6 +680,29 @@ export default function DraftReviewWorkspace() {
         setMessage(res.error || "Schedule failed");
       }
     } catch (err) {
+      if (err instanceof TimeoutError) {
+        setMessage("Scheduling is taking longer than expected. Checking the latest draft status…");
+        try {
+          await new Promise((resolve) => window.setTimeout(resolve, 3500));
+          const durable = await listDrafts(sessionToken);
+          const persisted = (durable.drafts as DraftEntry[]).find((draft) => draft.id === draftId);
+          if (persisted?.status === "scheduled") {
+            setDrafts((prev) => prev.map((draft) =>
+              draft.id === draftId ? { ...draft, status: "scheduled" } : draft,
+            ));
+            invalidateDraftCaches();
+            setMessage("Email scheduled successfully.");
+            setShowSchedulePicker(false);
+            return;
+          }
+        } catch {
+          // Scheduling has no durable in-progress status. A lost response is
+          // therefore unknown and must not trigger another schedule POST.
+        }
+        setScheduleLockedIds((locked) => new Set(locked).add(draftId));
+        setMessage("Schedule status could not be confirmed. Refresh before scheduling this draft again.");
+        return;
+      }
       setMessage(describeDraftActionError(err, "Schedule request failed"));
     } finally {
       setSchedulingId(null);
@@ -1112,13 +1175,18 @@ export default function DraftReviewWorkspace() {
               {(selected.status === "pending" || selected.status === "needs_review" || selected.status === "approved") ? (
                 <button
                   onClick={handleApprove}
+                  disabled={approvingId === selected.id || approvalLockedIds.has(selected.id)}
                   className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all duration-150 active:scale-[0.95] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2 ${
                     selected.status === "approved"
                       ? "border-outline-variant/20 text-on-surface-variant hover:border-error/40 hover:text-error"
                       : "border-secondary/30 text-secondary hover:bg-secondary/10"
                   }`}
                 >
-                  {selected.status === "approved" ? "Unapprove" : "Approve"}
+                  {approvingId === selected.id
+                    ? "Checking…"
+                    : approvalLockedIds.has(selected.id)
+                      ? "Refresh to confirm"
+                      : selected.status === "approved" ? "Unapprove" : "Approve"}
                 </button>
               ) : null}
               {noRecipientEmail ? (
@@ -1205,14 +1273,14 @@ export default function DraftReviewWorkspace() {
                 />
                 <button
                   onClick={handleSchedule}
-                  disabled={!scheduleTime || schedulingId === selected.id}
+                  disabled={!scheduleTime || schedulingId === selected.id || scheduleLockedIds.has(selected.id)}
                   className="px-3 py-1.5 text-xs font-bold rounded-lg bg-info text-on-info border border-info transition-all duration-150 hover:brightness-110 active:scale-[0.95] disabled:opacity-50"
                 >
                   {schedulingId === selected.id ? (
                     <span className="inline-flex items-center gap-1">
                       <span className="w-2.5 h-2.5 border-2 border-on-info border-t-transparent rounded-full animate-spin" />
                     </span>
-                  ) : "Confirm"}
+                  ) : scheduleLockedIds.has(selected.id) ? "Refresh to confirm" : "Confirm"}
                 </button>
                 <button
                   onClick={() => setShowSchedulePicker(false)}

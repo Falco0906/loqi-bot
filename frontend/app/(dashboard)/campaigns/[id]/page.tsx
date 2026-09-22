@@ -21,6 +21,7 @@ import {
   getStrategyGenerationStatus,
   getCampaignGenerationStatus,
   updateCampaign,
+  TimeoutError,
 } from "../../../../lib/api";
 import CampaignStatusBadge from "../../../../components/campaigns/CampaignStatusBadge";
 import StrategyDocument from "../../../../components/campaigns/StrategyDocument";
@@ -134,6 +135,7 @@ export default function CampaignDetailPage() {
   });
   const token = typeof window !== "undefined" ? localStorage.getItem("loqi_active_session_token") : null;
   const [strategyBusy, setStrategyBusy] = useState(false);
+  const [draftGenerationStarting, setDraftGenerationStarting] = useState(false);
   // PR-P1.4: generateStrategy's poll loop must not keep running (and keep
   // hitting the API) once the user has navigated away from this page.
   const strategyPollAborted = useRef(false);
@@ -144,6 +146,7 @@ export default function CampaignDetailPage() {
   const [launchStarted, setLaunchStarted] = useState(false);
   const [liveLaunch, setLiveLaunch] = useState<CampaignLaunchProgress | null>(null);
   const [executionDismissed, setExecutionDismissed] = useState(false);
+  const generating = data?.generation?.status === "processing";
 
   useActionHandlers({
     generate_strategy: () => { void generateStrategy(); },
@@ -154,8 +157,9 @@ export default function CampaignDetailPage() {
     delete_campaign: () => { void deleteCampaignAction(); },
   });
 
+  const generationInProgress = generating || draftGenerationStarting;
   useEffect(() => {
-    if (!data || data.generation?.status !== "processing" || !token) return;
+    if (!data || !generationInProgress || !token) return;
     let cancelled = false;
     // PR-P1.4: in-flight guard — generation-status polls must not overlap
     // when a request outlives the 2s interval.
@@ -165,7 +169,10 @@ export default function CampaignDetailPage() {
       pollBusy = true;
       try {
         const status = await getCampaignGenerationStatus(token, campaignId);
-        if (!cancelled && !status.active) void refreshCampaign();
+        if (!cancelled && !status.active) {
+          setDraftGenerationStarting(false);
+          void refreshCampaign();
+        }
       } catch {
         // Keep polling; the durable campaign state remains authoritative.
       } finally {
@@ -175,7 +182,7 @@ export default function CampaignDetailPage() {
     const timer = window.setInterval(() => void poll(), 2000);
     void poll();
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [campaignId, data?.generation?.status, token]);
+  }, [campaignId, generationInProgress, token, refreshCampaign]);
 
   /**
    * Campaigns built from a Discovery carry their strategy automatically —
@@ -223,7 +230,6 @@ export default function CampaignDetailPage() {
   const audience = useMemo(() => String(strategy.audience || ""), [strategy]);
   const messagingAngle = useMemo(() => String(strategy.messaging_angle || ""), [strategy]);
   const step = data?.currentStep || "";
-  const generating = data?.generation?.status === "processing";
 
   async function generateStrategy(force = false) {
     if (!token) return;
@@ -255,7 +261,7 @@ export default function CampaignDetailPage() {
           return;
         }
       }
-      toast("error", "Strategy generation timed out — try again");
+      toast("info", "Strategy generation is still running. You can return to this campaign later.");
     } catch {
       toast("error", "Strategy generation failed");
     } finally {
@@ -264,13 +270,19 @@ export default function CampaignDetailPage() {
   }
 
   async function startDrafts() {
-    if (!token || leads.length === 0) return;
+    if (!token || leads.length === 0 || generationInProgress) return;
+    setDraftGenerationStarting(true);
+    toast("info", "Writing drafts for your leads…");
     try {
       const result = await generateCampaignDrafts(token, campaignId);
-      if (!result.ok) return;
+      if (!result.ok) {
+        setDraftGenerationStarting(false);
+        toast("error", "Draft generation could not be started.");
+        return;
+      }
       toast("success", "Draft generation started");
       await refreshCampaign();
-    } catch {
+    } catch (error) {
       // The start call may have aborted client-side (timeout/network) even
       // though the backend accepted the batch. Reconnect through the durable
       // generation state: if a batch is running or finished, resume polling
@@ -278,14 +290,19 @@ export default function CampaignDetailPage() {
       try {
         const status = await getCampaignGenerationStatus(token, campaignId);
         if (status.ok && (status.active || status.status === "processing" || status.status === "completed")) {
-          toast("success", "Draft generation already running");
+          toast("info", "Draft generation is still processing.");
           await refreshCampaign();
           return;
         }
       } catch {
-        /* fall through to the error toast */
+        /* preserve the unknown outcome below */
       }
-      toast("error", "Could not start draft generation — try again");
+      if (error instanceof TimeoutError) {
+        toast("info", "Draft generation is taking longer than expected. Checking progress will continue.");
+        return;
+      }
+      setDraftGenerationStarting(false);
+      toast("error", "Could not start draft generation.");
     }
   }
 
@@ -570,7 +587,7 @@ export default function CampaignDetailPage() {
             <CampaignDraftsSection
               token={token}
               campaignId={campaignId}
-              generating={generating}
+              generating={generationInProgress}
               step={step}
               locked={launching}
             />
@@ -620,7 +637,7 @@ export default function CampaignDetailPage() {
               launchFailed={launchFailed}
               launching={launching}
               hasStrategy={hasStrategy}
-              generating={generating}
+              generating={generationInProgress}
               onGenerateStrategy={() => void generateStrategy()}
               onGenerateDrafts={() => void startDrafts()}
               onLaunch={() => void launchCampaign()}

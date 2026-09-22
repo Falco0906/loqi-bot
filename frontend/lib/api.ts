@@ -40,7 +40,7 @@ export class NetworkError extends Error {
 
 export class TimeoutError extends Error {
   constructor() {
-    super("Request timed out");
+    super("This request is taking longer than expected.");
     this.name = "TimeoutError";
   }
 }

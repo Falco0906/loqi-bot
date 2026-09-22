@@ -1,7 +1,14 @@
 "use client";
 
 import { memo, useCallback, useEffect, useState } from "react";
-import { addLeadToCampaign, attachDiscoveryToCampaign, listDiscoveries } from "../../lib/api";
+import {
+  addLeadToCampaign,
+  attachDiscoveryToCampaign,
+  getCampaign,
+  listDiscoveries,
+  TimeoutError,
+} from "../../lib/api";
+import { campaignHasAttachedDiscovery } from "../../lib/campaign-attachment-reconciliation";
 import { buildResearchUrl } from "../../lib/discovery-mode";
 import Icon from "../shared/Icon";
 import { toast } from "../shared/Toast";
@@ -174,17 +181,39 @@ export default memo(function CampaignLeadsSection({
       : discoveries;
 
   async function attachDiscovery(id: string) {
-    if (!token) return;
+    if (!token || attachingId) return;
     setAttachingId(id);
+    let keepLocked = false;
     try {
       const res = await attachDiscoveryToCampaign(token, campaignId, id);
       if (!res.ok) return;
       toast("success", `${res.added} lead${res.added === 1 ? "" : "s"} attached from Discovery`);
       await onLeadsChanged?.();
-    } catch {
+    } catch (error) {
+      if (error instanceof TimeoutError) {
+        // The server may still be attaching the discovery. Do not replay a
+        // bulk mutation; one canonical campaign read is the safe outcome
+        // check.
+        toast("info", "Attaching leads is taking longer than expected. Checking the campaign…");
+        try {
+          await new Promise((resolve) => window.setTimeout(resolve, 3500));
+          const current = await getCampaign(token, campaignId);
+          if (current.ok && campaignHasAttachedDiscovery(current.campaign, id)) {
+            toast("success", "Discovery leads are attached to this campaign.");
+            await onLeadsChanged?.();
+            return;
+          }
+        } catch {
+          // The request outcome remains unknown. Keeping the action locked
+          // is safer than issuing a second bulk-attachment POST.
+        }
+        keepLocked = true;
+        toast("info", "Lead attachment is still processing. Refresh the campaign to see the latest status.");
+        return;
+      }
       toast("error", "Failed to attach Discovery leads");
     } finally {
-      setAttachingId(null);
+      if (!keepLocked) setAttachingId(null);
     }
   }
 

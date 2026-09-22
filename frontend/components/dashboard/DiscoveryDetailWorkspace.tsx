@@ -17,7 +17,8 @@ import { useTellLoqi } from "../../hooks/useTellLoqi";
 import { useCopilot } from "../../contexts/CopilotContext";
 import { usePageContext } from "../../hooks/usePageContext";
 import { toast } from "../shared/Toast";
-import { addLeadToCampaign, decideLead, listCampaigns } from "../../lib/api";
+import { addLeadToCampaign, decideLead, getCampaign, listCampaigns, TimeoutError } from "../../lib/api";
+import { campaignContainsLeadIds } from "../../lib/campaign-attachment-reconciliation";
 import {
   buildDiscoveryQuery,
   discoveryDetailUrl,
@@ -621,6 +622,7 @@ export default function DiscoveryDetailWorkspace({ discoveryId }: { discoveryId:
     if (!token) { toast("error", "Your workspace session is not ready yet"); return; }
     const leads = Array.from(selectedLeads.values());
     setSavingSelection(true);
+    let keepSelectionLocked = false;
     try {
       const decisions = await Promise.all(
         leads.map((rec) => decideLead(token, leadPayload(rec), true)),
@@ -655,9 +657,30 @@ export default function DiscoveryDetailWorkspace({ discoveryId }: { discoveryId:
       }
       router.push(`/campaigns/${encodeURIComponent(campaignId)}`);
     } catch (err) {
+      if (err instanceof TimeoutError && campaignId) {
+        // A POST may have committed after the browser deadline. Re-read the
+        // canonical campaign instead of replaying selected lead writes.
+        toast("info", "Attaching leads is taking longer than expected. Checking the campaign…");
+        try {
+          await new Promise((resolve) => window.setTimeout(resolve, 3500));
+          const campaign = await getCampaign(token, campaignId);
+          if (campaign.ok && campaignContainsLeadIds(campaign.campaign, leads.map((lead) => lead.id))) {
+            toast("success", `${leads.length} lead${leads.length === 1 ? "" : "s"} attached to the campaign`);
+            setSelectedLeads(new Map());
+            router.push(`/campaigns/${encodeURIComponent(campaignId)}`);
+            return;
+          }
+        } catch {
+          // Keep the selected set locked when the durable outcome cannot be
+          // confirmed. A second POST could duplicate a still-running write.
+        }
+        keepSelectionLocked = true;
+        toast("info", "Lead attachment is still processing. Return to the campaign to see the latest status.");
+        return;
+      }
       toast("error", err instanceof Error ? err.message : "Leads were not added to the campaign");
     } finally {
-      setSavingSelection(false);
+      if (!keepSelectionLocked) setSavingSelection(false);
     }
   };
 

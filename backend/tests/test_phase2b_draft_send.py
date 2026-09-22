@@ -264,3 +264,26 @@ def test_h_production_bug_second_user_does_not_poison_first(harness):
     assert body.get("error") == "No Gmail outbound provider registered"
 
     # Owner-scoped durable hydration did not use the other user's provider.
+
+
+def test_i_revoked_durable_gmail_account_is_actionable_not_missing_provider(monkeypatch):
+    """The runtime registry is a projection; auth_failed remains canonical."""
+    monkeypatch.setattr(
+        "services.platform.supabase.is_connected_account_reauth_required",
+        lambda owner_id, provider: owner_id == OWNER and provider == "google",
+    )
+
+    error = asyncio.run(outbound_service.gmail_provider_unavailable_error(OWNER))
+
+    assert error == "Gmail authorization expired. Reconnect Gmail to send."
+
+
+def test_j_missing_durable_gmail_account_remains_distinct(monkeypatch):
+    monkeypatch.setattr(
+        "services.platform.supabase.is_connected_account_reauth_required",
+        lambda *_args: False,
+    )
+
+    error = asyncio.run(outbound_service.gmail_provider_unavailable_error(OWNER))
+
+    assert error == "No Gmail outbound provider registered"

@@ -197,13 +197,22 @@ def start_memory_consolidation(background_tasks: list[Any]) -> None:
 
 
 def rehydrate_conversation_store() -> None:
-    """Reload durable Inbox state, failing closed when production cannot read it."""
+    """Reload durable Inbox state without mistaking transport loss for corruption."""
     try:
-        from services.conversations.conversation_store import conversation_store
+        from services.conversations.conversation_store import (
+            ConversationStoreRehydrationState,
+            conversation_store,
+        )
 
-        conversation_store.reload()
+        state = conversation_store.reload()
+        if state is ConversationStoreRehydrationState.TEMPORARILY_UNAVAILABLE:
+            log.warning(
+                "Conversation store rehydration deferred: durable persistence temporarily unavailable"
+            )
+            return
         log.info(
-            "Conversation store rehydrated: %d conversations",
+            "Conversation store rehydrated state=%s conversations=%d",
+            state.value,
             sum(conversation_store.count_by_status().values()),
         )
     except Exception as error:

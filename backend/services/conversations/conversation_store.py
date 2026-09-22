@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Optional
 from services.conversations import persistence
 from services.conversations.conversation_models import (
@@ -25,6 +26,16 @@ from services.conversations.timeline import TimelineEvent, TimelineEventType, bu
 from services.conversations.state_machine import transition
 
 logger = logging.getLogger(__name__)
+
+
+class ConversationStoreRehydrationState(str, Enum):
+    LOADED = "loaded"
+    ABSENT = "absent"
+    TEMPORARILY_UNAVAILABLE = "temporarily_unavailable"
+
+
+class ConversationPersistenceUnavailable(RuntimeError):
+    """A mutation was attempted before durable Inbox state was rehydrated."""
 
 
 def conversation_owned_by(conversation: object, owner_id: str) -> bool:
@@ -71,6 +82,7 @@ class ConversationStore:
         self._by_external_thread: dict[str, str] = {}
         self._sequence = 0
         self._persist_lock = threading.RLock()
+        self._rehydration_state = ConversationStoreRehydrationState.TEMPORARILY_UNAVAILABLE
         self.reload()
 
     # ── Persistence ──
@@ -164,32 +176,55 @@ class ConversationStore:
         except Exception as e:
             logger.warning("[conversations] communication mapping seed failed: %s", e)
 
-    def reload(self) -> None:
+    @property
+    def rehydration_state(self) -> ConversationStoreRehydrationState:
+        """Expose the safe startup state without exposing conversation content."""
+        return self._rehydration_state
+
+    def reload(self) -> ConversationStoreRehydrationState:
         """Rehydrate the complete store from the persisted snapshot.
 
-        Idempotent: with no (or a corrupt) snapshot the store is left empty
-        and a corrupt file is preserved (never destroyed). Called at backend
-        startup before the API can serve conversation requests, and after
-        any persistence backend change (tests).
+        An absent snapshot is a valid empty Inbox. Corrupt durable data keeps
+        the existing fail-closed behavior. A retry-exhausted transport failure
+        leaves existing in-memory state untouched and blocks later writes.
         """
-        data, status = persistence.load_state()
+        try:
+            data, status = persistence.load_state()
+        except persistence.DurableConversationPersistenceUnavailable as error:
+            self._rehydration_state = ConversationStoreRehydrationState.TEMPORARILY_UNAVAILABLE
+            logger.error(
+                "persistence_rehydration_temporarily_unavailable "
+                "category=conversations error_type=%s",
+                type(error.__cause__ or error).__name__,
+            )
+            return self._rehydration_state
         if data is None and status is persistence.json_file.JsonFileStatus.ABSENT:
             self._restore_from_snapshot({})
+            self._rehydration_state = ConversationStoreRehydrationState.ABSENT
             logger.info("persistence_rehydration_absent category=conversations")
-            return
+            return self._rehydration_state
         if data is None:
             raise RuntimeError(
                 f"Durable conversation persistence could not be loaded (status={status.value})"
             )
         self._restore_from_snapshot(data)
+        self._rehydration_state = ConversationStoreRehydrationState.LOADED
         self._seed_communication_mappings()
         logger.info(
             "persistence_rehydration_completed category=conversations "
             "conversations=%d threads=%d messages=%d",
             len(self._conversations), len(self._threads), len(self._messages),
         )
+        return self._rehydration_state
+
+    def _require_durable_state_for_write(self) -> None:
+        if self._rehydration_state is ConversationStoreRehydrationState.TEMPORARILY_UNAVAILABLE:
+            raise ConversationPersistenceUnavailable(
+                "Conversation persistence is temporarily unavailable; refusing to mutate unrecovered state"
+            )
 
     def _persist(self, conversation_ids: set[str] | None = None) -> None:
+        self._require_durable_state_for_write()
         try:
             with self._persist_lock:
                 self._sequence += 1
@@ -212,6 +247,7 @@ class ConversationStore:
     # ── Conversation CRUD ──
 
     def create_conversation(self, conversation: Conversation) -> Conversation:
+        self._require_durable_state_for_write()
         cid = conversation.conversation_id
         self._conversations[cid] = conversation
         self._add_index(conversation)
@@ -230,6 +266,7 @@ class ConversationStore:
         return self._conversations.get(conversation_id)
 
     def update_conversation(self, conversation: Conversation) -> Conversation:
+        self._require_durable_state_for_write()
         cid = conversation.conversation_id
         old = self._conversations.get(cid)
         if old:
@@ -277,6 +314,7 @@ class ConversationStore:
         return result[:limit]
 
     def delete_conversation(self, conversation_id: str) -> bool:
+        self._require_durable_state_for_write()
         convo = self._conversations.pop(conversation_id, None)
         if not convo:
             return False
@@ -294,6 +332,7 @@ class ConversationStore:
     # ── Thread CRUD ──
 
     def add_thread(self, thread: ConversationThread) -> ConversationThread:
+        self._require_durable_state_for_write()
         self._threads[thread.thread_id] = thread
         self._persist({thread.conversation_id})
         return thread
@@ -307,6 +346,7 @@ class ConversationStore:
     # ── Message CRUD ──
 
     def add_message(self, message: ConversationMessage) -> ConversationMessage:
+        self._require_durable_state_for_write()
         self._messages[message.message_id] = message
         convo = self._conversations.get(message.conversation_id)
         if convo:
@@ -334,6 +374,7 @@ class ConversationStore:
     # ── Timeline ──
 
     def add_timeline_event(self, event: TimelineEvent) -> TimelineEvent:
+        self._require_durable_state_for_write()
         cid = event.conversation_id
         if cid not in self._timeline:
             self._timeline[cid] = []

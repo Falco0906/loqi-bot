@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import time
 from typing import Awaitable, Callable, TypeVar
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,48 @@ def classify_retryable(error: BaseException) -> bool:
 
 async def _asleep_with_jitter(seconds: float) -> None:
     await asyncio.sleep(seconds + random.uniform(0, seconds * 0.2))
+
+
+def _sleep_with_jitter(seconds: float) -> None:
+    """Sleep for bounded synchronous persistence retries during process boot."""
+    time.sleep(seconds + random.uniform(0, seconds * 0.2))
+
+
+def retry_sync(
+    factory: Callable[[], T],
+    *,
+    attempts: int = DEFAULT_ATTEMPTS,
+    base_delay: float = DEFAULT_BASE_DELAY,
+    max_delay: float = DEFAULT_MAX_DELAY,
+    category: str = "",
+) -> T:
+    """Run an idempotent synchronous operation with the shared retry policy.
+
+    Startup imports cannot await ``retry_async``. This is deliberately limited
+    to idempotent reads and writes whose callers already run synchronously.
+    """
+    last_error: BaseException | None = None
+    for attempt in range(attempts):
+        try:
+            return factory()
+        except Exception as error:  # noqa: BLE001 -- classification below is the policy
+            last_error = error
+            retryable = classify_retryable(error)
+            if not retryable or attempt + 1 >= attempts:
+                if retryable:
+                    logger.warning(
+                        "persistence_retry_exhausted category=%s attempts=%d error_type=%s",
+                        category, attempts, type(error).__name__,
+                    )
+                raise
+            delay = min(max_delay, base_delay * (2 ** attempt))
+            logger.warning(
+                "persistence_retry category=%s attempt=%d delay=%.2f error_type=%s",
+                category, attempt + 1, delay, type(error).__name__,
+            )
+            _sleep_with_jitter(delay)
+    assert last_error is not None
+    raise last_error
 
 
 async def retry_async(

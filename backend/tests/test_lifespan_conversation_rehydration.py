@@ -39,7 +39,13 @@ def test_lifespan_reloads_durable_conversations_before_communication_rehydration
     calls = _prepare_lifespan_before_conversation_reload(monkeypatch)
     monkeypatch.setenv("ENVIRONMENT", "development")
     monkeypatch.delenv("APP_ENV", raising=False)
-    monkeypatch.setattr(conversation_store, "reload", lambda: calls.append("conversations"))
+    from services.conversations.conversation_store import ConversationStoreRehydrationState
+
+    monkeypatch.setattr(
+        conversation_store,
+        "reload",
+        lambda: calls.append("conversations") or ConversationStoreRehydrationState.LOADED,
+    )
     monkeypatch.setattr(conversation_store, "count_by_status", lambda: {"active": 2})
 
     with caplog.at_level("INFO", logger="loqi"):
@@ -47,7 +53,7 @@ def test_lifespan_reloads_durable_conversations_before_communication_rehydration
             asyncio.run(_enter_lifespan())
 
     assert calls == ["conversations", "communication"]
-    assert "Conversation store rehydrated: 2 conversations" in caplog.text
+    assert "Conversation store rehydrated state=loaded conversations=2" in caplog.text
     monkeypatch.undo()
 
 
@@ -90,4 +96,28 @@ def test_lifespan_fails_closed_when_production_rehydration_fails(monkeypatch):
     assert isinstance(error.value.__cause__, RuntimeError)
     assert str(error.value.__cause__) == "snapshot unavailable"
     assert calls == []
+    monkeypatch.undo()
+
+
+def test_lifespan_continues_in_production_when_conversation_read_is_temporarily_unavailable(monkeypatch, caplog):
+    from services.conversations.conversation_store import (
+        ConversationStoreRehydrationState,
+        conversation_store,
+    )
+
+    calls = _prepare_lifespan_before_conversation_reload(monkeypatch)
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setattr(
+        conversation_store,
+        "reload",
+        lambda: ConversationStoreRehydrationState.TEMPORARILY_UNAVAILABLE,
+    )
+
+    with caplog.at_level("WARNING", logger="loqi"):
+        with pytest.raises(_StopAfterConversationReload):
+            asyncio.run(_enter_lifespan())
+
+    assert calls == ["communication"]
+    assert "Conversation store rehydration deferred" in caplog.text
     monkeypatch.undo()

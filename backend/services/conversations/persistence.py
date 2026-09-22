@@ -24,12 +24,25 @@ import os
 from typing import Any, Optional, Tuple
 
 from services.persistence import json_file
+from services.persistence import retry
 
 logger = logging.getLogger(__name__)
 
 SNAPSHOT_VERSION = 1
 
 CATEGORY = "conversations"
+
+
+class DurableConversationPersistenceUnavailable(RuntimeError):
+    """The durable Inbox backend could not be read after bounded retry.
+
+    This is deliberately distinct from corrupt snapshot data. Callers must
+    not replace durable conversation state with an empty store in this case.
+    """
+
+
+class DurableConversationPersistenceCorrupt(RuntimeError):
+    """The durable snapshot is present but does not satisfy its contract."""
 
 
 def _local_fallback_allowed() -> bool:
@@ -131,19 +144,21 @@ def _load_supabase(client) -> tuple[Optional[dict[str, Any]], json_file.JsonFile
         "timeline": {},
     }
     for row in rows:
-        payload = row.get("snapshot") if isinstance(row, dict) else None
+        if not isinstance(row, dict):
+            raise DurableConversationPersistenceCorrupt("Invalid durable conversation row")
+        payload = row.get("snapshot")
         if not isinstance(payload, dict):
-            raise RuntimeError("Invalid durable conversation snapshot")
+            raise DurableConversationPersistenceCorrupt("Invalid durable conversation snapshot")
         combined["sequence"] = max(combined["sequence"], int(payload.get("sequence") or 0))
         conversations = payload.get("conversations") or []
         for conversation in conversations:
             if not isinstance(conversation, dict):
-                raise RuntimeError("Invalid durable conversation row")
+                raise DurableConversationPersistenceCorrupt("Invalid durable conversation row")
             if str(conversation.get("owner_id") or "") != str(row.get("owner_id") or ""):
-                raise RuntimeError("Conversation owner mismatch")
+                raise DurableConversationPersistenceCorrupt("Conversation owner mismatch")
             metadata = conversation.setdefault("metadata", {})
             if not isinstance(metadata, dict):
-                raise RuntimeError("Invalid durable conversation metadata")
+                raise DurableConversationPersistenceCorrupt("Invalid durable conversation metadata")
             metadata["workspace_id"] = str(row.get("workspace_id") or "")
             metadata["_persistence_version"] = int(row.get("version") or 0)
         combined["conversations"].extend(conversations)
@@ -209,13 +224,27 @@ def load_state() -> Tuple[Optional[dict[str, Any]], json_file.JsonFileStatus]:
     client = _client()
     if client is not None:
         try:
-            return _load_supabase(client)
+            return retry.retry_sync(
+                lambda: _load_supabase(client),
+                category=CATEGORY,
+            )
+        except DurableConversationPersistenceCorrupt as error:
+            logger.error("persistence_read_corrupt category=%s error_type=%s", CATEGORY, type(error).__name__)
+            return None, json_file.JsonFileStatus.CORRUPT
         except Exception as error:
-            logger.error("persistence_read_failed category=%s error_type=%s", CATEGORY, type(error).__name__)
-            if not _local_fallback_allowed():
-                return None, json_file.JsonFileStatus.CORRUPT
-            return _read_local_state()
+            if retry.classify_retryable(error):
+                logger.error(
+                    "persistence_read_temporarily_unavailable category=%s error_type=%s",
+                    CATEGORY,
+                    type(error).__name__,
+                )
+                raise DurableConversationPersistenceUnavailable(
+                    "Durable conversation persistence is temporarily unavailable"
+                ) from error
+            raise
     if not _local_fallback_allowed():
-        logger.error("persistence_read_failed category=%s error=durable_backend_unavailable", CATEGORY)
-        return None, json_file.JsonFileStatus.CORRUPT
+        logger.error("persistence_read_temporarily_unavailable category=%s error=durable_backend_unavailable", CATEGORY)
+        raise DurableConversationPersistenceUnavailable(
+            "Durable conversation persistence is unavailable"
+        )
     return _read_local_state()

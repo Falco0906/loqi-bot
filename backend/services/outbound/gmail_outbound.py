@@ -98,6 +98,7 @@ class GmailOutboundProvider(OutboundProviderBase):
 
     def _refresh_auth(self) -> None:
         if not self._refresh_token:
+            self._mark_reauth_required()
             raise GmailReauthRequired("No refresh token available — Gmail re-auth required")
         if self._user_id:
             try:
@@ -105,6 +106,7 @@ class GmailOutboundProvider(OutboundProviderBase):
                 if is_connected_account_reauth_required(self._user_id, "google"):
                     raise GmailReauthRequired("Gmail account requires re-authentication")
             except GmailReauthRequired:
+                self._mark_reauth_required()
                 raise
             except Exception:
                 pass
@@ -118,9 +120,13 @@ class GmailOutboundProvider(OutboundProviderBase):
             },
             timeout=15,
         )
-        raise_for_token_response(
-            resp, provider_id=self._provider_id, user_id=self._user_id,
-        )
+        try:
+            raise_for_token_response(
+                resp, provider_id=self._provider_id, user_id=self._user_id,
+            )
+        except GmailReauthRequired:
+            self._mark_reauth_required()
+            raise
         data = resp.json()
         if data.get("access_token"):
             self._access_token = data["access_token"]
@@ -140,8 +146,22 @@ class GmailOutboundProvider(OutboundProviderBase):
                         self._token_expiry, tz=timezone.utc
                     ).isoformat(),
                 )
-            except Exception as e:
-                logger.warning("[GmailOutbound] Failed to persist refreshed token: %s", e)
+            except Exception as error:
+                logger.warning("[GmailOutbound] Failed to persist refreshed token: %s", error)
+
+    def _mark_reauth_required(self) -> None:
+        """Persist a known revoked/missing Gmail authorization safely."""
+        if not self._user_id:
+            return
+        try:
+            from services.platform.supabase import mark_connected_account_auth_failed
+            mark_connected_account_auth_failed(self._user_id, "google")
+        except Exception as error:
+            logger.warning(
+                "[GmailOutbound] Failed to persist reauth-required state user_id=%s error_type=%s",
+                self._user_id[:8],
+                type(error).__name__,
+            )
 
     def _request_with_auth_retry(self, method: str, url: str,
                                  timeout: int = 30, **kwargs) -> requests.Response:

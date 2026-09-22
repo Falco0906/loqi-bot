@@ -8,6 +8,21 @@
 
 export type DraftBucket = "pending" | "approved" | "sent" | null;
 
+/**
+ * Interpret the durable state after a Send Now response was lost.  This is
+ * deliberately separate from the actionable bucket: ``sending`` means a
+ * provider result is still ambiguous and must remain locked against a second
+ * external send.
+ */
+export type DraftSendReconciliation = "sent" | "sending" | "actionable" | "unknown";
+
+export function reconcileDraftSendStatus(status: string): DraftSendReconciliation {
+  if (status === "sent") return "sent";
+  if (status === "sending") return "sending";
+  if (status === "approved" || status === "pending") return "actionable";
+  return "unknown";
+}
+
 /** Statuses that carry a send/schedule action (approve → send/schedule). */
 export const ACTIONABLE_STATUSES = new Set([
   "pending",

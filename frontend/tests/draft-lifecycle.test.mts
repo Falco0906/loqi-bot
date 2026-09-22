@@ -15,6 +15,7 @@ import {
   isActionable,
   isApprovable,
   isSentStatus,
+  reconcileDraftSendStatus,
 } from "../lib/draft-lifecycle.ts";
 
 test("A. approved draft appears in Approved", () => {
@@ -72,4 +73,20 @@ test("sending status is treated as already-sent for action purposes", () => {
   assert.strictEqual(isSentStatus("sent"), true);
   assert.strictEqual(isSentStatus("sending"), true);
   assert.strictEqual(isSentStatus("approved"), false);
+});
+
+test("lost Send Now responses reconcile from the durable draft state", () => {
+  assert.strictEqual(reconcileDraftSendStatus("sent"), "sent");
+  assert.strictEqual(reconcileDraftSendStatus("sending"), "sending");
+  // Explicit provider failures release the durable claim back to an
+  // actionable state; neither outcome may trigger another POST implicitly.
+  assert.strictEqual(reconcileDraftSendStatus("approved"), "actionable");
+  assert.strictEqual(reconcileDraftSendStatus("pending"), "actionable");
+  assert.strictEqual(reconcileDraftSendStatus("failed"), "unknown");
+});
+
+test("only a confirmed actionable state may unlock Send Now after a timeout", () => {
+  assert.notStrictEqual(reconcileDraftSendStatus("sent"), "actionable");
+  assert.notStrictEqual(reconcileDraftSendStatus("sending"), "actionable");
+  assert.strictEqual(reconcileDraftSendStatus("approved"), "actionable");
 });

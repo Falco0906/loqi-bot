@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+from services.communication.gmail_auth_failure import GmailReauthRequired
 from services.outbound import outbound_registry
 from services.outbound.outbound_base import OutboundProviderBase
 from services.outbound.outbound_executor import OutboundExecutor
@@ -130,3 +131,22 @@ def test_history_persistence_failure_is_not_reported_as_send_success(executor, m
     # in-flight send claim rather than issue a duplicate retry.
     assert result["provider_accepted"] is True
     assert result["retry_safe"] is False
+
+
+def test_reauth_required_is_actionable_and_safe_to_release_send_claim(executor, monkeypatch):
+    service, persisted = executor
+    monkeypatch.setattr(
+        "services.outbound.outbound_executor.registry_send",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            GmailReauthRequired("Gmail account requires re-authentication")
+        ),
+    )
+
+    result = service.send_hydrated_draft(_draft(), provider_id="provider-1")
+
+    assert result == {
+        "ok": False,
+        "error": "Gmail authorization expired. Reconnect Gmail to send.",
+        "retry_safe": True,
+    }
+    assert persisted == []

@@ -20,7 +20,12 @@ import {
 } from "../../lib/api";
 import Icon from "../shared/Icon";
 import { toast } from "../shared/Toast";
-import { draftBucket, DraftBucket } from "../../lib/draft-lifecycle";
+import {
+  draftBucket,
+  DraftBucket,
+  DraftSendReconciliation,
+  reconcileDraftSendStatus,
+} from "../../lib/draft-lifecycle";
 import { usePageContext } from "../../hooks/usePageContext";
 import { useActionHandlers } from "../../hooks/useActionHandlers";
 import { useWorkspaceSearch } from "../../contexts/SearchContext";
@@ -124,6 +129,7 @@ export default function DraftReviewWorkspace() {
   const [showDiffId, setShowDiffId] = useState<string | null>(null);
   const [highlightKey, setHighlightKey] = useState(0);
   const [sendingId, setSendingId] = useState<string | null>(null);
+  const [sendLockedIds, setSendLockedIds] = useState<Set<string>>(new Set());
   const [showSchedulePicker, setShowSchedulePicker] = useState(false);
   const [scheduleTime, setScheduleTime] = useState("");
   const [schedulingId, setSchedulingId] = useState<string | null>(null);
@@ -131,6 +137,7 @@ export default function DraftReviewWorkspace() {
   const { query: searchQuery } = useWorkspaceSearch();
   const [testRecipient, setTestRecipient] = useState("");
   const aiEndRef = useRef<HTMLDivElement>(null);
+  const sendInFlightIds = useRef(new Set<string>());
   const { outreachResult } = useCopilot();
 
   const testRecipientEnabled =
@@ -486,8 +493,12 @@ export default function DraftReviewWorkspace() {
 
   async function handleSend() {
     if (!selected || !sessionToken) return;
+    if (sendInFlightIds.current.has(selected.id) || sendLockedIds.has(selected.id)) {
+      setMessage("Send is still processing. Checking delivery status…");
+      return;
+    }
     if (selected.status === "sent" || selected.status === "sending") {
-      setMessage("This draft was already sent");
+      setMessage(selected.status === "sent" ? "Email sent successfully." : "Email is still being sent.");
       return;
     }
     if (selected.status !== "approved") {
@@ -498,7 +509,57 @@ export default function DraftReviewWorkspace() {
       setMessage("This lead has no email address");
       return;
     }
+    sendInFlightIds.current.add(selected.id);
+    setSendLockedIds((locked) => new Set(locked).add(selected.id));
     setSendingId(selected.id);
+
+    const unlockSend = () => {
+      setSendLockedIds((locked) => {
+        const next = new Set(locked);
+        next.delete(selected.id);
+        return next;
+      });
+    };
+
+    const reconcileLostSendResponse = async (
+      waitForCompletion: boolean,
+    ): Promise<DraftSendReconciliation> => {
+      // Never replay the POST after an aborted response: its durable ``sending``
+      // claim may already own a Gmail send.  A bounded, read-only canonical
+      // lookup is the only safe recovery path.
+      if (waitForCompletion) {
+        await new Promise((resolve) => window.setTimeout(resolve, 3500));
+      }
+      const durable = await listDrafts(sessionToken);
+      const persisted = (durable.drafts as DraftEntry[]).find(
+        (draft) => draft.id === selected.id,
+      );
+      if (!persisted) return "unknown";
+
+      const sendState = reconcileDraftSendStatus(persisted.status);
+      if (sendState === "sent") {
+        setDrafts((prev) =>
+          prev.map((draft) =>
+            draft.id === selected.id ? { ...draft, status: "sent" } : draft,
+          ),
+        );
+        invalidateDraftCaches();
+        setMessage("Email sent successfully.");
+        return "sent";
+      }
+      if (sendState === "sending") {
+        setDrafts((prev) =>
+          prev.map((draft) =>
+            draft.id === selected.id ? { ...draft, status: "sending" } : draft,
+          ),
+        );
+        invalidateDraftCaches();
+        setMessage("Email is still being sent. This draft is locked to prevent a duplicate email.");
+        return "sending";
+      }
+      return sendState;
+    };
+
     try {
       const res = await sendDraft(
         sessionToken,
@@ -514,14 +575,45 @@ export default function DraftReviewWorkspace() {
           ),
         );
         invalidateDraftCaches();
-        setMessage("Draft sent successfully");
+        setMessage("Email sent successfully.");
       } else {
         const err = res.error || res.send_result?.error;
+        if (err === "Draft already sent") {
+          try {
+            const sendState = await reconcileLostSendResponse(false);
+            if (sendState === "sent" || sendState === "sending") return;
+          } catch {
+            // The existing duplicate-safe result is still authoritative, but
+            // the UI must not unlock the draft until a canonical read works.
+          }
+          setMessage("Send status could not be confirmed. Refresh before taking further action.");
+          return;
+        }
+        unlockSend();
         setMessage(err ? `Send failed: ${err}` : "Send failed");
       }
     } catch (err) {
+      if (err instanceof TimeoutError) {
+        setMessage("Send is taking longer than expected. Checking delivery status…");
+        try {
+          const sendState = await reconcileLostSendResponse(true);
+          if (sendState === "sent" || sendState === "sending") return;
+          if (sendState === "actionable") {
+            unlockSend();
+            setMessage("Send did not complete. You can try again.");
+            return;
+          }
+        } catch {
+          // A timeout makes provider acceptance ambiguous.  Do not invite a
+          // retry when the canonical status cannot be read.
+        }
+        setMessage("Send status could not be confirmed. Refresh before taking further action.");
+        return;
+      }
+      unlockSend();
       setMessage(describeDraftActionError(err, "Send request failed"));
     } finally {
+      sendInFlightIds.current.delete(selected.id);
       setSendingId(null);
     }
   }
@@ -1041,7 +1133,7 @@ export default function DraftReviewWorkspace() {
               {selected.status === "approved" && !noRecipientEmail ? (
                 <button
                   onClick={handleSend}
-                  disabled={sendingId === selected.id}
+                  disabled={sendingId === selected.id || sendLockedIds.has(selected.id)}
                   className="px-3 py-1.5 text-xs font-bold rounded-lg bg-primary text-on-primary border border-primary transition-all duration-150 hover:brightness-110 active:scale-[0.95] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2 disabled:opacity-50"
                 >
                   {sendingId === selected.id ? (

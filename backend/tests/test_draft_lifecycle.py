@@ -17,6 +17,7 @@ import os
 import sys
 import threading
 import uuid
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 os.chdir(os.path.join(os.path.dirname(__file__), ".."))
@@ -183,6 +184,35 @@ class TestApprovalLifecycle:
 
 
 class TestDurableSentStatus:
+    def test_send_claim_status_is_permitted_by_the_durable_draft_constraint(self):
+        """The durable compare-and-set must reach the provider send boundary.
+
+        This test protects the production regression where the canonical
+        ``sending`` claim was correct but the database constraint still
+        reflected the pre-send-state lifecycle from migration 008.
+        """
+        migration = (
+            Path(__file__).resolve().parents[1]
+            / "supabase/migrations/047_draft_sending_status.sql"
+        ).read_text()
+
+        expected_statuses = {
+            "draft",
+            "pending",
+            "generating",
+            "approved",
+            "rejected",
+            "sending",
+            "sent",
+            "delivered",
+            "failed",
+            "scheduled",
+            "cancelled",
+            "archived",
+        }
+        for status in expected_statuses:
+            assert f"'{status}'" in migration
+
     def test_C_sent_status_survives_reload(self, monkeypatch):
         rows: dict[str, Draft] = {}
         draft = Draft(

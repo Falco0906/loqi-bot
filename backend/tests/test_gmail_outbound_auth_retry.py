@@ -229,6 +229,25 @@ def test_refresh_no_user_id_skips_persist(monkeypatch):
     assert captured == []
 
 
+def test_revoked_refresh_token_persists_reauth_required_state(monkeypatch):
+    provider = _provider()
+    marked = []
+
+    def fake_token_post(url, data=None, timeout=None, **_kw):
+        return FakeResp(400, {"error": "invalid_grant"})
+
+    monkeypatch.setattr(real_requests, "post", fake_token_post)
+    monkeypatch.setattr(
+        "services.platform.supabase.mark_connected_account_auth_failed",
+        lambda user_id, provider_name: marked.append((user_id, provider_name)) or True,
+    )
+
+    with pytest.raises(Exception, match="re-authentication"):
+        provider._refresh_auth()
+
+    assert marked == [("u1", "google")]
+
+
 class _RecordingResp(FakeResp):
     pass
 

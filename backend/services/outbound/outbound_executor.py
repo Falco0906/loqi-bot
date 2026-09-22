@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 
+from services.communication.gmail_auth_failure import GmailReauthRequired
 from services.outbound.outbound_models import DraftMessage, DeliveryStatus, Recipient, SendHistoryItem, SendRequest
 from services.outbound.outbound_registry import send as registry_send
 from services.persistence.launch.communication_persistence import persist_outbound_message
@@ -27,6 +28,19 @@ class OutboundExecutor:
         )
         try:
             send_result = registry_send(request.provider_id, request)
+        except GmailReauthRequired:
+            # Refresh credential rejection occurs before Gmail accepts the
+            # message, so the caller can safely release its ``sending`` claim
+            # and direct the user to the existing reconnect flow.
+            logger.warning(
+                "outbound_send_reauth_required provider_id=%s",
+                request.provider_id,
+            )
+            return {
+                "ok": False,
+                "error": "Gmail authorization expired. Reconnect Gmail to send.",
+                "retry_safe": True,
+            }
         except Exception as error:  # noqa: BLE001 - translate provider failures at this boundary
             logger.error("outbound_send_failed provider_id=%s error_type=%s", request.provider_id, type(error).__name__)
             # A transport exception can occur after the provider accepted the

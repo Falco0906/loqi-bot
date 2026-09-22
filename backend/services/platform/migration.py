@@ -1,4 +1,5 @@
 import os
+from urllib.parse import unquote, urlparse
 
 MIGRATION_SQL = """
 create table if not exists jobs (
@@ -290,6 +291,47 @@ def _check_table_exists() -> bool:
         return False
 
 
+def _configured_supabase_project_ref() -> str:
+    """Return the configured Supabase project ref without exposing credentials."""
+    for value in (os.getenv("SUPABASE_URL", ""), os.getenv("DATABASE_URL", "")):
+        if not value:
+            continue
+        parsed = urlparse(value)
+        hostname = (parsed.hostname or "").lower()
+        labels = hostname.split(".")
+        if hostname.endswith(".supabase.co"):
+            if labels[0] == "db" and len(labels) >= 4:
+                return labels[1]
+            if len(labels) >= 3:
+                return labels[0]
+
+        # Supabase pooler URLs do not encode the project ref in their host,
+        # but the standard connection username is postgres.<project-ref>.
+        username = unquote(parsed.username or "")
+        if username.startswith("postgres."):
+            return username.removeprefix("postgres.")
+    return ""
+
+
+def _manual_migration_instructions() -> str:
+    project_ref = _configured_supabase_project_ref()
+    if project_ref:
+        database_target = f"db.{project_ref}.supabase.co"
+        dashboard_target = f"https://supabase.com/dashboard/project/{project_ref}/sql/new"
+    else:
+        database_target = "db.<project-ref>.supabase.co"
+        dashboard_target = "https://supabase.com/dashboard/project/<project-ref>/sql/new"
+    return (
+        "Cannot apply migration. Set DATABASE_URL in .env:\n"
+        f"  DATABASE_URL=postgresql://postgres:PASSWORD@{database_target}:5432/postgres\n"
+        "Get the password from Supabase Dashboard → Project Settings → Database.\n"
+        "Alternatively, run the SQL manually in the Supabase Dashboard SQL Editor:\n"
+        f"  Open {dashboard_target}\n"
+        "  Paste and run backend/supabase/migrations/003_job_engine.sql\n"
+        "  Then run 006_workspaces.sql, 007_domain.sql, 014_discoveries.sql"
+    )
+
+
 def apply_migrations() -> bool:
     jobs_exist = _check_table_exists()
     database_url = os.getenv("DATABASE_URL")
@@ -339,13 +381,5 @@ def apply_migrations() -> bool:
         except Exception as e:
             _log(f"Migration via DATABASE_URL failed: {e}")
 
-    _log(
-        "Cannot apply migration. Set DATABASE_URL in .env:\n"
-        "  DATABASE_URL=postgresql://postgres:PASSWORD@db.llckvmpwmovhchfpjnsa.supabase.co:5432/postgres\n"
-        "Get the password from Supabase Dashboard → Project Settings → Database.\n"
-        "Alternatively, run the SQL manually in the Supabase Dashboard SQL Editor:\n"
-        "  Open https://supabase.com/dashboard/project/llckvmpwmovhchfpjnsa/sql/new\n"
-        "  Paste and run backend/supabase/migrations/003_job_engine.sql\n"
-        "  Then run 006_workspaces.sql, 007_domain.sql, 014_discoveries.sql"
-    )
+    _log(_manual_migration_instructions())
     return False

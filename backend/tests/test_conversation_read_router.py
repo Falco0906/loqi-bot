@@ -109,3 +109,15 @@ async def test_conversation_read_router_preserves_not_found_contract(monkeypatch
 
     assert error.value.status_code == 404
     assert error.value.detail == "Conversation not found"
+
+
+async def test_unavailable_conversation_persistence_is_an_explicit_503():
+    from services.conversations.conversation_store import ConversationPersistenceUnavailable
+
+    response = await main.conversation_persistence_unavailable_handler(
+        _request(),
+        ConversationPersistenceUnavailable("durable state unavailable"),
+    )
+
+    assert response.status_code == 503
+    assert response.body == b'{"detail":"Conversation data is temporarily unavailable"}'

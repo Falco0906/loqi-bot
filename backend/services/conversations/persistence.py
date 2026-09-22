@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 SNAPSHOT_VERSION = 1
 
 CATEGORY = "conversations"
+LOAD_PAGE_SIZE = 100
 
 
 class DurableConversationPersistenceUnavailable(RuntimeError):
@@ -131,8 +132,33 @@ def _save_supabase(client, snapshot: dict[str, Any]) -> dict[str, int]:
 
 
 def _load_supabase(client) -> tuple[Optional[dict[str, Any]], json_file.JsonFileStatus]:
-    result = client.table("conversation_snapshots").select("snapshot, owner_id, workspace_id, version").execute()
-    rows = getattr(result, "data", None) or []
+    """Load every durable snapshot through bounded, deterministic pages."""
+    rows: list[dict[str, Any]] = []
+    start = 0
+    while True:
+        try:
+            result = (
+                client.table("conversation_snapshots")
+                .select("snapshot, owner_id, workspace_id, version")
+                .order("conversation_id")
+                .range(start, start + LOAD_PAGE_SIZE - 1)
+                .execute()
+            )
+        except Exception as error:
+            logger.error(
+                "persistence_read_page_failed category=%s start=%d error_type=%s",
+                CATEGORY,
+                start,
+                type(error).__name__,
+            )
+            raise
+        page = getattr(result, "data", None) or []
+        if not isinstance(page, list):
+            raise DurableConversationPersistenceCorrupt("Invalid durable conversation page")
+        rows.extend(page)
+        if len(page) < LOAD_PAGE_SIZE:
+            break
+        start += LOAD_PAGE_SIZE
     if not rows:
         return None, json_file.JsonFileStatus.ABSENT
     combined: dict[str, Any] = {
@@ -232,16 +258,15 @@ def load_state() -> Tuple[Optional[dict[str, Any]], json_file.JsonFileStatus]:
             logger.error("persistence_read_corrupt category=%s error_type=%s", CATEGORY, type(error).__name__)
             return None, json_file.JsonFileStatus.CORRUPT
         except Exception as error:
-            if retry.classify_retryable(error):
-                logger.error(
-                    "persistence_read_temporarily_unavailable category=%s error_type=%s",
-                    CATEGORY,
-                    type(error).__name__,
-                )
-                raise DurableConversationPersistenceUnavailable(
-                    "Durable conversation persistence is temporarily unavailable"
-                ) from error
-            raise
+            logger.error(
+                "persistence_read_unavailable category=%s retryable=%s error_type=%s",
+                CATEGORY,
+                retry.classify_retryable(error),
+                type(error).__name__,
+            )
+            raise DurableConversationPersistenceUnavailable(
+                "Durable conversation persistence is unavailable"
+            ) from error
     if not _local_fallback_allowed():
         logger.error("persistence_read_temporarily_unavailable category=%s error=durable_backend_unavailable", CATEGORY)
         raise DurableConversationPersistenceUnavailable(

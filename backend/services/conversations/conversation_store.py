@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 class ConversationStoreRehydrationState(str, Enum):
+    UNINITIALIZED = "uninitialized"
     LOADED = "loaded"
     ABSENT = "absent"
     TEMPORARILY_UNAVAILABLE = "temporarily_unavailable"
@@ -82,8 +83,10 @@ class ConversationStore:
         self._by_external_thread: dict[str, str] = {}
         self._sequence = 0
         self._persist_lock = threading.RLock()
-        self._rehydration_state = ConversationStoreRehydrationState.TEMPORARILY_UNAVAILABLE
-        self.reload()
+        # Importing a route/module must not require a remote Supabase read.
+        # The FastAPI lifespan owns explicit rehydration before conversation
+        # operations are allowed.
+        self._rehydration_state = ConversationStoreRehydrationState.UNINITIALIZED
 
     # ── Persistence ──
 
@@ -218,9 +221,21 @@ class ConversationStore:
         return self._rehydration_state
 
     def _require_durable_state_for_write(self) -> None:
-        if self._rehydration_state is ConversationStoreRehydrationState.TEMPORARILY_UNAVAILABLE:
+        if self._rehydration_state not in {
+            ConversationStoreRehydrationState.LOADED,
+            ConversationStoreRehydrationState.ABSENT,
+        }:
             raise ConversationPersistenceUnavailable(
-                "Conversation persistence is temporarily unavailable; refusing to mutate unrecovered state"
+                "Conversation persistence is unavailable; refusing to mutate unrecovered state"
+            )
+
+    def _require_durable_state_for_read(self) -> None:
+        if self._rehydration_state not in {
+            ConversationStoreRehydrationState.LOADED,
+            ConversationStoreRehydrationState.ABSENT,
+        }:
+            raise ConversationPersistenceUnavailable(
+                "Conversation persistence is unavailable; conversation state has not been rehydrated"
             )
 
     def _persist(self, conversation_ids: set[str] | None = None) -> None:
@@ -263,6 +278,7 @@ class ConversationStore:
         return conversation
 
     def get_conversation(self, conversation_id: str) -> Optional[Conversation]:
+        self._require_durable_state_for_read()
         return self._conversations.get(conversation_id)
 
     def update_conversation(self, conversation: Conversation) -> Conversation:
@@ -298,6 +314,7 @@ class ConversationStore:
         status: Optional[ConversationStatus] = None,
         limit: int = 50,
     ) -> list[Conversation]:
+        self._require_durable_state_for_read()
         ids: set[str] = set()
         if provider_id:
             ids |= self._by_provider.get(provider_id, set())
@@ -338,9 +355,11 @@ class ConversationStore:
         return thread
 
     def get_thread(self, thread_id: str) -> Optional[ConversationThread]:
+        self._require_durable_state_for_read()
         return self._threads.get(thread_id)
 
     def get_threads_for_conversation(self, conversation_id: str) -> list[ConversationThread]:
+        self._require_durable_state_for_read()
         return [t for t in self._threads.values() if t.conversation_id == conversation_id]
 
     # ── Message CRUD ──
@@ -357,16 +376,19 @@ class ConversationStore:
         return message
 
     def get_message(self, message_id: str) -> Optional[ConversationMessage]:
+        self._require_durable_state_for_read()
         return self._messages.get(message_id)
 
     def get_messages_for_conversation(
         self, conversation_id: str, limit: int = 100
     ) -> list[ConversationMessage]:
+        self._require_durable_state_for_read()
         msgs = [m for m in self._messages.values() if m.conversation_id == conversation_id]
         msgs.sort(key=lambda m: m.sent_at or datetime.min.replace(tzinfo=timezone.utc))
         return msgs[-limit:]
 
     def get_messages_for_thread(self, thread_id: str, limit: int = 100) -> list[ConversationMessage]:
+        self._require_durable_state_for_read()
         msgs = [m for m in self._messages.values() if m.thread_id == thread_id]
         msgs.sort(key=lambda m: m.sent_at or datetime.min.replace(tzinfo=timezone.utc))
         return msgs[-limit:]
@@ -384,17 +406,20 @@ class ConversationStore:
         return event
 
     def get_timeline(self, conversation_id: str) -> list[TimelineEvent]:
+        self._require_durable_state_for_read()
         return self._timeline.get(conversation_id, [])
 
     # ── Lookup Helpers ──
 
     def find_by_external_thread(self, external_thread_id: str) -> Optional[Conversation]:
+        self._require_durable_state_for_read()
         cid = self._by_external_thread.get(external_thread_id)
         if cid:
             return self._conversations.get(cid)
         return None
 
     def count_by_status(self) -> dict[str, int]:
+        self._require_durable_state_for_read()
         counts: dict[str, int] = {}
         for convo in self._conversations.values():
             s = convo.status.value

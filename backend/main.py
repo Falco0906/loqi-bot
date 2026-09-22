@@ -30,6 +30,7 @@ from services.export.api import router as export_router
 from services.workspace.api import router as workspace_router
 from services.workflows.api import router as workflows_router
 from services.conversations.api import engine, router as conversations_router
+from services.conversations.conversation_store import ConversationPersistenceUnavailable
 from services.capabilities.config import CapabilityConfig
 from services.capabilities.services import CapabilityService
 from services.capabilities.repositories import (
@@ -86,7 +87,7 @@ async def lifespan(app: FastAPI):
     background_tasks: list[asyncio.Task] = []
     app_lifespan.start_memory_consolidation(background_tasks)
 
-    app_lifespan.rehydrate_conversation_store()
+    app_lifespan.start_conversation_rehydration(background_tasks)
 
     app_lifespan.rehydrate_communication_store()
 
@@ -314,6 +315,26 @@ async def identity_exception_handler(request: Request, exc: IdentityException):
             message=_safe_identity_message(exc),
             request_id=req_id,
         ).model_dump(),
+    )
+
+
+@app.exception_handler(ConversationPersistenceUnavailable)
+async def conversation_persistence_unavailable_handler(
+    request: Request,
+    exc: ConversationPersistenceUnavailable,
+):
+    """Make unavailable durable Inbox state explicit without leaking internals."""
+    req_id = request_id_var.get("") or str(getattr(request.state, "request_id", "") or "")
+    log.warning(
+        "conversation_persistence_unavailable request_id=%s method=%s path=%s",
+        req_id,
+        request.method,
+        redact_session_path(request.url.path),
+    )
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Conversation data is temporarily unavailable"},
+        headers={"X-Request-ID": req_id},
     )
 
 

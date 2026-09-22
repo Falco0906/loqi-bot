@@ -159,6 +159,7 @@ class TestOwnershipPersistence:
 
         persistence.STATE_FILE = str(tmp_path / ".conversations.json")
         store = ConversationStore()
+        store.reload()
         convo = Conversation(
             external_thread_id=f"t_{uuid.uuid4().hex[:10]}",
             subject="ownership",
@@ -169,6 +170,7 @@ class TestOwnershipPersistence:
 
         # Simulate restart: a fresh store rehydrating from the snapshot.
         fresh = ConversationStore()
+        fresh.reload()
         restored = fresh.get_conversation(convo.conversation_id)
         assert restored is not None
         assert restored.owner_id == "owner-a"

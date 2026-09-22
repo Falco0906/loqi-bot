@@ -224,6 +224,26 @@ def rehydrate_conversation_store() -> None:
         log.warning("Conversation store rehydration failed: %s", error)
 
 
+def start_conversation_rehydration(background_tasks: list[asyncio.Task[Any]]) -> None:
+    """Rehydrate durable Inbox state after the HTTP process can begin serving.
+
+    Conversation operations remain unavailable until this completes, but a
+    transient Inbox persistence outage must not prevent unrelated routes such
+    as identity OAuth from binding their port.
+    """
+    async def rehydrate() -> None:
+        try:
+            await asyncio.to_thread(rehydrate_conversation_store)
+        except Exception as error:  # Corruption/configuration remains observable and fail-closed for Inbox.
+            log.error(
+                "Conversation store background rehydration failed error_type=%s",
+                type(error).__name__,
+                exc_info=True,
+            )
+
+    background_tasks.append(asyncio.create_task(rehydrate()))
+
+
 def rehydrate_communication_store() -> None:
     """Restore communication cursors and thread mappings before workers start."""
     try:

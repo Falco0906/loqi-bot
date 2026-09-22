@@ -657,6 +657,7 @@ class TestRehydration:
         )
         cid = convo.conversation_id
         fresh = ConversationStore()
+        fresh.reload()
         assert fresh.get_conversation(cid) is not None
         assert fresh.get_conversation(cid).subject == "rehydrate"
         assert conversation_store.get_conversation(cid) is not None

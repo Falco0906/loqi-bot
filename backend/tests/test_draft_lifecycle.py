@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import threading
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
@@ -298,6 +299,17 @@ class TestSendDraftGuard:
         assert result == {"ok": False, "error": "Draft already sent"}
         assert calls == []
 
+    async def test_D2b_non_actionable_draft_never_reaches_executor(self, monkeypatch):
+        draft = _sent_outbound_draft(DraftStatus.DRAFT)
+        self._canonical_guard(monkeypatch, draft)
+        executor = MagicMock()
+        monkeypatch.setattr(outbound_service, "outbound_executor", executor)
+
+        result = await send_draft("token", draft.id, MagicMock())
+
+        assert result == {"ok": False, "error": "Draft is not approved for sending"}
+        executor.send_hydrated_draft.assert_not_called()
+
     async def test_D3_durable_sent_draft_guard_fires_before_sync(self, monkeypatch):
         """A durable-row sent draft is caught before projection hydration."""
         monkeypatch.setattr(outbound_service.identity_dependencies, "authenticated_user_id", _fake_owner("owner-1"))
@@ -312,3 +324,53 @@ class TestSendDraftGuard:
         result = await send_draft("token", "d-durable-sent", MagicMock())
 
         assert result == {"ok": False, "error": "Draft already sent"}
+
+    @pytest.mark.asyncio
+    async def test_D4_cancelled_send_claim_blocks_a_second_provider_call(self, monkeypatch):
+        """A lost HTTP response cannot make a second request send Gmail twice."""
+        draft = _sent_outbound_draft(DraftStatus.APPROVED)
+        canonical = {"id": draft.id, "status": "approved"}
+        claimed = {"value": False}
+        provider_calls: list[str] = []
+        entered = threading.Event()
+        release = threading.Event()
+
+        async def resolve(*_args, **_kwargs):
+            return "owner-1", "workspace-1", canonical, draft
+
+        async def claim(*_args, **_kwargs):
+            if claimed["value"]:
+                return False
+            claimed["value"] = True
+            return True
+
+        def blocking_send(*_args, **_kwargs):
+            provider_calls.append("gmail")
+            entered.set()
+            assert release.wait(timeout=1)
+            return {"ok": True, "send_result": {"thread_id": "thread", "external_message_id": "message"}}
+
+        monkeypatch.setattr(outbound_service, "require_canonical_outbound_draft", resolve)
+        monkeypatch.setattr(outbound_service.workspace_state, "claim_draft_for_send", claim)
+        monkeypatch.setattr(outbound_service, "resolve_provider_for_draft", lambda *_args: "provider-1")
+        monkeypatch.setattr(
+            outbound_service,
+            "outbound_executor",
+            MagicMock(send_hydrated_draft=blocking_send),
+        )
+        monkeypatch.setattr(outbound_service, "publish", lambda *_args, **_kwargs: None)
+
+        first = asyncio.create_task(outbound_service.send_outbound_draft(MagicMock(), draft.id))
+        assert await asyncio.to_thread(entered.wait, 1)
+
+        # Simulate a client/network cancellation while the provider worker is
+        # still executing.  Its durable claim remains the source of truth.
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+
+        second = await outbound_service.send_outbound_draft(MagicMock(), draft.id)
+        assert second == {"ok": False, "error": "Draft already sent"}
+        assert provider_calls == ["gmail"]
+
+        release.set()

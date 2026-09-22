@@ -124,4 +124,9 @@ def test_history_persistence_failure_is_not_reported_as_send_success(executor, m
 
     result = service.send_hydrated_draft(_draft(), provider_id="provider-1")
 
-    assert result == {"ok": False, "error": "Email send history could not be persisted"}
+    assert result["ok"] is False
+    assert result["error"] == "Email send history could not be persisted"
+    # Gmail already accepted this message; callers must retain the durable
+    # in-flight send claim rather than issue a duplicate retry.
+    assert result["provider_accepted"] is True
+    assert result["retry_safe"] is False

@@ -1311,6 +1311,72 @@ async def persist_draft_update_awaited(user_id: str, draft_id: str, updates: dic
     return True
 
 
+async def claim_draft_for_send(
+    draft_id: str,
+    *,
+    workspace_id: str,
+    expected_status: str,
+) -> bool:
+    """Atomically transition one canonical draft into the in-flight send state.
+
+    The compare-and-set is the durable send ownership boundary: only the
+    request that changes the expected actionable status to ``sending`` may
+    call an outbound provider.  Callers authorize the workspace before this
+    repository-level operation.
+    """
+    if not draft_id or not workspace_id or not expected_status:
+        return False
+    client = get_supabase_client()
+    if client is None:
+        # Hermetic/in-memory repository mode has no concurrent database
+        # writer. Keep its existing persistence behavior for tests.
+        return False
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    def _claim() -> bool:
+        result = (
+            client.table("drafts")
+            .update({"status": "sending", "updated_at": now})
+            .eq("id", draft_id)
+            .eq("workspace_id", workspace_id)
+            .eq("status", expected_status)
+            .execute()
+        )
+        return bool(getattr(result, "data", None) or [])
+
+    return bool(await asyncio.to_thread(_claim))
+
+
+async def release_draft_send_claim(
+    draft_id: str,
+    *,
+    workspace_id: str,
+    restore_status: str,
+) -> bool:
+    """Release a send claim only after a known pre-acceptance failure."""
+    if not draft_id or not workspace_id or not restore_status:
+        return False
+    client = get_supabase_client()
+    if client is None:
+        return False
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    def _release() -> bool:
+        result = (
+            client.table("drafts")
+            .update({"status": restore_status, "updated_at": now})
+            .eq("id", draft_id)
+            .eq("workspace_id", workspace_id)
+            .eq("status", "sending")
+            .execute()
+        )
+        return bool(getattr(result, "data", None) or [])
+
+    return bool(await asyncio.to_thread(_release))
+
+
 async def _update_draft_row(user_id: str, draft_id: str, updates: dict[str, Any], workspace_id: str = "") -> bool:
     repo = DraftRepository()
     entity = await repo.get(draft_id)

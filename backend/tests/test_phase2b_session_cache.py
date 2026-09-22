@@ -6,6 +6,7 @@ leakage), explicit invalidation (token + user), and that the hot resolver
 executing the full ~9-query summary fetch.
 """
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -187,3 +188,40 @@ def test_authenticated_user_id_uses_canonical_session_resolution(monkeypatch):
     )
     assert owner == USER_A
     assert seen["full"] == 0
+
+
+def test_bound_web_session_skips_identity_token_and_legacy_summary(monkeypatch):
+    """A durable web binding is the fast, still-session-validated path."""
+    touched: list[str] = []
+
+    class SessionService:
+        async def touch_session(self, session_id):
+            touched.append(session_id)
+
+    monkeypatch.setattr(
+        identity_dependencies,
+        "web_session_binding",
+        lambda _token: asyncio.sleep(0, result=SimpleNamespace(
+            canonical_user_id=USER_A,
+            canonical_session_id="canonical-session-a",
+        )),
+    )
+    monkeypatch.setattr(
+        "services.identity.api.get_authenticated_user_id",
+        lambda _request: (_ for _ in ()).throw(AssertionError("identity token lookup must not run")),
+    )
+    monkeypatch.setattr(
+        "services.identity.api._get_service",
+        lambda: SimpleNamespace(_session_svc=SessionService()),
+    )
+    monkeypatch.setattr(
+        identity_dependencies,
+        "ensure_legacy_user_bridge",
+        lambda user_id: asyncio.sleep(0) if user_id == USER_A else None,
+    )
+
+    class Req:
+        headers = {"authorization": f"Bearer {TOKEN_A}"}
+
+    assert asyncio.run(identity_dependencies.resolve_web_session(Req())) == (USER_A, TOKEN_A)
+    assert touched == ["canonical-session-a"]

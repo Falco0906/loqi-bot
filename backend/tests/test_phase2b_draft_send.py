@@ -116,6 +116,23 @@ def harness(monkeypatch):
                 return True
         return False
     monkeypatch.setattr(workspace_state, "persist_draft_update_awaited", fake_persist_draft)
+
+    async def fake_claim(draft_id, *, workspace_id, expected_status):
+        for draft in state["durable"]:
+            if draft["id"] == draft_id and draft.get("status") == expected_status:
+                draft["status"] = "sending"
+                return True
+        return False
+
+    async def fake_release(draft_id, *, workspace_id, restore_status):
+        for draft in state["durable"]:
+            if draft["id"] == draft_id and draft.get("status") == "sending":
+                draft["status"] = restore_status
+                return True
+        return False
+
+    monkeypatch.setattr(workspace_state, "claim_draft_for_send", fake_claim)
+    monkeypatch.setattr(workspace_state, "release_draft_send_claim", fake_release)
     monkeypatch.setattr(
         outbound_service,
         "persist_outbound_projection",

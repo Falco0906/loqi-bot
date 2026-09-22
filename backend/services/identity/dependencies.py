@@ -140,6 +140,26 @@ async def resolve_web_session(request: Request) -> tuple[str, str]:
     token = web_session_token(request)
     if not token:
         raise HTTPException(status_code=401, detail="Authentication required")
+
+    # A web-session token is not an identity access token.  Prefer its
+    # durable binding before attempting identity-token validation, otherwise
+    # every authenticated web request pays for a failed session lookup and
+    # the legacy compatibility identity walk.  The binding remains safe: its
+    # canonical session is still touched/validated below before it authorizes
+    # the request.
+    binding = await web_session_binding(token)
+    if binding:
+        binding_user = getattr(binding, "canonical_user_id", "") or binding.get("canonical_user_id", "")
+        binding_session = getattr(binding, "canonical_session_id", "") or binding.get("canonical_session_id", "")
+        if binding_user and binding_session:
+            from services.identity.api import _get_service
+            try:
+                await _get_service()._session_svc.touch_session(binding_session)
+            except Exception as exc:
+                raise HTTPException(status_code=401, detail="Invalid or expired session") from exc
+            await ensure_legacy_user_bridge(binding_user)
+            return str(binding_user), token
+
     try:
         from services.identity.api import get_authenticated_user_id
         user_id = await get_authenticated_user_id(request)
@@ -151,17 +171,6 @@ async def resolve_web_session(request: Request) -> tuple[str, str]:
     identity = await cached_web_session_identity(token)
     if not identity or not identity.get("user_id"):
         raise HTTPException(status_code=401, detail="Invalid or expired session")
-    binding = await web_session_binding(token)
-    if binding:
-        binding_user = getattr(binding, "canonical_user_id", "") or binding.get("canonical_user_id", "")
-        binding_session = getattr(binding, "canonical_session_id", "") or binding.get("canonical_session_id", "")
-        from services.identity.api import _get_service
-        try:
-            await _get_service()._session_svc.touch_session(binding_session)
-        except Exception as exc:
-            raise HTTPException(status_code=401, detail="Invalid or expired session") from exc
-        await ensure_legacy_user_bridge(binding_user)
-        return binding_user, token
     user_id = str(identity["user_id"])
     await ensure_legacy_user_bridge(user_id)
     return user_id, token

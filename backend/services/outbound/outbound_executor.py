@@ -29,9 +29,12 @@ class OutboundExecutor:
             send_result = registry_send(request.provider_id, request)
         except Exception as error:  # noqa: BLE001 - translate provider failures at this boundary
             logger.error("outbound_send_failed provider_id=%s error_type=%s", request.provider_id, type(error).__name__)
-            return {"ok": False, "error": str(error)}
+            # A transport exception can occur after the provider accepted the
+            # request.  The caller must retain its durable send claim instead
+            # of treating this as retry-safe and risking a duplicate email.
+            return {"ok": False, "error": str(error), "retry_safe": False}
         if not send_result:
-            return {"ok": False, "error": "Provider not found"}
+            return {"ok": False, "error": "Provider not found", "retry_safe": True}
 
         history_item = SendHistoryItem(
             provider_id=send_result.provider_id,
@@ -53,10 +56,16 @@ class OutboundExecutor:
                 request.provider_id,
                 type(error).__name__,
             )
-            return {"ok": False, "error": "Email send history could not be persisted"}
+            return {
+                "ok": False,
+                "error": "Email send history could not be persisted",
+                "provider_accepted": send_result.status != DeliveryStatus.FAILED,
+                "retry_safe": send_result.status == DeliveryStatus.FAILED,
+            }
 
         return {
             "ok": send_result.status != DeliveryStatus.FAILED,
+            "retry_safe": send_result.status == DeliveryStatus.FAILED,
             "send_result": {
                 "id": send_result.id,
                 "external_message_id": send_result.external_message_id,

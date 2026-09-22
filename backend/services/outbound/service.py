@@ -497,6 +497,9 @@ async def send_outbound_draft(
 
     if canonical.get("status") == "sent" or draft.status in (DraftStatus.SENT, DraftStatus.SENDING):
         return {"ok": False, "error": "Draft already sent"}
+    original_status = str(canonical.get("status") or "")
+    if original_status not in {"approved", "pending"}:
+        return {"ok": False, "error": "Draft is not approved for sending"}
     if owner_id and draft.provider_id:
         provider = communication_store.get_provider(draft.provider_id)
         if provider is not None and str(provider.user_id) != str(owner_id):
@@ -507,6 +510,18 @@ async def send_outbound_draft(
     provider_id = resolve_provider_for_draft(draft, owner_id)
     if not provider_id:
         return {"ok": False, "error": "No Gmail outbound provider registered"}
+
+    claimed = await workspace_state.claim_draft_for_send(
+        draft_id,
+        workspace_id=workspace_id,
+        expected_status=original_status,
+    )
+    if not claimed:
+        # A concurrent request either owns the in-flight send or has already
+        # completed it.  Preserve the existing safe retry envelope and never
+        # invoke Gmail again.
+        return {"ok": False, "error": "Draft already sent"}
+
     effective_recipient = Recipient(
         email=test_recipient or recipient.email,
         name=(test_recipient_name or "Test Recipient") if test_recipient else recipient.name,
@@ -515,6 +530,16 @@ async def send_outbound_draft(
         outbound_executor.send_hydrated_draft, draft, provider_id=provider_id, recipient_override=effective_recipient,
     )
     if not result.get("ok"):
+        # Explicit provider failures (for example, a Gmail 4xx/5xx response)
+        # are safe to retry.  A transport failure or a history write after
+        # provider acceptance is ambiguous, so retain ``sending`` and block a
+        # duplicate external send.
+        if result.get("retry_safe", True):
+            await workspace_state.release_draft_send_claim(
+                draft_id,
+                workspace_id=workspace_id,
+                restore_status=original_status,
+            )
         publish(session_token, WMEventType.DRAFT_FAILED, {"draft_id": draft_id, "error": result.get("error", "Unknown error")}, actor="system")
         return {"ok": False, "send_result": result}
     if not await workspace_state.persist_draft_update_awaited(owner_id, draft_id, {"status": "sent"}, workspace_id=workspace_id):

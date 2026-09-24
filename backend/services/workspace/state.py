@@ -912,6 +912,11 @@ async def _persist_campaign_lead_id_row(
     return lead_id
 
 
+async def import_workspace_lead(workspace_id: str, lead: dict[str, Any]) -> str | None:
+    """Persist a user-provided lead through the canonical workspace-lead path."""
+    return await _normalize_lead(workspace_id, lead)
+
+
 async def _normalize_lead(workspace_id: str, lead: dict[str, Any]) -> str | None:
     """Persist a lead as a global person + company, then link it to the workspace.
 

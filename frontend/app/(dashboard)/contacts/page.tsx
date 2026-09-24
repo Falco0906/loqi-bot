@@ -1,73 +1,26 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import { useRouter } from "next/navigation";
-import PageHeader from "../../../components/primitives/PageHeader";
-import PageSection from "../../../components/primitives/PageSection";
-import ProspectCard from "../../../components/prospect/ProspectCard";
-import ProspectDrawer from "../../../components/prospect/ProspectDrawer";
-import PrimaryButton from "../../../components/shared/PrimaryButton";
-import { useProspectRegistry } from "../../../contexts/ProspectRegistryProvider";
-import { Prospect } from "../../../lib/types/prospect";
+import { useEffect, useState } from "react";
+import { importLeadCsv, listWorkspaceLeads, previewLeadCsv, type WorkspaceLeadRecord } from "../../../lib/api";
+
+const sessionToken = () => typeof window === "undefined" ? "" : localStorage.getItem("loqi_active_session_token") || "";
+const FIELDS = ["first_name", "last_name", "name", "email", "company", "website", "title", "linkedin_url", "location", "industry", "company_size", "phone"];
 
 export default function ContactsPage() {
-  const router = useRouter();
-  const { savedProspects } = useProspectRegistry();
-  const [search, setSearch] = useState("");
-  const [selectedProspect, setSelectedProspect] = useState<Prospect | null>(null);
-  
-  const filteredContacts = useMemo(() => {
-    return savedProspects.filter(c => 
-      c.company.toLowerCase().includes(search.toLowerCase()) ||
-      c.contact.toLowerCase().includes(search.toLowerCase()) ||
-      c.title.toLowerCase().includes(search.toLowerCase())
-    );
-  }, [search, savedProspects]);
-
-  return (
-    <div className="flex flex-col gap-8 p-8">
-      <PageHeader title="Contacts" description="Manage prospects you've saved." />
-      
-      <div className="flex gap-4 items-center">
-        <input 
-          className="p-2 border rounded bg-surface w-64"
-          placeholder="Search contacts..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <select className="p-2 border rounded bg-surface">
-          <option>All Filters</option>
-          <option>High Confidence</option>
-          <option>Needs Follow-up</option>
-        </select>
-        <PrimaryButton onClick={() => router.push("/discovery")}>Find Prospects</PrimaryButton>
-      </div>
-
-      <PageSection>
-        {filteredContacts.length > 0 ? (
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            {filteredContacts.map(p => (
-              <ProspectCard 
-                key={p.id} 
-                prospect={p} 
-                action="remove"
-                onToggle={() => setSelectedProspect(p)} 
-              />
-            ))}
-          </div>
-        ) : (
-             <div className="flex flex-col items-center justify-center py-20 text-center text-outline">
-                <p className="text-body-lg">You haven't saved any prospects yet.</p>
-                <PrimaryButton className="mt-4" onClick={() => router.push("/discovery")}>Find Prospects</PrimaryButton>
-             </div>
-        )}
-      </PageSection>
-
-      <ProspectDrawer 
-        isOpen={!!selectedProspect}
-        prospect={selectedProspect}
-        onClose={() => setSelectedProspect(null)}
-      />
-    </div>
-  );
+  const [leads, setLeads] = useState<WorkspaceLeadRecord[]>([]); const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set()); const [loading, setLoading] = useState(true); const [error, setError] = useState("");
+  const [csv, setCsv] = useState(""); const [preview, setPreview] = useState<Awaited<ReturnType<typeof previewLeadCsv>> | null>(null); const [mapping, setMapping] = useState<Record<string, string>>({}); const [importing, setImporting] = useState(false); const [importSummary, setImportSummary] = useState("");
+  const load = async () => { setLoading(true); try { setLeads((await listWorkspaceLeads(sessionToken(), search)).leads); setError(""); } catch { setError("Could not load your lead database."); } finally { setLoading(false); } };
+  useEffect(() => { const id = window.setTimeout(() => void load(), 250); return () => window.clearTimeout(id); }, [search]);
+  const inspect = async () => { try { const result = await previewLeadCsv(sessionToken(), csv, mapping); setPreview(result); setMapping(result.mapping); setImportSummary(""); setError(""); } catch (e) { setError(e instanceof Error ? e.message : "CSV could not be parsed."); } };
+  const upload = async (file?: File) => { if (file) { setCsv(await file.text()); setPreview(null); setMapping({}); setImportSummary(""); setError(""); } };
+  const confirm = async () => { if (!preview) return; setImporting(true); try { const finalPreview = await previewLeadCsv(sessionToken(), csv, mapping); const outcome = await importLeadCsv(sessionToken(), finalPreview.rows); setImportSummary(`${outcome.imported} imported · ${outcome.duplicates.length} duplicates skipped · ${outcome.invalid.length} invalid`); setPreview(null); setCsv(""); await load(); } catch { setError("Import could not be completed. No rows were retried automatically."); } finally { setImporting(false); } };
+  const all = leads.length > 0 && leads.every((lead) => selected.has(lead.id));
+  return <div className="p-8 space-y-6"><div><h1 className="text-2xl font-semibold">Lead Database</h1><p className="text-sm text-on-surface-variant">Durable leads in your selected workspace.</p></div>
+    <div className="flex flex-wrap gap-3"><input className="rounded-lg border bg-surface px-3 py-2" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, email, company, title, website"/><label className="rounded-lg bg-primary px-4 py-2 text-on-primary text-sm cursor-pointer">Upload CSV<input type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => void upload(e.target.files?.[0])}/></label>{csv && <button className="rounded-lg border px-4 py-2 text-sm" onClick={() => void inspect()}>Inspect columns</button>}</div>
+    {error && <p className="rounded-lg border border-error/30 p-3 text-error text-sm">{error}</p>}
+    {importSummary && <p className="rounded-lg border border-primary/30 p-3 text-sm text-primary">Import complete: {importSummary}</p>}
+    {preview && <section className="rounded-xl border p-4 space-y-3"><h2 className="font-medium">Import preview</h2><p className="text-sm">{preview.total_rows} detected · {preview.valid_rows} ready · {preview.invalid_rows.length} invalid</p>{preview.headers.map((header) => <label key={header} className="flex gap-3 text-sm"><span className="w-48 truncate">{header}</span><select value={mapping[header] || ""} onChange={(e) => setMapping({ ...mapping, [header]: e.target.value })}><option value="">Do not import</option>{FIELDS.map((field) => <option key={field}>{field}</option>)}</select></label>)}<p className="text-xs text-on-surface-variant">Unmapped: {preview.unmapped_columns.join(", ") || "none"}</p><button disabled={importing || !preview.valid_rows} onClick={() => void confirm()} className="rounded-lg bg-primary px-4 py-2 text-on-primary text-sm disabled:opacity-50">{importing ? "Importing…" : "Confirm import"}</button></section>}
+    {loading ? <p>Loading leads…</p> : leads.length === 0 ? <div className="rounded-xl border p-10 text-center text-on-surface-variant">No leads yet. Upload a CSV to begin.</div> : <div className="overflow-x-auto rounded-xl border"><table className="w-full text-sm"><thead><tr className="border-b text-left"><th className="p-3"><input type="checkbox" checked={all} onChange={() => setSelected(all ? new Set() : new Set(leads.map((lead) => lead.id)))}/></th><th>Name</th><th>Email</th><th>Company</th><th>Title</th><th>Website</th><th>Location</th></tr></thead><tbody>{leads.map((lead) => <tr key={lead.id} className="border-b last:border-0"><td className="p-3"><input type="checkbox" checked={selected.has(lead.id)} onChange={() => setSelected((current) => { const next = new Set(current); next.has(lead.id) ? next.delete(lead.id) : next.add(lead.id); return next; })}/></td><td>{`${lead.first_name} ${lead.last_name}`.trim() || "—"}</td><td>{lead.email || "—"}</td><td>{lead.company || "—"}</td><td>{lead.title || "—"}</td><td>{lead.website || "—"}</td><td>{lead.location || "—"}</td></tr>)}</tbody></table></div>}
+    {selected.size > 0 && <p className="text-sm text-primary">{selected.size} selected</p>}</div>;
 }

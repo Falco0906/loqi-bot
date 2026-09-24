@@ -30,6 +30,7 @@ import { usePageContext } from "../../hooks/usePageContext";
 import { useActionHandlers } from "../../hooks/useActionHandlers";
 import { useWorkspaceSearch } from "../../contexts/SearchContext";
 import { useCopilot } from "../../contexts/CopilotContext";
+import { useBetaFeature } from "../../contexts/BetaFeaturesContext";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
@@ -103,6 +104,7 @@ function describeDraftActionError(err: unknown, fallback: string): string {
 }
 
 export default function DraftReviewWorkspace() {
+  const outboundDeliveryEnabled = useBetaFeature("outbound_delivery");
   const searchParams = useSearchParams();
   const campaignParam = searchParams?.get("campaign") || null;
 
@@ -1198,7 +1200,7 @@ export default function DraftReviewWorkspace() {
                   This lead has no email address
                 </span>
               ) : null}
-              {selected.status === "approved" && !noRecipientEmail ? (
+              {outboundDeliveryEnabled && selected.status === "approved" && !noRecipientEmail ? (
                 <button
                   onClick={handleSend}
                   disabled={sendingId === selected.id || sendLockedIds.has(selected.id)}
@@ -1214,7 +1216,7 @@ export default function DraftReviewWorkspace() {
                   )}
                 </button>
               ) : null}
-              {selected.status === "approved" && !showSchedulePicker && !noRecipientEmail ? (
+              {outboundDeliveryEnabled && selected.status === "approved" && !showSchedulePicker && !noRecipientEmail ? (
                 <button
                   onClick={() => { setShowSchedulePicker(true); setScheduleTime(""); }}
                   className="px-3 py-1.5 text-xs font-bold rounded-lg border border-outline-variant/20 text-on-surface hover:border-info/40 hover:text-info transition-all duration-150 active:scale-[0.95]"
@@ -1222,7 +1224,7 @@ export default function DraftReviewWorkspace() {
                   Schedule
                 </button>
               ) : null}
-              {testRecipientEnabled && selected.status === "approved" ? (
+              {outboundDeliveryEnabled && testRecipientEnabled && selected.status === "approved" ? (
                 <label className="inline-flex items-center gap-2 rounded-lg border border-warning/30 bg-warning/5 px-2.5 py-1.5">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-warning">Test recipient</span>
                   <input

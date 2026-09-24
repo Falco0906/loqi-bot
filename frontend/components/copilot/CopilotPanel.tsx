@@ -6,10 +6,14 @@ import QuickReplies from "./QuickReplies";
 import SuggestedActions from "./SuggestedActions";
 import CopilotComposer from "./CopilotComposer";
 import Icon from "../shared/Icon";
+import { useTheme } from "../../hooks/useTheme";
 import { CLARIFICATION_PROMPT, CLARIFICATION_REPLIES, idleQuickReplies, type QuickReplyOption } from "../../lib/conversationMachine";
 
 function LoqiLogo({ className = "" }: { className?: string }) {
-  return <img src="/android-chrome-512x512.png" alt="" className={`shrink-0 rounded-md ${className}`} />;
+  const { theme } = useTheme();
+  const logoSrc = theme === "light" ? "/android-chrome-light-512x512.png" : "/android-chrome-512x512.png";
+
+  return <img src={logoSrc} alt="" className={`shrink-0 rounded-md ${className}`} />;
 }
 
 function ThinkingIndicator() {

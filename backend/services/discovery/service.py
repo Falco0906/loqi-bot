@@ -181,6 +181,14 @@ async def create_search_run(
     written before the job is scheduled, and the worker receives that exact
     ``discovery_id`` for progress, failure, recovery, and finalization.
     """
+    from services.capabilities.beta import beta_feature_enabled, beta_feature_unavailable_message
+
+    if not beta_feature_enabled("autonomous_lead_sourcing"):
+        raise DiscoveryJobLifecycleError(
+            403,
+            beta_feature_unavailable_message("autonomous_lead_sourcing"),
+        )
+
     if not workspace_id:
         from services.workspace.state import ensure_workspace
 

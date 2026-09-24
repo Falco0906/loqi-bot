@@ -349,6 +349,14 @@ async def update_campaign(
         if status not in VALID_CAMPAIGN_STATUSES:
             raise HTTPException(status_code=400, detail=f"Invalid campaign status: {status}")
         old_status = target.get("status", "")
+        if status == "completed" and old_status != "completed":
+            from services.capabilities.beta import beta_feature_enabled, beta_feature_unavailable_message
+
+            if not beta_feature_enabled("outbound_delivery"):
+                raise HTTPException(
+                    status_code=403,
+                    detail=beta_feature_unavailable_message("outbound_delivery"),
+                )
         target["status"] = status
         updates["status"] = status
         if status == "completed" and old_status != "completed":

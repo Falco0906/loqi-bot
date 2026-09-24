@@ -19,6 +19,7 @@ from services.capabilities.schemas import (
     OrganizationCapabilityResponse,
 )
 from services.capabilities.services import CapabilityService
+from services.capabilities.beta import beta_features
 from services.identity.dependencies import get_current_user_id
 from services.organizations.models import MembershipRole, MembershipStatus
 
@@ -151,6 +152,12 @@ async def list_capabilities(
     return CapabilitiesListResponse(
         capabilities=[_capability_to_response(c) for c in capabilities]
     )
+
+
+@router.get("/beta/features")
+async def list_beta_features():
+    """Expose the global Beta release policy to the web experience."""
+    return {"ok": True, "features": beta_features()}
 
 
 @router.get(

@@ -15,6 +15,7 @@ import {
 } from "../../lib/repositories";
 import { useTellLoqi } from "../../hooks/useTellLoqi";
 import { useCopilot } from "../../contexts/CopilotContext";
+import { useBetaFeature } from "../../contexts/BetaFeaturesContext";
 import { usePageContext } from "../../hooks/usePageContext";
 import { toast } from "../shared/Toast";
 import { addLeadToCampaign, decideLead, getCampaign, listCampaigns, TimeoutError } from "../../lib/api";
@@ -461,6 +462,7 @@ function LoadingSkeleton() {
 }
 
 export default function DiscoveryDetailWorkspace({ discoveryId }: { discoveryId: string }) {
+  const autonomousLeadSourcingEnabled = useBetaFeature("autonomous_lead_sourcing");
   const router = useRouter();
   const searchParams = useSearchParams();
   const parsed = useMemo(() => parseDiscoveryMode(searchParams), [searchParams]);
@@ -580,6 +582,10 @@ export default function DiscoveryDetailWorkspace({ discoveryId }: { discoveryId:
   }, [discoveryId, live?.status, data?.status]);
 
   const rerunDiscovery = async () => {
+    if (!autonomousLeadSourcingEnabled) {
+      toast("info", "Lead sourcing is not available in Loqi Beta.");
+      return;
+    }
     const contextQuery = attachContext ? buildDiscoveryQuery(attachContext) : "";
     const query = contextQuery || (view?.query || "").trim();
     if (!query) {
@@ -821,14 +827,14 @@ export default function DiscoveryDetailWorkspace({ discoveryId }: { discoveryId:
                 <p className="mt-1.5 text-body-md text-on-surface-variant/50 max-w-sm leading-relaxed">
                   The run stopped before completing. Restart it and I will derive a fresh plan from the same target.
                 </p>
-                <button
+                {autonomousLeadSourcingEnabled && <button
                   type="button"
                   disabled={restarting}
                   onClick={() => void rerunDiscovery()}
                   className="mt-6 bg-primary text-on-primary px-6 py-2 rounded-full text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
                 >
                   {restarting ? "Running…" : "Run again"}
-                </button>
+                </button>}
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center py-20 text-center animate-fade-in">
@@ -844,7 +850,7 @@ export default function DiscoveryDetailWorkspace({ discoveryId }: { discoveryId:
               </div>
             )}
             {view && !running && !failed && view.plan && <ResearchPlan plan={view.plan} />}
-            {!running && !attachMode && (
+            {!running && !attachMode && autonomousLeadSourcingEnabled && (
               <section className="pt-6 border-t border-outline-variant/20">
                 <div className="bg-surface-lowest border border-outline-variant/20 rounded-xl p-4 ambient-shadow">
                   <label className="text-xs uppercase tracking-widest text-on-surface-variant block mb-2 px-2 font-medium">

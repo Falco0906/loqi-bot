@@ -9,6 +9,7 @@ import { useData } from "../../lib/hooks/use-data";
 import { fetchDiscoveryListFresh, startDiscoverySearch } from "../../lib/repositories";
 import { toast } from "../shared/Toast";
 import { useWorkspaceSearch } from "../../contexts/SearchContext";
+import { useBetaFeature } from "../../contexts/BetaFeaturesContext";
 import { setNavState } from "../../lib/nav-state";
 import {
   parseDiscoveryMode,
@@ -99,8 +100,13 @@ export default function DiscoveryHistory() {
   const [inputQuery, setInputQuery] = useState("");
   const { data, loading, error, retry } = useData(fetchDiscoveryListFresh);
   const [searching, setSearching] = useState(false);
+  const autonomousLeadSourcingEnabled = useBetaFeature("autonomous_lead_sourcing");
 
   const submitDiscoverySearch = async (rawQuery: string) => {
+    if (!autonomousLeadSourcingEnabled) {
+      toast("info", "Lead sourcing is not available in Loqi Beta. Use existing workspace leads instead.");
+      return;
+    }
     const query = rawQuery.trim();
     if (!query || searching) return;
     setSearching(true);
@@ -121,6 +127,7 @@ export default function DiscoveryHistory() {
   };
 
   useEffect(() => {
+    if (!autonomousLeadSourcingEnabled) return;
     if (!attachMode || !attachContext || !attachContext.campaignId) return;
     let cancelled = false;
     const key = `loqi_attach_started_${attachContext.campaignId}`;
@@ -189,7 +196,7 @@ export default function DiscoveryHistory() {
     return () => {
       cancelled = true;
     };
-  }, [attachMode, attachContext, attachAttempt, router]);
+  }, [attachMode, attachContext, attachAttempt, router, autonomousLeadSourcingEnabled]);
 
   const items = data ?? [];
   const { query: searchQuery } = useWorkspaceSearch();
@@ -386,6 +393,8 @@ export default function DiscoveryHistory() {
         style={{ left: "var(--sidebar-w, 16rem)", right: "var(--copilot-w, 0px)" }}
       >
         <div className="reading-column px-6">
+          {autonomousLeadSourcingEnabled ? (
+            <>
           <div className="bg-surface-lowest border border-outline-variant/20 rounded-xl p-4 ambient-shadow">
             <label className="text-xs uppercase tracking-widest text-on-surface-variant block mb-2 px-2 font-medium">
               Tell Loqi...
@@ -433,6 +442,12 @@ export default function DiscoveryHistory() {
               SHIFT TO HEALTHCARE
             </button>
           </div>
+            </>
+          ) : (
+            <div className="rounded-xl border border-outline-variant/20 bg-surface-lowest p-5 text-center text-sm text-on-surface-variant">
+              Lead sourcing is unavailable in Loqi Beta. Work with leads already in your workspace.
+            </div>
+          )}
         </div>
       </div>
     </WorkspaceContainer>

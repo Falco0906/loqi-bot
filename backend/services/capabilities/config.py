@@ -1,6 +1,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import MappingProxyType
+
+
+# Product policy for the Loqi Beta release. This is global rather than an
+# organization entitlement: Beta deliberately exposes intelligence while
+# keeping autonomous execution code dormant.
+BETA_FEATURES = MappingProxyType({
+    "csv_import": True,
+    "lead_database": True,
+    "lead_search": True,
+    "lead_filtering": True,
+    "lead_selection": True,
+    "lead_analysis": True,
+    "lead_scoring": True,
+    "strategy_generation": True,
+    "outreach_generation": True,
+    "autonomous_lead_sourcing": False,
+    "outbound_delivery": False,
+    "automated_followups": False,
+    "autonomous_workflows": False,
+})
 
 
 SEED_CAPABILITIES: list[dict] = [

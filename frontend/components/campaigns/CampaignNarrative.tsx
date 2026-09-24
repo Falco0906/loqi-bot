@@ -2,6 +2,7 @@
 
 import { buildResearchUrl } from "../../lib/discovery-mode";
 import Icon from "../shared/Icon";
+import { useBetaFeature } from "../../contexts/BetaFeaturesContext";
 
 type Props = {
   campaignId: string;
@@ -52,6 +53,8 @@ export default function CampaignNarrative({
   onGenerateDrafts,
   onLaunch,
 }: Props) {
+  const outboundDeliveryEnabled = useBetaFeature("outbound_delivery");
+  const autonomousLeadSourcingEnabled = useBetaFeature("autonomous_lead_sourcing");
   const researchUrl = buildResearchUrl({
     campaignId,
     campaignName,
@@ -86,8 +89,10 @@ export default function CampaignNarrative({
     message = hasStrategy
       ? "Your strategy is ready. Attach the prospects it targets before drafting outreach."
       : "Let's find the right prospects before we build your messaging.";
-    primaryLabel = "Research prospects";
-    primaryHref = researchUrl;
+    if (autonomousLeadSourcingEnabled) {
+      primaryLabel = "Research prospects";
+      primaryHref = researchUrl;
+    }
   } else if (step === "strategy") {
     message = "Great. I understand your audience now. I'll prepare a strategy tailored to these companies.";
     primaryLabel = "Generate Strategy";
@@ -104,13 +109,17 @@ export default function CampaignNarrative({
     primaryLabel = "Open inbox";
     primaryHref = "/inbox";
   } else if (step === "sending") {
-    message =
-      approvedDrafts > 0
-        ? `Drafts are approved. Launch campaign (${approvedDrafts} draft${approvedDrafts === 1 ? "" : "s"} ready).`
-        : "Drafts are approved. Launch campaign.";
-    primaryLabel = "Launch campaign";
-    onPrimary = onLaunch;
-    primaryVariant = "success";
+    if (outboundDeliveryEnabled) {
+      message =
+        approvedDrafts > 0
+          ? `Drafts are approved. Launch campaign (${approvedDrafts} draft${approvedDrafts === 1 ? "" : "s"} ready).`
+          : "Drafts are approved. Launch campaign.";
+      primaryLabel = "Launch campaign";
+      onPrimary = onLaunch;
+      primaryVariant = "success";
+    } else {
+      message = "Your outreach is ready to review, copy, or export for a human to send.";
+    }
   } else {
     message = "Your messaging is ready. Next I'll prepare personalized outreach drafts.";
     primaryLabel = "Generate Drafts";

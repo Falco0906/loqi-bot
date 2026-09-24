@@ -6,6 +6,7 @@ import Icon from "../shared/Icon";
 import CampaignStatusBadge from "./CampaignStatusBadge";
 import { toast } from "../shared/Toast";
 import { setNavState } from "../../lib/nav-state";
+import { useBetaFeature } from "../../contexts/BetaFeaturesContext";
 
 type Props = {
   id: string;
@@ -57,6 +58,7 @@ export default function CampaignCard({
   onRename,
   onDuplicate,
 }: Props) {
+  const outboundDeliveryEnabled = useBetaFeature("outbound_delivery");
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -94,7 +96,7 @@ export default function CampaignCard({
         </Link>
       );
     }
-    if (step === "sending") {
+    if (step === "sending" && outboundDeliveryEnabled) {
       return (
         <Link
           href={stepAction?.link(id) || `/campaigns/${id}`}
@@ -110,7 +112,7 @@ export default function CampaignCard({
         href={stepAction?.link(id) || `/campaigns/${id}`}
         className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
       >
-        {stepAction?.primary || "Continue Planning"}
+        {step === "sending" ? "Review outreach" : stepAction?.primary || "Continue Planning"}
       </Link>
     );
   })();

@@ -21,6 +21,7 @@ import {
 } from "../../lib/repositories";
 import AppPage from "../../components/primitives/AppPage";
 import { ProspectRegistryProvider } from "../../contexts/ProspectRegistryProvider";
+import { BetaFeaturesProvider } from "../../contexts/BetaFeaturesContext";
 
 const COPILOT_PANEL_WIDTH = 440;
 const HIGHLIGHT_PAGES = ["/mission-control", "/knowledge", "/strategic-update", "/settings"];
@@ -212,13 +213,15 @@ export default function DashboardLayout({
 }) {
   return (
     <ProspectRegistryProvider>
-      <CopilotProvider>
-        <SearchProvider>
-          <DashboardShell>
-            {children}
-          </DashboardShell>
-        </SearchProvider>
-      </CopilotProvider>
+      <BetaFeaturesProvider>
+        <CopilotProvider>
+          <SearchProvider>
+            <DashboardShell>
+              {children}
+            </DashboardShell>
+          </SearchProvider>
+        </CopilotProvider>
+      </BetaFeaturesProvider>
     </ProspectRegistryProvider>
   );
 }

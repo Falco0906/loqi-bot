@@ -465,6 +465,11 @@ async def test_campaign_attachment_does_not_wait_for_legacy_event_persistence(mo
 
 async def test_create_search_run_keeps_explicit_workspace(monkeypatch):
     """The lower-level kickoff must not replace selected workspace with a default."""
+    import services.capabilities.beta as beta_policy
+
+    # Preserve coverage of the deferred implementation; the Beta boundary is
+    # exercised separately in test_beta_feature_policy.
+    monkeypatch.setattr(beta_policy, "beta_feature_enabled", lambda _feature: True)
     persisted: dict[str, str] = {}
 
     def create_discovery(workspace_id, owner_id, query, display_title=None):

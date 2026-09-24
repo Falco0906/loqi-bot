@@ -8,6 +8,7 @@ from fastapi import HTTPException
 
 import services.workflows.api as workflow_api
 import services.workflows.service as workflow_service
+import services.capabilities.beta as beta_policy
 from services.workflows.runtime import clear as clear_runtimes, create_runtime
 from services.world_model import EventType as WMEventType
 
@@ -29,7 +30,11 @@ def _runtime(status: str) -> SimpleNamespace:
 
 
 @pytest.fixture(autouse=True)
-def _reset_runtime_state():
+def _reset_runtime_state(monkeypatch):
+    # This module characterizes the preserved legacy runtime itself. Beta
+    # production routes reject it; the test explicitly enables the deferred
+    # capability so the underlying contract remains covered.
+    monkeypatch.setattr(beta_policy, "beta_feature_enabled", lambda _feature: True)
     clear_runtimes()
     yield
     clear_runtimes()

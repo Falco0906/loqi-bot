@@ -1,0 +1,3150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Claude Audit — loqi-bot</title>
+<style>
+  :root {
+    --bg: #0f1117; --surface: #1a1d27; --surface2: #21263a;
+    --border: #2d3348; --text: #e2e8f0; --muted: #6b7280;
+    --cyan: #06b6d4; --green: #4ade80; --yellow: #facc15; --red: #f87171;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, sans-serif; line-height: 1.6; }
+  a { color: var(--cyan); }
+  .container { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem; }
+
+  /* Header */
+  .header { text-align: center; padding: 3rem 0 2rem; border-bottom: 1px solid var(--border); margin-bottom: 2rem; }
+  .header .logo { font-size: 2rem; font-weight: 900; letter-spacing: -1px; }
+  .header .logo span { color: var(--cyan); }
+  .header .subtitle { color: var(--muted); margin-top: 0.5rem; }
+
+  /* Overview grid */
+  .overview { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 2rem; }
+  @media (max-width: 700px) { .overview { grid-template-columns: 1fr; } }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; }
+  .card h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 1rem; }
+
+  /* Score circle */
+  .big-score { text-align: center; }
+  .score-ring { width: 120px; height: 120px; margin: 0 auto 1rem; position: relative; }
+  .score-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .score-ring circle { fill: none; stroke-width: 8; }
+  .score-ring .bg { stroke: var(--border); }
+  .score-ring .fg { stroke-dasharray: 339; stroke-dashoffset: calc(339 - (339 * var(--score) / 100)); stroke-linecap: round; transition: stroke-dashoffset 1s ease; }
+  .score-number { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; }
+  .score-number .num { font-size: 2rem; font-weight: 900; }
+  .score-number .label { font-size: 0.7rem; color: var(--muted); }
+  .grade-badge { display: inline-block; padding: 0.3rem 1.2rem; border-radius: 999px; font-size: 1.5rem; font-weight: 900; margin-top: 0.5rem; }
+
+  /* Stats */
+  .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+  .stat-item { background: var(--surface2); border-radius: 8px; padding: 0.75rem 1rem; }
+  .stat-item .count { font-size: 1.5rem; font-weight: 700; }
+  .stat-item .slabel { font-size: 0.75rem; color: var(--muted); }
+
+  /* Project info */
+  .info-table { width: 100%; border-collapse: collapse; }
+  .info-table td { padding: 0.4rem 0; vertical-align: top; }
+  .info-table td:first-child { color: var(--muted); width: 40%; font-size: 0.85rem; }
+  .info-table td:last-child { font-size: 0.85rem; }
+
+  /* Category cards */
+  .categories { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+  @media (max-width: 700px) { .categories { grid-template-columns: 1fr; } }
+
+  .cat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; }
+  .cat-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
+  .cat-title { display: flex; align-items: center; gap: 0.5rem; }
+  .cat-icon { font-size: 1.25rem; }
+  .cat-title h3 { font-size: 1rem; font-weight: 600; }
+  .cat-score { display: flex; align-items: center; gap: 0.5rem; }
+  .score-circle { width: 44px; height: 44px; border-radius: 50%; background: conic-gradient(var(--color) calc(var(--score) * 1%), var(--border) 0); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.8rem; }
+  .grade { font-weight: 900; font-size: 1.1rem; }
+  .score-bar-wrap { height: 6px; background: var(--border); border-radius: 999px; overflow: hidden; margin-bottom: 1rem; }
+  .score-bar-fill { height: 100%; border-radius: 999px; }
+  .cat-summary { font-size: 0.85rem; color: var(--muted); margin-bottom: 1rem; }
+  .clean { color: var(--green); font-size: 0.9rem; }
+
+  /* Findings */
+  .findings-list { display: flex; flex-direction: column; gap: 0.75rem; }
+  .finding { background: var(--surface2); border-radius: 8px; padding: 1rem; border-left: 3px solid var(--border); }
+  .finding-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; flex-wrap: wrap; }
+  .sev-badge { font-size: 0.65rem; font-weight: 700; padding: 0.2rem 0.5rem; border-radius: 4px; color: #000; }
+  .finding-desc { font-size: 0.85rem; color: var(--muted); margin-bottom: 0.5rem; }
+  .finding-file { font-size: 0.8rem; color: var(--cyan); margin-bottom: 0.4rem; }
+  .snippet { font-size: 0.75rem; background: #0d0f18; padding: 0.5rem 0.75rem; border-radius: 6px; overflow-x: auto; color: #a5b4fc; margin-bottom: 0.4rem; font-family: 'Fira Code', monospace; }
+  .finding-fix { font-size: 0.82rem; color: var(--green); }
+
+  /* Footer */
+  .footer { text-align: center; padding: 2rem 0; color: var(--muted); font-size: 0.85rem; margin-top: 2rem; border-top: 1px solid var(--border); }
+
+  /* Section title */
+  .section-title { font-size: 1.25rem; font-weight: 700; margin: 2rem 0 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
+
+  /* Tool usage chips */
+  .tool-usage { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1rem; }
+  .tool-chip { background: var(--surface2); border: 1px solid var(--border); border-radius: 999px; padding: 0.25rem 0.75rem; font-size: 0.8rem; color: var(--muted); }
+  .tool-chip code { color: var(--cyan); font-family: 'Fira Code', monospace; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <div class="logo"><span>Claude</span> Audit</div>
+    <div class="subtitle">AI-Powered Codebase Audit Report · 24/9/2026, 11:25:46 am</div>
+  </div>
+
+  <div class="overview">
+    <div class="card big-score">
+      <h2>Overall Score</h2>
+      <div class="score-ring" style="--score:40">
+        <svg viewBox="0 0 120 120">
+          <circle class="bg" cx="60" cy="60" r="54"/>
+          <circle class="fg" cx="60" cy="60" r="54" style="stroke:#f87171;stroke-dasharray:339;stroke-dashoffset:203.4"/>
+        </svg>
+        <div class="score-number">
+          <span class="num" style="color:#f87171">40</span>
+          <span class="label">/ 100</span>
+        </div>
+      </div>
+      <div class="grade-badge" style="background:#f8717122;color:#f87171">F</div>
+    </div>
+
+    <div class="card">
+      <h2>Findings Breakdown</h2>
+      <div class="stats-grid">
+        <div class="stat-item">
+          <div class="count" style="color:#ef4444">11</div>
+          <div class="slabel">🔴 Critical</div>
+        </div>
+        <div class="stat-item">
+          <div class="count" style="color:#f97316">20</div>
+          <div class="slabel">🟠 High</div>
+        </div>
+        <div class="stat-item">
+          <div class="count" style="color:#eab308">50</div>
+          <div class="slabel">🟡 Medium</div>
+        </div>
+        <div class="stat-item">
+          <div class="count" style="color:#60a5fa">204</div>
+          <div class="slabel">🔵 Low</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:2rem">
+    <h2>Project Info</h2>
+    <table class="info-table">
+      <tr><td>Project</td><td><strong>loqi-bot</strong></td></tr>
+      <tr><td>Languages</td><td>JSON (12), Markdown (115), YAML (2), Docker (2), Python (294), TOML (1), HTML (25), TypeScript (43), JavaScript (2), SQL (1), CSS (1)</td></tr>
+      
+      <tr><td>Files Scanned</td><td>498</td></tr>
+      <tr><td>Lines of Code</td><td>1,55,994</td></tr>
+      <tr><td>Tests</td><td>✅ Yes</td></tr>
+      <tr><td>Package Manager</td><td>npm</td></tr>
+      <tr><td>Analysis</td><td>⚡ Static Only</td></tr>
+    </table>
+  </div>
+
+  
+
+  <div class="section-title">📈 Category Results</div>
+  <div class="categories">
+    
+    <div class="cat-card">
+      <div class="cat-header">
+        <div class="cat-title">
+          <span class="cat-icon">🔒</span>
+          <h3>Security</h3>
+        </div>
+        <div class="cat-score">
+          <div class="score-circle" style="--score:0;--color:#f87171">
+            <span>0</span>
+          </div>
+          <span class="grade" style="color:#f87171">F</span>
+        </div>
+      </div>
+      <div class="score-bar-wrap">
+        <div class="score-bar-fill" style="width:0%;background:#f87171"></div>
+      </div>
+      
+      <div class="findings-list">
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#ef4444">CRITICAL</span>
+          <strong>Hardcoded Secret / Password</strong>
+        </div>
+        <p class="finding-desc">Potential Hardcoded Secret / Password found in source code.</p>
+        <div class="finding-file">📄 <code>backend/scripts/saas_smoke_test.py:9</code></div>
+        <pre class="snippet">SMOKE_PASSWORD='&lt;password&gt;' python -m scripts.saas_smoke_test</pre>
+        <div class="finding-fix">✅ <strong>Fix:</strong> Use environment variables or a secrets manager (e.g. HashiCorp Vault, AWS Secrets Manager)</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>dangerouslySetInnerHTML (XSS Risk)</strong>
+        </div>
+        <p class="finding-desc">Potential dangerouslySetInnerHTML (XSS Risk) found in source code.</p>
+        <div class="finding-file">📄 <code>frontend/app/layout.tsx:36</code></div>
+        <pre class="snippet">dangerouslySetInnerHTML={{</pre>
+        <div class="finding-fix">✅ <strong>Fix:</strong> Sanitize content with DOMPurify before using dangerouslySetInnerHTML.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#ef4444">CRITICAL</span>
+          <strong>Hardcoded Secret / Password</strong>
+        </div>
+        <p class="finding-desc">Potential Hardcoded Secret / Password found in source code.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_account_recovery.py:63</code></div>
+        <pre class="snippet">PASSWORD = &quot;StrongPass!123&quot;</pre>
+        <div class="finding-fix">✅ <strong>Fix:</strong> Use environment variables or a secrets manager (e.g. HashiCorp Vault, AWS Secrets Manager)</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#ef4444">CRITICAL</span>
+          <strong>Hardcoded Secret / Password</strong>
+        </div>
+        <p class="finding-desc">Potential Hardcoded Secret / Password found in source code.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_billing_platform.py:76</code></div>
+        <pre class="snippet">stripe_webhook_secret=&quot;**********&quot;,</pre>
+        <div class="finding-fix">✅ <strong>Fix:</strong> Use environment variables or a secrets manager (e.g. HashiCorp Vault, AWS Secrets Manager)</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#ef4444">CRITICAL</span>
+          <strong>Hardcoded Secret / Password</strong>
+        </div>
+        <p class="finding-desc">Potential Hardcoded Secret / Password found in source code.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_billing_platform.py:354</code></div>
+        <pre class="snippet">stripe_webhook_secret=&quot;**********&quot;,</pre>
+        <div class="finding-fix">✅ <strong>Fix:</strong> Use environment variables or a secrets manager (e.g. HashiCorp Vault, AWS Secrets Manager)</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#ef4444">CRITICAL</span>
+          <strong>Hardcoded Secret / Password</strong>
+        </div>
+        <p class="finding-desc">Potential Hardcoded Secret / Password found in source code.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_billing_platform.py:1094</code></div>
+        <pre class="snippet">stripe_webhook_secret=&quot;**********&quot;,</pre>
+        <div class="finding-fix">✅ <strong>Fix:</strong> Use environment variables or a secrets manager (e.g. HashiCorp Vault, AWS Secrets Manager)</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#ef4444">CRITICAL</span>
+          <strong>Hardcoded Secret / Password</strong>
+        </div>
+        <p class="finding-desc">Potential Hardcoded Secret / Password found in source code.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_credential_framework.py:1034</code></div>
+        <pre class="snippet">secret = &quot;************&quot;</pre>
+        <div class="finding-fix">✅ <strong>Fix:</strong> Use environment variables or a secrets manager (e.g. HashiCorp Vault, AWS Secrets Manager)</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#ef4444">CRITICAL</span>
+          <strong>Hardcoded Secret / Password</strong>
+        </div>
+        <p class="finding-desc">Potential Hardcoded Secret / Password found in source code.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_credential_framework.py:1135</code></div>
+        <pre class="snippet">secret = &quot;**********&quot;  # 10 chars, show_first=4 -&gt; 4 + 6*</pre>
+        <div class="finding-fix">✅ <strong>Fix:</strong> Use environment variables or a secrets manager (e.g. HashiCorp Vault, AWS Secrets Manager)</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#ef4444">CRITICAL</span>
+          <strong>Hardcoded Secret / Password</strong>
+        </div>
+        <p class="finding-desc">Potential Hardcoded Secret / Password found in source code.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_gmail_auth_failure_recovery.py:35</code></div>
+        <pre class="snippet">SENTINEL_SECRET = &quot;************&quot;</pre>
+        <div class="finding-fix">✅ <strong>Fix:</strong> Use environment variables or a secrets manager (e.g. HashiCorp Vault, AWS Secrets Manager)</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#f97316">HIGH</span>
+          <strong>Database Connection String with Credentials</strong>
+        </div>
+        <p class="finding-desc">Potential Database Connection String with Credentials found in source code.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_platform_migration.py:21</code></div>
+        <pre class="snippet">&quot;postgresql://postgres:secret@db.project-from-database.supabase.co:5432/postgres&quot;,</pre>
+        <div class="finding-fix">✅ <strong>Fix:</strong> Use environment variable: DATABASE_URL=... and read via process.env.DATABASE_URL</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#ef4444">CRITICAL</span>
+          <strong>Hardcoded Secret / Password</strong>
+        </div>
+        <p class="finding-desc">Potential Hardcoded Secret / Password found in source code.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_provider_startup_projection.py:12</code></div>
+        <pre class="snippet">_client_secret = &quot;************&quot;</pre>
+        <div class="finding-fix">✅ <strong>Fix:</strong> Use environment variables or a secrets manager (e.g. HashiCorp Vault, AWS Secrets Manager)</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#ef4444">CRITICAL</span>
+          <strong>Hardcoded Secret / Password</strong>
+        </div>
+        <p class="finding-desc">Potential Hardcoded Secret / Password found in source code.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_saas22_membership_lifecycle.py:69</code></div>
+        <pre class="snippet">PASSWORD = &quot;StrongPass!123&quot;</pre>
+        <div class="finding-fix">✅ <strong>Fix:</strong> Use environment variables or a secrets manager (e.g. HashiCorp Vault, AWS Secrets Manager)</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#ef4444">CRITICAL</span>
+          <strong>Hardcoded Secret / Password</strong>
+        </div>
+        <p class="finding-desc">Potential Hardcoded Secret / Password found in source code.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_workspace_tenant_foundation.py:75</code></div>
+        <pre class="snippet">PASSWORD = &quot;StrongPass!123&quot;</pre>
+        <div class="finding-fix">✅ <strong>Fix:</strong> Use environment variables or a secrets manager (e.g. HashiCorp Vault, AWS Secrets Manager)</div>
+      </div></div>
+    </div>
+    <div class="cat-card">
+      <div class="cat-header">
+        <div class="cat-title">
+          <span class="cat-icon">📊</span>
+          <h3>Quality</h3>
+        </div>
+        <div class="cat-score">
+          <div class="score-circle" style="--score:0;--color:#f87171">
+            <span>0</span>
+          </div>
+          <span class="grade" style="color:#f87171">F</span>
+        </div>
+      </div>
+      <div class="score-bar-wrap">
+        <div class="score-bar-fill" style="width:0%;background:#f87171"></div>
+      </div>
+      
+      <div class="findings-list">
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#f97316">HIGH</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">frontend/contexts/CopilotContext.tsx has 1273 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>frontend/contexts/CopilotContext.tsx</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Deep Nesting Detected</strong>
+        </div>
+        <p class="finding-desc">frontend/contexts/CopilotContext.tsx:771 — nesting depth of 6. This hurts readability and testability.</p>
+        <div class="finding-file">📄 <code>frontend/contexts/CopilotContext.tsx:771</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Use early returns, extract functions, or restructure logic to reduce nesting. Aim for max depth of 3.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Deep Nesting Detected</strong>
+        </div>
+        <p class="finding-desc">frontend/hooks/useTextHighlight.ts:38 — nesting depth of 6. This hurts readability and testability.</p>
+        <div class="finding-file">📄 <code>frontend/hooks/useTextHighlight.ts:38</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Use early returns, extract functions, or restructure logic to reduce nesting. Aim for max depth of 3.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#f97316">HIGH</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">frontend/lib/api.ts has 1941 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>frontend/lib/api.ts</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Deep Nesting Detected</strong>
+        </div>
+        <p class="finding-desc">frontend/lib/api.ts:129 — nesting depth of 6. This hurts readability and testability.</p>
+        <div class="finding-file">📄 <code>frontend/lib/api.ts:129</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Use early returns, extract functions, or restructure logic to reduce nesting. Aim for max depth of 3.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Deep Nesting Detected</strong>
+        </div>
+        <p class="finding-desc">frontend/lib/event-client.ts:173 — nesting depth of 6. This hurts readability and testability.</p>
+        <div class="finding-file">📄 <code>frontend/lib/event-client.ts:173</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Use early returns, extract functions, or restructure logic to reduce nesting. Aim for max depth of 3.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#f97316">HIGH</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">frontend/lib/repositories.ts has 1185 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>frontend/lib/repositories.ts</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Deep Nesting Detected</strong>
+        </div>
+        <p class="finding-desc">frontend/lib/repositories.ts:1083 — nesting depth of 7. This hurts readability and testability.</p>
+        <div class="finding-file">📄 <code>frontend/lib/repositories.ts:1083</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Use early returns, extract functions, or restructure logic to reduce nesting. Aim for max depth of 3.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Duplicate Imports</strong>
+        </div>
+        <p class="finding-desc">frontend/lib/repositories.ts imports the same module multiple times: ./strategic-intelligence-api</p>
+        <div class="finding-file">📄 <code>frontend/lib/repositories.ts</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Consolidate imports from the same module into a single import statement.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">synthetic/data/gen_mfg_log.py has 833 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>synthetic/data/gen_mfg_log.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">synthetic/data/part_cafe_restaurant.py has 748 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>synthetic/data/part_cafe_restaurant.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_account_recovery.py has 717 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_account_recovery.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#f97316">HIGH</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_adapter_registry_integration.py has 1001 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_adapter_registry_integration.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#f97316">HIGH</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_adapter_sdk.py has 1511 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_adapter_sdk.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_auth_api.py has 719 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_auth_api.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#f97316">HIGH</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_billing_platform.py has 1271 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_billing_platform.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_booking_strategy.py has 640 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_booking_strategy.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_calendar_adapter.py has 956 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_calendar_adapter.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_campaign_revision.py has 610 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_campaign_revision.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#f97316">HIGH</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_capability_system.py has 1441 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_capability_system.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#f97316">HIGH</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_copilot_api.py has 1434 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_copilot_api.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#f97316">HIGH</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_credential_framework.py has 1196 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_credential_framework.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_discovery_jobs.py has 748 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_discovery_jobs.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#f97316">HIGH</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_email_composition_engine.py has 1408 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_email_composition_engine.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#f97316">HIGH</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_event_bus.py has 1077 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_event_bus.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_execution_adapter_registry.py has 902 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_execution_adapter_registry.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_execution_dispatcher.py has 981 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_execution_dispatcher.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_execution_foundation.py has 775 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_execution_foundation.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#f97316">HIGH</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_execution_loop.py has 1163 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_execution_loop.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_execution_scheduler.py has 858 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_execution_scheduler.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#f97316">HIGH</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_gmail_adapter.py has 1576 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_gmail_adapter.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_gmail_auth_failure_recovery.py has 585 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_gmail_auth_failure_recovery.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#f97316">HIGH</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_google_api_adapter.py has 1783 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_google_api_adapter.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_heterogeneous_execution.py has 608 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_heterogeneous_execution.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#f97316">HIGH</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_http_adapter.py has 2580 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_http_adapter.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_identity_platform_p1.py has 600 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_identity_platform_p1.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_identity_platform_p2.py has 678 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_identity_platform_p2.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_knowledge_service.py has 619 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_knowledge_service.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_launch_persistence.py has 719 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_launch_persistence.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_metrics_collector.py has 872 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_metrics_collector.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_multi_agent.py has 610 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_multi_agent.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_onboarding.py has 739 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_onboarding.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_organization_platform.py has 604 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_organization_platform.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#f97316">HIGH</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_organizational_memory.py has 1009 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_organizational_memory.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#f97316">HIGH</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_persistence.py has 1546 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_persistence.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_planner.py has 742 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_planner.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#f97316">HIGH</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_planner_router.py has 1604 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_planner_router.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_pr10_8_2_connection_dedup.py has 541 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_pr10_8_2_connection_dedup.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_pr10_8_2_live_fixes.py has 606 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_pr10_8_2_live_fixes.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_pr10_8_persistence_recovery.py has 697 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_pr10_8_persistence_recovery.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Deep Nesting Detected</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_pr10_8_persistence_recovery.py:669 — nesting depth of 6. This hurts readability and testability.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_pr10_8_persistence_recovery.py:669</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Use early returns, extract functions, or restructure logic to reduce nesting. Aim for max depth of 3.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_provider_layer.py has 786 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_provider_layer.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_recovery_manager.py has 981 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_recovery_manager.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_registration_lifecycle_cleanup.py has 530 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_registration_lifecycle_cleanup.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#f97316">HIGH</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_retry_engine.py has 1469 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_retry_engine.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_saas22_membership_lifecycle.py has 596 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_saas22_membership_lifecycle.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_saas_identity_boundary.py has 561 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_saas_identity_boundary.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_sales_intelligence.py has 814 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_sales_intelligence.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_workflow_executor.py has 528 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_workflow_executor.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_workflow_phase2b.py has 600 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_workflow_phase2b.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_workspace_tenant_foundation.py has 630 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_workspace_tenant_foundation.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/services/campaigns/service.py has 848 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/services/campaigns/service.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/services/billing/services.py has 522 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/services/billing/services.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/services/communication/gmail_provider.py has 734 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/services/communication/gmail_provider.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/services/communication/reply_simulator.py has 564 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/services/communication/reply_simulator.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/services/communication/service.py has 740 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/services/communication/service.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/services/copilot/runners.py has 664 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/services/copilot/runners.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/services/copilot/service.py has 697 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/services/copilot/service.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#eab308">MEDIUM</span>
+          <strong>Large File — Consider Splitting</strong>
+        </div>
+        <p class="finding-desc">backend/services/copilot/tools.py has 639 lines. Large files are hard to test, review, and maintain.</p>
+        <div class="finding-file">📄 <code>backend/services/copilot/tools.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Split into smaller, focused modules. Follow the Single Responsibility Principle.</div>
+      </div></div>
+    </div>
+    <div class="cat-card">
+      <div class="cat-header">
+        <div class="cat-title">
+          <span class="cat-icon">⚡</span>
+          <h3>Performance</h3>
+        </div>
+        <div class="cat-score">
+          <div class="score-circle" style="--score:80;--color:#4ade80">
+            <span>80</span>
+          </div>
+          <span class="grade" style="color:#4ade80">B</span>
+        </div>
+      </div>
+      <div class="score-bar-wrap">
+        <div class="score-bar-fill" style="width:80%;background:#4ade80"></div>
+      </div>
+      
+      <p class="clean">✅ No issues found</p>
+    </div>
+    <div class="cat-card">
+      <div class="cat-header">
+        <div class="cat-title">
+          <span class="cat-icon">🏗️</span>
+          <h3>Architecture</h3>
+        </div>
+        <div class="cat-score">
+          <div class="score-circle" style="--score:80;--color:#4ade80">
+            <span>80</span>
+          </div>
+          <span class="grade" style="color:#4ade80">B</span>
+        </div>
+      </div>
+      <div class="score-bar-wrap">
+        <div class="score-bar-fill" style="width:80%;background:#4ade80"></div>
+      </div>
+      
+      <p class="clean">✅ No issues found</p>
+    </div>
+    <div class="cat-card">
+      <div class="cat-header">
+        <div class="cat-title">
+          <span class="cat-icon">📦</span>
+          <h3>Dependencies</h3>
+        </div>
+        <div class="cat-score">
+          <div class="score-circle" style="--score:80;--color:#4ade80">
+            <span>80</span>
+          </div>
+          <span class="grade" style="color:#4ade80">B</span>
+        </div>
+      </div>
+      <div class="score-bar-wrap">
+        <div class="score-bar-fill" style="width:80%;background:#4ade80"></div>
+      </div>
+      
+      <p class="clean">✅ No issues found</p>
+    </div>
+    <div class="cat-card">
+      <div class="cat-header">
+        <div class="cat-title">
+          <span class="cat-icon">🧪</span>
+          <h3>Testing</h3>
+        </div>
+        <div class="cat-score">
+          <div class="score-circle" style="--score:80;--color:#4ade80">
+            <span>80</span>
+          </div>
+          <span class="grade" style="color:#4ade80">B</span>
+        </div>
+      </div>
+      <div class="score-bar-wrap">
+        <div class="score-bar-fill" style="width:80%;background:#4ade80"></div>
+      </div>
+      
+      <p class="clean">✅ No issues found</p>
+    </div>
+    <div class="cat-card">
+      <div class="cat-header">
+        <div class="cat-title">
+          <span class="cat-icon">📚</span>
+          <h3>Documentation</h3>
+        </div>
+        <div class="cat-score">
+          <div class="score-circle" style="--score:0;--color:#f87171">
+            <span>0</span>
+          </div>
+          <span class="grade" style="color:#f87171">F</span>
+        </div>
+      </div>
+      <div class="score-bar-wrap">
+        <div class="score-bar-fill" style="width:0%;background:#f87171"></div>
+      </div>
+      
+      <div class="findings-list">
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">frontend/tailwind.config.ts has &lt; 5% comment coverage across 120 lines.</p>
+        <div class="finding-file">📄 <code>frontend/tailwind.config.ts</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">synthetic/generator.py has &lt; 5% comment coverage across 405 lines.</p>
+        <div class="finding-file">📄 <code>synthetic/generator.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/app/lifespan.py has &lt; 5% comment coverage across 475 lines.</p>
+        <div class="finding-file">📄 <code>backend/app/lifespan.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/scripts/backfill_diagnose.py has &lt; 5% comment coverage across 107 lines.</p>
+        <div class="finding-file">📄 <code>backend/scripts/backfill_diagnose.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/scripts/cleanup_abandoned_registration.py has &lt; 5% comment coverage across 135 lines.</p>
+        <div class="finding-file">📄 <code>backend/scripts/cleanup_abandoned_registration.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/scripts/delete_test_account.py has &lt; 5% comment coverage across 376 lines.</p>
+        <div class="finding-file">📄 <code>backend/scripts/delete_test_account.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/scripts/migrate_legacy_workspaces.py has &lt; 5% comment coverage across 240 lines.</p>
+        <div class="finding-file">📄 <code>backend/scripts/migrate_legacy_workspaces.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/scripts/reconcile_web_sessions.py has &lt; 5% comment coverage across 269 lines.</p>
+        <div class="finding-file">📄 <code>backend/scripts/reconcile_web_sessions.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">frontend/contexts/CopilotContext.tsx has &lt; 5% comment coverage across 1273 lines.</p>
+        <div class="finding-file">📄 <code>frontend/contexts/CopilotContext.tsx</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">frontend/hooks/useJobPolling.ts has &lt; 5% comment coverage across 141 lines.</p>
+        <div class="finding-file">📄 <code>frontend/hooks/useJobPolling.ts</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">frontend/lib/actionRegistry.ts has &lt; 5% comment coverage across 162 lines.</p>
+        <div class="finding-file">📄 <code>frontend/lib/actionRegistry.ts</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">frontend/lib/api.ts has &lt; 5% comment coverage across 1941 lines.</p>
+        <div class="finding-file">📄 <code>frontend/lib/api.ts</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">frontend/lib/auth-api.ts has &lt; 5% comment coverage across 215 lines.</p>
+        <div class="finding-file">📄 <code>frontend/lib/auth-api.ts</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">frontend/lib/domain.ts has &lt; 5% comment coverage across 388 lines.</p>
+        <div class="finding-file">📄 <code>frontend/lib/domain.ts</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">frontend/lib/onboarding-api.ts has &lt; 5% comment coverage across 144 lines.</p>
+        <div class="finding-file">📄 <code>frontend/lib/onboarding-api.ts</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">frontend/lib/repositories.ts has &lt; 5% comment coverage across 1185 lines.</p>
+        <div class="finding-file">📄 <code>frontend/lib/repositories.ts</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">synthetic/data/gen_mfg_log.py has &lt; 5% comment coverage across 833 lines.</p>
+        <div class="finding-file">📄 <code>synthetic/data/gen_mfg_log.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">synthetic/data/part_cafe_restaurant.py has &lt; 5% comment coverage across 748 lines.</p>
+        <div class="finding-file">📄 <code>synthetic/data/part_cafe_restaurant.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/adapters/adapter_registration.py has &lt; 5% comment coverage across 114 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/adapters/adapter_registration.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/adapters/capabilities.py has &lt; 5% comment coverage across 213 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/adapters/capabilities.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/adapters/credentials.py has &lt; 5% comment coverage across 277 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/adapters/credentials.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/adapters/models.py has &lt; 5% comment coverage across 133 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/adapters/models.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_account_recovery.py has &lt; 5% comment coverage across 717 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_account_recovery.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_adapter_registry_integration.py has &lt; 5% comment coverage across 1001 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_adapter_registry_integration.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_adapter_sdk.py has &lt; 5% comment coverage across 1511 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_adapter_sdk.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_auth_api.py has &lt; 5% comment coverage across 719 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_auth_api.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_billing_platform.py has &lt; 5% comment coverage across 1271 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_billing_platform.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_booking_strategy.py has &lt; 5% comment coverage across 640 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_booking_strategy.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_calendar_adapter.py has &lt; 5% comment coverage across 956 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_calendar_adapter.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_campaign_launch_identity.py has &lt; 5% comment coverage across 205 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_campaign_launch_identity.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_campaign_revision.py has &lt; 5% comment coverage across 610 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_campaign_revision.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_campaign_timeline_projection.py has &lt; 5% comment coverage across 213 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_campaign_timeline_projection.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_capability_platform.py has &lt; 5% comment coverage across 469 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_capability_platform.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_capability_system.py has &lt; 5% comment coverage across 1441 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_capability_system.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_cleanup_abandoned_registration.py has &lt; 5% comment coverage across 230 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_cleanup_abandoned_registration.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_config_validation.py has &lt; 5% comment coverage across 203 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_config_validation.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_conversation_followup_flow.py has &lt; 5% comment coverage across 332 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_conversation_followup_flow.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_conversation_intelligence_memory_persistence.py has &lt; 5% comment coverage across 139 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_conversation_intelligence_memory_persistence.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_conversation_read_router.py has &lt; 5% comment coverage across 124 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_conversation_read_router.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_conversation_reply_flow.py has &lt; 5% comment coverage across 304 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_conversation_reply_flow.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_conversation_supabase_persistence.py has &lt; 5% comment coverage across 361 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_conversation_supabase_persistence.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_copilot_api.py has &lt; 5% comment coverage across 1434 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_copilot_api.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_copilot_async_jobs.py has &lt; 5% comment coverage across 273 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_copilot_async_jobs.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_copilot_execution_ledger.py has &lt; 5% comment coverage across 180 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_copilot_execution_ledger.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_copilot_lead_campaign_flow.py has &lt; 5% comment coverage across 270 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_copilot_lead_campaign_flow.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_copilot_memory.py has &lt; 5% comment coverage across 190 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_copilot_memory.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_copilot_orchestrator.py has &lt; 5% comment coverage across 157 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_copilot_orchestrator.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_credential_framework.py has &lt; 5% comment coverage across 1196 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_credential_framework.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_delayed_job_leases.py has &lt; 5% comment coverage across 191 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_delayed_job_leases.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_delete_test_account.py has &lt; 5% comment coverage across 175 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_delete_test_account.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_discovery_context.py has &lt; 5% comment coverage across 223 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_discovery_context.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_discovery_jobs.py has &lt; 5% comment coverage across 748 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_discovery_jobs.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_discovery_workspace_scope.py has &lt; 5% comment coverage across 486 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_discovery_workspace_scope.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_draft_batch_job_engine.py has &lt; 5% comment coverage across 156 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_draft_batch_job_engine.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_draft_generation_recovery.py has &lt; 5% comment coverage across 144 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_draft_generation_recovery.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_draft_lifecycle.py has &lt; 5% comment coverage across 407 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_draft_lifecycle.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_email_composition_engine.py has &lt; 5% comment coverage across 1408 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_email_composition_engine.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_email_infrastructure.py has &lt; 5% comment coverage across 340 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_email_infrastructure.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_event_bus.py has &lt; 5% comment coverage across 1077 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_event_bus.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_execution_adapter_registry.py has &lt; 5% comment coverage across 902 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_execution_adapter_registry.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_execution_dispatcher.py has &lt; 5% comment coverage across 981 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_execution_dispatcher.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_execution_foundation.py has &lt; 5% comment coverage across 775 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_execution_foundation.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_execution_loop.py has &lt; 5% comment coverage across 1163 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_execution_loop.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_execution_scheduler.py has &lt; 5% comment coverage across 858 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_execution_scheduler.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_export_csv_contract.py has &lt; 5% comment coverage across 230 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_export_csv_contract.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_generate_reply_instruction.py has &lt; 5% comment coverage across 214 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_generate_reply_instruction.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_gmail_adapter.py has &lt; 5% comment coverage across 1576 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_gmail_adapter.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_gmail_outbound_auth_retry.py has &lt; 5% comment coverage across 316 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_gmail_outbound_auth_retry.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_google_api_adapter.py has &lt; 5% comment coverage across 1783 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_google_api_adapter.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_google_oauth.py has &lt; 5% comment coverage across 366 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_google_oauth.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_heterogeneous_execution.py has &lt; 5% comment coverage across 608 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_heterogeneous_execution.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_http_adapter.py has &lt; 5% comment coverage across 2580 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_http_adapter.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_identity_auth_repository_contract.py has &lt; 5% comment coverage across 300 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_identity_auth_repository_contract.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_identity_platform_p1.py has &lt; 5% comment coverage across 600 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_identity_platform_p1.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_identity_platform_p2.py has &lt; 5% comment coverage across 678 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_identity_platform_p2.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_identity_schema_migration.py has &lt; 5% comment coverage across 326 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_identity_schema_migration.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_identity_schema_migration_022.py has &lt; 5% comment coverage across 174 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_identity_schema_migration_022.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_identity_schema_migration_025_026.py has &lt; 5% comment coverage across 139 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_identity_schema_migration_025_026.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_inbound_filter.py has &lt; 5% comment coverage across 207 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_inbound_filter.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_inbox_sync_engine.py has &lt; 5% comment coverage across 248 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_inbox_sync_engine.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_knowledge_agent_context.py has &lt; 5% comment coverage across 345 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_knowledge_agent_context.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_knowledge_service.py has &lt; 5% comment coverage across 619 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_knowledge_service.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_launch_execution.py has &lt; 5% comment coverage across 341 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_launch_execution.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_launch_persistence.py has &lt; 5% comment coverage across 719 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_launch_persistence.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_lead_round_trip.py has &lt; 5% comment coverage across 351 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_lead_round_trip.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_lifecycle_readiness.py has &lt; 5% comment coverage across 135 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_lifecycle_readiness.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_lifespan_runtime_bootstrap.py has &lt; 5% comment coverage across 243 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_lifespan_runtime_bootstrap.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_logging_error_handling.py has &lt; 5% comment coverage across 205 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_logging_error_handling.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_manual_campaign_creation.py has &lt; 5% comment coverage across 156 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_manual_campaign_creation.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_mission_control.py has &lt; 5% comment coverage across 478 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_mission_control.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_mission_control_workspace_scope.py has &lt; 5% comment coverage across 307 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_mission_control_workspace_scope.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_no_email_guard.py has &lt; 5% comment coverage across 140 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_no_email_guard.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_nonblocking_provider_retries.py has &lt; 5% comment coverage across 107 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_nonblocking_provider_retries.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_onboarding.py has &lt; 5% comment coverage across 739 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_onboarding.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_onboarding_initial_research.py has &lt; 5% comment coverage across 138 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_onboarding_initial_research.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_organization_platform.py has &lt; 5% comment coverage across 604 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_organization_platform.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_organizational_memory.py has &lt; 5% comment coverage across 1009 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_organizational_memory.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_outbound_endpoint_ownership.py has &lt; 5% comment coverage across 130 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_outbound_endpoint_ownership.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_outbound_engine.py has &lt; 5% comment coverage across 153 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_outbound_engine.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_outbound_provider_threading.py has &lt; 5% comment coverage across 251 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_outbound_provider_threading.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_outbound_scheduled_jobs.py has &lt; 5% comment coverage across 205 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_outbound_scheduled_jobs.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_persistence.py has &lt; 5% comment coverage across 1546 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_persistence.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_phase2b_draft_send.py has &lt; 5% comment coverage across 290 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_phase2b_draft_send.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_phase2b_session_cache.py has &lt; 5% comment coverage across 228 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_phase2b_session_cache.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_phase3a_redis.py has &lt; 5% comment coverage across 324 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_phase3a_redis.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_phase3e_draft_events.py has &lt; 5% comment coverage across 166 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_phase3e_draft_events.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_phase3f_concurrency.py has &lt; 5% comment coverage across 293 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_phase3f_concurrency.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_phase4_discovery.py has &lt; 5% comment coverage across 133 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_phase4_discovery.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_planner.py has &lt; 5% comment coverage across 742 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_planner.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_planner_router.py has &lt; 5% comment coverage across 1604 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_planner_router.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_pr10_7_oauth_credentials.py has &lt; 5% comment coverage across 255 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_pr10_7_oauth_credentials.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_pr10_8_2_connection_dedup.py has &lt; 5% comment coverage across 541 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_pr10_8_2_connection_dedup.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_pr10_8_3_2_idor_audit.py has &lt; 5% comment coverage across 441 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_pr10_8_3_2_idor_audit.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_pr10_8_3_3_final_security.py has &lt; 5% comment coverage across 286 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_pr10_8_3_3_final_security.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_pr10_8_persistence_recovery.py has &lt; 5% comment coverage across 697 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_pr10_8_persistence_recovery.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_pr10_error_handling.py has &lt; 5% comment coverage across 181 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_pr10_error_handling.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_pr10_persistence_verification.py has &lt; 5% comment coverage across 177 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_pr10_persistence_verification.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_pr10_volume_entrypoint.py has &lt; 5% comment coverage across 208 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_pr10_volume_entrypoint.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_pr29_sales_playbook.py has &lt; 5% comment coverage across 359 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_pr29_sales_playbook.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_pr30_campaign_flow.py has &lt; 5% comment coverage across 432 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_pr30_campaign_flow.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_pr9_reply_lifecycle.py has &lt; 5% comment coverage across 355 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_pr9_reply_lifecycle.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_provider_layer.py has &lt; 5% comment coverage across 786 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_provider_layer.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_r15_legacy_lead_routes.py has &lt; 5% comment coverage across 152 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_r15_legacy_lead_routes.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_r17_provider_route_contracts.py has &lt; 5% comment coverage across 492 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_r17_provider_route_contracts.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_r18_copilot_turn_context.py has &lt; 5% comment coverage across 265 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_r18_copilot_turn_context.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_r18_web_session_route_contracts.py has &lt; 5% comment coverage across 270 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_r18_web_session_route_contracts.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_r19_workflow_lifecycle_contracts.py has &lt; 5% comment coverage across 153 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_r19_workflow_lifecycle_contracts.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_r2a1_access_characterization.py has &lt; 5% comment coverage across 141 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_r2a1_access_characterization.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_rate_limiting.py has &lt; 5% comment coverage across 173 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_rate_limiting.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_reasoner_integration.py has &lt; 5% comment coverage across 384 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_reasoner_integration.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_registration_lifecycle_cleanup.py has &lt; 5% comment coverage across 530 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_registration_lifecycle_cleanup.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_reply_simulator.py has &lt; 5% comment coverage across 300 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_reply_simulator.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_retry_engine.py has &lt; 5% comment coverage across 1469 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_retry_engine.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_saas12_auth_hardening.py has &lt; 5% comment coverage across 299 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_saas12_auth_hardening.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_saas13_api_boundary.py has &lt; 5% comment coverage across 450 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_saas13_api_boundary.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_saas14_tenant_isolation.py has &lt; 5% comment coverage across 402 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_saas14_tenant_isolation.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_saas15_oauth_hardening.py has &lt; 5% comment coverage across 364 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_saas15_oauth_hardening.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_saas16_session_consolidation.py has &lt; 5% comment coverage across 386 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_saas16_session_consolidation.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_saas17_reconciliation.py has &lt; 5% comment coverage across 147 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_saas17_reconciliation.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_saas22_membership_lifecycle.py has &lt; 5% comment coverage across 596 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_saas22_membership_lifecycle.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_saas24_resource_tenant_scoping.py has &lt; 5% comment coverage across 356 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_saas24_resource_tenant_scoping.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_saas26_durable_communication.py has &lt; 5% comment coverage across 275 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_saas26_durable_communication.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_saas27_multi_workspace.py has &lt; 5% comment coverage across 449 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_saas27_multi_workspace.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_saas28_1_organization_adoption.py has &lt; 5% comment coverage across 277 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_saas28_1_organization_adoption.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_saas28_production_workspace_migration.py has &lt; 5% comment coverage across 386 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_saas28_production_workspace_migration.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_sales_intelligence.py has &lt; 5% comment coverage across 814 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_sales_intelligence.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_secrets_safety.py has &lt; 5% comment coverage across 165 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_secrets_safety.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_signup_completion_link.py has &lt; 5% comment coverage across 207 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_signup_completion_link.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_strategic_actions.py has &lt; 5% comment coverage across 261 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_strategic_actions.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_strategic_intelligence.py has &lt; 5% comment coverage across 285 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_strategic_intelligence.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_strategic_profile_service.py has &lt; 5% comment coverage across 106 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_strategic_profile_service.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_verification_email_recipient.py has &lt; 5% comment coverage across 171 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_verification_email_recipient.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_web_session_identity.py has &lt; 5% comment coverage across 489 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_web_session_identity.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_workflow_executor.py has &lt; 5% comment coverage across 528 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_workflow_executor.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_workflow_lifecycle_threading.py has &lt; 5% comment coverage across 267 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_workflow_lifecycle_threading.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_workflow_phase2b.py has &lt; 5% comment coverage across 600 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_workflow_phase2b.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_workflow_planner.py has &lt; 5% comment coverage across 267 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_workflow_planner.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_workspace_activity.py has &lt; 5% comment coverage across 275 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_workspace_activity.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_workspace_context_contract.py has &lt; 5% comment coverage across 180 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_workspace_context_contract.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_workspace_lead_attach.py has &lt; 5% comment coverage across 332 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_workspace_lead_attach.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_workspace_lifecycle_routes.py has &lt; 5% comment coverage across 181 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_workspace_lifecycle_routes.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_workspace_preferences.py has &lt; 5% comment coverage across 440 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_workspace_preferences.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_workspace_snapshot_canonical.py has &lt; 5% comment coverage across 228 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_workspace_snapshot_canonical.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_workspace_tenant_foundation.py has &lt; 5% comment coverage across 630 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_workspace_tenant_foundation.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/tests/test_world_model.py has &lt; 5% comment coverage across 383 lines.</p>
+        <div class="finding-file">📄 <code>backend/tests/test_world_model.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/campaigns/analysis.py has &lt; 5% comment coverage across 288 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/campaigns/analysis.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/campaigns/api.py has &lt; 5% comment coverage across 281 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/campaigns/api.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/campaigns/service.py has &lt; 5% comment coverage across 848 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/campaigns/service.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/campaigns/strategy_comparison.py has &lt; 5% comment coverage across 119 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/campaigns/strategy_comparison.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/campaigns/timeline.py has &lt; 5% comment coverage across 210 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/campaigns/timeline.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/agent_sdk/models.py has &lt; 5% comment coverage across 134 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/agent_sdk/models.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/agents/crm_agent.py has &lt; 5% comment coverage across 122 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/agents/crm_agent.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/agents/memory_agent.py has &lt; 5% comment coverage across 118 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/agents/memory_agent.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/agents/outreach_agent.py has &lt; 5% comment coverage across 126 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/agents/outreach_agent.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/agents/research_agent.py has &lt; 5% comment coverage across 116 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/agents/research_agent.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/billing/api.py has &lt; 5% comment coverage across 463 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/billing/api.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/billing/events.py has &lt; 5% comment coverage across 126 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/billing/events.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/billing/models.py has &lt; 5% comment coverage across 175 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/billing/models.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/billing/repositories.py has &lt; 5% comment coverage across 249 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/billing/repositories.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/billing/services.py has &lt; 5% comment coverage across 522 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/billing/services.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/billing/stripe_provider.py has &lt; 5% comment coverage across 448 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/billing/stripe_provider.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/capabilities/api.py has &lt; 5% comment coverage across 242 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/capabilities/api.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/capabilities/repositories.py has &lt; 5% comment coverage across 205 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/capabilities/repositories.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/capabilities/services.py has &lt; 5% comment coverage across 299 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/capabilities/services.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/communication/api.py has &lt; 5% comment coverage across 364 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/communication/api.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/communication/communication_store.py has &lt; 5% comment coverage across 290 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/communication/communication_store.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/communication/gmail_provider.py has &lt; 5% comment coverage across 734 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/communication/gmail_provider.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/communication/google_auth.py has &lt; 5% comment coverage across 107 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/communication/google_auth.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/communication/inbox_sync_engine.py has &lt; 5% comment coverage across 253 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/communication/inbox_sync_engine.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/communication/provider_events.py has &lt; 5% comment coverage across 114 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/communication/provider_events.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/communication/provider_models.py has &lt; 5% comment coverage across 151 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/communication/provider_models.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/communication/provider_registry.py has &lt; 5% comment coverage across 103 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/communication/provider_registry.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/communication/provider_startup.py has &lt; 5% comment coverage across 339 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/communication/provider_startup.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/communication/reply_simulator.py has &lt; 5% comment coverage across 564 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/communication/reply_simulator.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/communication/service.py has &lt; 5% comment coverage across 740 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/communication/service.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/copilot/decision.py has &lt; 5% comment coverage across 232 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/copilot/decision.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/copilot/executions.py has &lt; 5% comment coverage across 309 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/copilot/executions.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/copilot/memory.py has &lt; 5% comment coverage across 267 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/copilot/memory.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/copilot/orchestrator.py has &lt; 5% comment coverage across 320 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/copilot/orchestrator.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/copilot/response.py has &lt; 5% comment coverage across 298 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/copilot/response.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/copilot/runners.py has &lt; 5% comment coverage across 664 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/copilot/runners.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/copilot/service.py has &lt; 5% comment coverage across 697 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/copilot/service.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div>
+      <div class="finding">
+        <div class="finding-header">
+          <span class="sev-badge" style="background:#60a5fa">LOW</span>
+          <strong>Insufficient Documentation</strong>
+        </div>
+        <p class="finding-desc">backend/services/copilot/tools.py has &lt; 5% comment coverage across 639 lines.</p>
+        <div class="finding-file">📄 <code>backend/services/copilot/tools.py</code></div>
+        
+        <div class="finding-fix">✅ <strong>Fix:</strong> Add JSDoc/docstrings to exported functions, classes, and complex logic.</div>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Generated by <a href="https://github.com/itsmesherry/claude-audit">claude-audit</a> · AI-powered codebase auditor
+  </div>
+</div>
+</body>
+</html>

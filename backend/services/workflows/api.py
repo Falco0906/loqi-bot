@@ -16,6 +16,17 @@ from services.workflows.runtime import get_active_runtimes, get_all_runtimes, ge
 router = APIRouter(tags=["Workflows"])
 
 
+def _require_beta_workflow_execution() -> None:
+    """Keep the legacy runtime intact while Beta disables autonomous execution."""
+    from services.capabilities.beta import beta_feature_enabled, beta_feature_unavailable_message
+
+    if not beta_feature_enabled("autonomous_workflows"):
+        raise HTTPException(
+            status_code=403,
+            detail=beta_feature_unavailable_message("autonomous_workflows"),
+        )
+
+
 class ExecuteWorkflowRequest(BaseModel):
     plan_id: str
     goal: str
@@ -66,6 +77,7 @@ async def execute_workflow_endpoint(
     request: Request = None,
 ):
     """Start the existing synchronous legacy workflow runtime."""
+    _require_beta_workflow_execution()
     session_token = identity_dependencies.web_session_token(request)
     return await service.start_workflow_async(
         session_token=session_token,
@@ -82,6 +94,7 @@ async def execute_workflow_endpoint(
 @router.post("/api/web/session/{session_token}/workflows/{workflow_id}/approve")
 async def approve_workflow_step(session_token: str, workflow_id: str, request: Request = None):
     """Approve one owned workflow through its canonical lifecycle operation."""
+    _require_beta_workflow_execution()
     session_token = identity_dependencies.web_session_token(request)
     _owned_runtime_or_404(workflow_id, request, session_token)
     return await _lifecycle_result(service.approve_workflow_for_session_async, workflow_id, session_token)
@@ -98,6 +111,7 @@ async def pause_workflow_endpoint(session_token: str, workflow_id: str, request:
 @router.post("/api/web/session/{session_token}/workflows/{workflow_id}/resume")
 async def resume_workflow_endpoint(session_token: str, workflow_id: str, request: Request = None):
     """Resume one owned workflow through its canonical lifecycle operation."""
+    _require_beta_workflow_execution()
     session_token = identity_dependencies.web_session_token(request)
     _owned_runtime_or_404(workflow_id, request, session_token)
     return await _lifecycle_result(service.resume_workflow_for_session_async, workflow_id, session_token)

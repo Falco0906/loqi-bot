@@ -685,4 +685,12 @@ async def send_reply(conversation_id: str, owner_id: str, payload: object) -> di
 
 async def send_follow_up(conversation_id: str, owner_id: str, payload: object) -> dict[str, Any]:
     """Send a follow-up only for the authenticated conversation owner."""
+    from fastapi import HTTPException
+    from services.capabilities.beta import beta_feature_enabled, beta_feature_unavailable_message
+
+    if not beta_feature_enabled("automated_followups"):
+        raise HTTPException(
+            status_code=403,
+            detail=beta_feature_unavailable_message("automated_followups"),
+        )
     return await _send_conversation_message(conversation_id, owner_id, payload, follow_up=True)

@@ -45,6 +45,8 @@ export class TimeoutError extends Error {
   }
 }
 
+export type BetaFeatures = Record<string, boolean>;
+
 type FetchOptions = {
   method?: string;
   headers?: Record<string, string>;
@@ -186,6 +188,15 @@ async function fetchWithRetry<T>(
   }
 
   throw lastError || new NetworkError("Failed to fetch");
+}
+
+/** Read the backend-owned Loqi Beta release policy. */
+export async function getBetaFeatures(): Promise<BetaFeatures> {
+  const response = await fetchWithRetry<{ ok: boolean; features: BetaFeatures }>(
+    `${API_BASE}/api/v1/beta/features`,
+    { headers: authHeaders() },
+  );
+  return response.features || {};
 }
 
 export async function checkHealth() {
@@ -748,6 +759,69 @@ export async function decideLead(
       body: JSON.stringify({ lead, approved }),
     },
   );
+}
+
+export type WorkspaceLeadRecord = { id: string; first_name: string; last_name: string; email: string; title: string; company: string; website: string; location: string; industry: string };
+export async function listWorkspaceLeads(sessionToken: string, query = "", page = 1, filters: Record<string, string> = {}) {
+  const params = new URLSearchParams({ q: query, page: String(page), ...filters });
+  return fetchWithRetry<{ ok: boolean; leads: WorkspaceLeadRecord[]; total: number; page: number; page_size: number }>(`${API_BASE}/api/web/session/_/leads?${params}`, { headers: authHeaders(), timeout: 8000 });
+}
+export async function previewLeadCsv(sessionToken: string, csv: string, mapping: Record<string, string>) {
+  return fetchWithRetry<{ ok: boolean; headers: string[]; mapping: Record<string, string>; unmapped_columns: string[]; total_rows: number; valid_rows: number; invalid_rows: Array<{ row: number; reason: string }>; preview: Array<{ row: number; lead: Record<string, string> }>; rows: Array<{ row: number; lead: Record<string, string> }> }>(`${API_BASE}/api/web/session/_/leads/csv-preview`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify({ csv, mapping }) });
+}
+export async function importLeadCsv(sessionToken: string, rows: Array<{ row: number; lead: Record<string, string> }>) {
+  return fetchWithRetry<{ ok: boolean; imported: number; duplicates: Array<{ row: number; reason: string }>; invalid: Array<{ row: number; reason: string }> }>(`${API_BASE}/api/web/session/_/leads/csv-import`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify({ rows }) });
+}
+export async function analyzeWorkspaceLeads(sessionToken: string, leadIds: string[]) {
+  return fetchWithRetry<{
+    ok: boolean;
+    results: Array<{
+      lead: WorkspaceLeadRecord;
+      status: "completed" | "failed";
+      error?: string;
+      facts?: Array<{ label: string; value: string; source: string }>;
+      observed_signals?: Array<{ type: string; label: string; strength: number; source: string; detected_at: string }>;
+      derived_assessment?: {
+        priority: "high" | "medium" | "low";
+        icp_fit: number;
+        why_this_lead: string[];
+        recommended_approach: string;
+        lead_intelligence: Record<string, unknown>;
+        account_intelligence: Record<string, unknown>;
+        contact_intelligence: Record<string, unknown>;
+        enrichment_confidence: number;
+      };
+    }>;
+    business_guidance: {
+      note: string;
+      items: Array<{ id: string; title: string; summary: string; category: string; source_type: string }>;
+      source_ids: string[];
+    };
+  }>(`${API_BASE}/api/web/session/_/leads/analyze`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify({ lead_ids: leadIds }) });
+}
+
+export async function generateWorkspaceLeadStrategyDrafts(sessionToken: string, leadIds: string[]) {
+  return fetchWithRetry<{
+    ok: boolean;
+    results: Array<{
+      lead_id: string;
+      status: "completed" | "failed";
+      error?: string;
+      strategy?: {
+        relevance_summary: string;
+        recommended_angle: string;
+        key_message: string;
+        things_to_avoid: string[];
+        next_action: string;
+      };
+      outreach?: { subject: string; body: string };
+      evidence_used?: Array<{ source_type: string; statement: string }>;
+    }>;
+  }>(`${API_BASE}/api/web/session/_/leads/generate-strategy`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ lead_ids: leadIds }),
+  });
 }
 
 export async function listCampaigns(sessionToken: string) {

@@ -16,6 +16,7 @@ import {
 } from "../../../../lib/api";
 import { usePageContext } from "../../../../hooks/usePageContext";
 import { useCopilot } from "../../../../contexts/CopilotContext";
+import { useBetaFeature } from "../../../../contexts/BetaFeaturesContext";
 import {
   classLabel,
   classTone,
@@ -35,6 +36,7 @@ type WorkspaceMessage = { name: string; direction: string; text: string; time: s
 type WorkspaceTimelineItem = { time: string; title: string; description: string };
 
 export default function ConversationWorkspacePage({ params }: { params: Params }) {
+  const automatedFollowupsEnabled = useBetaFeature("automated_followups");
   const { id } = use(params);
   const router = useRouter();
 
@@ -591,7 +593,7 @@ export default function ConversationWorkspacePage({ params }: { params: Params }
                       >
                         {generatingReply ? "Refining…" : "Refine"}
                       </button>
-                      <button
+                      {(mode === "reply" || automatedFollowupsEnabled) && <button
                         type="button"
                         onClick={() => void handleSend()}
                         disabled={sending || generatingReply || !reply.trim()}
@@ -602,7 +604,7 @@ export default function ConversationWorkspacePage({ params }: { params: Params }
                           : mode === "reply"
                             ? "Approve & Send"
                             : "Send Follow-up"}
-                      </button>
+                      </button>}
                     </div>
                   </div>
                 )}

@@ -5,10 +5,14 @@ import { useCallback, useRef, useState, type KeyboardEvent, type PointerEvent } 
 import { usePathname } from "next/navigation";
 import Icon from "../shared/Icon";
 import { useAuth } from "../../hooks/useAuth";
+import { useTheme } from "../../hooks/useTheme";
+import { useBetaFeature } from "../../contexts/BetaFeaturesContext";
 
 const navigation = [
   { label: "Mission Control", href: "/mission-control", icon: "dashboard" },
   { label: "Discovery", href: "/discovery", icon: "explore" },
+  { label: "Discover", href: "/discover", icon: "search" },
+  { label: "Lead Database", href: "/contacts", icon: "groups" },
   { label: "Campaigns", href: "/campaigns", icon: "campaign" },
   { label: "Draft Review", href: "/draft", icon: "draft" },
   { label: "Inbox", href: "/inbox", icon: "inbox" },
@@ -60,7 +64,10 @@ export default function Sidebar({
 }: Props) {
   const pathname = usePathname();
   const { user, logout } = useAuth();
+  const { theme } = useTheme();
+  const outboundDeliveryEnabled = useBetaFeature("outbound_delivery");
   const [profileOpen, setProfileOpen] = useState(false);
+  const logoSrc = theme === "light" ? "/android-chrome-light-512x512.png" : "/android-chrome-512x512.png";
   const dragState = useRef<{ startX: number; fromExpanded: boolean } | null>(null);
   const copilotActive = pathname.startsWith("/copilot");
 
@@ -192,7 +199,7 @@ export default function Sidebar({
         <div className={collapsed ? "flex justify-center" : "flex items-center gap-2.5 px-2"}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/android-chrome-512x512.png"
+            src={logoSrc}
             alt="Loqi"
             className={`${collapsed ? "w-7 h-7" : "w-6 h-6"} shrink-0 rounded-md`}
           />
@@ -244,7 +251,9 @@ export default function Sidebar({
       {/* Navigation */}
       <nav className="flex-1 overflow-x-hidden">
         <div className="space-y-0.5 px-4">
-          {navigation.map(renderNavItem)}
+          {navigation
+            .filter((item) => item.href !== "/inbox" || outboundDeliveryEnabled)
+            .map(renderNavItem)}
         </div>
 
         {renderHandle({ label: "Resize sidebar" })}

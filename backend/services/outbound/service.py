@@ -430,8 +430,12 @@ async def cancel_scheduled_outbound_send(
 
 async def run_scheduled_outbound_send(job, on_progress) -> dict[str, Any]:
     """Execute one claimed scheduled send from its canonical Draft state."""
+    from services.capabilities.beta import beta_feature_enabled, beta_feature_unavailable_message
     from services.outbound.outbound_models import DraftStatus
     from services.workspace.state import load_drafts_only, persist_draft_update_awaited
+
+    if not beta_feature_enabled("outbound_delivery"):
+        return {"ok": False, "error": beta_feature_unavailable_message("outbound_delivery")}
 
     draft_id = str(job.payload.get("draft_id") or "")
     if not draft_id or not job.user_id or not job.workspace_id:
@@ -513,6 +517,13 @@ async def send_outbound_draft(
     test_recipient_name: str = "",
 ) -> dict[str, Any]:
     """Send one authorized hydrated draft and persist the resulting state."""
+    from services.capabilities.beta import beta_feature_enabled, beta_feature_unavailable_message
+
+    if not beta_feature_enabled("outbound_delivery"):
+        raise HTTPException(
+            status_code=403,
+            detail=beta_feature_unavailable_message("outbound_delivery"),
+        )
     if test_recipient and not test_recipient_override_enabled():
         raise HTTPException(status_code=403, detail="Test recipient override is disabled")
     session_token = identity_dependencies.web_session_token(request)
@@ -597,6 +608,13 @@ async def send_outbound_draft(
 
 async def schedule_outbound_draft(request: Request, draft_id: str, send_at: str) -> dict[str, Any]:
     """Schedule one authorized draft through the durable outbound job flow."""
+    from services.capabilities.beta import beta_feature_enabled, beta_feature_unavailable_message
+
+    if not beta_feature_enabled("outbound_delivery"):
+        raise HTTPException(
+            status_code=403,
+            detail=beta_feature_unavailable_message("outbound_delivery"),
+        )
     session_token = identity_dependencies.web_session_token(request)
     owner_id, workspace_id, canonical, draft = await require_canonical_outbound_draft(request, session_token, draft_id)
     if not draft.recipient or not str(draft.recipient.email or "").strip():

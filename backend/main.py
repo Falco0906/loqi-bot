@@ -28,6 +28,7 @@ from services.communication.api import router as communication_router
 from services.events.api import router as events_router
 from services.export.api import router as export_router
 from services.workspace.api import router as workspace_router
+from services.leads.api import router as leads_router
 from services.workflows.api import router as workflows_router
 from services.conversations.api import engine, router as conversations_router
 from services.conversations.conversation_store import ConversationPersistenceUnavailable
@@ -164,6 +165,7 @@ app.include_router(communication_router)
 app.include_router(events_router)
 app.include_router(export_router)
 app.include_router(workspace_router)
+app.include_router(leads_router)
 app.include_router(conversations_router)
 app.include_router(workflows_router)
 

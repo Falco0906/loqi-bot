@@ -12,6 +12,7 @@ import { campaignHasAttachedDiscovery } from "../../lib/campaign-attachment-reco
 import { buildResearchUrl } from "../../lib/discovery-mode";
 import Icon from "../shared/Icon";
 import { toast } from "../shared/Toast";
+import { useBetaFeature } from "../../contexts/BetaFeaturesContext";
 
 type DiscoveryItem = {
   id: string;
@@ -123,6 +124,7 @@ export default memo(function CampaignLeadsSection({
   messagingAngle,
   onLeadsChanged,
 }: Props) {
+  const autonomousLeadSourcingEnabled = useBetaFeature("autonomous_lead_sourcing");
   const [discoveries, setDiscoveries] = useState<DiscoveryItem[]>([]);
   const [loadingDiscoveries, setLoadingDiscoveries] = useState(false);
   const [attachingId, setAttachingId] = useState<string | null>(null);
@@ -323,17 +325,17 @@ export default memo(function CampaignLeadsSection({
             Loqi needs prospects to build messaging that fits.
           </p>
           <p className="mt-1 text-xs text-on-surface-variant/60 leading-relaxed max-w-md">
-            Research fresh prospects, attach a Discovery you already ran, or add a lead manually.
+            Attach a Discovery you already ran, or add a lead manually.
           </p>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
-            <a
+            {autonomousLeadSourcingEnabled && <a
               href={researchUrl}
               className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-xs font-semibold text-on-primary hover:brightness-110 transition-all"
             >
               <span className="material-symbols-outlined text-sm">travel_explore</span>
               Research prospects
-            </a>
+            </a>}
             <button
               onClick={() => setShowDiscovery((v) => !v)}
               disabled={loadingDiscoveries}
@@ -361,13 +363,13 @@ export default memo(function CampaignLeadsSection({
               ) : discoveries.length === 0 ? (
                 <div className="p-5 rounded-xl border border-outline-variant/15 bg-surface-lowest text-center">
                   <p className="text-sm text-on-surface-variant/80">No matching Discovery found.</p>
-                  <a
+                  {autonomousLeadSourcingEnabled && <a
                     href={researchUrl}
                     className="mt-3 inline-flex items-center gap-2 rounded-lg bg-secondary/15 text-secondary px-4 py-2 text-xs font-semibold hover:bg-secondary/25 transition-all"
                   >
                     <span className="material-symbols-outlined text-sm">travel_explore</span>
                     Research prospects
-                  </a>
+                  </a>}
                 </div>
               ) : topMatch && topMatch.score > 0.5 ? (
                 <>

@@ -67,7 +67,7 @@ export default function Sidebar({
   const { theme } = useTheme();
   const outboundDeliveryEnabled = useBetaFeature("outbound_delivery");
   const [profileOpen, setProfileOpen] = useState(false);
-  const logoSrc = theme === "light" ? "/android-chrome-512x512.png" : "/android-chrome-light-512x512.png";
+  const logoSrc = theme === "light" ? "/android-chrome-light-512x512.png" : "/android-chrome-512x512.png";
   const dragState = useRef<{ startX: number; fromExpanded: boolean } | null>(null);
   const copilotActive = pathname.startsWith("/copilot");
 

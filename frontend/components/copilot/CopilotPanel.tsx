@@ -11,7 +11,7 @@ import { CLARIFICATION_PROMPT, CLARIFICATION_REPLIES, idleQuickReplies, type Qui
 
 function LoqiLogo({ className = "" }: { className?: string }) {
   const { theme } = useTheme();
-  const logoSrc = theme === "light" ? "/android-chrome-512x512.png" : "/android-chrome-light-512x512.png";
+  const logoSrc = theme === "light" ? "/android-chrome-light-512x512.png" : "/android-chrome-512x512.png";
 
   return <img src={logoSrc} alt="" className={`shrink-0 rounded-md ${className}`} />;
 }

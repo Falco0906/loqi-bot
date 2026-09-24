@@ -157,7 +157,7 @@ export default function Sidebar({
     );
   }
 
-  function renderHandle({ label, inset }: { label: string; inset: string }) {
+  function renderHandle({ label }: { label: string }) {
     return (
       <div
         role="separator"
@@ -174,13 +174,11 @@ export default function Sidebar({
         className="group flex h-5 shrink-0 cursor-col-resize touch-none items-center outline-none"
       >
         <div
-          className={`h-px bg-on-surface-variant/30 transition-colors duration-150 group-hover:bg-on-surface-variant/50 group-focus-visible:bg-primary ${inset}`}
+          className="h-px w-full bg-outline-variant/15 transition-colors duration-150 group-hover:bg-outline-variant/40 group-focus-visible:bg-primary"
         />
       </div>
     );
   }
-
-  const handleInset = collapsed ? "mx-3 w-auto flex-1" : "mx-6 w-auto flex-1";
 
   return (
     <aside
@@ -241,7 +239,7 @@ export default function Sidebar({
       </div>
 
       {/* Resize handle */}
-      {renderHandle({ label: "Resize sidebar", inset: handleInset })}
+      {renderHandle({ label: "Resize sidebar" })}
 
       {/* Navigation */}
       <nav className="flex-1 overflow-x-hidden">
@@ -249,7 +247,7 @@ export default function Sidebar({
           {navigation.map(renderNavItem)}
         </div>
 
-        {renderHandle({ label: "Resize sidebar", inset: `${handleInset} my-3` })}
+        {renderHandle({ label: "Resize sidebar" })}
 
         <div className="space-y-0.5 px-4">
           {utilityPages.map(renderNavItem)}
@@ -257,7 +255,7 @@ export default function Sidebar({
       </nav>
 
       {/* Bottom */}
-      <div className={`relative border-t border-outline-variant/10 py-4 shrink-0 ${collapsed ? "px-3" : "px-6"}`}>
+      <div className={`relative border-t border-outline-variant/15 py-4 shrink-0 ${collapsed ? "px-3" : "px-6"}`}>
         {user && (
           <button
             type="button"

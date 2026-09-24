@@ -6,7 +6,6 @@ import { usePathname } from "next/navigation";
 import Icon from "../shared/Icon";
 import { useAuth } from "../../hooks/useAuth";
 import { useTheme } from "../../hooks/useTheme";
-import { useBetaFeature } from "../../contexts/BetaFeaturesContext";
 
 const navigation = [
   { label: "Mission Control", href: "/mission-control", icon: "dashboard" },
@@ -65,7 +64,6 @@ export default function Sidebar({
   const pathname = usePathname();
   const { user, logout } = useAuth();
   const { theme } = useTheme();
-  const outboundDeliveryEnabled = useBetaFeature("outbound_delivery");
   const [profileOpen, setProfileOpen] = useState(false);
   const logoSrc = theme === "light" ? "/android-chrome-light-512x512.png" : "/android-chrome-512x512.png";
   const dragState = useRef<{ startX: number; fromExpanded: boolean } | null>(null);
@@ -251,9 +249,7 @@ export default function Sidebar({
       {/* Navigation */}
       <nav className="flex-1 overflow-x-hidden">
         <div className="space-y-0.5 px-4">
-          {navigation
-            .filter((item) => item.href !== "/inbox" || outboundDeliveryEnabled)
-            .map(renderNavItem)}
+          {navigation.map(renderNavItem)}
         </div>
 
         {renderHandle({ label: "Resize sidebar" })}

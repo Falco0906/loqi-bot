@@ -406,6 +406,16 @@ export default function DraftReviewWorkspace() {
     setEditing(false);
   }
 
+  async function copyDraftText(text: string, label: "Subject" | "Message") {
+    if (!text.trim()) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setMessage(`${label} copied to clipboard`);
+    } catch {
+      setMessage(`Couldn't copy the ${label.toLowerCase()}. Select and copy it manually.`);
+    }
+  }
+
   async function saveEdit() {
     if (!selected || !sessionToken) return;
     const full = editSubject
@@ -1337,17 +1347,40 @@ export default function DraftReviewWorkspace() {
             ) : (
               <div className="space-y-6">
                 {selected.subject ? (
-                  <div>
+                  <div className="rounded-xl border border-outline-variant/10 bg-surface-lowest/50 px-4 py-2.5">
                     <p className="text-label-md text-on-surface-variant uppercase tracking-wider mb-1">Subject</p>
-                    <p className="text-sm font-bold text-on-surface">{selected.subject}</p>
+                    <div className="flex items-center gap-3">
+                      <p className="min-w-0 flex-1 text-sm font-bold text-on-surface">{selected.subject}</p>
+                      <button
+                        type="button"
+                        onClick={() => void copyDraftText(selected.subject || "", "Subject")}
+                        aria-label="Copy subject"
+                        title="Copy subject"
+                        className="shrink-0 rounded-md p-1.5 text-on-surface-variant hover:bg-surface-container hover:text-primary"
+                      >
+                        <Icon name="content_copy" className="text-base" />
+                      </button>
+                    </div>
                   </div>
                 ) : null}
                 <div
                   key={highlightKey}
-                  className="whitespace-pre-wrap text-sm text-on-surface leading-relaxed cursor-pointer transition-all duration-500 animate-highlight-fade"
+                  className="relative whitespace-pre-wrap rounded-xl border border-outline-variant/10 bg-surface-lowest/50 p-4 pr-12 text-sm text-on-surface leading-relaxed cursor-pointer transition-all duration-500 animate-highlight-fade"
                   onClick={startEditing}
                 >
                   {selected.text}
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void copyDraftText(selected.text, "Message");
+                    }}
+                    aria-label="Copy message"
+                    title="Copy message"
+                    className="absolute bottom-3 right-3 rounded-md p-1.5 text-on-surface-variant hover:bg-surface-container hover:text-primary"
+                  >
+                    <Icon name="content_copy" className="text-base" />
+                  </button>
                 </div>
               </div>
             )}

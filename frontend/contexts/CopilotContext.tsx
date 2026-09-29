@@ -322,7 +322,10 @@ export function CopilotProvider({
   const pathnameRef = useRef<string | null>(null);
   pathnameRef.current = usePathname();
 
-  const [open, setOpen] = useState(true);
+  // Copilot is an explicit workspace tool. Starting it closed keeps focused
+  // surfaces such as Discover full-width until the user opens the existing
+  // shared panel from the top bar.
+  const [open, setOpen] = useState(false);
   const [pageContext, setPageContextState] = useState<PageContext | null>(null);
   const handlersRef = useRef<Map<ActionType, ActionHandler>>(new Map());
 

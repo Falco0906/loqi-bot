@@ -67,12 +67,11 @@ def _search_with_progress(
         except Exception:
             icp = None
 
-    from services.discovery.search_expansion import expand_search_intent
-    try:
-        expand_search_intent(service, target, icp)
-        on_stage(2)
-    except Exception:
-        pass
+    # ``search_with_expansion`` owns query expansion. Calling it here as a
+    # preflight used to issue the same synchronous LLM request twice before a
+    # provider search could begin. Advance the durable progress stage here,
+    # then let the provider pipeline perform its single canonical expansion.
+    on_stage(2)
 
     result = search_with_expansion(
         service, target, plan=plan, context=discovery_context,

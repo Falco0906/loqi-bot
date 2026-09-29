@@ -130,3 +130,26 @@ def test_first_result_hook_in_pipeline(monkeypatch):
     assert len(partial_calls) == 1 and len(partial_calls[0]) == 5, (
         "first-result callback must fire exactly once with raw provider leads"
     )
+
+
+def test_pipeline_does_not_expand_the_same_query_before_provider_search(monkeypatch):
+    """The provider pipeline owns one expansion; dispatcher must not duplicate it."""
+    from workflow_dispatcher import _search_with_progress
+    import services.discovery.search_expansion as expansion
+
+    def duplicate_expansion(*_args, **_kwargs):
+        raise AssertionError("dispatcher must not preflight query expansion")
+
+    monkeypatch.setattr(expansion, "expand_search_intent", duplicate_expansion)
+    monkeypatch.setattr(
+        __import__("workflow_dispatcher", fromlist=["x"]),
+        "search_with_expansion",
+        lambda *_args, **_kwargs: {"ok": True, "leads": []},
+    )
+
+    result = _search_with_progress(
+        "CRM", "startups", {"industries": [], "decision_maker_roles": []}, {},
+        lambda *_args: None,
+    )
+
+    assert result == {"ok": True, "leads": []}

@@ -1,18 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import DiscoveryHistory from "../../../components/dashboard/DiscoveryHistory";
 import {
   DiscoveryExecutionPanel,
+  DiscoveryLeadDetails,
   DiscoveryResearchBriefing,
 } from "../../../components/dashboard/DiscoveryDetailWorkspace";
 import { useBetaFeature } from "../../../contexts/BetaFeaturesContext";
 import { listWorkspaceLeads, type WorkspaceLeadRecord } from "../../../lib/api";
 import { parseDiscoveryMode } from "../../../lib/discovery-mode";
-import { fetchDiscoveryFresh, startDiscoverySearch } from "../../../lib/repositories";
-import type { DiscoveryData, DiscoveryProgress } from "../../../lib/domain";
+import {
+  fetchDiscoveryFresh,
+  fetchDiscoveryListFresh,
+  startDiscoverySearch,
+  workspaceLeadToRecommendation,
+} from "../../../lib/repositories";
+import type { DiscoveryData, DiscoveryProgress, DiscoveryRecommendation } from "../../../lib/domain";
 
 const PAGE_SIZE = 50;
 const FILTERS = [
@@ -31,6 +37,37 @@ const SUGGESTIONS = [
 
 function activeSessionToken(): string {
   return window.localStorage.getItem("loqi_active_session_token") || "";
+}
+
+// This is a navigation hint, not a second discovery state store. The durable
+// discovery row remains authoritative and is always re-authorized by the API
+// before the page restores it. Keeping only its id lets a mounted page reconnect
+// after route navigation without coupling a server-side job to React's lifetime.
+const ACTIVE_DISCOVERY_KEY = "loqi_active_discovery";
+
+function rememberedDiscoveryId(): string {
+  try {
+    return window.sessionStorage.getItem(ACTIVE_DISCOVERY_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function rememberDiscovery(id: string): void {
+  try {
+    if (id) window.sessionStorage.setItem(ACTIVE_DISCOVERY_KEY, id);
+  } catch {
+    // URL state and the workspace-scoped API remain sufficient when storage
+    // is unavailable (for example, a privacy-restricted browser session).
+  }
+}
+
+function forgetRememberedDiscovery(): void {
+  try {
+    window.sessionStorage.removeItem(ACTIVE_DISCOVERY_KEY);
+  } catch {
+    // See rememberDiscovery.
+  }
 }
 
 function FilterRail({
@@ -105,14 +142,20 @@ function LeadResultsTable({
   leads,
   selected,
   selectedOnPage,
+  expandedLeadId,
+  detailsByLeadId,
   onToggleVisible,
   onToggleLead,
+  onToggleExpand,
 }: {
   leads: WorkspaceLeadRecord[];
   selected: Set<string>;
   selectedOnPage: boolean;
+  expandedLeadId: string | null;
+  detailsByLeadId: Map<string, DiscoveryRecommendation>;
   onToggleVisible: () => void;
   onToggleLead: (leadId: string) => void;
+  onToggleExpand: (leadId: string) => void;
 }) {
   return (
     <div className="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-lowest">
@@ -138,33 +181,64 @@ function LeadResultsTable({
         <tbody>
           {leads.map((lead) => {
             const name = `${lead.first_name} ${lead.last_name}`.trim();
+            const expanded = expandedLeadId === lead.id;
+            const details = detailsByLeadId.get(lead.id);
             return (
-              <tr key={lead.id} className="border-b border-outline-variant/10 transition-colors last:border-0 hover:bg-surface-container-low/55">
-                <td className="px-4 py-3">
-                  <input
-                    aria-label={`Select ${name || lead.email || "lead"}`}
-                    type="checkbox"
-                    checked={selected.has(lead.id)}
-                    onChange={() => onToggleLead(lead.id)}
-                  />
-                </td>
-                <td className="px-3 py-3">
-                  <p className="font-medium text-on-surface">{name || "Unnamed lead"}</p>
-                  <p className="mt-0.5 text-xs text-on-surface-variant/65">{lead.email || "No email recorded"}</p>
-                </td>
-                <td className="px-3 py-3 text-on-surface-variant">
-                  {lead.company || "—"}
-                  {lead.website && <p className="mt-0.5 max-w-40 truncate text-xs text-on-surface-variant/55">{lead.website}</p>}
-                </td>
-                <td className="px-3 py-3 text-on-surface-variant">{lead.title || "—"}</td>
-                <td className="px-3 py-3 text-on-surface-variant">{lead.location || "—"}</td>
-                <td className="px-3 py-3 text-on-surface-variant">{lead.industry || "—"}</td>
-                <td className="px-3 py-3">
-                  <span className="rounded-full bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary">
-                    {lead.source_label}
-                  </span>
-                </td>
-              </tr>
+              <Fragment key={lead.id}>
+                <tr className={`border-b border-outline-variant/10 transition-colors hover:bg-surface-container-low/55 ${expanded ? "bg-surface-container-low/40" : ""}`}>
+                  <td className="px-4 py-3">
+                    <input
+                      aria-label={`Select ${name || lead.email || "lead"}`}
+                      type="checkbox"
+                      checked={selected.has(lead.id)}
+                      onChange={() => onToggleLead(lead.id)}
+                    />
+                  </td>
+                  <td className="px-3 py-3">
+                    <button
+                      type="button"
+                      aria-expanded={expanded}
+                      onClick={() => onToggleExpand(lead.id)}
+                      className="flex min-w-0 items-center gap-2 text-left"
+                    >
+                      <span className={`material-symbols-outlined text-[18px] text-on-surface-variant/60 transition-transform ${expanded ? "rotate-180" : ""}`}>expand_more</span>
+                      <span className="min-w-0">
+                        <span className="block font-medium text-on-surface">{name || "Unnamed lead"}</span>
+                        <span className="mt-0.5 block text-xs text-on-surface-variant/65">{lead.email || "No email recorded"}</span>
+                      </span>
+                    </button>
+                  </td>
+                  <td className="px-3 py-3 text-on-surface-variant">
+                    {lead.company || "—"}
+                    {lead.website && <p className="mt-0.5 max-w-40 truncate text-xs text-on-surface-variant/55">{lead.website}</p>}
+                  </td>
+                  <td className="px-3 py-3 text-on-surface-variant">{lead.title || "—"}</td>
+                  <td className="px-3 py-3 text-on-surface-variant">{lead.location || "—"}</td>
+                  <td className="px-3 py-3 text-on-surface-variant">{lead.industry || "—"}</td>
+                  <td className="px-3 py-3">
+                    <span className="rounded-full bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary">
+                      {lead.source_label}
+                    </span>
+                  </td>
+                </tr>
+                {expanded && details && (
+                  <tr className="border-b border-outline-variant/10 bg-surface-lowest">
+                    <td colSpan={7} className="px-6 py-5 md:px-8">
+                      <p className="mb-3 text-xs text-on-surface-variant/65">
+                        Source: {lead.source_label}
+                        {lead.source_provenance.length > 1
+                          ? ` · Also observed via ${lead.source_provenance.filter((source) => source !== lead.source_label).join(", ")}`
+                          : ""}
+                      </p>
+                      <DiscoveryLeadDetails
+                        rec={details}
+                        selected={selected.has(lead.id)}
+                        onToggle={() => onToggleLead(lead.id)}
+                      />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             );
           })}
         </tbody>
@@ -241,7 +315,9 @@ function DiscoveryWorkspace() {
   const [providerError, setProviderError] = useState("");
   const [startingSearch, setStartingSearch] = useState(false);
   const startingSearchRef = useRef(false);
+  const restoredRunRef = useRef(false);
   const [pendingQuery, setPendingQuery] = useState("");
+  const [expandedLeadId, setExpandedLeadId] = useState<string | null>(null);
   const hasSearch = Boolean(query.trim());
   const hasFilters = Object.values(filters).some(Boolean);
   const runIsActive = Boolean(pendingQuery)
@@ -269,6 +345,46 @@ function DiscoveryWorkspace() {
     if (history === "push") router.push(path);
     else router.replace(path);
   };
+
+  useEffect(() => {
+    // URL state remains the shareable source for a particular run. When a
+    // user leaves Discover through normal navigation, this session-scoped
+    // pointer reconnects the page to the already-durable run on return. It
+    // never starts, cancels, or mutates the server-side job.
+    if (providerDiscoveryId || query || restoredRunRef.current) return;
+    restoredRunRef.current = true;
+    let active = true;
+
+    const restoreDurableRun = async () => {
+      const remembered = rememberedDiscoveryId();
+      const candidates = remembered
+        ? [remembered]
+        : (await fetchDiscoveryListFresh() || [])
+          .filter((item) => item.status === "queued" || item.status === "searching")
+          .slice(0, 1)
+          .map((item) => item.id);
+
+      for (const discoveryId of candidates) {
+        const run = await fetchDiscoveryFresh(discoveryId);
+        if (!active) return;
+        if (!run) {
+          if (discoveryId === remembered) forgetRememberedDiscovery();
+          continue;
+        }
+        rememberDiscovery(run.id);
+        writeState({ q: run.query, page: "1" }, run.id);
+        return;
+      }
+    };
+
+    void restoreDurableRun().catch(() => {
+      // A recovery hint must not make a normal first visit fail. The
+      // workspace-scoped run will be retried the next time Discover mounts.
+    });
+    return () => { active = false; };
+    // Intentionally restores once per mounted blank Discover route.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [providerDiscoveryId, query]);
 
   const loadWorkspaceLeads = async () => {
     if (!hasSearch) return;
@@ -316,6 +432,7 @@ function DiscoveryWorkspace() {
           setProviderError("This saved search is unavailable or could not be refreshed.");
           return;
         }
+        rememberDiscovery(next.id);
         setProviderRun(next);
         if (next?.status === "queued" || next?.status === "searching") {
           setProviderError("");
@@ -359,6 +476,7 @@ function DiscoveryWorkspace() {
     try {
       const started = await startDiscoverySearch(nextQuery, "manual");
       if (!started?.discoveryId) throw new Error("Search could not be started.");
+      rememberDiscovery(started.discoveryId);
       writeState({ ...filters, q: nextQuery, page: "1" }, started.discoveryId, "push");
     } catch {
       // A run failure never removes the user's canonical workspace results.
@@ -379,6 +497,8 @@ function DiscoveryWorkspace() {
     setSelected(new Set());
     setProviderError("");
     setPendingQuery("");
+    setExpandedLeadId(null);
+    forgetRememberedDiscovery();
     writeState({}, "", "push");
   };
   const clearFilters = () => {
@@ -400,6 +520,33 @@ function DiscoveryWorkspace() {
     else next.add(leadId);
     return next;
   });
+  const toggleExpandedLead = (leadId: string) => {
+    setExpandedLeadId((current) => current === leadId ? null : leadId);
+  };
+  const detailsByLeadId = useMemo(() => {
+    const details = new Map<string, DiscoveryRecommendation>();
+    providerRun?.recommendations.forEach((recommendation) => {
+      details.set(recommendation.id, recommendation);
+    });
+    workspaceLeads.forEach((lead, index) => {
+      if (!details.has(lead.id)) {
+        details.set(
+          lead.id,
+          workspaceLeadToRecommendation({
+            ...lead,
+            company_name: lead.company,
+            buying_signal: lead.source_kind === "provider"
+              ? "Provider result"
+              : "No additional Discovery signal recorded",
+            buying_signal_detail: lead.source_kind === "provider"
+              ? "This lead was surfaced by the completed provider search."
+              : "No provider research signal is available for this saved lead.",
+          } as Record<string, unknown>, index),
+        );
+      }
+    });
+    return details;
+  }, [providerRun?.recommendations, workspaceLeads]);
 
   const searchForm = (
     <form
@@ -525,7 +672,16 @@ function DiscoveryWorkspace() {
                       </div>
                     ) : (
                       <>
-                        <LeadResultsTable leads={workspaceLeads} selected={selected} selectedOnPage={selectedOnPage} onToggleVisible={toggleVisible} onToggleLead={toggleLead} />
+                        <LeadResultsTable
+                          leads={workspaceLeads}
+                          selected={selected}
+                          selectedOnPage={selectedOnPage}
+                          expandedLeadId={expandedLeadId}
+                          detailsByLeadId={detailsByLeadId}
+                          onToggleVisible={toggleVisible}
+                          onToggleLead={toggleLead}
+                          onToggleExpand={toggleExpandedLead}
+                        />
                         {workspaceTotal > PAGE_SIZE && (
                           <nav className="flex items-center justify-between" aria-label="Lead results pagination">
                             <button

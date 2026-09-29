@@ -780,15 +780,42 @@ async def finalize_discovery(job) -> bool:
         seen: set[str] = set()
         providers: dict[str, int] = {}
         normalization_errors: list[str] = []
+        unique_leads: list[dict] = []
+        source_keys: set[str] = set()
         for lead in leads:
             provider = str(lead.get("provider") or lead.get("source") or "search")
             providers[provider] = providers.get(provider, 0) + 1
-            try:
-                ws_lead_id = await _normalize_lead(workspace_id, lead)
-            except Exception as e:
-                _log(f"finalize_discovery normalize lead skipped: {e}")
-                normalization_errors.append(str(e))
+            email = str(lead.get("email") or "").strip().lower()
+            fallback = str(lead.get("lead_id") or lead.get("id") or lead.get("linkedin_url") or "").strip().lower()
+            source_key = email or (f"{provider}:{fallback}" if fallback else "")
+            if source_key and source_key in source_keys:
                 continue
+            if source_key:
+                source_keys.add(source_key)
+            unique_leads.append(lead)
+
+        # Canonical normalization performs several repository round trips per
+        # lead. Bound parallelism preserves the existing source/provenance and
+        # global-deduplication path while avoiding a 30-lead serial tail after
+        # the provider has already returned useful results.
+        semaphore = asyncio.Semaphore(4)
+
+        async def normalize_one(lead: dict) -> str | Exception | None:
+            async with semaphore:
+                try:
+                    return await _normalize_lead(workspace_id, lead)
+                except Exception as error:
+                    return error
+
+        normalized_ids = await asyncio.gather(
+            *(normalize_one(lead) for lead in unique_leads),
+        )
+        for lead, normalized in zip(unique_leads, normalized_ids):
+            if isinstance(normalized, Exception):
+                _log(f"finalize_discovery normalize lead skipped: {normalized}")
+                normalization_errors.append(str(normalized))
+                continue
+            ws_lead_id = normalized
             if ws_lead_id and ws_lead_id not in seen:
                 seen.add(ws_lead_id)
                 ws_lead_ids.append(ws_lead_id)

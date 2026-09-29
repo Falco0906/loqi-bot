@@ -55,6 +55,12 @@ test("Discover reuses the durable run cards instead of making a second progress 
   assert.match(discovery, /next\?\.status === "failed" \|\| next\?\.status === "cancelled"/);
   assert.match(discovery, /startingSearchRef\.current/, "rapid repeated clicks must not start duplicate provider runs");
   assert.match(discovery, /const clearFilters/, "clearing filters must preserve the active search/run");
+  assert.match(discovery, /ACTIVE_DISCOVERY_KEY/, "navigation recovery keeps only a durable-run reference");
+  assert.match(discovery, /fetchDiscoveryListFresh\(\)/, "a blank return route can recover a current durable run");
+  assert.match(discovery, /never starts, cancels, or mutates the server-side job/);
+  assert.match(discovery, /DiscoveryLeadDetails/, "the unified table must reuse the existing detail body");
+  assert.match(discovery, /aria-expanded=\{expanded\}/, "rows must expand independently of selection");
+  assert.match(detail, /export function DiscoveryLeadDetails/, "lead detail remains owned by Discovery detail UI");
   assert.match(history, /\/discovery\?q=\$\{encodeURIComponent\(item\.query\)\}/, "history must restore the unified Discover route");
 });
 

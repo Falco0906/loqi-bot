@@ -438,6 +438,46 @@ export function DiscoveryResearchBriefing({
   );
 }
 
+/**
+ * Existing Discovery detail body shared by the legacy detail view and the
+ * unified Discover table. It renders only the persisted recommendation and
+ * qualification fields supplied by the durable discovery run.
+ */
+export function DiscoveryLeadDetails({
+  rec,
+  selected,
+  onToggle,
+}: {
+  rec: DiscoveryRecommendation;
+  selected: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="grid gap-8 px-2 py-2 md:grid-cols-5">
+      <div className="md:col-span-3">
+        <h4 className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant/50">Executive Deep Reasoning</h4>
+        <p className="mb-5 text-sm leading-relaxed text-on-surface-variant">{rec.reasoning}</p>
+        <div className="rounded-lg border border-outline-variant/20 bg-surface-container-low p-5">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-on-surface">Key buying signal</p>
+          <p className="text-sm font-medium text-on-surface">{rec.buyingSignal}</p>
+          <p className="mt-1 text-sm text-on-surface-variant/70">{rec.signalDetail}</p>
+        </div>
+        <QualificationEvidencePanel qualification={rec.qualification} />
+      </div>
+      <div className="space-y-5 md:col-span-2">
+        <h4 className="text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant/50">Research Evidence</h4>
+        <div className="space-y-3 text-sm">
+          <div className="flex justify-between border-b border-outline-variant/20 pb-2"><span className="text-on-surface-variant">Funding history</span><span>{rec.funding}</span></div>
+          <div className="flex justify-between border-b border-outline-variant/20 pb-2"><span className="text-on-surface-variant">Hiring trends</span><span>{rec.hiring}</span></div>
+        </div>
+        <button type="button" onClick={onToggle} className="rounded-full border border-outline-variant px-5 py-2 text-sm font-medium hover:bg-surface-container-low">
+          {selected ? "Remove from selection" : "Select for campaign"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function RecommendationCard({
   rec,
   selected,
@@ -474,27 +514,12 @@ function RecommendationCard({
         </div>
       </div>
       {expanded && (
-        <div className="px-8 md:px-14 pb-8 pt-2 grid md:grid-cols-5 gap-8">
-          <div className="md:col-span-3">
-            <h4 className="text-[11px] uppercase tracking-widest text-on-surface-variant/50 font-semibold mb-3">Executive Deep Reasoning</h4>
-            <p className="text-sm text-on-surface-variant leading-relaxed mb-5">{rec.reasoning}</p>
-            <div className="p-5 rounded-lg bg-surface-container-low border border-outline-variant/20">
-              <p className="text-xs uppercase tracking-wider font-semibold text-on-surface mb-2">Key buying signal</p>
-              <p className="text-sm font-medium text-on-surface">{rec.buyingSignal}</p>
-              <p className="text-sm text-on-surface-variant/70 mt-1">{rec.signalDetail}</p>
-            </div>
-            <QualificationEvidencePanel qualification={rec.qualification} />
-          </div>
-          <div className="md:col-span-2 space-y-5">
-            <h4 className="text-[11px] uppercase tracking-widest text-on-surface-variant/50 font-semibold">Research Evidence</h4>
-            <div className="space-y-3 text-sm">
-              <div className="flex justify-between border-b border-outline-variant/20 pb-2"><span className="text-on-surface-variant">Funding history</span><span>{rec.funding}</span></div>
-              <div className="flex justify-between border-b border-outline-variant/20 pb-2"><span className="text-on-surface-variant">Hiring trends</span><span>{rec.hiring}</span></div>
-            </div>
-            <button type="button" onClick={() => onToggle(rec)} className="border border-outline-variant px-5 py-2 rounded-full text-sm font-medium hover:bg-surface-container-low">
-              {selected ? "Remove from selection" : "Select for campaign"}
-            </button>
-          </div>
+        <div className="px-8 pb-8 pt-2 md:px-14">
+          <DiscoveryLeadDetails
+            rec={rec}
+            selected={selected}
+            onToggle={() => onToggle(rec)}
+          />
         </div>
       )}
     </article>

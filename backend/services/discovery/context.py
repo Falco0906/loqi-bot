@@ -6,6 +6,7 @@ services. It does not introduce a second retrieval system or persistence layer.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -24,23 +25,31 @@ async def retrieve_discovery_context(owner_id: str, query: str = "") -> dict[str
     if not owner_id:
         return empty
 
-    try:
-        knowledge = await retrieve_knowledge_context(
-            owner_id,
-            query=query,
-            categories=["company", "icp", "messaging"],
-            limit=8,
-        )
-        knowledge_dict = knowledge.to_dict()
-    except Exception:
-        knowledge_dict = empty["knowledge"]
+    async def load_knowledge() -> dict[str, Any]:
+        try:
+            knowledge = await retrieve_knowledge_context(
+                owner_id,
+                query=query,
+                categories=["company", "icp", "messaging"],
+                limit=8,
+            )
+            return knowledge.to_dict()
+        except Exception:
+            return empty["knowledge"]
 
-    strategic: list[dict[str, Any]] = []
-    try:
-        from services.strategic.service import StrategicIntelligenceService
-        strategic = (await StrategicIntelligenceService().list_updates(owner_id))[:6]
-    except Exception:
-        strategic = []
+    async def load_strategic_updates() -> list[dict[str, Any]]:
+        try:
+            from services.strategic.service import StrategicIntelligenceService
+            return (await StrategicIntelligenceService().list_updates(owner_id))[:6]
+        except Exception:
+            return []
+
+    # These two bounded, workspace-scoped reads have no dependency on one
+    # another. Running them together keeps context helpful without delaying
+    # the durable provider job by two database round trips.
+    knowledge_dict, strategic = await asyncio.gather(
+        load_knowledge(), load_strategic_updates(),
+    )
 
     provenance = {
         "query": query,

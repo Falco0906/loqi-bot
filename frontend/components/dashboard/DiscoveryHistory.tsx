@@ -67,7 +67,7 @@ function DiscoveryRow({ item }: { item: DiscoveryListItem }) {
   const brief = (item.summary?.brief as string) || "";
   return (
     <Link
-      href={`/discovery/${item.id}`}
+      href={`/discovery?q=${encodeURIComponent(item.query)}&page=1&provider_discovery=${encodeURIComponent(item.id)}`}
       onClick={() => setNavState("discovery", "selected", { id: item.id, at: Date.now() })}
       className="group flex items-center justify-between gap-4 px-4 md:px-6 py-5 border-b border-outline-variant/20 transition-colors hover:bg-surface-container-low"
     >

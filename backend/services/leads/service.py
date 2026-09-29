@@ -245,6 +245,7 @@ async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1
         )
     records: list[dict[str, Any]] = []
     needle = query.strip().lower(); filters = filters or {}
+    keyword_needle = str(filters.get("keywords") or "").strip().lower()
     for row in workspace_rows:
         profile = profile_by_id.get(row.lead_id)
         company = company_by_id.get(row.company_id or "")
@@ -272,7 +273,7 @@ async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1
         searchable = " ".join(str(value or "") for value in record.values()).lower()
         matches_filters = all(
             not value or value.lower() in str(record.get(field, "") or "").lower()
-            for field, value in filters.items()
+            for field, value in filters.items() if field != "keywords"
         )
         # A completed provider run is already linked to canonical
         # ``workspace_leads``.  Its IDs are included even when a natural
@@ -280,7 +281,8 @@ async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1
         # persisted fields.  The union is formed before sorting/counting/
         # slicing, so every page and total remains internally consistent.
         included_by_discovery = row.id in run_sources_by_lead
-        if (not needle or needle in searchable or included_by_discovery) and matches_filters:
+        matches_keywords = not keyword_needle or keyword_needle in searchable
+        if (not needle or needle in searchable or included_by_discovery) and matches_filters and matches_keywords:
             records.append(record)
     records.sort(key=lambda record: (record["company"].lower(), record["last_name"].lower(), record["first_name"].lower()))
     total = len(records); start = max(page - 1, 0) * page_size

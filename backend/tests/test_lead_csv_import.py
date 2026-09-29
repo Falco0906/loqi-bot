@@ -246,6 +246,73 @@ def _workspace_lead(
 
 
 @pytest.mark.asyncio
+async def test_keyword_filter_searches_canonical_workspace_lead_fields(monkeypatch):
+    rows = [
+        _workspace_lead("operations", name="Operations"),
+        _workspace_lead("finance", name="Finance"),
+    ]
+    rows[0].title = "Revenue Operations"
+    rows[1].title = "Finance Lead"
+
+    class WorkspaceRepo:
+        async def list_for_workspace(self, workspace_id):
+            assert workspace_id == "workspace-a"
+            return rows
+
+    class EmptyProjection:
+        async def list_by_ids(self, _ids):
+            return []
+
+    monkeypatch.setattr(lead_service, "WorkspaceLeadRepository", WorkspaceRepo)
+    monkeypatch.setattr(lead_service, "LeadRepository", EmptyProjection)
+    monkeypatch.setattr(lead_service, "CompanyRepository", EmptyProjection)
+
+    result = await lead_service.list_workspace_leads(
+        "workspace-a", filters={"keywords": "revenue"},
+    )
+
+    assert result["total"] == 1
+    assert [lead["id"] for lead in result["leads"]] == ["operations"]
+
+
+@pytest.mark.asyncio
+async def test_lead_list_route_forwards_the_keyword_filter(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def scope(_request):
+        return "actor-a", "workspace-a"
+
+    async def list_leads(workspace_id, query, page, filters, discovery_id):
+        captured.update({
+            "workspace_id": workspace_id,
+            "query": query,
+            "page": page,
+            "filters": filters,
+            "discovery_id": discovery_id,
+        })
+        return {"leads": [], "total": 0, "page": page, "page_size": 50}
+
+    monkeypatch.setattr(lead_api, "_scope", scope)
+    monkeypatch.setattr(lead_api, "list_workspace_leads", list_leads)
+
+    response = await lead_api.list_leads(
+        "_", None, q="saas", page=2, keywords="revenue operations",
+    )
+
+    assert response["ok"] is True
+    assert captured == {
+        "workspace_id": "workspace-a",
+        "query": "saas",
+        "page": 2,
+        "filters": {
+            "location": "", "industry": "", "company": "", "title": "",
+            "keywords": "revenue operations",
+        },
+        "discovery_id": "",
+    }
+
+
+@pytest.mark.asyncio
 async def test_provider_normalization_preserves_csv_source_and_appends_durable_provenance(monkeypatch):
     """One canonical workspace lead can retain both CSV and provider origin."""
     from services.persistence.launch import Lead, WorkspaceLead

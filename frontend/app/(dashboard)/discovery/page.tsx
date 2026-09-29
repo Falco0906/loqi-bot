@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import DiscoveryHistory from "../../../components/dashboard/DiscoveryHistory";
 import {
@@ -193,7 +193,7 @@ function DiscoverySearchStatus({
   if (error) {
     return (
       <div className="rounded-xl border border-error/30 bg-error/5 px-5 py-4 text-sm text-error">
-        The broader search could not finish. Matching leads already in your workspace are still available below.
+        {error}
       </div>
     );
   }
@@ -240,6 +240,7 @@ function DiscoveryWorkspace() {
   const [providerRun, setProviderRun] = useState<DiscoveryData | null>(null);
   const [providerError, setProviderError] = useState("");
   const [startingSearch, setStartingSearch] = useState(false);
+  const startingSearchRef = useRef(false);
   const [pendingQuery, setPendingQuery] = useState("");
   const hasSearch = Boolean(query.trim());
   const hasFilters = Object.values(filters).some(Boolean);
@@ -310,12 +311,20 @@ function DiscoveryWorkspace() {
       try {
         const next = await fetchDiscoveryFresh(providerDiscoveryId);
         if (!active) return;
+        if (!next) {
+          setProviderRun(null);
+          setProviderError("This saved search is unavailable or could not be refreshed.");
+          return;
+        }
         setProviderRun(next);
-        setProviderError("");
         if (next?.status === "queued" || next?.status === "searching") {
+          setProviderError("");
           retryTimer = window.setTimeout(() => void refresh(), 4000);
         } else if (next?.status === "completed") {
+          setProviderError("");
           void loadWorkspaceLeads();
+        } else if (next?.status === "failed" || next?.status === "cancelled") {
+          setProviderError("This search did not complete. Matching workspace leads are still available below.");
         }
       } catch {
         if (active) setProviderError("Discovery search could not be loaded.");
@@ -332,7 +341,8 @@ function DiscoveryWorkspace() {
 
   const runSearch = async (requestedQuery = draftQuery) => {
     const nextQuery = requestedQuery.trim();
-    if (!nextQuery || startingSearch) return;
+    if (!nextQuery || startingSearchRef.current) return;
+    startingSearchRef.current = true;
     setDraftQuery(nextQuery);
     setPendingQuery(nextQuery);
     setProviderError("");
@@ -340,6 +350,7 @@ function DiscoveryWorkspace() {
     if (!providerSearchEnabled) {
       writeState({ ...filters, q: nextQuery, page: "1" }, "", "push");
       setPendingQuery("");
+      startingSearchRef.current = false;
       return;
     }
 
@@ -356,6 +367,7 @@ function DiscoveryWorkspace() {
       setPendingQuery("");
     } finally {
       setStartingSearch(false);
+      startingSearchRef.current = false;
     }
   };
 
@@ -368,6 +380,9 @@ function DiscoveryWorkspace() {
     setProviderError("");
     setPendingQuery("");
     writeState({}, "", "push");
+  };
+  const clearFilters = () => {
+    writeState(query ? { q: query, page: "1" } : {}, providerDiscoveryId, "push");
   };
 
   const selectedOnPage = workspaceLeads.length > 0 && workspaceLeads.every((lead) => selected.has(lead.id));
@@ -426,7 +441,7 @@ function DiscoveryWorkspace() {
 
   return (
     <main className="flex h-full min-h-0 bg-surface">
-      <FilterRail filters={filters} hasFilters={hasFilters} onChange={updateFilter} onClear={clearSearch} />
+      <FilterRail filters={filters} hasFilters={hasFilters} onChange={updateFilter} onClear={clearFilters} />
       <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {!hasSearch && !runIsActive ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 md:px-6">
@@ -461,13 +476,7 @@ function DiscoveryWorkspace() {
         ) : (
           <>
             <div className="shrink-0 border-b border-outline-variant/15 bg-surface px-5 py-4 md:px-6">
-              <div className="flex items-center justify-between gap-4">
-              <div className="min-w-0 flex-1">{searchForm}</div>
-              <Link href="/discovery/history" className="hidden shrink-0 items-center gap-1.5 text-sm text-on-surface-variant transition-colors hover:text-primary md:inline-flex">
-                <span className="material-symbols-outlined text-[18px]">history</span>
-                Search history
-              </Link>
-              </div>
+              {searchForm}
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 md:px-6">
               <div className="space-y-5">

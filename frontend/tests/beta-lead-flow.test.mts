@@ -43,6 +43,7 @@ test("Discovery starts as an explicit universal search and keeps provider result
 test("Discover reuses the durable run cards instead of making a second progress or ICP view", async () => {
   const detail = await readFile(new URL("../components/dashboard/DiscoveryDetailWorkspace.tsx", import.meta.url), "utf8");
   const topbar = await readFile(new URL("../components/layout/Topbar.tsx", import.meta.url), "utf8");
+  const history = await readFile(new URL("../components/dashboard/DiscoveryHistory.tsx", import.meta.url), "utf8");
 
   assert.match(detail, /export function DiscoveryExecutionPanel/);
   assert.match(detail, /export function DiscoveryResearchBriefing/);
@@ -50,6 +51,11 @@ test("Discover reuses the durable run cards instead of making a second progress 
   assert.match(detail, /View interpreted ICP and target criteria/);
   assert.match(topbar, /hideWorkspaceSearch: true/);
   assert.match(topbar, /!config\.hideWorkspaceSearch/);
+  assert.match(discovery, /if \(!next\)/, "an invalid or unreadable durable run must leave the progress state");
+  assert.match(discovery, /next\?\.status === "failed" \|\| next\?\.status === "cancelled"/);
+  assert.match(discovery, /startingSearchRef\.current/, "rapid repeated clicks must not start duplicate provider runs");
+  assert.match(discovery, /const clearFilters/, "clearing filters must preserve the active search/run");
+  assert.match(history, /\/discovery\?q=\$\{encodeURIComponent\(item\.query\)\}/, "history must restore the unified Discover route");
 });
 
 test("Lead Database makes CSV outcomes visible and does not retry an import", () => {

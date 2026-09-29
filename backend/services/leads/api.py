@@ -6,6 +6,7 @@ from services.identity import dependencies as identity_dependencies
 from services.workspace import access
 from services.leads.service import (
     LeadImportError,
+    LeadDatabaseUnavailable,
     analyze_workspace_leads,
     generate_workspace_lead_strategy_drafts,
     import_csv_rows,
@@ -37,9 +38,12 @@ async def list_leads(session_token: str, request: Request, q: str = "", page: in
     _, workspace_id = await _scope(request)
     if page < 1:
         raise HTTPException(status_code=400, detail="page must be positive")
-    return {"ok": True, **await list_workspace_leads(workspace_id, q, page, filters={
-        "location": location, "industry": industry, "company": company, "title": title,
-    })}
+    try:
+        return {"ok": True, **await list_workspace_leads(workspace_id, q, page, filters={
+            "location": location, "industry": industry, "company": company, "title": title,
+        })}
+    except LeadDatabaseUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
 @router.post("/api/web/session/{session_token}/leads/csv-preview")
 async def csv_preview(session_token: str, payload: CsvPreviewRequest, request: Request):
@@ -55,7 +59,10 @@ async def csv_preview(session_token: str, payload: CsvPreviewRequest, request: R
 async def csv_import(session_token: str, payload: CsvImportRequest, request: Request):
     del session_token
     owner, workspace_id = await _scope(request)
-    return {"ok": True, **await import_csv_rows(workspace_id, owner, payload.rows)}
+    try:
+        return {"ok": True, **await import_csv_rows(workspace_id, owner, payload.rows)}
+    except LeadDatabaseUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
 @router.post("/api/web/session/{session_token}/leads/analyze")
 async def analyze_leads(session_token: str, payload: LeadAnalysisRequest, request: Request):

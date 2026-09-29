@@ -1095,8 +1095,20 @@ async def _normalize_company_lead(workspace_id: str, lead: dict[str, Any]) -> st
 
 def _qualification_metadata(lead: dict[str, Any]) -> dict[str, Any]:
     """Persist qualification explanation without changing the lead model."""
+    metadata: dict[str, Any] = {}
     breakdown = lead.get("commercial_score_breakdown")
-    return {"qualification": breakdown} if isinstance(breakdown, dict) else {}
+    if isinstance(breakdown, dict):
+        metadata["qualification"] = breakdown
+    # A CSV may contain useful workspace context even when there is no domain
+    # from which to form a globally deduplicated company relation. Keep that
+    # bounded, user-supplied context on the canonical workspace-lead record.
+    csv_metadata = lead.get("csv_import_metadata")
+    if isinstance(csv_metadata, dict):
+        metadata["csv_import"] = {
+            key: str(value) for key, value in csv_metadata.items()
+            if key in {"company", "website", "location", "industry", "company_size"} and value
+        }
+    return metadata
 
 
 _CANONICAL_LEAD_STATUSES = {"new", "added", "approved", "rejected"}

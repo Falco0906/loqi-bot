@@ -277,6 +277,12 @@ class CompanyRepository(LaunchRepository[Company]):
             return None
         return await self._first_where([("domain", "eq", domain)])
 
+    async def list_by_ids(self, company_ids: list[str]) -> list[Company]:
+        """Load a bounded set of canonical companies in one query."""
+        if not company_ids:
+            return []
+        return await self._list([("id", "in", company_ids)], limit=len(company_ids))
+
 
 class WorkspaceCompanyRepository(LaunchRepository[WorkspaceCompany]):
     _table_name = "workspace_companies"
@@ -317,6 +323,12 @@ class LeadRepository(LaunchRepository[Lead]):
             return None
         return await self._first_where([("email", "eq", email)])
 
+    async def list_by_ids(self, lead_ids: list[str]) -> list[Lead]:
+        """Load a bounded set of canonical leads in one query."""
+        if not lead_ids:
+            return []
+        return await self._list([("id", "in", lead_ids)], limit=len(lead_ids))
+
 
 class WorkspaceLeadRepository(LaunchRepository[WorkspaceLead]):
     _table_name = "workspace_leads"
@@ -340,7 +352,10 @@ class WorkspaceLeadRepository(LaunchRepository[WorkspaceLead]):
         ])
 
     async def list_for_workspace(self, workspace_id: str) -> list[WorkspaceLead]:
-        return await self._list([("workspace_id", "eq", workspace_id)])
+        return await self._list([
+            ("workspace_id", "eq", workspace_id),
+            ("deleted_at", "is", "null"),
+        ])
 
     async def list_by_email(self, workspace_id: str, email: str) -> list[WorkspaceLead]:
         return await self._list([

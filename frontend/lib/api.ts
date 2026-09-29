@@ -770,7 +770,10 @@ export async function previewLeadCsv(sessionToken: string, csv: string, mapping:
   return fetchWithRetry<{ ok: boolean; headers: string[]; mapping: Record<string, string>; unmapped_columns: string[]; total_rows: number; valid_rows: number; invalid_rows: Array<{ row: number; reason: string }>; preview: Array<{ row: number; lead: Record<string, string> }>; rows: Array<{ row: number; lead: Record<string, string> }> }>(`${API_BASE}/api/web/session/_/leads/csv-preview`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify({ csv, mapping }) });
 }
 export async function importLeadCsv(sessionToken: string, rows: Array<{ row: number; lead: Record<string, string> }>) {
-  return fetchWithRetry<{ ok: boolean; imported: number; duplicates: Array<{ row: number; reason: string }>; invalid: Array<{ row: number; reason: string }> }>(`${API_BASE}/api/web/session/_/leads/csv-import`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify({ rows }) });
+  // CSV import is an explicit, non-retried mutation that performs canonical
+  // identity/link writes for every confirmed row. It gets its own bounded
+  // response budget instead of the short interactive-action timeout.
+  return fetchWithRetry<{ ok: boolean; imported: number; duplicates: Array<{ row: number; reason: string }>; invalid: Array<{ row: number; reason: string }> }>(`${API_BASE}/api/web/session/_/leads/csv-import`, { method: "POST", timeout: 60_000, retries: 0, headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify({ rows }) });
 }
 export async function analyzeWorkspaceLeads(sessionToken: string, leadIds: string[]) {
   return fetchWithRetry<{

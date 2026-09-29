@@ -14,6 +14,7 @@ from services.persistence.launch import (
     LeadSignalRepository,
     WorkspaceLeadRepository,
 )
+from services.persistence.retry import classify_retryable
 from services.workspace.state import import_workspace_lead
 
 
@@ -34,6 +35,42 @@ ALIASES = {
 
 class LeadImportError(ValueError):
     pass
+
+
+class LeadDatabaseUnavailable(RuntimeError):
+    """The canonical lead store could not complete a read or write."""
+
+
+def _require_repository_client(repository: Any) -> None:
+    """Do not mistake an unconfigured canonical store for an empty database.
+
+    Repository fakes deliberately omit ``_client``; production repositories
+    expose it.  This keeps offline tests hermetic while making a missing local
+    Supabase configuration visible to the API rather than reporting a false
+    successful import or an empty lead database.
+    """
+    client_getter = getattr(repository, "_client", None)
+    if callable(client_getter) and client_getter() is None:
+        raise LeadDatabaseUnavailable("The lead database is temporarily unavailable")
+
+
+def _raise_for_persistence_failure(error: Exception, *, operation: str, workspace_id: str) -> None:
+    """Translate only retryable store outages; preserve every other failure.
+
+    A schema mismatch or programming mistake needs to remain a visible 500
+    with its original exception type, not look like a short-lived outage.
+    """
+    if classify_retryable(error):
+        log.warning(
+            "lead persistence temporarily unavailable operation=%s workspace_id=%s error_type=%s",
+            operation, workspace_id, type(error).__name__,
+        )
+        raise LeadDatabaseUnavailable("The lead database is temporarily unavailable") from error
+    log.exception(
+        "lead persistence unexpected failure operation=%s workspace_id=%s error_type=%s",
+        operation, workspace_id, type(error).__name__,
+    )
+    raise error
 
 
 def suggested_mapping(headers: list[str]) -> dict[str, str]:
@@ -77,6 +114,7 @@ def parse_csv_preview(content: str, mapping: dict[str, str] | None = None) -> di
 
 async def import_csv_rows(workspace_id: str, actor_user_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
     repo = WorkspaceLeadRepository()
+    _require_repository_client(repo)
     imported: list[str] = []
     duplicates: list[dict[str, Any]] = []
     invalid: list[dict[str, Any]] = []
@@ -94,11 +132,22 @@ async def import_csv_rows(workspace_id: str, actor_user_id: str, rows: list[dict
                 duplicates.append({"row": number, "reason": "Lead already exists in this workspace"})
                 continue
         lead["source"] = "csv_import"
+        lead["csv_import_metadata"] = {
+            field: value for field, value in lead.items()
+            if field in {"company", "website", "location", "industry", "company_size"} and value
+        }
         try:
             lead_id = await import_workspace_lead(workspace_id, lead)
-        except Exception:
-            invalid.append({"row": number, "reason": "Lead could not be persisted"})
+        except LeadImportError as error:
+            # This is a row-specific validation failure, not a store outage.
+            invalid.append({"row": number, "reason": str(error) or "Lead could not be persisted"})
             continue
+        except Exception as error:
+            # Persistence errors are systemic request failures. Do not claim a
+            # bad CSV row when the canonical store or code path is at fault.
+            _raise_for_persistence_failure(
+                error, operation="csv_import", workspace_id=workspace_id,
+            )
         if lead_id:
             imported.append(lead_id)
         else:
@@ -108,21 +157,43 @@ async def import_csv_rows(workspace_id: str, actor_user_id: str, rows: list[dict
 
 async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1, page_size: int = 50,
                                filters: dict[str, str] | None = None) -> dict[str, Any]:
-    workspace_rows = await WorkspaceLeadRepository().list_for_workspace(workspace_id)
+    workspace_repository = WorkspaceLeadRepository()
+    _require_repository_client(workspace_repository)
+    try:
+        workspace_rows = await workspace_repository.list_for_workspace(workspace_id)
+    except Exception as error:
+        _raise_for_persistence_failure(
+            error, operation="workspace_lead_list", workspace_id=workspace_id,
+        )
+
     profiles = LeadRepository()
     companies = CompanyRepository()
+    try:
+        profile_rows, company_rows = await asyncio.gather(
+            profiles.list_by_ids(list({row.lead_id for row in workspace_rows if row.lead_id})),
+            companies.list_by_ids(list({row.company_id for row in workspace_rows if row.company_id})),
+        )
+    except Exception as error:
+        _raise_for_persistence_failure(
+            error, operation="workspace_lead_projection", workspace_id=workspace_id,
+        )
+    profile_by_id = {profile.id: profile for profile in profile_rows}
+    company_by_id = {company.id: company for company in company_rows}
     records: list[dict[str, Any]] = []
     needle = query.strip().lower(); filters = filters or {}
     for row in workspace_rows:
-        profile = await profiles.get(row.lead_id) if row.lead_id else None
-        company = await companies.get(row.company_id) if row.company_id else None
+        profile = profile_by_id.get(row.lead_id)
+        company = company_by_id.get(row.company_id or "")
+        imported_metadata = (getattr(row, "metadata", {}) or {}).get("csv_import", {})
         record = {
             "id": row.id, "first_name": row.first_name or getattr(profile, "first_name", ""),
             "last_name": row.last_name or getattr(profile, "last_name", ""),
             "email": row.email or getattr(profile, "email", ""), "title": row.title or getattr(profile, "title", ""),
             "phone": row.phone or getattr(profile, "phone", ""), "linkedin_url": row.linkedin_url or getattr(profile, "linkedin_url", ""),
-            "company": getattr(company, "name", ""), "website": getattr(company, "website", ""),
-            "location": getattr(company, "location", ""), "industry": getattr(company, "industry", ""),
+            "company": getattr(company, "name", "") or imported_metadata.get("company", ""),
+            "website": getattr(company, "website", "") or imported_metadata.get("website", ""),
+            "location": getattr(company, "location", "") or imported_metadata.get("location", ""),
+            "industry": getattr(company, "industry", "") or imported_metadata.get("industry", ""),
             "status": row.lead_status,
         }
         searchable = " ".join(str(value or "") for value in record.values()).lower()

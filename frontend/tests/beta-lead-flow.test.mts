@@ -15,8 +15,9 @@ test("Discover preserves URL-backed search, filter, pagination, and selected lea
 });
 
 test("Lead Database makes CSV outcomes visible and does not retry an import", () => {
-  for (const text of ["Upload CSV", "Inspect columns", "Confirm import", "Import complete:", "duplicates skipped", "No rows were retried automatically"]) {
+  for (const text of ["Upload CSV", "Review column mapping", "Confirm import", "Import complete:", "duplicates skipped", "No rows were retried automatically", "Loading durable lead records", "Lead database pagination"]) {
     assert.ok(contacts.includes(text), `missing ${text}`);
   }
+  assert.match(contacts, /await inspect\(content, \{\}\)/, "a normally mapped CSV should preview immediately");
   assert.doesNotMatch(contacts, /Apollo|SerpAPI|OpenAI|generate/);
 });

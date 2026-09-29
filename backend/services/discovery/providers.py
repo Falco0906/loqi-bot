@@ -62,7 +62,16 @@ def _filter_and_rank_leads_soft(leads: list, icp: dict, context: dict | None = N
 
 def get_leads(service: str, target: str) -> dict:
     """Search for leads using the configured provider (no ICP expansion)."""
-    provider = get_provider()
+    try:
+        provider = get_provider()
+    except Exception as error:
+        _log(f"Provider initialization failed: {type(error).__name__}: {error}")
+        return {
+            "ok": False,
+            "source": "",
+            "error": "Lead provider configuration is unavailable",
+            "leads": [],
+        }
     health = provider.health_check()
     if not health.get("ok"):
         return {
@@ -119,7 +128,21 @@ def search_with_expansion(service: str, target: str, plan=None, context: dict | 
     free-text pipeline runs unchanged.
     """
     import time; _t0 = time.time()
-    provider = get_provider()
+    try:
+        provider = get_provider()
+    except Exception as error:
+        # Provider selection/configuration is not a transient provider call.
+        # Keep the real exception observable in server logs while returning a
+        # safe terminal classification to the durable Discovery job.
+        _log(f"Provider initialization failed: {type(error).__name__}: {error}")
+        return {
+            "ok": False,
+            "provider_error_kind": "permanent",
+            "error": "Lead provider configuration is unavailable",
+            "leads": [],
+            "icp": None,
+            "context_provenance": (context or {}).get("provenance", {}),
+        }
 
     _log(f"Using {type(provider).__name__}")
     _log(f"BUYER-INTENT search: service='{service}', target='{target}'"

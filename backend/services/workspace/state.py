@@ -71,6 +71,13 @@ def _to_float(value: Any) -> float:
         return 0.0
 
 
+def _to_int_or_none(value: Any) -> int | None:
+    try:
+        return int(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _run(async_fn):
     """Fire an async write from a sync or async context without awaiting.
 
@@ -925,6 +932,11 @@ async def _normalize_lead(workspace_id: str, lead: dict[str, Any]) -> str | None
     state (status, source, confidence, company link) lives in workspace_leads.
     Returns the workspace-lead id — what campaign_leads and drafts reference.
     """
+    # Providers expose the documented canonical discovery schema (for example
+    # ``company_website``), while CSV uses the workspace-lead field names
+    # directly. Normalize those aliases once at the canonical persistence
+    # boundary so both inputs follow the same lead/company write path.
+    lead = _canonicalize_lead_payload(lead)
     email = str(lead.get("email") or "").strip().lower()
     if not email:
         return await _normalize_company_lead(workspace_id, lead)
@@ -947,7 +959,14 @@ async def _normalize_lead(workspace_id: str, lead: dict[str, Any]) -> str | None
             profile.first_name = parts[0]
             if len(parts) > 1:
                 profile.last_name = parts[1]
-        profile = await lead_repo.save(profile)
+        try:
+            profile = await lead_repo.save(profile)
+        except Exception as error:
+            if not _is_unique_constraint_error(error):
+                raise
+            profile = await lead_repo.find_by_email(email)
+            if profile is None:
+                raise
 
     company_id = None
     domain = _lead_domain(lead)
@@ -965,18 +984,35 @@ async def _normalize_lead(workspace_id: str, lead: dict[str, Any]) -> str | None
                 industry=str(lead.get("industry") or ""),
                 country=str(lead.get("country") or ""),
                 city=str(lead.get("city") or ""),
+                location=str(lead.get("location") or ""),
+                description=str(lead.get("description") or ""),
+                employee_count=_to_int_or_none(lead.get("employee_count")),
+                revenue_band=str(lead.get("revenue_band") or ""),
                 source_provider=source,
             )
-            company = await company_repo.save(company)
+            try:
+                company = await company_repo.save(company)
+            except Exception as error:
+                if not _is_unique_constraint_error(error):
+                    raise
+                company = await company_repo.find_by_domain(domain)
+                if company is None:
+                    raise
         company_id = company.id
         ws_company_repo = WorkspaceCompanyRepository()
         link = await ws_company_repo.find(workspace_id, company.id)
         if link is None:
-            await ws_company_repo.save(WorkspaceCompany(
-                workspace_id=workspace_id,
-                company_id=company.id,
-                source=source,
-            ))
+            try:
+                await ws_company_repo.save(WorkspaceCompany(
+                    workspace_id=workspace_id,
+                    company_id=company.id,
+                    source=source,
+                ))
+            except Exception as error:
+                if not _is_unique_constraint_error(error):
+                    raise
+                if await ws_company_repo.find(workspace_id, company.id) is None:
+                    raise
 
     ws_lead_repo = WorkspaceLeadRepository()
     existing = await ws_lead_repo.find_in_workspace(workspace_id, profile.id)
@@ -1022,7 +1058,18 @@ async def _normalize_lead(workspace_id: str, lead: dict[str, Any]) -> str | None
         source=source or str(lead.get("source") or ""),
         metadata=metadata,
     )
-    saved = await ws_lead_repo.save(ws_lead)
+    try:
+        saved = await ws_lead_repo.save(ws_lead)
+    except Exception as error:
+        if not _is_unique_constraint_error(error):
+            raise
+        saved = await ws_lead_repo.find_in_workspace(workspace_id, profile.id)
+        if saved is None:
+            raise
+        if source and not saved.source:
+            saved.source = source
+        saved.metadata = _with_source_provenance(saved.metadata, saved.source, source)
+        await ws_lead_repo.save(saved)
     return saved.id
 
 
@@ -1037,7 +1084,9 @@ async def _normalize_company_lead(workspace_id: str, lead: dict[str, Any]) -> st
     """
     ws_lead_repo = WorkspaceLeadRepository()
     source = str(lead.get("source") or lead.get("provider") or "").strip()
-    raw_id = str(lead.get("id") or "").strip()
+    raw_id = str(
+        lead.get("id") or lead.get("lead_id") or lead.get("company_id") or ""
+    ).strip()
 
     if raw_id:
         account = await _safe_repo_get(ws_lead_repo, raw_id)
@@ -1057,11 +1106,17 @@ async def _normalize_company_lead(workspace_id: str, lead: dict[str, Any]) -> st
         ws_company_repo = WorkspaceCompanyRepository()
         link = await ws_company_repo.find(workspace_id, company_id)
         if link is None:
-            await ws_company_repo.save(WorkspaceCompany(
-                workspace_id=workspace_id,
-                company_id=company_id,
-                source=source,
-            ))
+            try:
+                await ws_company_repo.save(WorkspaceCompany(
+                    workspace_id=workspace_id,
+                    company_id=company_id,
+                    source=source,
+                ))
+            except Exception as error:
+                if not _is_unique_constraint_error(error):
+                    raise
+                if await ws_company_repo.find(workspace_id, company_id) is None:
+                    raise
         existing = await ws_lead_repo.find_by_company(workspace_id, company_id)
         if existing is not None:
             changed = False
@@ -1080,14 +1135,33 @@ async def _normalize_company_lead(workspace_id: str, lead: dict[str, Any]) -> st
                 await ws_lead_repo.save(existing)
             return existing.id
 
+    # A provider may legitimately return a company-level prospect without an
+    # email or a resolvable domain. Its provider id is still a stable
+    # canonical identity. Never collapse every such provider record into the
+    # old ``company:anonymous:<workspace>`` key.
+    source_identity = str(lead.get("source") or lead.get("provider") or "").strip()
+    if source_identity and raw_id:
+        canonical_id = f"provider:{source_identity}:{raw_id}"
+    else:
+        canonical_id = f"company:{company_id or 'anonymous'}:{workspace_id}"
+
     lead_repo = LeadRepository()
-    profile = await lead_repo.save(Lead(
-        canonical_id=f"company:{company_id or 'anonymous'}:{workspace_id}",
-        email="",
-        first_name=str(lead.get("first_name") or ""),
-        last_name=str(lead.get("last_name") or ""),
-        title=str(lead.get("title") or ""),
-    ))
+    profile = await lead_repo.find_by_canonical_id(canonical_id)
+    if profile is None:
+        try:
+            profile = await lead_repo.save(Lead(
+                canonical_id=canonical_id,
+                email="",
+                first_name=str(lead.get("first_name") or ""),
+                last_name=str(lead.get("last_name") or ""),
+                title=str(lead.get("title") or ""),
+            ))
+        except Exception as error:
+            if not _is_unique_constraint_error(error):
+                raise
+            profile = await lead_repo.find_by_canonical_id(canonical_id)
+            if profile is None:
+                raise
     ws_lead = WorkspaceLead(
         workspace_id=workspace_id,
         lead_id=profile.id,
@@ -1101,7 +1175,9 @@ async def _normalize_company_lead(workspace_id: str, lead: dict[str, Any]) -> st
     )
     try:
         saved = await ws_lead_repo.save(ws_lead)
-    except Exception:
+    except Exception as error:
+        if not _is_unique_constraint_error(error):
+            raise
         if company_id:
             existing = await ws_lead_repo.find_by_company(workspace_id, company_id)
             if existing is not None:
@@ -1126,6 +1202,76 @@ def _qualification_metadata(lead: dict[str, Any]) -> dict[str, Any]:
             if key in {"company", "website", "location", "industry", "company_size"} and value
         }
     return metadata
+
+
+def _canonicalize_lead_payload(lead: dict[str, Any]) -> dict[str, Any]:
+    """Map documented provider lead fields onto canonical lead fields.
+
+    The function is deliberately data-only: it does not validate, persist, or
+    infer information. CSV payloads already use these canonical names and are
+    returned unchanged except for a defensive copy.
+    """
+    normalized = dict(lead or {})
+    aliases = {
+        "website": "company_website",
+        "industry": "company_industry",
+        "description": "company_description",
+        "city": "company_city",
+        "country": "company_country",
+        "employee_count": "company_employees",
+        "revenue_band": "company_revenue_band",
+    }
+    for canonical, provider_field in aliases.items():
+        if not normalized.get(canonical) and normalized.get(provider_field):
+            normalized[canonical] = normalized[provider_field]
+
+    if not normalized.get("location"):
+        location = ", ".join(
+            str(normalized.get(field) or "").strip()
+            for field in ("city", "country")
+            if str(normalized.get(field) or "").strip()
+        )
+        if location:
+            normalized["location"] = location
+    return normalized
+
+
+def _is_unique_constraint_error(error: BaseException) -> bool:
+    """Recognize only the database conflict safe to resolve by re-reading.
+
+    The normalizer must not turn schema, authorization, data-shape, or
+    transport failures into duplicate handling. PostgreSQL uses SQLSTATE
+    ``23505`` for a unique violation; the message checks cover the Supabase
+    client variants that do not expose the SQLSTATE directly.
+    """
+    code = str(getattr(error, "code", "") or "")
+    message = str(error).lower()
+    return code == "23505" or "duplicate key" in message or "unique constraint" in message
+
+
+def _normalization_lock_key(lead: dict[str, Any]) -> str | None:
+    """Return the global identity that must not normalize concurrently.
+
+    Discovery finalization can process unrelated provider leads in parallel,
+    but multiple contacts at the same company race the global company and
+    workspace-company unique indexes if their find/create paths overlap.
+    ``None`` means a provider row has no stable canonical identity and should
+    be reported as a skipped record rather than persisted ambiguously.
+    """
+    normalized = _canonicalize_lead_payload(lead)
+    domain = _lead_domain(normalized)
+    if domain:
+        return f"domain:{domain}"
+    email = str(normalized.get("email") or "").strip().lower()
+    if email:
+        return f"email:{email}"
+    source = str(normalized.get("source") or normalized.get("provider") or "").strip()
+    external_id = str(
+        normalized.get("id") or normalized.get("lead_id") or normalized.get("company_id") or ""
+    ).strip()
+    if source and external_id:
+        return f"provider:{source}:{external_id}"
+    return None
 
 
 def _with_source_provenance(

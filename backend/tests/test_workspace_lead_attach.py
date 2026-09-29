@@ -55,6 +55,10 @@ class _FakeLeadRepo:
         rows = self.rows.matching(lambda r: r.email == email)
         return rows[0] if rows else None
 
+    async def find_by_canonical_id(self, canonical_id: str):
+        rows = self.rows.matching(lambda r: r.canonical_id == canonical_id)
+        return rows[0] if rows else None
+
     async def save(self, entity):
         return self.rows.store(entity)
 
@@ -201,6 +205,7 @@ def env(monkeypatch):
     monkeypatch.setattr(workspace_state, "StrategyRepository", lambda: _FakeStrategyRepo())
 
     return {
+        "companies": companies,
         "campaigns": campaigns,
         "ws_companies": ws_companies,
         "ws_leads": ws_leads,
@@ -276,6 +281,79 @@ async def test_person_lead_path_is_unchanged(env):
 
     lead_id = await _normalize_lead("ws-1", {"email": "ada@acme.com", "company": "Acme Inc"})
     assert lead_id == "ws-person"
+
+
+async def test_provider_lead_aliases_use_the_same_canonical_workspace_lead_path(env):
+    """Provider fields map to the existing CSV/workspace lead representation."""
+    lead_id = await _normalize_lead("ws-1", {
+        "lead_id": "provider-ada",
+        "email": "ada@acme.example",
+        "first_name": "Ada",
+        "last_name": "Lovelace",
+        "title": "Founder",
+        "company": "Acme Example",
+        "company_website": "https://acme.example",
+        "company_industry": "SaaS",
+        "company_city": "Bengaluru",
+        "company_country": "India",
+        "provider": "synthetic",
+    })
+
+    lead = env["ws_leads"].get(lead_id)
+    company = env["companies"].get(lead.company_id)
+    assert lead.email == "ada@acme.example"
+    assert lead.source == "synthetic"
+    assert company.website == "https://acme.example"
+    assert company.industry == "SaaS"
+    assert company.city == "Bengaluru"
+    assert company.country == "India"
+
+
+async def test_provider_normalization_recovers_only_from_a_company_unique_race(env, monkeypatch):
+    """A concurrent Discovery run may win the company insert first."""
+    class UniqueConflict(Exception):
+        code = "23505"
+
+    class RacingCompanyRepo(_FakeCompanyRepo):
+        async def save(self, entity):
+            # Model another normalizer committing this domain between this
+            # request's find and insert. A unique conflict is safe to resolve
+            # by reading that canonical company back.
+            self.rows.store(entity)
+            raise UniqueConflict("duplicate key value violates unique constraint")
+
+    company_repo = RacingCompanyRepo(env["companies"])
+    monkeypatch.setattr(workspace_state, "CompanyRepository", lambda: company_repo)
+
+    lead_id = await _normalize_lead("ws-1", {
+        "lead_id": "provider-race",
+        "email": "race@acme.example",
+        "company": "Acme Example",
+        "company_website": "https://acme.example",
+        "provider": "synthetic",
+    })
+
+    assert lead_id
+    assert len(env["companies"].matching(lambda row: row.domain == "acme.example")) == 1
+
+
+async def test_provider_normalization_does_not_treat_non_unique_failure_as_recovery(env, monkeypatch):
+    class PersistenceFailure(_FakeWorkspaceLeadRepo):
+        async def save(self, _entity):
+            raise RuntimeError("workspace_leads schema rejected insert")
+
+    monkeypatch.setattr(
+        workspace_state,
+        "WorkspaceLeadRepository",
+        lambda: PersistenceFailure(env["ws_leads"],),
+    )
+
+    with pytest.raises(RuntimeError, match="schema rejected"):
+        await _normalize_lead("ws-1", {
+            "lead_id": "provider-schema-failure",
+            "company_website": "https://acme.example",
+            "provider": "synthetic",
+        })
 
 
 async def test_failed_persist_reports_false(monkeypatch):

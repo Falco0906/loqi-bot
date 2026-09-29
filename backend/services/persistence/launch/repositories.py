@@ -323,6 +323,11 @@ class LeadRepository(LaunchRepository[Lead]):
             return None
         return await self._first_where([("email", "eq", email)])
 
+    async def find_by_canonical_id(self, canonical_id: str) -> Lead | None:
+        if not canonical_id:
+            return None
+        return await self._first_where([("canonical_id", "eq", canonical_id)])
+
     async def list_by_ids(self, lead_ids: list[str]) -> list[Lead]:
         """Load a bounded set of canonical leads in one query."""
         if not lead_ids:

@@ -262,7 +262,13 @@ async def create_search_run(
 
         if status in ("failed", "cancelled"):
             linked_discovery = get_discovery_by_job_id(job_id)
-            if linked_discovery:
+            # Finalization may already have recorded a detailed terminal
+            # summary (provider count, canonical count, and safe failure
+            # category). Do not replace that durable diagnosis with the
+            # runner's generic failure wrapper.
+            if linked_discovery and str(linked_discovery.get("status") or "") not in (
+                "completed", "failed", "cancelled",
+            ):
                 mark_discovery_status(
                     str(linked_discovery["id"]),
                     str(status),
@@ -784,13 +790,14 @@ async def finalize_discovery(job) -> bool:
         leads = await asyncio.to_thread(JobStorage().get_search_results, job.id)
         _log(f"[kickoff] finalize_discovery: search_results={len(leads) if leads else 0} for job {getattr(job, 'id', '')}")
 
-        from services.workspace.state import _normalize_lead
+        from services.workspace.state import _normalization_lock_key, _normalize_lead
 
         ws_lead_ids: list[str] = []
         normalized_leads: list[dict] = []
         seen: set[str] = set()
         providers: dict[str, int] = {}
         normalization_errors: list[str] = []
+        skipped_records = 0
         unique_leads: list[dict] = []
         source_keys: set[str] = set()
         for lead in leads:
@@ -806,24 +813,31 @@ async def finalize_discovery(job) -> bool:
             unique_leads.append(lead)
 
         # Canonical normalization performs several repository round trips per
-        # lead. Bound parallelism preserves the existing source/provenance and
-        # global-deduplication path while avoiding a 30-lead serial tail after
-        # the provider has already returned useful results.
+        # lead. Bound parallelism avoids a 30-lead serial tail, while the
+        # per-identity lock prevents multiple contacts at the same provider
+        # company from racing the global company/workspace-company unique
+        # indexes. CSV imports are sequential and never had this race.
         semaphore = asyncio.Semaphore(4)
+        normalization_locks: dict[str, asyncio.Lock] = {}
 
         async def normalize_one(lead: dict) -> str | Exception | None:
-            async with semaphore:
-                try:
-                    return await _normalize_lead(workspace_id, lead)
-                except Exception as error:
-                    return error
+            identity = _normalization_lock_key(lead)
+            if identity is None:
+                return None
+            lock = normalization_locks.setdefault(identity, asyncio.Lock())
+            async with lock:
+                async with semaphore:
+                    try:
+                        return await _normalize_lead(workspace_id, lead)
+                    except Exception as error:
+                        return error
 
         normalized_ids = await asyncio.gather(
             *(normalize_one(lead) for lead in unique_leads),
         )
         for lead, normalized in zip(unique_leads, normalized_ids):
             if isinstance(normalized, Exception):
-                _log(f"finalize_discovery normalize lead skipped: {normalized}")
+                _log(f"finalize_discovery normalize lead failed: {normalized}")
                 normalization_errors.append(str(normalized))
                 continue
             ws_lead_id = normalized
@@ -832,11 +846,20 @@ async def finalize_discovery(job) -> bool:
                 ws_lead_ids.append(ws_lead_id)
                 normalized_leads.append(lead)
             elif not ws_lead_id:
-                normalization_errors.append("Lead normalization returned no canonical workspace lead")
+                # A provider row without email/domain/provider identity cannot
+                # be linked to a canonical lead safely. It is a bad record,
+                # not evidence that the persistence system failed.
+                skipped_records += 1
     except Exception as e:
         _log(f"finalize_discovery failed: {e}")
         if row:
-            await asyncio.to_thread(mark_discovery_status, str(row["id"]), "failed", str(e))
+            await asyncio.to_thread(
+                mark_discovery_status,
+                str(row["id"]),
+                "failed",
+                str(e),
+                error_kind="persistence",
+            )
         return False
 
     linked = await asyncio.to_thread(_link_leads, discovery_id, normalized_leads, ws_lead_ids)
@@ -855,9 +878,16 @@ async def finalize_discovery(job) -> bool:
             "error": error,
             "provider_lead_count": len(leads),
             "persisted_lead_count": len(ws_lead_ids),
+            "skipped_provider_record_count": skipped_records,
             "persistence": "partial_failed",
         }
-        await asyncio.to_thread(mark_discovery_status, discovery_id, "failed", error)
+        await asyncio.to_thread(
+            mark_discovery_status,
+            discovery_id,
+            "failed",
+            error,
+            error_kind="persistence",
+        )
         try:
             client = get_supabase_client()
             await asyncio.to_thread(
@@ -884,6 +914,8 @@ async def finalize_discovery(job) -> bool:
         ),
         "company_count": company_count,
         "lead_count": lead_count,
+        "provider_lead_count": len(leads),
+        "skipped_provider_record_count": skipped_records,
     }
     updates: dict[str, Any] = {
         "status": "completed",
@@ -908,7 +940,11 @@ async def finalize_discovery(job) -> bool:
     except Exception as e:
         _log(f"finalize_discovery update error: {e}")
         await asyncio.to_thread(
-            mark_discovery_status, discovery_id, "failed", str(e)
+            mark_discovery_status,
+            discovery_id,
+            "failed",
+            str(e),
+            error_kind="persistence",
         )
         return False
 

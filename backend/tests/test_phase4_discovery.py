@@ -101,6 +101,28 @@ def test_provider_no_matches_is_a_completed_zero_result_search(monkeypatch):
     assert result["leads"] == []
 
 
+def test_provider_configuration_failure_is_a_safe_terminal_provider_failure(monkeypatch):
+    """Provider construction must not escape as a generic runner crash."""
+    from services.discovery import providers
+
+    monkeypatch.setattr(
+        providers,
+        "get_provider",
+        lambda: (_ for _ in ()).throw(ValueError("unknown provider")),
+    )
+
+    result = providers.search_with_expansion("CRM", "startups")
+
+    assert result == {
+        "ok": False,
+        "provider_error_kind": "permanent",
+        "error": "Lead provider configuration is unavailable",
+        "leads": [],
+        "icp": None,
+        "context_provenance": {},
+    }
+
+
 @pytest.mark.asyncio
 async def test_runner_preserves_provider_failure_kind_for_discovery_status():
     """Timeout/permanent provider failures reach the durable discovery owner."""
@@ -206,3 +228,44 @@ def test_pipeline_does_not_expand_the_same_query_before_provider_search(monkeypa
     )
 
     assert result == {"ok": True, "leads": []}
+
+
+@pytest.mark.asyncio
+async def test_distinct_queries_reach_the_same_provider_workflow_without_a_default(monkeypatch):
+    """Discovery must use each explicit query, never a recovered hard-coded target."""
+    import workflow_dispatcher
+    from services.job_engine.models import Job
+
+    captured: list[tuple[str, str]] = []
+
+    async def context(_owner_id, query=""):
+        return {"query": query, "provenance": {}}
+
+    def search(service, target, _plan, _context, _progress, _on_results):
+        captured.append((service, target))
+        return {"ok": True, "leads": []}
+
+    monkeypatch.setattr(
+        "services.discovery.context.retrieve_discovery_context", context,
+    )
+    monkeypatch.setattr(
+        "services.discovery.plan.derive_discovery_plan", lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(workflow_dispatcher, "_search_with_progress", search)
+
+    await workflow_dispatcher.run_search_workflow(
+        Job(id="job-india", user_id="owner-1", query="SaaS founders in India"),
+        lambda *_args: None,
+    )
+    await workflow_dispatcher.run_search_workflow(
+        Job(
+            id="job-us", user_id="owner-1",
+            query="ecommerce companies hiring sales leaders in the US",
+        ),
+        lambda *_args: None,
+    )
+
+    assert captured == [
+        ("SaaS founders", "India"),
+        ("ecommerce companies hiring sales leaders", "the US"),
+    ]

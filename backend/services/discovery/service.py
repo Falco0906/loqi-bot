@@ -235,6 +235,8 @@ async def create_search_run(
             }
             if payload.get("error"):
                 data["error"] = str(payload.get("error"))[:200]
+            if payload.get("error_kind"):
+                data["error_kind"] = str(payload.get("error_kind"))[:40]
             await event_bus.publish_user_event(
                 user_id,
                 event_type,
@@ -265,6 +267,7 @@ async def create_search_run(
                     str(linked_discovery["id"]),
                     str(status),
                     str(payload.get("error") or ""),
+                    error_kind=str(payload.get("error_kind") or ""),
                 )
         elif status == "running" and payload.get("stage"):
             linked_discovery_id = get_discovery_id_for_job(job_id)
@@ -703,7 +706,13 @@ def get_discovery_lead_provenance(
         return {}
 
 
-def mark_discovery_status(discovery_id: str, status: str, error: str = "") -> bool:
+def mark_discovery_status(
+    discovery_id: str,
+    status: str,
+    error: str = "",
+    *,
+    error_kind: str = "",
+) -> bool:
     """Lightweight status transition (used for failed/cancelled jobs)."""
     client = get_supabase_client()
     if not client or not discovery_id:
@@ -715,6 +724,8 @@ def mark_discovery_status(discovery_id: str, status: str, error: str = "") -> bo
         }
         if error:
             summary = {"error": error}
+            if error_kind:
+                summary["error_kind"] = error_kind[:40]
             updates["summary"] = summary
         if status in ("completed", "failed", "cancelled"):
             updates["completed_at"] = _now()

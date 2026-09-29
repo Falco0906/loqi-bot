@@ -57,6 +57,9 @@ test("Discover reuses the durable run cards instead of making a second progress 
   assert.match(discovery, /const clearFilters/, "clearing filters must preserve the active search/run");
   assert.match(discovery, /ACTIVE_DISCOVERY_KEY/, "navigation recovery keeps only a durable-run reference");
   assert.match(discovery, /fetchDiscoveryListFresh\(\)/, "a blank return route can recover a current durable run");
+  assert.match(discovery, /run\.status !== "queued" && run\.status !== "searching"/, "fresh Discover must not restore a completed run");
+  assert.match(discovery, /forgetRememberedDiscovery\(\);\s*setProviderError\(""\)/s, "terminal runs must stop being navigation recovery candidates");
+  assert.match(discovery, /function terminalDiscoveryMessage/, "terminal provider states require a specific safe message");
   assert.match(discovery, /never starts, cancels, or mutates the server-side job/);
   assert.match(discovery, /DiscoveryLeadDetails/, "the unified table must reuse the existing detail body");
   assert.match(discovery, /aria-expanded=\{expanded\}/, "rows must expand independently of selection");

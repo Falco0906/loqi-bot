@@ -78,6 +78,59 @@ def test_success_first_try_no_retry():
     assert result["ok"] is True and calls["n"] == 1
 
 
+def test_provider_no_matches_is_a_completed_zero_result_search(monkeypatch):
+    """A valid empty provider response must not be mislabeled as a failure."""
+    from services.discovery import providers
+
+    class EmptyProvider:
+        def search_leads(self, *, icp, search_expansion, limit):
+            return {"ok": True, "provider": "synthetic", "leads": []}
+
+    monkeypatch.setattr(providers, "get_provider", lambda: EmptyProvider())
+    monkeypatch.setattr(
+        "services.discovery.search_expansion.expand_search_intent",
+        lambda *_args, **_kwargs: {"search_queries": ["founder saas"]},
+    )
+
+    result = providers.search_with_expansion(
+        "CRM", "startups", plan={"industries": [], "decision_maker_roles": []},
+    )
+
+    assert result["ok"] is True
+    assert result["empty_result"] is True
+    assert result["leads"] == []
+
+
+@pytest.mark.asyncio
+async def test_runner_preserves_provider_failure_kind_for_discovery_status():
+    """Timeout/permanent provider failures reach the durable discovery owner."""
+    from services.job_engine.models import Job
+    from services.job_engine.runner import BackgroundRunner
+
+    updates: list[dict] = []
+
+    class Storage:
+        def update_job(self, *_args, **_kwargs):
+            return True
+
+    async def failed_provider(*_args):
+        return {
+            "ok": False,
+            "provider_error_kind": "timeout",
+            "error": "provider timeout after retry budget",
+        }
+
+    runner = BackgroundRunner(Storage())
+    await runner._run_wrapper(
+        Job(id="job-1", type="search", discovery_id="discovery-1"),
+        failed_provider,
+        on_update=updates.append,
+    )
+
+    assert updates[-1]["status"] == "failed"
+    assert updates[-1]["error_kind"] == "timeout"
+
+
 # ─── first-result callback ───────────────────────────────────────────────
 
 def test_first_result_hook_in_pipeline(monkeypatch):

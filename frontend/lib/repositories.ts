@@ -1062,6 +1062,7 @@ export async function fetchDiscovery(id: string): Promise<DiscoveryData | null> 
         .filter((entry): entry is DiscoveryWorkspaceLeadResult => entry !== null);
       const providerCounts = toRecord(d.provider_provenance);
       const metadata = isRecord(d.metadata) ? d.metadata : {};
+      const summary = isRecord(d.summary) ? d.summary : {};
       const rawProgress = isRecord(metadata.progress) ? metadata.progress : {};
       const rawPlan = isRecord(metadata.plan) ? metadata.plan : {};
       const progress: DiscoveryProgress = {
@@ -1172,6 +1173,12 @@ export async function fetchDiscovery(id: string): Promise<DiscoveryData | null> 
         metadata: d.metadata || {},
         progress,
         plan,
+        failure: status === "failed" || status === "cancelled"
+          ? {
+              kind: String(summary.error_kind || (status === "cancelled" ? "cancelled" : "execution")),
+              message: String(summary.error || ""),
+            }
+          : null,
       };
     } catch {
       return null;

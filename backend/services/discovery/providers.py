@@ -223,10 +223,15 @@ def search_with_expansion(service: str, target: str, plan=None, context: dict | 
 
     if not all_leads:
         return {
-            "ok": False,
+            # A provider responding successfully with no matches is a valid
+            # completed search, not an execution failure. Finalization will
+            # persist the durable zero-result discovery so the UI can
+            # distinguish "no matches" from timeout/configuration failures.
+            "ok": True,
             "source": result.get("provider", type(provider).__name__),
             "leads": [],
-            "error": "No leads found. Try a broader target.",
+            "empty_result": True,
+            "error": None,
             "icp": icp,
             "context_provenance": (context or {}).get("provenance", {}),
         }

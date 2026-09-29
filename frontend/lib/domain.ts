@@ -241,6 +241,8 @@ export type DiscoveryData = {
   metadata?: Record<string, unknown>;
   progress?: DiscoveryProgress;
   plan?: DiscoveryPlan;
+  /** Safe terminal failure classification persisted on the durable run. */
+  failure?: { kind: string; message: string } | null;
 };
 
 export type DiscoveryWorkspaceLeadResult = {

@@ -105,14 +105,33 @@ class BackgroundRunner:
                 })
             return
         _log(f"[kickoff] _run_wrapper TASK STARTED job={job.id} discovery_id={job.discovery_id}")
-        def notify(status: str, stage: str, progress: int, error: str = "") -> None:
+        def notify(
+            status: str,
+            stage: str,
+            progress: int,
+            error: str = "",
+            error_kind: str = "",
+        ) -> None:
             if on_update:
-                on_update({"job_id": job.id, "status": status, "stage": stage, "progress": progress, "error": error})
+                on_update({
+                    "job_id": job.id,
+                    "status": status,
+                    "stage": stage,
+                    "progress": progress,
+                    "error": error,
+                    "error_kind": error_kind,
+                })
 
-        async def notify_off_loop(status: str, stage: str, progress: int, error: str = "") -> None:
+        async def notify_off_loop(
+            status: str,
+            stage: str,
+            progress: int,
+            error: str = "",
+            error_kind: str = "",
+        ) -> None:
             # PR-P1.2: on_update handlers perform synchronous Supabase writes
             # (discovery progress/status). Run them off the event loop.
-            await asyncio.to_thread(notify, status, stage, progress, error)
+            await asyncio.to_thread(notify, status, stage, progress, error, error_kind)
 
         lease_task = asyncio.create_task(self._renew_claim_lease(job.id)) if claimed else None
         try:
@@ -151,7 +170,7 @@ class BackgroundRunner:
                                 error_message=error,
                                 completed_at=datetime.now(timezone.utc),
                             )
-                            await notify_off_loop("failed", "Failed", 0, error)
+                            await notify_off_loop("failed", "Failed", 0, error, "persistence")
                             return
                     except Exception as e:
                         error = f"Discovery finalization failed: {e}"
@@ -163,7 +182,7 @@ class BackgroundRunner:
                             error_message=error,
                             completed_at=datetime.now(timezone.utc),
                         )
-                        await notify_off_loop("failed", "Failed", 0, error)
+                        await notify_off_loop("failed", "Failed", 0, error, "persistence")
                         return
                 await asyncio.to_thread(
                     self._storage.update_job,
@@ -185,7 +204,13 @@ class BackgroundRunner:
                     error_message=result.get("error", "Unknown error"),
                     completed_at=datetime.now(timezone.utc),
                 )
-                await notify_off_loop("failed", "Failed", 0, result.get("error", "Unknown error"))
+                await notify_off_loop(
+                    "failed",
+                    "Failed",
+                    0,
+                    result.get("error", "Unknown error"),
+                    str(result.get("provider_error_kind") or "execution"),
+                )
         except Exception as e:
             _log(f"job {job.id} crashed: {e}")
             await asyncio.to_thread(
@@ -196,7 +221,7 @@ class BackgroundRunner:
                 error_message=str(e),
                 completed_at=datetime.now(timezone.utc),
             )
-            await notify_off_loop("failed", "Failed", 0, str(e))
+            await notify_off_loop("failed", "Failed", 0, str(e), "execution")
         finally:
             if lease_task:
                 lease_task.cancel()

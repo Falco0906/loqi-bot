@@ -70,6 +70,22 @@ function forgetRememberedDiscovery(): void {
   }
 }
 
+function terminalDiscoveryMessage(run: DiscoveryData): string {
+  if (run.status === "cancelled") {
+    return "This search was stopped before it completed. Your saved leads are still available.";
+  }
+  switch (run.failure?.kind) {
+    case "timeout":
+      return "The provider did not respond in time after its retry budget. Your saved leads are still available.";
+    case "permanent":
+      return "The configured provider could not accept this search. Check its connection and try again.";
+    case "persistence":
+      return "Matching leads were found, but their results could not be saved. Please try the search again.";
+    default:
+      return "This search failed before it completed. Your saved leads are still available.";
+  }
+}
+
 function FilterRail({
   filters,
   hasFilters,
@@ -367,7 +383,7 @@ function DiscoveryWorkspace() {
       for (const discoveryId of candidates) {
         const run = await fetchDiscoveryFresh(discoveryId);
         if (!active) return;
-        if (!run) {
+        if (!run || (run.status !== "queued" && run.status !== "searching")) {
           if (discoveryId === remembered) forgetRememberedDiscovery();
           continue;
         }
@@ -432,16 +448,18 @@ function DiscoveryWorkspace() {
           setProviderError("This saved search is unavailable or could not be refreshed.");
           return;
         }
-        rememberDiscovery(next.id);
         setProviderRun(next);
         if (next?.status === "queued" || next?.status === "searching") {
+          rememberDiscovery(next.id);
           setProviderError("");
           retryTimer = window.setTimeout(() => void refresh(), 4000);
         } else if (next?.status === "completed") {
+          forgetRememberedDiscovery();
           setProviderError("");
           void loadWorkspaceLeads();
         } else if (next?.status === "failed" || next?.status === "cancelled") {
-          setProviderError("This search did not complete. Matching workspace leads are still available below.");
+          forgetRememberedDiscovery();
+          setProviderError(terminalDiscoveryMessage(next));
         }
       } catch {
         if (active) setProviderError("Discovery search could not be loaded.");

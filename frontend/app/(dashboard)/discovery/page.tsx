@@ -47,7 +47,7 @@ function FilterRail({
   const [expanded, setExpanded] = useState<string | null>(null);
 
   return (
-    <aside className="flex min-h-[calc(100vh-9rem)] flex-col border-r border-outline-variant/15 bg-surface-lowest px-4 py-6 lg:w-[304px] lg:shrink-0">
+    <aside className="flex h-full min-h-0 flex-col overflow-y-auto border-r border-outline-variant/15 bg-surface-lowest px-4 py-5 lg:w-[304px] lg:shrink-0">
       <div className="mb-5 flex items-center justify-between px-1">
         <h1 className="text-sm font-semibold text-on-surface">Filters</h1>
         <button
@@ -425,119 +425,126 @@ function DiscoveryWorkspace() {
   );
 
   return (
-    <main className="flex min-h-[calc(100vh-4rem)] bg-surface">
+    <main className="flex h-full min-h-0 bg-surface">
       <FilterRail filters={filters} hasFilters={hasFilters} onChange={updateFilter} onClear={clearSearch} />
-      <section className="min-w-0 flex-1 px-5 py-6 md:px-10">
+      <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {!hasSearch && !runIsActive ? (
-          <div className="mx-auto flex min-h-[calc(100vh-10rem)] max-w-3xl flex-col justify-center">
-            <div className="flex items-center justify-between gap-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Discover</p>
-              <Link href="/discovery/history" className="inline-flex items-center gap-1.5 text-sm text-on-surface-variant transition-colors hover:text-primary">
-                <span className="material-symbols-outlined text-[18px]">history</span>
-                Search history
-              </Link>
-            </div>
-            <h1 className="mt-3 font-serif text-4xl tracking-tight text-on-surface md:text-5xl">Who are you looking for?</h1>
-            <div className="mt-8">{searchForm}</div>
-            <div className="mt-9">
-              <p className="mb-3 text-sm font-medium text-on-surface-variant">Suggested for you</p>
-              <div className="space-y-2">
-                {SUGGESTIONS.map((suggestion) => (
-                  <button
-                    key={suggestion}
-                    type="button"
-                    onClick={() => void runSearch(suggestion)}
-                    className="flex w-full items-center justify-between rounded-lg border border-outline-variant/20 bg-surface-lowest px-4 py-3 text-left text-sm text-on-surface-variant transition-colors hover:border-primary/40 hover:text-on-surface"
-                  >
-                    <span><span className="mr-3 text-primary">✦</span>{suggestion}</span>
-                    <span className="material-symbols-outlined text-[18px] text-primary">arrow_forward</span>
-                  </button>
-                ))}
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 md:px-6">
+            <div className="mx-auto flex min-h-full max-w-3xl flex-col justify-center">
+              <div className="flex items-center justify-between gap-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Discover</p>
+                <Link href="/discovery/history" className="inline-flex items-center gap-1.5 text-sm text-on-surface-variant transition-colors hover:text-primary">
+                  <span className="material-symbols-outlined text-[18px]">history</span>
+                  Search history
+                </Link>
+              </div>
+              <h1 className="mt-3 font-serif text-4xl tracking-tight text-on-surface md:text-5xl">Who are you looking for?</h1>
+              <div className="mt-8">{searchForm}</div>
+              <div className="mt-9">
+                <p className="mb-3 text-sm font-medium text-on-surface-variant">Suggested for you</p>
+                <div className="space-y-2">
+                  {SUGGESTIONS.map((suggestion) => (
+                    <button
+                      key={suggestion}
+                      type="button"
+                      onClick={() => void runSearch(suggestion)}
+                      className="flex w-full items-center justify-between rounded-lg border border-outline-variant/20 bg-surface-lowest px-4 py-3 text-left text-sm text-on-surface-variant transition-colors hover:border-primary/40 hover:text-on-surface"
+                    >
+                      <span><span className="mr-3 text-primary">✦</span>{suggestion}</span>
+                      <span className="material-symbols-outlined text-[18px] text-primary">arrow_forward</span>
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
         ) : (
-          <div className="mx-auto max-w-[1280px] space-y-5">
-            <div className="flex items-center justify-between gap-4">
+          <>
+            <div className="shrink-0 border-b border-outline-variant/15 bg-surface px-5 py-4 md:px-6">
+              <div className="flex items-center justify-between gap-4">
               <div className="min-w-0 flex-1">{searchForm}</div>
               <Link href="/discovery/history" className="hidden shrink-0 items-center gap-1.5 text-sm text-on-surface-variant transition-colors hover:text-primary md:inline-flex">
                 <span className="material-symbols-outlined text-[18px]">history</span>
                 Search history
               </Link>
+              </div>
             </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 md:px-6">
+              <div className="space-y-5">
+                {runIsActive && <DiscoverySearchStatus query={pendingQuery || (startingSearch ? draftQuery : query)} run={providerRun} starting={startingSearch} error={providerError} />}
+                {!runIsActive && providerError && <DiscoverySearchStatus query={query} run={providerRun} starting={false} error={providerError} />}
+                {!runIsActive && providerRun?.status === "completed" && (
+                  <DiscoveryResearchBriefing view={providerRun} resultCount={workspaceTotal} />
+                )}
 
-            {runIsActive && <DiscoverySearchStatus query={pendingQuery || (startingSearch ? draftQuery : query)} run={providerRun} starting={startingSearch} error={providerError} />}
-            {!runIsActive && providerError && <DiscoverySearchStatus query={query} run={providerRun} starting={false} error={providerError} />}
-            {!runIsActive && providerRun?.status === "completed" && (
-              <DiscoveryResearchBriefing view={providerRun} resultCount={workspaceTotal} />
-            )}
-
-            {!runIsActive && (
-              <>
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-sm text-on-surface-variant">
-                    <span className="font-semibold text-on-surface">{workspaceTotal}</span> result{workspaceTotal === 1 ? "" : "s"}
-                  </p>
-                  {selected.size > 0 && (
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm font-medium text-primary">{selected.size} selected</span>
-                      <button
-                        type="button"
-                        className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-on-primary"
-                        onClick={() => router.push(`/lead-intelligence?lead_ids=${encodeURIComponent([...selected].join(","))}`)}
-                      >
-                        Analyze with Loqi
-                      </button>
-                      <button type="button" onClick={() => setSelected(new Set())} className="text-sm text-on-surface-variant hover:text-primary">
-                        Clear selection
-                      </button>
-                    </div>
-                  )}
-                </div>
-                {error ? (
-                  <div className="rounded-xl border border-error/30 bg-error/5 p-6 text-center">
-                    <p className="font-medium text-error">{error}</p>
-                    <button type="button" onClick={() => void loadWorkspaceLeads()} className="mt-3 text-sm text-primary hover:underline">Try again</button>
-                  </div>
-                ) : loading ? (
-                  <div className="flex min-h-64 items-center justify-center rounded-xl border border-outline-variant/20 bg-surface-lowest text-sm text-on-surface-variant">
-                    <span className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />
-                    Loading matching leads…
-                  </div>
-                ) : workspaceLeads.length === 0 ? (
-                  <div className="flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed border-outline-variant/30 bg-surface-lowest p-8 text-center">
-                    <p className="font-medium text-on-surface">No leads match this search.</p>
-                    <p className="mt-1 text-sm text-on-surface-variant">Try a broader query or adjust the filters.</p>
-                  </div>
-                ) : (
+                {!runIsActive && (
                   <>
-                    <LeadResultsTable leads={workspaceLeads} selected={selected} selectedOnPage={selectedOnPage} onToggleVisible={toggleVisible} onToggleLead={toggleLead} />
-                    {workspaceTotal > PAGE_SIZE && (
-                      <nav className="flex items-center justify-between" aria-label="Lead results pagination">
-                        <button
-                          type="button"
-                          disabled={page === 1}
-                          onClick={() => writeState({ ...filters, q: query, page: String(page - 1) })}
-                          className="rounded-lg border border-outline-variant/25 px-3 py-2 text-sm text-on-surface disabled:opacity-40"
-                        >
-                          Previous
-                        </button>
-                        <span className="text-sm text-on-surface-variant">Page {page} of {Math.ceil(workspaceTotal / PAGE_SIZE)}</span>
-                        <button
-                          type="button"
-                          disabled={page * PAGE_SIZE >= workspaceTotal}
-                          onClick={() => writeState({ ...filters, q: query, page: String(page + 1) })}
-                          className="rounded-lg border border-outline-variant/25 px-3 py-2 text-sm text-on-surface disabled:opacity-40"
-                        >
-                          Next
-                        </button>
-                      </nav>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-sm text-on-surface-variant">
+                        <span className="font-semibold text-on-surface">{workspaceTotal}</span> result{workspaceTotal === 1 ? "" : "s"}
+                      </p>
+                      {selected.size > 0 && (
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm font-medium text-primary">{selected.size} selected</span>
+                          <button
+                            type="button"
+                            className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-on-primary"
+                            onClick={() => router.push(`/lead-intelligence?lead_ids=${encodeURIComponent([...selected].join(","))}`)}
+                          >
+                            Analyze with Loqi
+                          </button>
+                          <button type="button" onClick={() => setSelected(new Set())} className="text-sm text-on-surface-variant hover:text-primary">
+                            Clear selection
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    {error ? (
+                      <div className="rounded-xl border border-error/30 bg-error/5 p-6 text-center">
+                        <p className="font-medium text-error">{error}</p>
+                        <button type="button" onClick={() => void loadWorkspaceLeads()} className="mt-3 text-sm text-primary hover:underline">Try again</button>
+                      </div>
+                    ) : loading ? (
+                      <div className="flex min-h-64 items-center justify-center rounded-xl border border-outline-variant/20 bg-surface-lowest text-sm text-on-surface-variant">
+                        <span className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />
+                        Loading matching leads…
+                      </div>
+                    ) : workspaceLeads.length === 0 ? (
+                      <div className="flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed border-outline-variant/30 bg-surface-lowest p-8 text-center">
+                        <p className="font-medium text-on-surface">No leads match this search.</p>
+                        <p className="mt-1 text-sm text-on-surface-variant">Try a broader query or adjust the filters.</p>
+                      </div>
+                    ) : (
+                      <>
+                        <LeadResultsTable leads={workspaceLeads} selected={selected} selectedOnPage={selectedOnPage} onToggleVisible={toggleVisible} onToggleLead={toggleLead} />
+                        {workspaceTotal > PAGE_SIZE && (
+                          <nav className="flex items-center justify-between" aria-label="Lead results pagination">
+                            <button
+                              type="button"
+                              disabled={page === 1}
+                              onClick={() => writeState({ ...filters, q: query, page: String(page - 1) })}
+                              className="rounded-lg border border-outline-variant/25 px-3 py-2 text-sm text-on-surface disabled:opacity-40"
+                            >
+                              Previous
+                            </button>
+                            <span className="text-sm text-on-surface-variant">Page {page} of {Math.ceil(workspaceTotal / PAGE_SIZE)}</span>
+                            <button
+                              type="button"
+                              disabled={page * PAGE_SIZE >= workspaceTotal}
+                              onClick={() => writeState({ ...filters, q: query, page: String(page + 1) })}
+                              className="rounded-lg border border-outline-variant/25 px-3 py-2 text-sm text-on-surface disabled:opacity-40"
+                            >
+                              Next
+                            </button>
+                          </nav>
+                        )}
+                      </>
                     )}
                   </>
                 )}
-              </>
-            )}
-          </div>
+              </div>
+            </div>
+          </>
         )}
       </section>
     </main>

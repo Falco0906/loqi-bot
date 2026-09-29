@@ -6,9 +6,9 @@ import { useCopilot } from "../../contexts/CopilotContext";
 import { useWorkspaceSearch } from "../../contexts/SearchContext";
 import { usePageTitle } from "../../hooks/usePageTitle";
 
-export const pageConfig: Record<string, { title: string; searchPlaceholder: string }> = {
+export const pageConfig: Record<string, { title: string; searchPlaceholder: string; hideWorkspaceSearch?: boolean }> = {
   "/mission-control": { title: "Briefing", searchPlaceholder: "Search briefings..." },
-  "/discovery": { title: "Discover", searchPlaceholder: "Search your lead database..." },
+  "/discovery": { title: "Discover", searchPlaceholder: "", hideWorkspaceSearch: true },
   "/discovery/history": { title: "Research History", searchPlaceholder: "Search research history..." },
   "/campaigns": { title: "Campaigns", searchPlaceholder: "Search campaigns..." },
   "/inbox": { title: "Inbox", searchPlaceholder: "Search inbox..." },
@@ -32,30 +32,36 @@ export default function Topbar() {
   usePageTitle(config.title);
 
   return (
-    <header className="shrink-0 grid h-16 grid-cols-[minmax(0,1fr)_minmax(220px,420px)_minmax(0,1fr)] items-center gap-6 border-b border-outline-variant/5 bg-surface-lowest/50 px-6 backdrop-blur-md">
+    <header className={`shrink-0 grid h-16 items-center gap-6 border-b border-outline-variant/5 bg-surface-lowest/50 px-6 backdrop-blur-md ${
+      config.hideWorkspaceSearch
+        ? "grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+        : "grid-cols-[minmax(0,1fr)_minmax(220px,420px)_minmax(0,1fr)]"
+    }`}>
       <h1 className="min-w-0 truncate font-serif text-[24px] text-on-surface tracking-tighter">{config.title}</h1>
 
-      <label className="flex h-9 w-full items-center gap-2 rounded-lg border border-outline-variant/15 bg-surface-lowest/55 px-3 text-on-surface-variant/60 transition-colors focus-within:border-primary/30">
-        <span className="material-symbols-outlined shrink-0 text-[18px]">search</span>
-        <input
-          type="text"
-          aria-label="Search workspace"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder={config.searchPlaceholder}
-          className="min-w-0 flex-1 bg-transparent text-sm text-on-surface outline-none placeholder:text-on-surface-variant/45"
-        />
-        {query && (
-          <button
-            type="button"
-            onClick={() => setQuery("")}
-            aria-label="Clear workspace search"
-            className="shrink-0 text-on-surface-variant/45 transition-colors hover:text-on-surface"
-          >
-            <span className="material-symbols-outlined text-[16px]">close</span>
-          </button>
-        )}
-      </label>
+      {!config.hideWorkspaceSearch && (
+        <label className="flex h-9 w-full items-center gap-2 rounded-lg border border-outline-variant/15 bg-surface-lowest/55 px-3 text-on-surface-variant/60 transition-colors focus-within:border-primary/30">
+          <span className="material-symbols-outlined shrink-0 text-[18px]">search</span>
+          <input
+            type="text"
+            aria-label="Search workspace"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={config.searchPlaceholder}
+            className="min-w-0 flex-1 bg-transparent text-sm text-on-surface outline-none placeholder:text-on-surface-variant/45"
+          />
+          {query && (
+            <button
+              type="button"
+              onClick={() => setQuery("")}
+              aria-label="Clear workspace search"
+              className="shrink-0 text-on-surface-variant/45 transition-colors hover:text-on-surface"
+            >
+              <span className="material-symbols-outlined text-[16px]">close</span>
+            </button>
+          )}
+        </label>
+      )}
 
       <div className="flex items-center justify-end gap-3">
         <button

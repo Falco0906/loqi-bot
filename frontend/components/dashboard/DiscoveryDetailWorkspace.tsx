@@ -49,7 +49,7 @@ function stageIndexFor(label: string | undefined): number {
   return EXECUTION_STAGES.findIndex((stage) => label.startsWith(stage));
 }
 
-function DiscoveryExecutionPanel({
+export function DiscoveryExecutionPanel({
   progress,
   plan,
   narrative,
@@ -361,6 +361,79 @@ function ResearchPlan({ plan, embedded = false }: { plan?: DiscoveryPlan; embedd
           </div>
         ))}
       </dl>
+    </section>
+  );
+}
+
+/**
+ * The durable Discovery run's existing research/ICP briefing. This stays
+ * presentation-only: the run service remains the owner of the narrative and
+ * plan it renders. The primary Discover workspace and the detail view share
+ * it so a completed search is explained consistently in both places.
+ */
+export function DiscoveryResearchBriefing({
+  view,
+  resultCount,
+}: {
+  view: DiscoveryData;
+  resultCount: number;
+}) {
+  return (
+    <section className="w-full animate-fade-in">
+      <div className="overflow-hidden rounded-xl border border-outline-variant/20 bg-surface-lowest ambient-shadow">
+        <div className="flex items-center justify-between gap-3 border-b border-outline-variant/20 px-6 py-4 md:px-8">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <span className="material-symbols-outlined text-[16px]">insights</span>
+            </span>
+            <p className="truncate text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant/60">
+              Search intelligence
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="rounded-full bg-surface-container px-3 py-1 text-[11px] font-medium uppercase tracking-wider text-on-surface-variant">
+              {resultCount} result{resultCount === 1 ? "" : "s"}
+            </span>
+            {view.companyCount > 0 && (
+              <span className="rounded-full bg-secondary-container px-3 py-1 text-[11px] font-medium uppercase tracking-wider text-on-secondary-container">
+                {view.companyCount} companies
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="grid gap-8 px-6 py-6 md:px-8 md:py-8 lg:grid-cols-3">
+          <div className="min-w-0 space-y-4 lg:col-span-2">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant/50">
+              Searching for: {view.query}
+            </p>
+            <h2 className="font-serif text-3xl font-normal leading-tight tracking-tight text-on-surface md:text-4xl">
+              {view.narrativeTitle}
+            </h2>
+            {view.narrativeLines[0] && (
+              <p className="line-clamp-2 text-lg font-light leading-relaxed text-on-surface-variant/60">
+                {view.narrativeLines[0]}
+              </p>
+            )}
+            {view.narrativeLines.length > 1 && (
+              <ExpandableRow label="Read the full search summary">
+                <div className="space-y-3">
+                  {view.narrativeLines.slice(1).map((line, index) => (
+                    <p key={index} className="text-sm font-light leading-relaxed text-on-surface-variant/70">
+                      {line}
+                    </p>
+                  ))}
+                </div>
+              </ExpandableRow>
+            )}
+            {view.plan && (
+              <ExpandableRow label="View interpreted ICP and target criteria">
+                <ResearchPlan plan={view.plan} embedded />
+              </ExpandableRow>
+            )}
+          </div>
+          <AtGlancePanel plan={view.plan} />
+        </div>
+      </div>
     </section>
   );
 }
@@ -897,59 +970,9 @@ export default function DiscoveryDetailWorkspace({ discoveryId }: { discoveryId:
           <section className="reading-column animate-fade-in">{historyLink}</section>
 
           {/* Section 1: Executive Research Briefing (full width) */}
-          <section className="w-full px-4 md:px-6 lg:px-10 animate-fade-in">
-            <div className="bg-surface-lowest border border-outline-variant/20 rounded-xl overflow-hidden ambient-shadow">
-              <div className="flex items-center justify-between gap-3 px-6 md:px-8 py-4 border-b border-outline-variant/20">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <span className="w-7 h-7 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
-                    <span className="material-symbols-outlined text-[16px]">insights</span>
-                  </span>
-                  <p className="text-[11px] uppercase tracking-widest text-on-surface-variant/60 font-semibold truncate">
-                    Executive Research Briefing
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="bg-surface-container px-3 py-1 rounded-full text-[11px] uppercase tracking-wider text-on-surface-variant font-medium">
-                    {view.companyCount} companies
-                  </span>
-                  {recommendations.length > 0 && (
-                    <span className="bg-secondary-container text-on-secondary-container px-3 py-1 rounded-full text-[11px] uppercase tracking-wider font-medium">
-                      {recommendations.length} decision makers
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div className="grid lg:grid-cols-3 gap-8 px-6 md:px-8 py-6 md:py-8">
-                <div className="lg:col-span-2 min-w-0 space-y-4">
-                  <h1 className="text-3xl md:text-4xl font-serif text-on-surface leading-tight tracking-tight font-normal">
-                    {view.narrativeTitle}
-                  </h1>
-                  {view.narrativeLines[0] && (
-                    <p className="text-lg text-on-surface-variant/60 leading-relaxed font-light line-clamp-2">
-                      {view.narrativeLines[0]}
-                    </p>
-                  )}
-                  {view.narrativeLines.length > 1 && (
-                    <ExpandableRow label="Read the full research narrative">
-                      <div className="space-y-3">
-                        {view.narrativeLines.slice(1).map((line, i) => (
-                          <p key={i} className="text-sm text-on-surface-variant/70 leading-relaxed font-light">
-                            {line}
-                          </p>
-                        ))}
-                      </div>
-                    </ExpandableRow>
-                  )}
-                  {view.plan && (
-                    <ExpandableRow label="How this research was planned">
-                      <ResearchPlan plan={view.plan} embedded />
-                    </ExpandableRow>
-                  )}
-                </div>
-                <AtGlancePanel plan={view.plan} />
-              </div>
-            </div>
-          </section>
+          <div className="px-4 md:px-6 lg:px-10">
+            <DiscoveryResearchBriefing view={view} resultCount={recommendations.length} />
+          </div>
 
           {/* Section 2: Research Toolbar & Filters */}
           <div className="reading-column flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-outline-variant/20 pb-6">

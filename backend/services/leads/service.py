@@ -166,25 +166,37 @@ async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1
             error, operation="workspace_lead_list", workspace_id=workspace_id,
         )
 
-    profiles = LeadRepository()
-    companies = CompanyRepository()
+    # ``workspace_leads`` owns the Lead Database. Global lead/company rows
+    # enrich display fields when available, but must never make an imported
+    # workspace lead unreadable.
+    profile_by_id: dict[str, Any] = {}
+    company_by_id: dict[str, Any] = {}
     try:
+        profiles = LeadRepository()
+        companies = CompanyRepository()
         profile_rows, company_rows = await asyncio.gather(
             profiles.list_by_ids(list({row.lead_id for row in workspace_rows if row.lead_id})),
             companies.list_by_ids(list({row.company_id for row in workspace_rows if row.company_id})),
         )
+        profile_by_id = {profile.id: profile for profile in profile_rows}
+        company_by_id = {company.id: company for company in company_rows}
     except Exception as error:
-        _raise_for_persistence_failure(
-            error, operation="workspace_lead_projection", workspace_id=workspace_id,
+        # Projection is optional. Keep this warning separate from mandatory
+        # workspace-lead persistence failures; the canonical row is enough to
+        # render and search the database safely.
+        log.warning(
+            "workspace lead optional projection unavailable workspace_id=%s error_type=%s",
+            workspace_id, type(error).__name__,
         )
-    profile_by_id = {profile.id: profile for profile in profile_rows}
-    company_by_id = {company.id: company for company in company_rows}
     records: list[dict[str, Any]] = []
     needle = query.strip().lower(); filters = filters or {}
     for row in workspace_rows:
         profile = profile_by_id.get(row.lead_id)
         company = company_by_id.get(row.company_id or "")
-        imported_metadata = (getattr(row, "metadata", {}) or {}).get("csv_import", {})
+        metadata = getattr(row, "metadata", {})
+        imported_metadata = metadata.get("csv_import", {}) if isinstance(metadata, dict) else {}
+        if not isinstance(imported_metadata, dict):
+            imported_metadata = {}
         record = {
             "id": row.id, "first_name": row.first_name or getattr(profile, "first_name", ""),
             "last_name": row.last_name or getattr(profile, "last_name", ""),

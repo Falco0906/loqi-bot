@@ -122,6 +122,45 @@ async def test_list_projects_canonical_workspace_leads_with_batched_related_read
 
 
 @pytest.mark.asyncio
+async def test_list_reads_csv_imported_workspace_leads_when_global_projection_is_absent(monkeypatch):
+    rows = [
+        SimpleNamespace(
+            id=f"workspace-lead-{number}", lead_id=f"global-lead-{number}", company_id=f"global-company-{number}",
+            email=f"person{number}@example.com", first_name=f"Person{number}", last_name="Imported",
+            title="Operations", phone="", linkedin_url="", lead_status="new",
+            metadata={"csv_import": {"company": f"CSV Co {number}", "location": "United States", "industry": "SaaS"}},
+        ) for number in range(1, 12)
+    ]
+
+    class WorkspaceRepo:
+        async def list_for_workspace(self, workspace_id):
+            assert workspace_id == "workspace-a"
+            return rows
+
+    class UnavailableLeadProjection:
+        async def list_by_ids(self, ids):
+            raise RuntimeError("global leads projection is unavailable")
+
+    class UnavailableCompanyProjection:
+        async def list_by_ids(self, ids):
+            raise RuntimeError("global companies projection is unavailable")
+
+    monkeypatch.setattr(lead_service, "WorkspaceLeadRepository", WorkspaceRepo)
+    monkeypatch.setattr(lead_service, "LeadRepository", UnavailableLeadProjection)
+    monkeypatch.setattr(lead_service, "CompanyRepository", UnavailableCompanyProjection)
+
+    result = await lead_service.list_workspace_leads("workspace-a", query="person", page=1)
+
+    assert result["total"] == 11
+    assert len(result["leads"]) == 11
+    assert result["leads"][0] == {
+        "id": "workspace-lead-1", "first_name": "Person1", "last_name": "Imported",
+        "email": "person1@example.com", "title": "Operations", "phone": "", "linkedin_url": "",
+        "company": "CSV Co 1", "website": "", "location": "United States", "industry": "SaaS", "status": "new",
+    }
+
+
+@pytest.mark.asyncio
 async def test_import_reports_canonical_store_unavailability_instead_of_false_success(monkeypatch):
     class Repo:
         def _client(self):

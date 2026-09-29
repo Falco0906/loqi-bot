@@ -9,8 +9,7 @@ import { useTheme } from "../../hooks/useTheme";
 
 const navigation = [
   { label: "Mission Control", href: "/mission-control", icon: "dashboard" },
-  { label: "Discovery", href: "/discovery", icon: "explore" },
-  { label: "Discover", href: "/discover", icon: "search" },
+  { label: "Discover", href: "/discovery", icon: "explore" },
   { label: "Lead Database", href: "/contacts", icon: "groups" },
   { label: "Campaigns", href: "/campaigns", icon: "campaign" },
   { label: "Draft Review", href: "/draft", icon: "draft" },

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -81,6 +82,80 @@ async def test_discovery_create_list_and_get_share_authenticated_workspace(monke
     assert listed_response["discoveries"] == [{"id": "discovery-1", "workspace_id": selected_workspace}]
     assert detail_response["discovery"]["workspace_id"] == selected_workspace
     assert calls == [("list", selected_workspace), ("get", selected_workspace)]
+
+
+async def test_explicit_discovery_provider_search_passes_manual_initiation(monkeypatch):
+    """The primary Discovery search is explicit, but the workspace remains server-derived."""
+    captured: dict[str, str] = {}
+
+    async def resolve_user(_request):
+        return "authenticated-user", "session-token"
+
+    async def resolve_workspace(_request, owner_id):
+        assert owner_id == "authenticated-user"
+        return "workspace-selected"
+
+    async def create_run(user_id, query, session_token, **kwargs):
+        captured.update({
+            "user_id": user_id,
+            "query": query,
+            "session_token": session_token,
+            "workspace_id": kwargs["workspace_id"],
+            "initiation": kwargs["initiation"],
+        })
+        return {"discovery_id": "discovery-1", "job_id": "job-1"}
+
+    monkeypatch.setattr(discovery_api.identity_dependencies, "resolve_web_session", resolve_user)
+    monkeypatch.setattr(discovery_api.workspace_access, "resolve_legacy_workspace_id", resolve_workspace)
+    monkeypatch.setattr(discovery_api, "create_search_run", create_run)
+
+    response = await discovery_api.create_discovery_endpoint(
+        discovery_api.CreateDiscoveryRequest(query="SaaS operations leaders", initiation="manual"),
+        _request(),
+    )
+
+    assert response == {"ok": True, "discovery_id": "discovery-1", "job_id": "job-1"}
+    assert captured == {
+        "user_id": "authenticated-user",
+        "query": "SaaS operations leaders",
+        "session_token": "session-token",
+        "workspace_id": "workspace-selected",
+        "initiation": "manual",
+    }
+
+
+def test_discovery_lead_provenance_read_is_scoped_to_the_selected_workspace(monkeypatch):
+    """The unified lead list cannot borrow links from another workspace run."""
+    filters: list[tuple[str, str]] = []
+
+    class Query:
+        def table(self, _name):
+            return self
+
+        def select(self, _columns):
+            return self
+
+        def eq(self, column, value):
+            filters.append((column, value))
+            return self
+
+        def is_(self, _column, _value):
+            return self
+
+        def limit(self, _value):
+            return self
+
+        def execute(self):
+            return SimpleNamespace(data=[{
+                "discovery_leads": [{"lead_id": "workspace-lead-1", "source_provider": "apollo"}],
+            }])
+
+    monkeypatch.setattr(discovery_service, "get_supabase_client", lambda: Query())
+
+    assert discovery_service.get_discovery_lead_provenance(
+        "discovery-a", "workspace-selected",
+    ) == {"workspace-lead-1": ["apollo"]}
+    assert filters == [("id", "discovery-a"), ("workspace_id", "workspace-selected")]
 
 
 async def test_discovery_read_routes_keep_their_registered_http_contract(monkeypatch):

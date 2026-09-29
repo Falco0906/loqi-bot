@@ -16,6 +16,7 @@ from services.persistence.launch import (
 )
 from services.persistence.retry import classify_retryable
 from services.workspace.state import import_workspace_lead
+from services.discovery.service import get_discovery_lead_provenance
 
 
 log = logging.getLogger("loqi.leads")
@@ -155,8 +156,58 @@ async def import_csv_rows(workspace_id: str, actor_user_id: str, rows: list[dict
     return {"imported": len(imported), "imported_ids": imported, "duplicates": duplicates, "invalid": invalid}
 
 
+def _source_provenance(row: Any, run_sources: list[str] | None = None) -> list[str]:
+    """Read the durable lead provenance, plus an optional scoped run source."""
+    metadata = getattr(row, "metadata", {})
+    raw_values = metadata.get("source_provenance", []) if isinstance(metadata, dict) else []
+    values = raw_values if isinstance(raw_values, list) else []
+    sources: list[str] = []
+    for value in [*values, getattr(row, "source", ""), *(run_sources or [])]:
+        source = str(value or "").strip()
+        if source and source not in sources:
+            sources.append(source)
+    return sources
+
+
+def _source_presentation(sources: list[str]) -> tuple[str, str]:
+    """Return a stable UI source kind and label without changing lead data."""
+    provider_sources = [
+        source for source in sources
+        if source.lower() not in {"csv_import", "lead_database", "manual"}
+    ]
+    if provider_sources:
+        provider = provider_sources[0]
+        labels = {"apollo": "Apollo", "pdl": "PDL", "serpapi": "SerpAPI", "search": "Provider"}
+        return "provider", labels.get(provider.lower(), provider.replace("_", " ").title())
+    if any(source.lower() == "csv_import" for source in sources):
+        return "workspace", "CSV import"
+    return "workspace", "Lead database"
+
+
+async def _provider_sources_for_discovery(
+    discovery_id: str,
+    workspace_id: str,
+) -> dict[str, list[str]]:
+    """Read optional per-run provenance without weakening lead-list reads."""
+    if not discovery_id:
+        return {}
+    try:
+        return await asyncio.to_thread(
+            get_discovery_lead_provenance, discovery_id, workspace_id,
+        )
+    except Exception as error:
+        # A provider/run read is an optional Discovery projection.  The
+        # canonical lead list remains available when that projection fails.
+        log.warning(
+            "discovery lead provenance unavailable workspace_id=%s error_type=%s",
+            workspace_id, type(error).__name__,
+        )
+        return {}
+
+
 async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1, page_size: int = 50,
-                               filters: dict[str, str] | None = None) -> dict[str, Any]:
+                               filters: dict[str, str] | None = None,
+                               discovery_id: str = "") -> dict[str, Any]:
     workspace_repository = WorkspaceLeadRepository()
     _require_repository_client(workspace_repository)
     try:
@@ -165,6 +216,10 @@ async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1
         _raise_for_persistence_failure(
             error, operation="workspace_lead_list", workspace_id=workspace_id,
         )
+
+    run_sources_by_lead = await _provider_sources_for_discovery(
+        discovery_id, workspace_id,
+    )
 
     # ``workspace_leads`` owns the Lead Database. Global lead/company rows
     # enrich display fields when available, but must never make an imported
@@ -197,6 +252,8 @@ async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1
         imported_metadata = metadata.get("csv_import", {}) if isinstance(metadata, dict) else {}
         if not isinstance(imported_metadata, dict):
             imported_metadata = {}
+        sources = _source_provenance(row, run_sources_by_lead.get(row.id))
+        source_kind, source_label = _source_presentation(sources)
         record = {
             "id": row.id, "first_name": row.first_name or getattr(profile, "first_name", ""),
             "last_name": row.last_name or getattr(profile, "last_name", ""),
@@ -207,13 +264,23 @@ async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1
             "location": getattr(company, "location", "") or imported_metadata.get("location", ""),
             "industry": getattr(company, "industry", "") or imported_metadata.get("industry", ""),
             "status": row.lead_status,
+            "source": str(getattr(row, "source", "") or ""),
+            "source_provenance": sources,
+            "source_kind": source_kind,
+            "source_label": source_label,
         }
         searchable = " ".join(str(value or "") for value in record.values()).lower()
         matches_filters = all(
             not value or value.lower() in str(record.get(field, "") or "").lower()
             for field, value in filters.items()
         )
-        if (not needle or needle in searchable) and matches_filters:
+        # A completed provider run is already linked to canonical
+        # ``workspace_leads``.  Its IDs are included even when a natural
+        # language provider query is not a literal substring of the lead's
+        # persisted fields.  The union is formed before sorting/counting/
+        # slicing, so every page and total remains internally consistent.
+        included_by_discovery = row.id in run_sources_by_lead
+        if (not needle or needle in searchable or included_by_discovery) and matches_filters:
             records.append(record)
     records.sort(key=lambda record: (record["company"].lower(), record["last_name"].lower(), record["first_name"].lower()))
     total = len(records); start = max(page - 1, 0) * page_size

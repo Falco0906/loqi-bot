@@ -990,10 +990,15 @@ async def _normalize_lead(workspace_id: str, lead: dict[str, Any]) -> str | None
         status = lead.get("status") or lead.get("lead_status")
         if status:
             existing.lead_status = _canonical_lead_status(status)
-        if lead.get("source") or lead.get("provider"):
-            existing.source = str(
-                lead.get("source") or lead.get("provider") or ""
-            )
+        # ``source`` is the primary acquisition source for this workspace
+        # lead.  A later Discovery run must not erase a user's CSV provenance
+        # merely because it found the same canonical person again.  Keep the
+        # complete, bounded acquisition history on the canonical row instead.
+        if source and not existing.source:
+            existing.source = source
+        existing.metadata = _with_source_provenance(
+            existing.metadata, existing.source, source,
+        )
         qualification = _qualification_metadata(lead)
         if qualification:
             existing.metadata.update(qualification)
@@ -1001,6 +1006,7 @@ async def _normalize_lead(workspace_id: str, lead: dict[str, Any]) -> str | None
         await ws_lead_repo.save(existing)
         return existing.id
 
+    metadata = _with_source_provenance(_qualification_metadata(lead), source)
     ws_lead = WorkspaceLead(
         workspace_id=workspace_id,
         lead_id=profile.id,
@@ -1014,7 +1020,7 @@ async def _normalize_lead(workspace_id: str, lead: dict[str, Any]) -> str | None
         lead_status=_canonical_lead_status(lead.get("status") or lead.get("lead_status")),
         confidence=_to_float(lead.get("confidence")),
         source=source or str(lead.get("source") or ""),
-        metadata=_qualification_metadata(lead),
+        metadata=metadata,
     )
     saved = await ws_lead_repo.save(ws_lead)
     return saved.id
@@ -1030,6 +1036,7 @@ async def _normalize_company_lead(workspace_id: str, lead: dict[str, Any]) -> st
     global person row (empty email) satisfies the workspace_leads FK.
     """
     ws_lead_repo = WorkspaceLeadRepository()
+    source = str(lead.get("source") or lead.get("provider") or "").strip()
     raw_id = str(lead.get("id") or "").strip()
 
     if raw_id:
@@ -1053,13 +1060,23 @@ async def _normalize_company_lead(workspace_id: str, lead: dict[str, Any]) -> st
             await ws_company_repo.save(WorkspaceCompany(
                 workspace_id=workspace_id,
                 company_id=company_id,
-                source=str(lead.get("source") or ""),
+                source=source,
             ))
         existing = await ws_lead_repo.find_by_company(workspace_id, company_id)
         if existing is not None:
+            changed = False
+            if source and not existing.source:
+                existing.source = source
+                changed = True
+            provenance = _with_source_provenance(existing.metadata, existing.source, source)
+            if provenance != existing.metadata:
+                existing.metadata = provenance
+                changed = True
             qualification = _qualification_metadata(lead)
             if qualification:
                 existing.metadata.update(qualification)
+                changed = True
+            if changed:
                 await ws_lead_repo.save(existing)
             return existing.id
 
@@ -1079,8 +1096,8 @@ async def _normalize_company_lead(workspace_id: str, lead: dict[str, Any]) -> st
         linkedin_url=str(lead.get("linkedin_url") or ""),
         lead_status=_canonical_lead_status(lead.get("status") or lead.get("lead_status")),
         confidence=_to_float(lead.get("confidence")),
-        source=str(lead.get("source") or ""),
-        metadata=_qualification_metadata(lead),
+        source=source,
+        metadata=_with_source_provenance(_qualification_metadata(lead), source),
     )
     try:
         saved = await ws_lead_repo.save(ws_lead)
@@ -1109,6 +1126,30 @@ def _qualification_metadata(lead: dict[str, Any]) -> dict[str, Any]:
             if key in {"company", "website", "location", "industry", "company_size"} and value
         }
     return metadata
+
+
+def _with_source_provenance(
+    metadata: Any,
+    *sources: str,
+) -> dict[str, Any]:
+    """Return canonical, bounded acquisition provenance for a workspace lead.
+
+    ``workspace_leads`` remains the only lead authority.  Its primary
+    ``source`` records first acquisition, while this metadata list records
+    later explicit provider Discovery observations without overwriting a CSV
+    import's provenance.
+    """
+    result = dict(metadata) if isinstance(metadata, dict) else {}
+    recorded = result.get("source_provenance", [])
+    values = recorded if isinstance(recorded, list) else []
+    normalized: list[str] = []
+    for value in [*values, *sources]:
+        candidate = str(value or "").strip()
+        if candidate and candidate not in normalized:
+            normalized.append(candidate[:100])
+    if normalized:
+        result["source_provenance"] = normalized[:12]
+    return result
 
 
 _CANONICAL_LEAD_STATUSES = {"new", "added", "approved", "rejected"}

@@ -25,7 +25,7 @@ Design notes
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from uuid import uuid4
 
 from services.job_engine import job_manager
@@ -174,6 +174,7 @@ async def create_search_run(
     display_title: str | None = None,
     workspace_id: str = "",
     on_update=None,
+    initiation: Literal["manual", "automated"] = "automated",
 ) -> dict:
     """Create a durable Discovery, then schedule its linked search job.
 
@@ -183,10 +184,18 @@ async def create_search_run(
     """
     from services.capabilities.beta import beta_feature_enabled, beta_feature_unavailable_message
 
-    if not beta_feature_enabled("autonomous_lead_sourcing"):
+    # A durable job is an execution boundary, not necessarily autonomous
+    # behavior. A person explicitly starting provider Discovery is governed by
+    # Beta's enabled ``lead_search`` capability. Existing campaign, Copilot,
+    # onboarding, and service callers retain the default automated initiation
+    # and remain behind the disabled autonomous-sourcing capability.
+    required_capability = (
+        "lead_search" if initiation == "manual" else "autonomous_lead_sourcing"
+    )
+    if not beta_feature_enabled(required_capability):
         raise DiscoveryJobLifecycleError(
             403,
-            beta_feature_unavailable_message("autonomous_lead_sourcing"),
+            beta_feature_unavailable_message(required_capability),
         )
 
     if not workspace_id:
@@ -626,7 +635,7 @@ def get_discovery(discovery_id: str, workspace_id: str = "") -> Optional[dict]:
                 f"{_DISCOVERY_SELECT}, "
                 "discovery_companies(rank, match_score, "
                 "company_id, company:companies(*)), "
-                "discovery_leads(rank, match_score, status, "
+                "discovery_leads(rank, match_score, status, source_provider, "
                 "lead_id, workspace_lead:workspace_leads("
                 "id, company_id, email, first_name, last_name, title, phone, "
                 "linkedin_url, lead_status, source, metadata, "
@@ -642,6 +651,56 @@ def get_discovery(discovery_id: str, workspace_id: str = "") -> Optional[dict]:
     except Exception as e:
         _log(f"get_discovery error: {e}")
         return None
+
+
+def get_discovery_lead_provenance(
+    discovery_id: str,
+    workspace_id: str,
+) -> dict[str, list[str]]:
+    """Return provider provenance for canonical leads in one scoped run.
+
+    Discovery owns per-run provider provenance.  The Lead Database can use
+    this read-only projection to include an explicit provider search in its
+    canonical, paginated workspace-lead result set without trusting a client
+    supplied lead ID or creating a second result store.
+    """
+    if not discovery_id or not workspace_id:
+        return {}
+    client = get_supabase_client()
+    if not client:
+        return {}
+    try:
+        result = (
+            client.table("discoveries")
+            .select("discovery_leads(lead_id, source_provider)")
+            .eq("id", discovery_id)
+            .eq("workspace_id", workspace_id)
+            .is_("deleted_at", "null")
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(result, "data", None) or []
+        links = rows[0].get("discovery_leads", []) if rows else []
+        provenance: dict[str, list[str]] = {}
+        for link in links if isinstance(links, list) else []:
+            if not isinstance(link, dict):
+                continue
+            lead_id = str(link.get("lead_id") or "").strip()
+            source = str(link.get("source_provider") or "").strip()
+            if not lead_id:
+                continue
+            values = provenance.setdefault(lead_id, [])
+            if source and source not in values:
+                values.append(source)
+        return provenance
+    except Exception as error:
+        # A Discovery projection is optional for lead browsing.  Its failure
+        # must not make canonical workspace leads unreadable.
+        _log(
+            "get_discovery_lead_provenance error: "
+            f"{type(error).__name__}"
+        )
+        return {}
 
 
 def mark_discovery_status(discovery_id: str, status: str, error: str = "") -> bool:

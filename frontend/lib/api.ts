@@ -761,9 +761,15 @@ export async function decideLead(
   );
 }
 
-export type WorkspaceLeadRecord = { id: string; first_name: string; last_name: string; email: string; title: string; company: string; website: string; location: string; industry: string };
-export async function listWorkspaceLeads(sessionToken: string, query = "", page = 1, filters: Record<string, string> = {}) {
+export type WorkspaceLeadRecord = {
+  id: string; first_name: string; last_name: string; email: string; title: string;
+  company: string; website: string; location: string; industry: string;
+  source: string; source_provenance: string[]; source_kind: "workspace" | "provider"; source_label: string;
+};
+export async function listWorkspaceLeads(sessionToken: string, query = "", page = 1,
+  filters: Record<string, string> = {}, discoveryId = "") {
   const params = new URLSearchParams({ q: query, page: String(page), ...filters });
+  if (discoveryId) params.set("discovery_id", discoveryId);
   return fetchWithRetry<{ ok: boolean; leads: WorkspaceLeadRecord[]; total: number; page: number; page_size: number }>(`${API_BASE}/api/web/session/_/leads?${params}`, { headers: authHeaders(), timeout: 8000 });
 }
 export async function previewLeadCsv(sessionToken: string, csv: string, mapping: Record<string, string>) {
@@ -1054,20 +1060,28 @@ export const DISCOVERY_SEARCH_START_TIMEOUT_MS = 20000;
  */
 export const DRAFT_BATCH_START_TIMEOUT_MS = 30000;
 
-export async function startSearchJob(sessionToken: string, query: string) {
+export async function startSearchJob(
+  sessionToken: string,
+  query: string,
+  initiation: "manual" | "automated" = "automated",
+) {
   return fetchWithRetry<{ job_id: string; status: string; discovery_id: string }>(
     `${API_BASE}/api/jobs/search`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}` },
-      body: JSON.stringify({ query }),
+      body: JSON.stringify({ query, initiation }),
       timeout: DISCOVERY_SEARCH_START_TIMEOUT_MS,
       retries: 0,
     },
   );
 }
 
-export async function startDiscoveryJob(sessionToken: string, query: string) {
+export async function startDiscoveryJob(
+  sessionToken: string,
+  query: string,
+  initiation: "manual" | "automated" = "automated",
+) {
   console.log("[kickoff] startDiscoveryJob: firing POST /api/discoveries", {
     tokenPrefix: sessionToken?.slice(0, 8),
     query,
@@ -1079,7 +1093,7 @@ export async function startDiscoveryJob(sessionToken: string, query: string) {
       {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}` },
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({ query, initiation }),
         timeout: DISCOVERY_SEARCH_START_TIMEOUT_MS,
         retries: 0,
       },
@@ -1143,6 +1157,7 @@ export type DiscoveryDetailResponse = {
     rank: number;
     match_score: number;
     status: string;
+    source_provider?: string;
     lead_id: string;
     workspace_lead: Record<string, unknown>;
   }>;

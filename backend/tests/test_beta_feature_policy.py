@@ -35,6 +35,41 @@ def test_discovery_sourcing_is_rejected_before_any_persistence_work():
     assert "not available in Loqi Beta" in exc.value.detail
 
 
+@pytest.mark.asyncio
+async def test_explicit_provider_search_uses_enabled_lead_search_without_enabling_automation(monkeypatch):
+    """A person-clicked search may use providers; automated callers remain gated."""
+    import services.discovery.service as discovery_service
+
+    requested_capabilities: list[str] = []
+
+    def feature_enabled(capability: str) -> bool:
+        requested_capabilities.append(capability)
+        return capability == "lead_search"
+
+    monkeypatch.setattr("services.capabilities.beta.beta_feature_enabled", feature_enabled)
+    monkeypatch.setattr(
+        discovery_service,
+        "create_discovery",
+        lambda workspace_id, *_args: {"id": f"discovery-{workspace_id}"},
+    )
+
+    async def create_job(**kwargs):
+        assert kwargs["discovery_id"] == "discovery-workspace-a"
+        return {"job_id": "job-a"}
+
+    monkeypatch.setattr(discovery_service.job_manager, "create_search_job", create_job)
+
+    result = await create_search_run(
+        "owner-a",
+        "operations leaders",
+        workspace_id="workspace-a",
+        initiation="manual",
+    )
+
+    assert result == {"job_id": "job-a", "discovery_id": "discovery-workspace-a"}
+    assert requested_capabilities == ["lead_search"]
+
+
 def test_direct_outbound_operations_are_rejected_before_request_resolution():
     with pytest.raises(HTTPException) as send_exc:
         asyncio.run(send_outbound_draft(None, "draft-id"))

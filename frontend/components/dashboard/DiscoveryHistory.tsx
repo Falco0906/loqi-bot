@@ -111,7 +111,7 @@ export default function DiscoveryHistory() {
     if (!query || searching) return;
     setSearching(true);
     try {
-      const started = await startDiscoverySearch(query);
+      const started = await startDiscoverySearch(query, "manual");
       if (!started) {
         toast("error", "Could not start the discovery");
         return;

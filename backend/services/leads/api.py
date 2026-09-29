@@ -33,7 +33,8 @@ async def _scope(request: Request) -> tuple[str, str]:
 
 @router.get("/api/web/session/{session_token}/leads")
 async def list_leads(session_token: str, request: Request, q: str = "", page: int = 1,
-                     location: str = "", industry: str = "", company: str = "", title: str = ""):
+                     location: str = "", industry: str = "", company: str = "", title: str = "",
+                     discovery_id: str = ""):
     del session_token
     _, workspace_id = await _scope(request)
     if page < 1:
@@ -41,7 +42,7 @@ async def list_leads(session_token: str, request: Request, q: str = "", page: in
     try:
         return {"ok": True, **await list_workspace_leads(workspace_id, q, page, filters={
             "location": location, "industry": industry, "company": company, "title": title,
-        })}
+        }, discovery_id=discovery_id)}
     except LeadDatabaseUnavailable as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
 

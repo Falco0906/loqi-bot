@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -37,10 +38,12 @@ async def _authorized_workspace(request: Request) -> tuple[str, str, str]:
 
 class StartSearchRequest(BaseModel):
     query: str
+    initiation: Literal["manual", "automated"] = "automated"
 
 
 class CreateDiscoveryRequest(BaseModel):
     query: str
+    initiation: Literal["manual", "automated"] = "automated"
 
 
 class LeadDecisionRequest(BaseModel):
@@ -58,6 +61,7 @@ async def start_search(payload: StartSearchRequest, request: Request):
             payload.query,
             session_token,
             workspace_id=workspace_id,
+            initiation=payload.initiation,
         )
     except DiscoveryJobLifecycleError as error:
         raise HTTPException(status_code=error.status_code, detail=error.detail) from error
@@ -74,6 +78,7 @@ async def create_discovery_endpoint(payload: CreateDiscoveryRequest, request: Re
             payload.query,
             session_token,
             workspace_id=workspace_id,
+            initiation=payload.initiation,
         )
     except DiscoveryJobLifecycleError as error:
         raise HTTPException(status_code=error.status_code, detail=error.detail) from error

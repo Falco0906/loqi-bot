@@ -594,7 +594,7 @@ export default function DiscoveryDetailWorkspace({ discoveryId }: { discoveryId:
     }
     setRestarting(true);
     try {
-      const started = await startDiscoverySearch(query);
+      const started = await startDiscoverySearch(query, "manual");
       if (started?.discoveryId) {
         router.push(discoveryDetailUrl(started.discoveryId, attachContext));
       } else {

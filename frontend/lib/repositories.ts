@@ -23,6 +23,7 @@ import type {
   MCHealthSummary,
   MCTimelineEvent,
   DiscoveryData,
+  DiscoveryWorkspaceLeadResult,
   DiscoveryRecommendation,
   DiscoveryListItem,
   DiscoveryStatus,
@@ -66,6 +67,37 @@ function recordFromJson(value: unknown): Record<string, unknown> {
     }
   }
   return {};
+}
+
+function providerWorkspaceLeadResult(
+  discoveryLead: Record<string, unknown>,
+  companyById: Map<string, Record<string, unknown>>,
+): DiscoveryWorkspaceLeadResult | null {
+  const workspaceLead = isRecord(discoveryLead.workspace_lead)
+    ? discoveryLead.workspace_lead
+    : {};
+  const id = String(workspaceLead.id || "");
+  if (!id) return null;
+
+  const profile = isRecord(workspaceLead.lead) ? workspaceLead.lead : {};
+  const metadata = recordFromJson(workspaceLead.metadata);
+  const imported = recordFromJson(metadata.csv_import);
+  const company = companyById.get(String(workspaceLead.company_id || "")) || {};
+  const provider = String(discoveryLead.source_provider || "Provider");
+
+  return {
+    id,
+    first_name: String(workspaceLead.first_name || profile.first_name || ""),
+    last_name: String(workspaceLead.last_name || profile.last_name || ""),
+    email: String(workspaceLead.email || profile.email || ""),
+    title: String(workspaceLead.title || profile.title || ""),
+    company: String(company.name || imported.company || profile.company_name || ""),
+    website: String(company.website || imported.website || ""),
+    location: String(company.location || imported.location || profile.location || ""),
+    industry: String(company.industry || imported.industry || ""),
+    source: "provider",
+    sourceLabel: provider,
+  };
 }
 
 const CACHE_TTL_MS = 20_000;
@@ -1019,6 +1051,15 @@ export async function fetchDiscovery(id: string): Promise<DiscoveryData | null> 
       const status = (d.status as DiscoveryStatus) || "queued";
       const companies = Array.isArray(d.discovery_companies) ? d.discovery_companies : [];
       const leads = Array.isArray(d.discovery_leads) ? d.discovery_leads : [];
+      const companyById = new Map(
+        companies
+          .filter((entry) => isRecord(entry))
+          .map((entry) => [String(entry.company_id || ""), isRecord(entry.company) ? entry.company : {}]),
+      );
+      const workspaceLeadResults = leads
+        .filter((entry) => isRecord(entry))
+        .map((entry) => providerWorkspaceLeadResult(entry, companyById))
+        .filter((entry): entry is DiscoveryWorkspaceLeadResult => entry !== null);
       const providerCounts = toRecord(d.provider_provenance);
       const metadata = isRecord(d.metadata) ? d.metadata : {};
       const rawProgress = isRecord(metadata.progress) ? metadata.progress : {};
@@ -1121,6 +1162,7 @@ export async function fetchDiscovery(id: string): Promise<DiscoveryData | null> 
         narrativeLines,
         filters: [],
         recommendations,
+        workspaceLeadResults,
         title: d.title ?? null,
         description: d.description ?? null,
         favorite: Boolean(d.favorite),
@@ -1159,7 +1201,10 @@ export function invalidateDiscoveryCache(): void {
   fetchCache.delete(sessionKey("discovery-list"));
 }
 
-export async function startDiscoverySearch(rawQuery: string): Promise<{ jobId: string; discoveryId: string } | null> {
+export async function startDiscoverySearch(
+  rawQuery: string,
+  initiation: "manual" | "automated" = "automated",
+): Promise<{ jobId: string; discoveryId: string } | null> {
   const token = getToken();
   // PR-4.5: SINGLE normalization choke point — every Discovery creation
   // caller (search box, copilot sidebar/page, rerun, campaign-attach) gets
@@ -1172,7 +1217,7 @@ export async function startDiscoverySearch(rawQuery: string): Promise<{ jobId: s
     console.log("[kickoff] startDiscoverySearch: ABORT (no token or empty query)");
     return null;
   }
-  const res = await startDiscoveryJob(token, query.trim());
+  const res = await startDiscoveryJob(token, query.trim(), initiation);
   console.log("[kickoff] startDiscoverySearch: startDiscoveryJob resolved", res);
   if (res && res.discovery_id) {
     invalidateDiscoveryCache();

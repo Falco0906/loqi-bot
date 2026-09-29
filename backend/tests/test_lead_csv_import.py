@@ -157,6 +157,7 @@ async def test_list_reads_csv_imported_workspace_leads_when_global_projection_is
         "id": "workspace-lead-1", "first_name": "Person1", "last_name": "Imported",
         "email": "person1@example.com", "title": "Operations", "phone": "", "linkedin_url": "",
         "company": "CSV Co 1", "website": "", "location": "United States", "industry": "SaaS", "status": "new",
+        "source": "", "source_provenance": [], "source_kind": "workspace", "source_label": "Lead database",
     }
 
 
@@ -219,6 +220,192 @@ async def test_row_validation_failure_remains_an_invalid_row_result(monkeypatch)
 
     result = await lead_service.import_csv_rows("workspace-a", "actor-a", [{"row": 2, "lead": {"email": "bad"}}])
     assert result == {"imported": 0, "imported_ids": [], "duplicates": [], "invalid": [{"row": 2, "reason": "Email format is invalid"}]}
+
+
+def _workspace_lead(
+    identifier: str,
+    *,
+    name: str,
+    source: str = "",
+    provenance: list[str] | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=identifier,
+        lead_id=f"global-{identifier}",
+        company_id=None,
+        email=f"{identifier}@example.com",
+        first_name=name,
+        last_name="Lead",
+        title="Operations",
+        phone="",
+        linkedin_url="",
+        lead_status="new",
+        source=source,
+        metadata={"source_provenance": provenance or []},
+    )
+
+
+@pytest.mark.asyncio
+async def test_provider_normalization_preserves_csv_source_and_appends_durable_provenance(monkeypatch):
+    """One canonical workspace lead can retain both CSV and provider origin."""
+    from services.persistence.launch import Lead, WorkspaceLead
+    import services.workspace.state as workspace_state
+
+    profile = Lead(id="global-1", email="ada@example.com")
+    existing = WorkspaceLead(
+        id="workspace-lead-1",
+        workspace_id="workspace-a",
+        lead_id="global-1",
+        email="ada@example.com",
+        source="csv_import",
+        metadata={"source_provenance": ["csv_import"]},
+    )
+    saved: list[WorkspaceLead] = []
+
+    class LeadRepo:
+        async def find_by_email(self, email):
+            assert email == "ada@example.com"
+            return profile
+
+    class WorkspaceRepo:
+        async def find_in_workspace(self, workspace_id, lead_id):
+            assert (workspace_id, lead_id) == ("workspace-a", "global-1")
+            return existing
+
+        async def save(self, row):
+            saved.append(row)
+            return row
+
+    monkeypatch.setattr(workspace_state, "LeadRepository", LeadRepo)
+    monkeypatch.setattr(workspace_state, "WorkspaceLeadRepository", WorkspaceRepo)
+    monkeypatch.setattr(workspace_state, "_lead_domain", lambda _lead: None)
+
+    result = await workspace_state._normalize_lead(
+        "workspace-a", {"email": "ada@example.com", "provider": "apollo"},
+    )
+
+    assert result == "workspace-lead-1"
+    assert saved == [existing]
+    assert existing.source == "csv_import"
+    assert existing.metadata["source_provenance"] == ["csv_import", "apollo"]
+
+
+@pytest.mark.asyncio
+async def test_discovery_results_are_canonical_deduplicated_and_keep_provider_provenance(monkeypatch):
+    """A provider link augments one workspace_lead, never adds a second row."""
+    rows = [
+        _workspace_lead("shared", name="Acme", source="csv_import", provenance=["csv_import", "apollo"]),
+        _workspace_lead("provider-only", name="Provider Match", source="pdl", provenance=["pdl"]),
+    ]
+
+    class WorkspaceRepo:
+        async def list_for_workspace(self, workspace_id):
+            assert workspace_id == "workspace-a"
+            return rows
+
+    class EmptyProjection:
+        async def list_by_ids(self, _ids):
+            return []
+
+    def provenance(discovery_id, workspace_id):
+        assert (discovery_id, workspace_id) == ("discovery-a", "workspace-a")
+        return {"shared": ["apollo"], "provider-only": ["pdl"]}
+
+    monkeypatch.setattr(lead_service, "WorkspaceLeadRepository", WorkspaceRepo)
+    monkeypatch.setattr(lead_service, "LeadRepository", EmptyProjection)
+    monkeypatch.setattr(lead_service, "CompanyRepository", EmptyProjection)
+    monkeypatch.setattr(lead_service, "get_discovery_lead_provenance", provenance)
+
+    result = await lead_service.list_workspace_leads(
+        "workspace-a", query="provider query not in a row", page=1,
+        discovery_id="discovery-a",
+    )
+
+    assert result["total"] == 2
+    assert {lead["id"] for lead in result["leads"]} == {"shared", "provider-only"}
+    assert len(result["leads"]) == 2
+    assert all(lead["source_kind"] == "provider" for lead in result["leads"])
+    assert {lead["source_label"] for lead in result["leads"]} == {"Apollo", "PDL"}
+
+    # Reloading without a run id still reads the durable workspace-lead
+    # provenance rather than degrading the provider result to "Lead database".
+    reloaded = await lead_service.list_workspace_leads("workspace-a", page=1)
+    shared = next(lead for lead in reloaded["leads"] if lead["id"] == "shared")
+    assert shared["source"] == "csv_import"
+    assert shared["source_provenance"] == ["csv_import", "apollo"]
+    assert shared["source_kind"] == "provider"
+    assert shared["source_label"] == "Apollo"
+
+
+@pytest.mark.asyncio
+async def test_discovery_union_is_counted_and_paginated_before_the_response_is_sliced(monkeypatch):
+    rows = [
+        _workspace_lead(f"lead-{number:02d}", name=f"Lead {number:02d}")
+        for number in range(52)
+    ]
+    rows[51].metadata = {"source_provenance": ["apollo"]}
+
+    class WorkspaceRepo:
+        async def list_for_workspace(self, _workspace_id):
+            return rows
+
+    class EmptyProjection:
+        async def list_by_ids(self, _ids):
+            return []
+
+    monkeypatch.setattr(lead_service, "WorkspaceLeadRepository", WorkspaceRepo)
+    monkeypatch.setattr(lead_service, "LeadRepository", EmptyProjection)
+    monkeypatch.setattr(lead_service, "CompanyRepository", EmptyProjection)
+    monkeypatch.setattr(
+        lead_service,
+        "get_discovery_lead_provenance",
+        lambda _discovery_id, _workspace_id: {"lead-51": ["apollo"]},
+    )
+
+    first = await lead_service.list_workspace_leads(
+        "workspace-a", query="lead", page=1, page_size=50,
+        discovery_id="discovery-a",
+    )
+    second = await lead_service.list_workspace_leads(
+        "workspace-a", query="lead", page=2, page_size=50,
+        discovery_id="discovery-a",
+    )
+
+    # The provider-linked canonical lead is counted once in the same sorted
+    # set as workspace results.  It is not appended to page one after the
+    # server has calculated a different total/page boundary.
+    assert first["total"] == second["total"] == 52
+    assert len(first["leads"]) == 50
+    assert len(second["leads"]) == 2
+    assert {lead["id"] for lead in first["leads"]}.isdisjoint(
+        {lead["id"] for lead in second["leads"]}
+    )
+    assert "lead-51" in {lead["id"] for lead in second["leads"]}
+
+
+@pytest.mark.asyncio
+async def test_provider_projection_failure_does_not_hide_workspace_results(monkeypatch):
+    class WorkspaceRepo:
+        async def list_for_workspace(self, _workspace_id):
+            return [_workspace_lead("workspace-only", name="Workspace")]
+
+    class EmptyProjection:
+        async def list_by_ids(self, _ids):
+            return []
+
+    def unavailable(_discovery_id, _workspace_id):
+        raise RuntimeError("discovery projection unavailable")
+
+    monkeypatch.setattr(lead_service, "WorkspaceLeadRepository", WorkspaceRepo)
+    monkeypatch.setattr(lead_service, "LeadRepository", EmptyProjection)
+    monkeypatch.setattr(lead_service, "CompanyRepository", EmptyProjection)
+    monkeypatch.setattr(lead_service, "get_discovery_lead_provenance", unavailable)
+
+    result = await lead_service.list_workspace_leads(
+        "workspace-a", query="workspace", page=1, discovery_id="discovery-a",
+    )
+    assert result["total"] == 1
+    assert result["leads"][0]["id"] == "workspace-only"
 
 
 @pytest.mark.asyncio

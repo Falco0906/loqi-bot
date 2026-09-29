@@ -8,7 +8,8 @@ import { usePageTitle } from "../../hooks/usePageTitle";
 
 export const pageConfig: Record<string, { title: string; searchPlaceholder: string }> = {
   "/mission-control": { title: "Briefing", searchPlaceholder: "Search briefings..." },
-  "/discovery": { title: "Discovery", searchPlaceholder: "Research a different market..." },
+  "/discovery": { title: "Discover", searchPlaceholder: "Search your lead database..." },
+  "/discovery/history": { title: "Research History", searchPlaceholder: "Search research history..." },
   "/campaigns": { title: "Campaigns", searchPlaceholder: "Search campaigns..." },
   "/inbox": { title: "Inbox", searchPlaceholder: "Search inbox..." },
   "/knowledge": { title: "Knowledge", searchPlaceholder: "Search knowledge..." },

@@ -92,7 +92,9 @@ export async function startCampaignResearch(
     console.log("[kickoff] startCampaignResearch: ABORT (empty query)");
     return null;
   }
-  const started = await startDiscoverySearch(query);
+  // Campaign attach starts research as a workflow consequence, not a direct
+  // provider-search click. Beta keeps that automated behavior disabled.
+  const started = await startDiscoverySearch(query, "automated");
   console.log("[kickoff] startCampaignResearch: result", started);
   return started ? started.discoveryId : null;
 }
@@ -123,5 +125,4 @@ export function campaignAttachContext(
     messagingAngle: messagingAngle || undefined,
   };
 }
-
 

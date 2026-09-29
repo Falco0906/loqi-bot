@@ -230,6 +230,8 @@ export type DiscoveryData = {
   narrativeLines: string[];
   filters: DiscoveryFilter[];
   recommendations: DiscoveryRecommendation[];
+  /** Canonical workspace-lead records surfaced by this provider run. */
+  workspaceLeadResults: DiscoveryWorkspaceLeadResult[];
   title?: string | null;
   description?: string | null;
   favorite?: boolean;
@@ -239,6 +241,20 @@ export type DiscoveryData = {
   metadata?: Record<string, unknown>;
   progress?: DiscoveryProgress;
   plan?: DiscoveryPlan;
+};
+
+export type DiscoveryWorkspaceLeadResult = {
+  id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  title: string;
+  company: string;
+  website: string;
+  location: string;
+  industry: string;
+  source: "provider";
+  sourceLabel: string;
 };
 
 /* ─── Campaigns ─── */

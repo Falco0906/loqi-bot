@@ -13,7 +13,6 @@ test("Discovery starts as an explicit universal search and keeps provider result
     "Find SaaS founders in the US",
     "Find heads of sales at growing startups",
     "Find operations leaders at e-commerce companies",
-    "Search history",
     "DiscoveryExecutionPanel",
     "DiscoveryResearchBriefing",
     "Analyze with Loqi",
@@ -65,6 +64,8 @@ test("Discover reuses the durable run cards instead of making a second progress 
   assert.match(discovery, /aria-expanded=\{expanded\}/, "rows must expand independently of selection");
   assert.match(detail, /export function DiscoveryLeadDetails/, "lead detail remains owned by Discovery detail UI");
   assert.match(history, /\/discovery\?q=\$\{encodeURIComponent\(item\.query\)\}/, "history must restore the unified Discover route");
+  assert.match(history, /Back to Discover/, "history must provide a direct route back to Discover");
+  assert.match(discovery, /href="\/discovery\/history"/, "Discover keeps search history in the filter rail");
 });
 
 test("Lead Database makes CSV outcomes visible and does not retry an import", () => {

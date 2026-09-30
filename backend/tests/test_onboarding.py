@@ -705,6 +705,24 @@ class TestDurableOnboardingCompletion:
         assert user.onboarding_data_dict["company_name"] == "Acme"
 
     @pytest.mark.asyncio
+    async def test_finalize_does_not_require_a_gmail_connection(self, monkeypatch):
+        """Workspace completion is independent of optional integrations."""
+        svc = self._wired_service()
+        user_id = "no-gmail-onboarding-user"
+        await svc._user_service.save_user(User(id=user_id, display_name="No Gmail"))
+        monkeypatch.setattr("services.workspace.state.ensure_workspace", lambda *_args, **_kwargs: "workspace-1")
+
+        await svc.create_workspace_and_finalize(user_id, {
+            "workspace_name": "No Gmail Workspace",
+            "slug": "no-gmail-workspace",
+        })
+
+        user = await svc._user_service.get_user(user_id)
+        assert user is not None
+        assert user.is_onboarding_complete is True
+        assert "gmail_connected" not in user.onboarding_data_dict
+
+    @pytest.mark.asyncio
     async def test_finalize_creates_personal_workspace_in_org(self, monkeypatch):
         from unittest.mock import MagicMock
         from services.workspace.state import ensure_workspace

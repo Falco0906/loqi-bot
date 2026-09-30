@@ -260,6 +260,21 @@ export default function OnboardingPage() {
     // "opened" keeps connecting=true until the popup reports back.
   };
 
+  const handleSkipConnection = async () => {
+    // Gmail is an optional integration during Beta onboarding. Persist the
+    // next wizard state so refresh/recovery cannot return someone who chose
+    // to continue to the connection prompt.
+    if (userId) {
+      try {
+        await saveWizardData(userId, { onboarding_step: "executive-briefing" }, false);
+      } catch {
+        // The final onboarding completion remains the durable authority; this
+        // checkpoint only improves recovery before the user enters the app.
+      }
+    }
+    setState("executive-briefing");
+  };
+
   const handleEnterMissionControl = async () => {
     if (!userId || finishing) return;
     setFinishing(true);
@@ -367,6 +382,7 @@ export default function OnboardingPage() {
           connecting={connecting}
           error={connectError}
           onConnect={handleConnect}
+          onSkip={handleSkipConnection}
         />
       )}
       {state === "executive-briefing" && profile && (
@@ -1025,10 +1041,12 @@ function WorkspaceConnection({
   connecting,
   error,
   onConnect,
+  onSkip,
 }: {
   connecting: boolean;
   error: string | null;
   onConnect: () => void;
+  onSkip: () => void;
 }) {
   return (
     <div className="min-h-screen py-16 px-6 flex flex-col items-center">
@@ -1054,8 +1072,8 @@ function WorkspaceConnection({
 
         <div className="mb-16">
           <p className="font-['Inter'] text-[18px] leading-[1.6] text-[#1c1b1b] italic">
-            &ldquo;I know enough to begin. To actually work on your behalf I
-            need access to your Google Workspace.&rdquo;
+            &ldquo;I know enough to begin. You can connect Google Workspace now,
+            or continue and connect it later when you need email features.&rdquo;
           </p>
         </div>
 
@@ -1076,22 +1094,31 @@ function WorkspaceConnection({
                 </p>
               </div>
             </div>
-            <button
-              onClick={onConnect}
-              disabled={connecting}
-              className="bg-[#000000] text-[#ffffff] px-8 py-3 font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] font-medium rounded-full active:scale-95 transition-all disabled:opacity-60 flex items-center gap-2"
-            >
-              {connecting ? (
-                <>
-                  <span className="material-symbols-outlined text-sm animate-spin">
-                    refresh
-                  </span>
-                  Connecting...
-                </>
-              ) : (
-                "Connect Account"
-              )}
-            </button>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <button
+                onClick={onSkip}
+                disabled={connecting}
+                className="border border-[#000000]/20 px-6 py-3 font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] font-medium rounded-full transition-all hover:border-[#000000] disabled:opacity-60"
+              >
+                Continue without Gmail
+              </button>
+              <button
+                onClick={onConnect}
+                disabled={connecting}
+                className="bg-[#000000] text-[#ffffff] px-8 py-3 font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] font-medium rounded-full active:scale-95 transition-all disabled:opacity-60 flex items-center gap-2"
+              >
+                {connecting ? (
+                  <>
+                    <span className="material-symbols-outlined text-sm animate-spin">
+                      refresh
+                    </span>
+                    Connecting...
+                  </>
+                ) : (
+                  "Connect Account"
+                )}
+              </button>
+            </div>
           </div>
           
           {error && (

@@ -611,12 +611,8 @@ function DiscoveryWorkspace() {
         {!hasSearch && !runIsActive ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 md:px-6">
             <div className="mx-auto flex min-h-full max-w-3xl flex-col justify-center">
-              <div className="flex items-center justify-between gap-4">
+              <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Discover</p>
-                <Link href="/discovery/history" className="inline-flex items-center gap-1.5 text-sm text-on-surface-variant transition-colors hover:text-primary">
-                  <span className="material-symbols-outlined text-[18px]">history</span>
-                  Search history
-                </Link>
               </div>
               <h1 className="mt-3 font-serif text-4xl tracking-tight text-on-surface md:text-5xl">Who are you looking for?</h1>
               <div className="mt-8">{searchForm}</div>

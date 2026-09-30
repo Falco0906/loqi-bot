@@ -323,6 +323,13 @@ export default function DiscoveryHistory() {
         <div className="reading-column pt-16 pb-72 flex flex-col gap-10">
 
           <section className="animate-fade-in">
+            <Link
+              href="/discovery"
+              className="mb-6 inline-flex w-fit items-center gap-1.5 text-sm text-on-surface-variant/60 transition-colors hover:text-primary"
+            >
+              <span className="material-symbols-outlined text-[17px]">arrow_back</span>
+              Back to Discover
+            </Link>
             <h1 className="text-4xl md:text-5xl font-serif text-on-surface leading-tight tracking-tight font-normal">
               Market Discovery
             </h1>

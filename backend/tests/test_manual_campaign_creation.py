@@ -3,6 +3,7 @@
 import asyncio
 import threading
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -15,8 +16,7 @@ async def test_manual_campaign_returns_after_four_selected_leads_are_durable(mon
     persisted: dict = {}
     active_links = 0
     max_active_links = 0
-    strategy_started = asyncio.Event()
-    release_strategy = asyncio.Event()
+    automatic_strategy = AsyncMock()
     ordering: list[str] = []
     durable_activity: list[dict] = []
 
@@ -34,19 +34,22 @@ async def test_manual_campaign_returns_after_four_selected_leads_are_durable(mon
         active_links -= 1
         return True
 
-    async def blocked_strategy(*_args, **_kwargs):
-        strategy_started.set()
-        await release_strategy.wait()
-
     monkeypatch.setattr(campaign_api.identity_dependencies, "web_session_token", lambda _request: "session-1")
     monkeypatch.setattr(campaign_api.identity_dependencies, "authenticated_user_id", lambda *_args, **_kwargs: _async_value("owner-1"))
-    monkeypatch.setattr(campaign_api.workspace_access, "resolve_legacy_workspace_id", lambda *_args, **_kwargs: _async_value("workspace-1"))
+    monkeypatch.setattr(campaign_api.workspace_access, "resolve_selected_workspace_id", lambda *_args, **_kwargs: _async_value("workspace-1"))
     monkeypatch.setattr("services.discovery.service.get_discovery", lambda discovery_id, workspace_id="": {
         "id": discovery_id, "workspace_id": workspace_id,
     })
     monkeypatch.setattr("services.workspace.state.persist_campaign_row", persist_campaign)
     monkeypatch.setattr("services.workspace.state.persist_campaign_lead_awaited", persist_lead)
-    def load_verified_campaign(_owner, campaign_id, workspace_id=""):
+    async def persist_creation(workspace, actor, identity, _hash, campaign):
+        await persist_campaign(actor, campaign, workspace_id=workspace)
+        await asyncio.gather(*(persist_lead(actor, identity, lead, workspace_id=workspace) for lead in campaign["leads"]))
+        return True
+    monkeypatch.setattr("services.campaigns.creation.recover_creation", AsyncMock(return_value=None))
+    monkeypatch.setattr("services.campaigns.creation.persist_creation", persist_creation)
+    def load_verified_campaign(_owner, campaign_id, workspace_id="", *, strict=False):
+        assert strict
         ordering.append("campaign_verified")
         return {
             **persisted, "id": campaign_id, "lead_count": len(attached), "leads": leads,
@@ -62,12 +65,13 @@ async def test_manual_campaign_returns_after_four_selected_leads_are_durable(mon
 
     monkeypatch.setattr("services.campaigns.service.get_activity_repository", lambda: ActivityRepository())
     monkeypatch.setattr("services.campaigns.service.publish", lambda *_args, **_kwargs: ordering.append("legacy_projection"))
-    monkeypatch.setattr("services.campaigns.service.maybe_auto_strategy", blocked_strategy)
+    monkeypatch.setattr("services.campaigns.service.maybe_auto_strategy", automatic_strategy)
     monkeypatch.setattr("services.campaigns.service._feedback", lambda: SimpleNamespace(on_campaign_created=lambda *_args: None))
 
     leads = [{"id": f"workspace-lead-{index}", "company": f"Cafe {index}"} for index in range(1, 5)]
     payload = campaign_api.SaveCampaignRequest(
         name="Hyderabad cafe owners",
+        idempotency_key="four-lead-intent",
         objective="Start outreach",
         discovery_id="discovery-1",
         leads=leads,
@@ -93,9 +97,8 @@ async def test_manual_campaign_returns_after_four_selected_leads_are_durable(mon
         "occurred_at": response["campaign"]["created_at"],
     }]
 
-    # The response is not held hostage by strategy setup.
-    await asyncio.wait_for(strategy_started.wait(), timeout=0.2)
-    release_strategy.set()
+    # Creation does not initiate intelligence as an implicit side effect.
+    automatic_strategy.assert_not_awaited()
     await asyncio.sleep(0)
 
 
@@ -118,9 +121,14 @@ async def test_manual_campaign_without_leads_returns_when_compatibility_event_is
 
     monkeypatch.setattr(campaign_api.identity_dependencies, "web_session_token", lambda _request: "session-1")
     monkeypatch.setattr(campaign_api.identity_dependencies, "authenticated_user_id", lambda *_args, **_kwargs: _async_value("owner-1"))
-    monkeypatch.setattr(campaign_api.workspace_access, "resolve_legacy_workspace_id", lambda *_args, **_kwargs: _async_value("workspace-1"))
+    monkeypatch.setattr(campaign_api.workspace_access, "resolve_selected_workspace_id", lambda *_args, **_kwargs: _async_value("workspace-1"))
     monkeypatch.setattr("services.workspace.state.persist_campaign_row", persist_campaign)
-    monkeypatch.setattr("services.workspace.state.load_campaign_state", lambda _owner, campaign_id, workspace_id="": {
+    async def persist_creation(workspace, actor, _identity, _hash, campaign):
+        await persist_campaign(actor, campaign, workspace_id=workspace)
+        return True
+    monkeypatch.setattr("services.campaigns.creation.recover_creation", AsyncMock(return_value=None))
+    monkeypatch.setattr("services.campaigns.creation.persist_creation", persist_creation)
+    monkeypatch.setattr("services.workspace.state.load_campaign_state", lambda _owner, campaign_id, workspace_id="", **_kwargs: {
         **persisted, "id": campaign_id, "lead_count": 0, "leads": [],
     })
     monkeypatch.setattr("services.workspace.state.append_event", blocked_event)
@@ -137,7 +145,7 @@ async def test_manual_campaign_without_leads_returns_when_compatibility_event_is
 
     response = await campaign_api.save_campaign(
         "_",
-        campaign_api.SaveCampaignRequest(name="Empty campaign", objective="No leads yet"),
+        campaign_api.SaveCampaignRequest(name="Empty campaign", objective="No leads yet", idempotency_key="empty-intent"),
         SimpleNamespace(),
     )
 

@@ -71,11 +71,22 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s %(message)s",
 )
 from services.platform.logging_setup import configure_logging
+from services.platform.test_runtime import is_test_runtime
 configure_logging()
 log = logging.getLogger("loqi")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Tests exercise routes/services with injected doubles. Never run the
+    # production startup graph (migrations, provider restoration, recovery
+    # workers, or scheduled/background work) from a test client.
+    if is_test_runtime():
+        from services.platform.lifecycle import set_ready
+
+        set_ready()
+        yield
+        return
+
     startup_started = app_lifespan.begin_startup(app)
 
     # Validate before any background worker, provider restore, or sync engine.

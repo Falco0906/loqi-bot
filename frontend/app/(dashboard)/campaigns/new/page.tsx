@@ -1,7 +1,8 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useCampaignWorkspace } from "../../../../hooks/useCampaignWorkspace";
 import WorkspaceContainer from "../../../../components/layout/WorkspaceContainer";
 import AppPage from "../../../../components/primitives/AppPage";
 import { saveCampaign } from "../../../../lib/api";
@@ -21,9 +22,18 @@ type CampaignLeadHandoff = {
 };
 
 export default function NewCampaignPage() {
+  const params = useSearchParams();
+  const context = useCampaignWorkspace(params.get("workspace_id") || "");
+  if (!context.workspace) return <main role={context.error ? "alert" : "status"} className="p-8">{context.error || "Loading your workspace…"} {context.error && <button type="button" onClick={context.retry}>Retry</button>}</main>;
+  return <NewCampaignForm key={context.scope} workspaceId={context.workspace} />;
+}
+
+function NewCampaignForm({ workspaceId }: { workspaceId: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const discoveryId = searchParams?.get("discovery") || "";
+  const creationKey = useRef(searchParams?.get("creation_key") || "");
+  const savingRef = useRef(false);
   const [name, setName] = useState("");
   const [objective, setObjective] = useState("");
   const [saving, setSaving] = useState(false);
@@ -59,9 +69,17 @@ export default function NewCampaignPage() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (savingRef.current) return;
     const token = localStorage.getItem(ACTIVE_SESSION_KEY);
     if (!token) { setError("Your workspace session is not ready yet."); return; }
     if (!name.trim() || !objective.trim()) { setError("Campaign name and objective are required."); return; }
+    if (!creationKey.current) {
+      creationKey.current = crypto.randomUUID();
+      const url = new URL(window.location.href);
+      url.searchParams.set("creation_key", creationKey.current);
+      window.history.replaceState(window.history.state, "", url.toString());
+    }
+    savingRef.current = true;
     setSaving(true);
     setError(null);
     try {
@@ -75,18 +93,21 @@ export default function NewCampaignPage() {
         undefined,
         pendingLeads,
         discoveryId || undefined,
+        creationKey.current,
+        workspaceId,
       );
       const campaign = created.campaign as Record<string, unknown>;
       const id = String(campaign.id || "");
       if (!created.ok || !id) throw new Error("Campaign could not be created");
       toast("success", "Campaign created — research prospects next");
       // PR-3C: new campaign must not be hidden by a cached campaigns list.
-      invalidateClientCache(scopedKey(token, "campaigns"));
+      invalidateClientCache(scopedKey(token, "campaigns", workspaceId));
       sessionStorage.removeItem(campaignLeadHandoffKey(token, discoveryId));
-      router.push(`/campaigns/${id}`);
+      router.push(`/campaigns/${id}?workspace_id=${encodeURIComponent(workspaceId)}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Campaign setup failed");
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
@@ -97,7 +118,7 @@ export default function NewCampaignPage() {
         <div className="reading-column py-16">
           <p className="text-[11px] uppercase tracking-widest text-on-surface-variant/50 font-medium mb-3">New campaign</p>
           <h1 className="text-4xl font-serif text-on-surface mb-3">Start with the outcome.</h1>
-          <p className="text-base text-on-surface-variant/60 mb-10">Name the campaign and describe what this outreach should achieve. Next you'll research the exact prospects, and Loqi writes the strategy for them.</p>
+          <p className="text-base text-on-surface-variant/60 mb-10">Name the campaign and describe what this outreach should achieve. Next, add prospects and explicitly generate a strategy when you're ready.</p>
           {pendingLeads.length > 0 && <p className="text-sm text-primary mb-6">{pendingLeads.length} researched leads selected. They will be included when this campaign is created.</p>}
           <form onSubmit={submit} className="space-y-6 max-w-2xl">
             <label className="block">

@@ -182,13 +182,38 @@ async def create_campaign_launch(
     )
 
 
+async def _authorize_selected_lead(workspace_id: str, lead: dict[str, Any]) -> dict[str, Any]:
+    """Resolve an explicit saved-lead reference; legacy inline payloads stay unchanged."""
+    from fastapi import HTTPException
+    from services.persistence.launch.repositories import WorkspaceLeadRepository
+
+    selected_id = lead.get("workspace_lead_id")
+    if selected_id is None:
+        return lead
+    try:
+        selected_id = str(uuid.UUID(str(selected_id)))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid selected lead ID")
+    if await WorkspaceLeadRepository().get_for_workspace(selected_id, workspace_id) is None:
+        raise HTTPException(status_code=404, detail="Selected lead not found in this workspace")
+    return {"id": selected_id, "workspace_lead_id": selected_id}
+
+
+
 async def create_campaign(
     session_token: str,
     owner_id: str,
     workspace_id: str,
     payload: dict[str, Any],
+    *,
+    allow_legacy_creation: bool = False,
 ) -> dict[str, Any]:
-    """Create a durable campaign, selected lead links, and its strategy start."""
+    """Create a durable campaign and selected links; strategy remains explicit.
+
+    The public API requires a stable key and membership-authorized workspace.
+    The unkeyed branch requires an explicit internal compatibility opt-in;
+    public callers must never use it as timeout recovery.
+    """
     from fastapi import HTTPException
     from services.discovery.service import get_discovery
     from services.workspace.state import (
@@ -200,16 +225,35 @@ async def create_campaign(
     )
     from services.workspace.timeline import record_campaign_created
 
+    from services.campaigns.creation import creation_identity, persist_creation, recover_creation
+    key = payload.get("idempotency_key")
+    if key is not None and (not isinstance(key, str) or not key.strip() or len(key) > 128):
+        raise HTTPException(422, "Campaign creation requires a stable idempotency key")
+    if key is None and not allow_legacy_creation:
+        raise HTTPException(422, "Campaign creation requires a stable idempotency key")
+    campaign_id, request_hash = creation_identity(workspace_id, owner_id, key, payload) if key else (str(uuid.uuid4()), "")
+    if key and await recover_creation(workspace_id, owner_id, campaign_id, request_hash) is not None:
+        recovered = await asyncio.to_thread(load_campaign_state, owner_id, campaign_id, workspace_id=workspace_id, strict=True)
+        if recovered is None:
+            raise HTTPException(503, "Original campaign was committed but could not be loaded; retry with the same key")
+        return {"ok": True, "campaign": recovered}
+
     discovery_id = str(payload.get("discovery_id") or "")
     if discovery_id:
         discovery = await asyncio.to_thread(get_discovery, discovery_id, workspace_id)
-        if discovery is None:
+        if (discovery is None or discovery.get("deleted_at") is not None
+                or discovery.get("workspace_id") != workspace_id):
             raise HTTPException(status_code=404, detail="Discovery not found")
 
     now = datetime.now(timezone.utc).isoformat()
-    leads = list(payload.get("leads") or [])
+    leads = list(await asyncio.gather(*(
+        _authorize_selected_lead(workspace_id, lead) for lead in (payload.get("leads") or [])
+    )))
+    selected_ids = [lead["workspace_lead_id"] for lead in leads if "workspace_lead_id" in lead]
+    if len(selected_ids) != len(set(selected_ids)):
+        raise HTTPException(status_code=422, detail="Selected lead IDs must be unique")
     campaign = {
-        "id": str(uuid.uuid4()),
+        "id": campaign_id,
         "name": payload["name"],
         "objective": payload.get("objective") or "",
         "search_query": payload.get("search_query") or "",
@@ -221,7 +265,10 @@ async def create_campaign(
         "created_at": now,
         "updated_at": now,
     }
-    if not await persist_campaign_row(owner_id, campaign, workspace_id=workspace_id):
+    created = True
+    if key:
+        created = await persist_creation(workspace_id, owner_id, campaign_id, request_hash, campaign)
+    elif not await persist_campaign_row(owner_id, campaign, workspace_id=workspace_id):
         raise HTTPException(status_code=503, detail="Campaign could not be persisted")
 
     async def persist_selected_lead(lead: dict[str, Any]) -> bool:
@@ -229,7 +276,7 @@ async def create_campaign(
             owner_id, campaign["id"], lead, workspace_id=workspace_id,
         )
 
-    lead_results = await asyncio.gather(*(persist_selected_lead(lead) for lead in leads))
+    lead_results = [] if key else await asyncio.gather(*(persist_selected_lead(lead) for lead in leads))
     if any(not persisted for persisted in lead_results):
         compensated = await delete_campaign_row_awaited(
             owner_id, campaign["id"], workspace_id=workspace_id,
@@ -242,15 +289,19 @@ async def create_campaign(
         raise HTTPException(status_code=503, detail=detail)
 
     canonical_campaign = await asyncio.to_thread(
-        load_campaign_state, owner_id, campaign["id"], workspace_id=workspace_id,
+        load_campaign_state, owner_id, campaign["id"], workspace_id=workspace_id, strict=True,
     )
-    if canonical_campaign is None or int(canonical_campaign.get("lead_count") or 0) != len(leads):
+    if canonical_campaign is None or (not key and int(canonical_campaign.get("lead_count") or 0) != len(leads)):
+        if key:
+            raise HTTPException(503, "Campaign was committed but could not be loaded; retry with the same key")
         await delete_campaign_row_awaited(owner_id, campaign["id"], workspace_id=workspace_id)
         raise HTTPException(
             status_code=503,
             detail="Campaign links could not be verified; creation was rolled back",
         )
     campaign = canonical_campaign
+    if not created:
+        return {"ok": True, "campaign": campaign}
 
     source_key = f"campaign:{campaign['id']}:created"
     activity_payload = {
@@ -283,7 +334,8 @@ async def create_campaign(
 
     def report_event_failure(task: asyncio.Task) -> None:
         try:
-            task.result()
+            if task.result() is False:
+                log.warning("campaign_compatibility_event_unconfirmed campaign=%s", campaign["id"])
         except asyncio.CancelledError:
             return
         except Exception:
@@ -296,23 +348,7 @@ async def create_campaign(
         "status": campaign["status"], "lead_count": campaign["lead_count"],
         "search_query": campaign["search_query"],
     }, actor="user")
-    _feedback().on_campaign_created(session_token, campaign["id"])
-
-    strategy_task = asyncio.create_task(maybe_auto_strategy(
-        session_token, owner_id, campaign["id"],
-        str(payload.get("objective") or "").strip(), campaign,
-        workspace_id=workspace_id,
-    ))
-
-    def report_strategy_failure(task: asyncio.Task) -> None:
-        try:
-            task.result()
-        except asyncio.CancelledError:
-            return
-        except Exception:
-            log.exception("[campaign_strategy] auto-start failed campaign=%s", campaign["id"])
-
-    strategy_task.add_done_callback(report_strategy_failure)
+    await asyncio.to_thread(_feedback().on_campaign_created, session_token, campaign["id"])
     return {"ok": True, "campaign": campaign}
 
 

@@ -6,6 +6,7 @@ import logging
 import os
 import time
 from typing import Any
+from services.platform.test_runtime import is_test_runtime
 
 
 log = logging.getLogger("loqi")
@@ -13,6 +14,8 @@ log = logging.getLogger("loqi")
 
 def begin_startup(app: Any) -> float:
     """Mark startup and register workflows that must exist before requests."""
+    if is_test_runtime():
+        raise RuntimeError("Production startup registration is disabled in test runtime")
     from services.platform.lifecycle import set_starting
     from services.operations import log_config_warnings, set_startup_time, startup_diagnostics
     from services.outbound import service as outbound_service
@@ -48,6 +51,8 @@ def validate_startup_configuration() -> None:
 
 def initialize_runtime_services(adapter_registry: Any) -> None:
     """Check migrations and register the application's runtime integrations."""
+    if is_test_runtime():
+        raise RuntimeError("Runtime integrations are disabled in test runtime")
     from services.execution.adapter_registry_resolver import init_planner_registry
     from services.platform.migration import apply_migrations
 

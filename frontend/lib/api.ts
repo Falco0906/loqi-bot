@@ -3,12 +3,12 @@ import type { LeadIntelligence, LoqiMessage, LoqiSessionSummary } from "./types"
 const API_BASE =
   process.env.NEXT_PUBLIC_LOQI_API_BASE_URL || "http://127.0.0.1:10000";
 
-function authHeaders(): Record<string, string> {
+function authHeaders(workspaceId = ""): Record<string, string> {
   try {
     const token = localStorage.getItem("loqi_access_token");
-    return token ? { Authorization: `Bearer ${token}` } : {};
+    return { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(workspaceId ? { "X-Workspace-Id": workspaceId } : {}) };
   } catch {
-    return {};
+    return workspaceId ? { "X-Workspace-Id": workspaceId } : {};
   }
 }
 
@@ -236,6 +236,19 @@ export async function getSession(sessionToken: string) {
   return fetchWithRetry<LoqiSessionSummary>(
     `${API_BASE}/api/web/session/_`,
     { cache: "no-store", headers: authHeaders() },
+  );
+}
+
+export type AuthorizedWorkspace = {
+  id: string;
+  organization_id?: string;
+  name?: string;
+  slug?: string;
+};
+
+export async function listAuthorizedWorkspaces(signal?: AbortSignal) {
+  return fetchWithRetry<{ ok: boolean; workspaces: AuthorizedWorkspace[] }>(
+    `${API_BASE}/api/web/session/_/workspaces`, { headers: authHeaders(), signal, retries: 0 },
   );
 }
 
@@ -667,12 +680,16 @@ export async function saveCampaign(
   status?: string,
   leads?: unknown[],
   discoveryId?: string,
+  idempotencyKey?: string,
+  workspaceId = "",
 ) {
+  if (!idempotencyKey?.trim() || idempotencyKey.length > 128) {
+    throw new Error("Campaign creation requires a stable idempotency key (1–128 characters).");
+  }
   return fetchWithRetry<{ ok: boolean; campaign: unknown }>(
     `${API_BASE}/api/web/session/_/campaigns`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({
         name,
         objective,
@@ -682,7 +699,9 @@ export async function saveCampaign(
         status: status || "planning",
         leads,
         discovery_id: discoveryId,
+        idempotency_key: idempotencyKey,
       }),
+      headers: { "Content-Type": "application/json", ...authHeaders(workspaceId) },
     },
   );
 }
@@ -691,6 +710,7 @@ export async function generateCampaignStrategy(
   sessionToken: string,
   campaignId: string,
   force = false,
+  workspaceId = "",
 ) {
   return fetchWithRetry<
     {
@@ -704,7 +724,7 @@ export async function generateCampaignStrategy(
     `${API_BASE}/api/web/session/_/campaigns/${campaignId}/generate-strategy`,
     {
       method: "POST",
-      headers: authHeaders(),
+      headers: authHeaders(workspaceId),
       body: JSON.stringify({ force }),
       timeout: 15000,
       // PR-P1.3: strategy start creates a backend job; a replayed POST would
@@ -718,6 +738,7 @@ export async function getStrategyGenerationStatus(
   sessionToken: string,
   campaignId: string,
   jobId: string,
+  workspaceId = "",
 ) {
   return fetchWithRetry<{
     job_id: string;
@@ -726,7 +747,7 @@ export async function getStrategyGenerationStatus(
     error?: string | null;
   }>(
     `${API_BASE}/api/web/session/_/campaigns/${campaignId}/strategy-jobs/${jobId}`,
-    { timeout: 8000, retries: 1 },
+    { headers: authHeaders(workspaceId), timeout: 8000, retries: 1 },
   );
 }
 
@@ -840,10 +861,10 @@ export async function listCampaigns(sessionToken: string) {
   );
 }
 
-export async function getCampaign(sessionToken: string, campaignId: string) {
+export async function getCampaign(sessionToken: string, campaignId: string, workspaceId = "") {
   return fetchWithRetry<{ ok: boolean; campaign: Record<string, unknown> }>(
     `${API_BASE}/api/web/session/_/campaigns/${campaignId}`,
-    { headers: authHeaders() },
+    { headers: authHeaders(workspaceId) },
   );
 }
 

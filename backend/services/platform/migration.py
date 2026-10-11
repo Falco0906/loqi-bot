@@ -1,5 +1,6 @@
 import os
 from urllib.parse import unquote, urlparse
+from services.platform.test_runtime import is_test_runtime
 
 MIGRATION_SQL = """
 create table if not exists jobs (
@@ -333,6 +334,12 @@ def _manual_migration_instructions() -> str:
 
 
 def apply_migrations() -> bool:
+    # Schema changes are an explicit reviewed operation, never an application
+    # or test-startup side effect. The guard precedes even the read-only probe.
+    if is_test_runtime():
+        _log("Migration execution disabled in test mode")
+        return False
+
     jobs_exist = _check_table_exists()
     database_url = os.getenv("DATABASE_URL")
     if jobs_exist and not database_url:

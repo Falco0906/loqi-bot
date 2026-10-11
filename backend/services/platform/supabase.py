@@ -4,7 +4,13 @@ import threading
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
-from supabase import Client, create_client
+from supabase import Client
+from services.platform.test_runtime import (
+    create_supabase_client,
+    is_test_runtime,
+    validate_test_database_authorization,
+    validate_supabase_client,
+)
 
 load_dotenv()
 
@@ -16,6 +22,8 @@ TERMINAL_MESSAGES = {
 }
 
 _client: Client | None = None
+_test_client: Client | None = None
+_test_client_authorization = None
 
 
 def _log(message: str) -> None:
@@ -23,11 +31,20 @@ def _log(message: str) -> None:
 
 
 def get_supabase_client() -> Client | None:
-    _log("get_supabase_client called")
+    """Return the application client, but never inherit application credentials in tests.
+
+    Pytest activates the process-owned guard before importing the application.
+    Database integration fixtures may install a client only after validating
+    the dedicated test-project allowlist.
+    """
     global _client
 
+    if is_test_runtime():
+        if _test_client is not None:
+            validate_supabase_client(_test_client, _test_client_authorization)
+        return _test_client
+
     if _client is not None:
-        _log("get_supabase_client returning cached client")
         return _client
 
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -35,12 +52,38 @@ def get_supabase_client() -> Client | None:
         return None
 
     try:
-        _client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        _client = create_supabase_client(SUPABASE_URL, SUPABASE_KEY)
         _log("get_supabase_client success: client created")
         return _client
     except Exception as error:
-        _log(f"get_supabase_client error: {error}")
+        _log(f"get_supabase_client error type: {type(error).__name__}")
         return None
+
+
+def install_validated_test_client(client: Client | None, authorization=None) -> None:
+    """Install a test-only client after the integration fixture validates its target."""
+    global _test_client, _test_client_authorization
+    if not is_test_runtime():
+        raise RuntimeError("Test Supabase clients can only be installed in test mode")
+    if client is not None:
+        capability = validate_test_database_authorization(authorization)
+        if not validate_supabase_client(client, capability):
+            raise TypeError("Validated integration installation requires a Supabase SDK client")
+        _test_client_authorization = capability
+    else:
+        _test_client_authorization = None
+    _test_client = client
+
+
+def install_test_double(client) -> None:
+    """Install an explicitly injected offline fake; never accepts SDK clients."""
+    global _test_client, _test_client_authorization
+    if not is_test_runtime():
+        raise RuntimeError("Test doubles can only be installed in test runtime")
+    if client is not None and validate_supabase_client(client):
+        raise TypeError("Supabase SDK clients require validated integration authorization")
+    _test_client = client
+    _test_client_authorization = None
 
 
 def _first_row(result) -> dict | None:

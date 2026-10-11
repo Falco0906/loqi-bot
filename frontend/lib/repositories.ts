@@ -462,10 +462,10 @@ function campaignInsightsFromBackend(campaign: Record<string, unknown>): Campaig
   return [];
 }
 
-export async function fetchCampaign(id: string): Promise<CampaignData | null> {
+export async function fetchCampaign(id: string, workspaceId = ""): Promise<CampaignData | null> {
   const token = getToken();
   if (!token) return null;
-  const raw = await getCampaign(token, id);
+  const raw = await getCampaign(token, id, workspaceId);
   if (!raw.ok || !raw.campaign) return null;
   const c = raw.campaign;
   return {

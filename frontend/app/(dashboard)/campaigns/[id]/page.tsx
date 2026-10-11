@@ -1,6 +1,7 @@
 "use client";
 
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useCampaignWorkspace } from "../../../../hooks/useCampaignWorkspace";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import WorkspaceContainer from "../../../../components/layout/WorkspaceContainer";
 import AppPage from "../../../../components/primitives/AppPage";
@@ -74,12 +75,21 @@ function SectionLabel({ icon, children }: { icon: string; children: React.ReactN
 export default function CampaignDetailPage() {
   const params = useParams();
   const campaignId = params.id as string;
+  const searchParams = useSearchParams();
+  const context = useCampaignWorkspace(searchParams.get("workspace_id") || "");
+  if (!context.workspace) return <div role={context.error ? "alert" : "status"} className="p-6">{context.error || "Loading your workspace…"} {context.error && <button type="button" onClick={context.retry}>Retry</button>} <a href="/discovery">Return to Discover</a></div>;
+  return <CampaignDetailWorkspace key={`${context.scope}:${campaignId}`} campaignId={campaignId} workspaceId={context.workspace} scope={context.scope} />;
+}
+
+function CampaignDetailWorkspace({ campaignId, workspaceId, scope }: { campaignId: string; workspaceId: string; scope: string }) {
   const router = useRouter();
   const [sessionToken] = useState<string | null>(() => {
     try { return localStorage.getItem("loqi_active_session_token"); }
     catch { return null; }
   });
-  const campaignKey = scopedKey(sessionToken, "campaign", campaignId);
+  const campaignKey = scopedKey(sessionToken, "campaign", workspaceId, campaignId);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   // PR-3C: stale-while-revalidate — returning to a recently visited campaign
   // renders the cached payload instantly via `initial`, and every (re)load
   // goes through swrFetch so fresh<10s hits cache and stale revalidates.
@@ -89,13 +99,13 @@ export default function CampaignDetailPage() {
   const loadCampaign = useCallback(
     (): Promise<CampaignData | null> => swrFetch<CampaignData | null>(
       campaignKey,
-      () => fetchCampaign(campaignId),
+      () => fetchCampaign(campaignId, workspaceId),
       {
-        onStale: value => mutateRef.current(value),
-        onUpdate: value => mutateRef.current(value),
+        onStale: value => { if (mounted.current) mutateRef.current(value); },
+        onUpdate: value => { if (mounted.current) mutateRef.current(value); },
       },
     ),
-    [campaignKey, campaignId],
+    [campaignKey, campaignId, workspaceId],
   );
   const cachedCampaign = peekCache<CampaignData>(campaignKey);
   const { data, loading, error, retry, mutate } = useData<CampaignData>(loadCampaign, {
@@ -114,7 +124,7 @@ export default function CampaignDetailPage() {
     invalidateClientCache(campaignKey);
     invalidateMissionControlCache();
     const fresh = await loadCampaign();
-    if (fresh) mutate(fresh);
+    if (fresh && mounted.current) mutate(fresh);
     return fresh;
   }, [loadCampaign, mutate, campaignKey]);
   const { campaignResult, outreachResult } = useCopilot();
@@ -184,47 +194,6 @@ export default function CampaignDetailPage() {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [campaignId, generationInProgress, token, refreshCampaign]);
 
-  /**
-   * Campaigns built from a Discovery carry their strategy automatically —
-   * the backend enqueues generation when research is attached. Poll quietly
-   * until the carried strategy lands so the page shows it without the user
-   * clicking Generate. Bounded; stops on first appearance.
-   */
-  const waitingForCarriedStrategy = Boolean(
-    data && !(Object.keys(data.strategy || {}).length > 0) && (data.leads?.length ?? 0) > 0 && data.discoveryId,
-  );
-  useEffect(() => {
-    if (!waitingForCarriedStrategy || !token) return;
-    let cancelled = false;
-    // PR-P1.4: in-flight guard for the carried-strategy poll.
-    let pollBusy = false;
-    const budgetMs = 90_000;
-    const deadline = Date.now() + budgetMs;
-    let timer: number | undefined;
-    const poll = async () => {
-      if (cancelled || pollBusy) return;
-      if (Date.now() > deadline) {
-        if (timer !== undefined) window.clearInterval(timer);
-        return;
-      }
-      pollBusy = true;
-      try {
-        const fresh = await loadCampaign().catch(() => null);
-        if (cancelled) return;
-        if (fresh && Object.keys(fresh.strategy || {}).length > 0) {
-          mutate(fresh);
-          if (timer !== undefined) window.clearInterval(timer);
-          return;
-        }
-      } finally {
-        pollBusy = false;
-      }
-    };
-    void poll();
-    timer = window.setInterval(() => void poll(), 3000);
-    return () => { cancelled = true; if (timer !== undefined) window.clearInterval(timer); };
-  }, [waitingForCarriedStrategy, loadCampaign, mutate, token]);
-
   const leads = useMemo(() => data?.leads || [], [data?.leads]);
   const strategy = useMemo(() => data?.strategy || {}, [data?.strategy]);
   const audience = useMemo(() => String(strategy.audience || ""), [strategy]);
@@ -235,7 +204,8 @@ export default function CampaignDetailPage() {
     if (!token) return;
     setStrategyBusy(true);
     try {
-      const started = await generateCampaignStrategy(token, campaignId, force);
+      const started = await generateCampaignStrategy(token, campaignId, force, workspaceId);
+      if (!mounted.current) return;
       if (!started.ok) return;
       if (started.reused || !started.job_id) {
         if (started.reused) toast("success", "Strategy already covers this objective");
@@ -249,7 +219,7 @@ export default function CampaignDetailPage() {
         await new Promise((resolve) => setTimeout(resolve, 2000));
         attempts += 1;
         if (strategyPollAborted.current) return;
-        const status = await getStrategyGenerationStatus(token, campaignId, started.job_id);
+        const status = await getStrategyGenerationStatus(token, campaignId, started.job_id, workspaceId);
         if (strategyPollAborted.current) return;
         if (status.status === "completed") {
           toast("success", "Strategy generated");

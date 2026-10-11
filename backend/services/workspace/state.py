@@ -1749,7 +1749,7 @@ def load_drafts_only(user_id: str, workspace_id: str = "") -> list[dict[str, Any
 
 
 def load_campaign_state(user_id: str, campaign_id: str,
-                        workspace_id: str = "") -> dict[str, Any] | None:
+                        workspace_id: str = "", *, strict: bool = False) -> dict[str, Any] | None:
     """Return one campaign with its leads and strategy — no whole-graph load.
 
     Uses the same canonical fan-out scoped to a single campaign (links,
@@ -1763,10 +1763,14 @@ def load_campaign_state(user_id: str, campaign_id: str,
             campaign = _run_sync(_load_canonical_state(
                 user_id, campaign_id=campaign_id, workspace_id=workspace_id,
             ))
-            if campaign is not None:
+            if campaign is not None or strict:
                 return campaign
         except Exception as error:
+            if strict:
+                raise
             print(f"[workspace_state] single-campaign read failed, falling back: {error}")
+    if strict:
+        raise RuntimeError("Campaign persistence is unavailable")
     state = _project_from_events(_events(user_id))
     return next((c for c in state.get("campaigns", []) if c.get("id") == campaign_id), None)
 

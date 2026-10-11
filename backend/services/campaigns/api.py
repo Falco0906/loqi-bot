@@ -6,7 +6,7 @@ import logging
 import time
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from services.workspace import access as workspace_access
 from services.campaigns import service
@@ -23,11 +23,13 @@ router = APIRouter(tags=["Campaigns"])
 log = logging.getLogger("loqi")
 
 
-async def _authorized_workspace(request: Request) -> tuple[str, str, str]:
+async def _authorized_workspace(request: Request, *, creation: bool = False) -> tuple[str, str, str]:
     """Resolve the authenticated caller, bearer token, and selected workspace."""
     session_token = identity_dependencies.web_session_token(request)
     owner_id = await identity_dependencies.authenticated_user_id(request, session_token)
-    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, owner_id)
+    resolver = (workspace_access.resolve_selected_workspace_id if creation
+                else workspace_access.resolve_legacy_workspace_id)
+    workspace_id = await resolver(request, owner_id)
     return owner_id, session_token, workspace_id
 
 
@@ -40,6 +42,7 @@ class SaveCampaignRequest(BaseModel):
     leads: list[dict] | None = None
     strategy: dict | None = None
     status: str = "planning"
+    idempotency_key: str = Field(min_length=1, max_length=128, pattern=r"\S")
 
 
 class UpdateCampaignRequest(BaseModel):
@@ -79,7 +82,7 @@ async def analyze_campaigns_endpoint(session_token: str, payload: AnalyzeCampaig
 @router.post("/api/web/session/{session_token}/campaigns")
 async def save_campaign(session_token: str, payload: SaveCampaignRequest, request: Request):
     del session_token
-    owner_id, bearer_token, workspace_id = await _authorized_workspace(request)
+    owner_id, bearer_token, workspace_id = await _authorized_workspace(request, creation=True)
     return await service.create_campaign(
         bearer_token, owner_id, workspace_id, payload.model_dump(),
     )

@@ -1,5 +1,6 @@
 """Shared fixtures for backend tests."""
 
+import os
 import re
 from types import SimpleNamespace
 
@@ -7,83 +8,94 @@ import pytest
 from fastapi.testclient import TestClient
 from fastapi import HTTPException
 
+# Establish process-owned test mode before importing main/services. Mutating
+# LOQI_TEST_MODE later cannot disable the shared runtime guard.
+os.environ["LOQI_TEST_MODE"] = "1"
+from services.platform.test_runtime import activate_test_runtime
+
+activate_test_runtime()
+
 import main as main_module
 import services.identity.dependencies as identity_dependencies
+from tests.supabase_test_safety import (
+    OwnedRecordCleanup,
+    validate_supabase_test_configuration,
+)
 
-
-# This row is intentionally durable across test runs.  Cleanup below may only
-# delete rows tied to this exact UUID; it never deletes an identity user.
-SHARED_TEST_USER_ID = "00000000-0000-4000-8000-000000000001"
-SHARED_TEST_EMAIL = "test-fixture@loqi.internal"
-
-
-def _rows(client, table: str, column: str, value: str) -> list[dict]:
-    response = client.table(table).select("id").eq(column, value).execute()
-    return list(getattr(response, "data", None) or [])
-
-
-def _delete_owned_test_data(client, user_id: str = SHARED_TEST_USER_ID) -> None:
-    """Delete only data attributable to the fixed integration-test identity.
-
-    Workspace deletion relies on the database's workspace-owned cascades.
-    Session/message rows are removed explicitly because they predate that
-    workspace graph.  The identity row is deliberately never deleted.
-    """
-    if user_id != SHARED_TEST_USER_ID:
-        raise AssertionError("test cleanup may only target the shared test identity")
-
-    session_ids = [row["id"] for row in _rows(client, "workflow_sessions", "user_id", user_id)]
-    for session_id in session_ids:
-        client.table("workflow_messages").delete().eq("workflow_session_id", session_id).execute()
-        client.table("workflow_events").delete().eq("workflow_session_id", session_id).execute()
-
-    # These predicates are deliberately exact, never prefix/pattern based.
-    client.table("web_session_bindings").delete().eq("canonical_user_id", user_id).execute()
-    client.table("sessions").delete().eq("user_id", user_id).execute()
-    client.table("password_reset_requests").delete().eq("user_id", user_id).execute()
-    client.table("notifications").delete().eq("user_id", user_id).execute()
-    client.table("workflow_sessions").delete().eq("user_id", user_id).execute()
-    client.table("workspaces").delete().eq("owner_user_id", user_id).execute()
-    client.table("workspace_members").delete().eq("user_id", user_id).execute()
-    # The legacy bridge is test-owned state. Deleting it cascades its jobs.
-    client.table("users").delete().eq("id", user_id).execute()
-
-
-def _ensure_shared_test_identity(client) -> str:
-    rows = _rows(client, "identity_users", "id", SHARED_TEST_USER_ID)
-    if not rows:
-        client.table("identity_users").insert({
-            "id": SHARED_TEST_USER_ID,
-            "display_name": "Loqi Test Fixture",
-            "email": SHARED_TEST_EMAIL,
-        }).execute()
-    return SHARED_TEST_USER_ID
+def pytest_collection_modifyitems(config, items):
+    """Database and external integration tests are opt-in independently."""
+    skip_db = pytest.mark.skip(reason=(
+        "requires_db tests need LOQI_RUN_DB_INTEGRATION=1 and approved dedicated test credentials"
+    ))
+    skip_external = pytest.mark.skip(reason=(
+        "integration tests need LOQI_RUN_EXTERNAL_INTEGRATION=1 and a dedicated integration environment"
+    ))
+    for item in items:
+        if item.get_closest_marker("requires_local_postgres") and os.getenv("LOQI_TEST_POSTGRES_ENABLED") != "1":
+            item.add_marker(pytest.mark.skip(reason="Local PostgreSQL tests require separate explicit opt-in and target approval"))
+        if item.get_closest_marker("requires_db") and os.getenv("LOQI_RUN_DB_INTEGRATION") != "1":
+            item.add_marker(skip_db)
+        if item.get_closest_marker("integration") and os.getenv("LOQI_RUN_EXTERNAL_INTEGRATION") != "1":
+            item.add_marker(skip_external)
 
 
 @pytest.fixture(scope="session")
-def durable_test_identity():
-    """One reusable live-Supabase identity, reset without changing its ID."""
-    from services.platform.supabase import get_supabase_client
+def supabase_test_configuration():
+    if os.getenv("LOQI_RUN_DB_INTEGRATION") != "1":
+        pytest.skip("Supabase integration tests require explicit opt-in")
+    return validate_supabase_test_configuration()
 
-    client = get_supabase_client()
-    if client is None:
-        pytest.skip("live Supabase integration fixture requires configured Supabase")
-    user_id = _ensure_shared_test_identity(client)
-    _delete_owned_test_data(client, user_id)
-    yield user_id
-    _delete_owned_test_data(client, user_id)
+
+@pytest.fixture(scope="session")
+def supabase_integration_client(supabase_test_configuration):
+    """Create a client only after validating dedicated test-only configuration."""
+    from services.platform.test_runtime import create_supabase_client
+
+    client = create_supabase_client(
+        supabase_test_configuration.url,
+        supabase_test_configuration.key,
+        authorization=supabase_test_configuration,
+    )
+    yield client
+
+
+@pytest.fixture(autouse=True)
+def _require_explicit_external_integration_environment(request):
+    """A marker alone never authorizes provider integration execution."""
+    if request.node.get_closest_marker("integration"):
+        if (os.getenv("LOQI_RUN_EXTERNAL_INTEGRATION") != "1"
+                or os.getenv("LOQI_EXTERNAL_INTEGRATION_ENV") != "dedicated"):
+            pytest.skip("External integration requires explicit opt-in and a dedicated environment")
+
+
+@pytest.fixture()
+def owned_test_records(supabase_integration_client, supabase_test_configuration):
+    """Register exact rows created by an integration test for scoped cleanup."""
+    owner = OwnedRecordCleanup(
+        supabase_integration_client,
+        supabase_test_configuration,
+    )
+    try:
+        yield owner
+    finally:
+        owner.cleanup()
+
+
+@pytest.fixture()
+def test_run_id(owned_test_records):
+    return owned_test_records.test_run_id
+
+
+@pytest.fixture()
+def durable_test_identity(owned_test_records):
+    """Create a fresh per-test identity; never reuse or clean a shared identity."""
+    return owned_test_records.create_identity()
 
 
 @pytest.fixture()
 def shared_test_identity(durable_test_identity):
-    """Provide an empty owned-data graph for one live integration test."""
-    from services.platform.supabase import get_supabase_client
-
-    client = get_supabase_client()
-    assert client is not None
-    _delete_owned_test_data(client, durable_test_identity)
-    yield durable_test_identity
-    _delete_owned_test_data(client, durable_test_identity)
+    """Compatibility name for tests now receiving a unique identity per test."""
+    return durable_test_identity
 
 
 @pytest.fixture()
@@ -137,15 +149,47 @@ def _session_auth_shim(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _reset_persistence_provider_between_tests():
+def _reset_persistence_provider_between_tests(request):
     """Prevent a test-installed fake Supabase provider leaking to another test."""
     from services.persistence import reset_connection_manager, reset_repository_provider
+    from services.persistence.database import SupabaseConnectionManager, set_connection_manager
+    from services.platform import supabase as supabase_module
 
+    supabase_module.install_validated_test_client(None)
     reset_connection_manager()
     reset_repository_provider()
-    yield
-    reset_connection_manager()
-    reset_repository_provider()
+    if request.node.get_closest_marker("requires_db"):
+        client = request.getfixturevalue("supabase_integration_client")
+        authorization = request.getfixturevalue("supabase_test_configuration")
+        supabase_module.install_validated_test_client(client, authorization)
+        set_connection_manager(SupabaseConnectionManager(client=client, authorization=authorization))
+    try:
+        yield
+    finally:
+        supabase_module.install_validated_test_client(None)
+        reset_connection_manager()
+        reset_repository_provider()
+
+
+@pytest.fixture(autouse=True)
+def _block_network_for_offline_tests(request, monkeypatch):
+    """Reject accidental socket connections from ordinary tests and their setup."""
+    import socket
+
+    if request.node.get_closest_marker("requires_db"):
+        request.getfixturevalue("supabase_test_configuration")
+        return
+    if (request.node.get_closest_marker("integration")
+            and os.getenv("LOQI_RUN_EXTERNAL_INTEGRATION") == "1"
+            and os.getenv("LOQI_EXTERNAL_INTEGRATION_ENV") == "dedicated"):
+        return
+
+    def forbidden(*_args, **_kwargs):
+        raise RuntimeError("Network connections are disabled for offline tests")
+
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    monkeypatch.setattr(socket.socket, "connect_ex", forbidden)
+    monkeypatch.setattr(socket, "create_connection", forbidden)
 
 
 class _AuthTestClient(TestClient):

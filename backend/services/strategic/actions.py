@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -239,7 +238,7 @@ class StrategicActionService:
         if action.action_type in {"update_messaging", "refine_icp"}:
             return await self._execute_knowledge(owner_id, workspace_id, action)
         if action.action_type == "create_campaign":
-            return await self._execute_campaign(owner_id, action)
+            return await self._execute_campaign(owner_id, workspace_id, action)
         raise StrategicActionError("Unsupported action type")
 
     async def _execute_knowledge(self, owner_id, workspace_id, action):
@@ -266,19 +265,20 @@ class StrategicActionService:
         )
         return {"entity_type": "knowledge_item", "entity_id": item["id"], "category": category}
 
-    async def _execute_campaign(self, owner_id: str, action: StrategicAction):
-        from services.workspace.state import load_workspace_state, persist_campaign_row
+    async def _execute_campaign(self, owner_id: str, workspace_id: str, action: StrategicAction):
+        from services.campaigns.creation import creation_identity, persist_creation, recover_creation
+        from services.workspace.access import resolve_workspace_context
+
+        # A durable action ID identifies this approved creation intent. Scope is
+        # still membership-authorized, not granted by possession of the action.
+        await asyncio.to_thread(resolve_workspace_context, None, owner_id, workspace_id)
         proposed = action.proposal.get("proposed_change") or {}
-        state = await asyncio.to_thread(load_workspace_state, owner_id, include_details=False)
-        for campaign in state.get("campaigns", []):
-            if (campaign.get("metadata") or {}).get("strategic_action_id") == action.id:
-                return {"entity_type": "campaign", "entity_id": campaign["id"], "idempotent": True}
         now = datetime.now(timezone.utc).isoformat()
         campaign = {
-            "id": str(uuid.uuid4()),
             "name": str(proposed.get("name") or "Strategic follow-on campaign")[:160],
             "objective": str(proposed.get("objective") or "")[:4000],
             "search_query": str(proposed.get("search_query") or "")[:500],
+            "discovery_id": "",
             "lead_count": 0,
             "leads": [],
             "status": "planning",
@@ -287,9 +287,12 @@ class StrategicActionService:
             "created_at": now,
             "updated_at": now,
         }
-        if not await persist_campaign_row(owner_id, campaign):
-            raise RuntimeError("Campaign could not be persisted")
-        return {"entity_type": "campaign", "entity_id": campaign["id"], "status": "planning"}
+        identity, fingerprint = creation_identity(workspace_id, owner_id, f"strategic-action:{action.id}", campaign)
+        campaign["id"] = identity
+        if await recover_creation(workspace_id, owner_id, identity, fingerprint) is not None:
+            return {"entity_type": "campaign", "entity_id": identity, "idempotent": True}
+        created = await persist_creation(workspace_id, owner_id, identity, fingerprint, campaign)
+        return {"entity_type": "campaign", "entity_id": identity, "status": "planning", "idempotent": not created}
 
     async def _workspace(self, owner_id: str) -> str | None:
         from services.workspace.state import _async_workspace

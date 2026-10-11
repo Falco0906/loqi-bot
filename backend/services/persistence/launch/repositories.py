@@ -444,6 +444,39 @@ class CampaignRepository(LaunchRepository[Campaign]):
             ("workspace_id", "eq", workspace_id),
         ])
 
+    async def get_creation(self, campaign_id: str, workspace_id: str) -> Campaign | None:
+        """Strict lookup: unavailability is not proof that a creation is absent."""
+        client = self._client()
+        if client is None:
+            raise RuntimeError("Campaign persistence is unavailable")
+        result = await asyncio.to_thread(lambda: client.table("campaigns").select("*")
+            .eq("id", campaign_id).eq("workspace_id", workspace_id).limit(1).execute())
+        if not isinstance(result.data, list):
+            raise RuntimeError("Invalid campaign creation read response")
+        return self._from_row(result.data[0]) if result.data else None
+
+
+    async def create_once(self, *, campaign_id: str, workspace_id: str, actor_user_id: str,
+                          request_hash: str, campaign: dict[str, Any], lead_ids: list[str]) -> tuple[Campaign, bool]:
+        """Atomically commit one campaign + attachments, or recover its prior commit."""
+        client = self._client()
+        if client is None:
+            raise RuntimeError("Campaign persistence is unavailable")
+        arguments = {"p_campaign_id": campaign_id, "p_workspace_id": workspace_id,
+                     "p_actor_user_id": actor_user_id, "p_request_hash": request_hash,
+                     "p_campaign": {key: campaign[key] for key in ("name", "objective", "status", "search_query", "discovery_id")},
+                     "p_lead_ids": lead_ids, "p_strategy": campaign.get("strategy")}
+        result = await asyncio.to_thread(lambda: client.rpc("create_workspace_campaign_once", arguments).execute())
+        data = result.data
+        if not isinstance(data, dict) or not isinstance(data.get("campaign"), dict) or not isinstance(data.get("created"), bool):
+            raise RuntimeError("Campaign creation commit was not confirmed")
+        entity = self._from_row(data["campaign"])
+        if (entity.id != campaign_id or entity.workspace_id != workspace_id or entity.created_by != actor_user_id
+                or entity.metadata.get("creation_request_hash") != request_hash):
+            raise RuntimeError("Campaign creation returned inconsistent identity")
+        return entity, data["created"]
+
+
     async def update_for_workspace_with_revision(
         self,
         campaign_id: str,

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "postgres_major": 16,
+  "prerequisites": [
+    {"file": "004_identity_platform.sql", "sha256": "7a102a9a0b8f1ab310927699774e278eb4393c7d4cf2da74d9ec8fd25e9a59ef", "requires": []},
+    {"file": "006_workspaces.sql", "sha256": "f96cf89b7789ed54e41fc0272ab93fd5de13ee7fda2f0ba5bf221771d6943e02", "requires": ["004_identity_platform.sql"]},
+    {"file": "007_domain.sql", "sha256": "600b46a7f6fb452a0cf31e2ba28f288b1003dc2ea254abba3f1963b03538b7d6", "requires": ["006_workspaces.sql"]},
+    {"file": "008_campaigns.sql", "sha256": "7472eb3162263abb357a32d029e75b7b0e74086fe5e05e284b05979628e198f9", "requires": ["007_domain.sql"]},
+    {"file": "014_discoveries.sql", "sha256": "fa711ea1ef2d9c41867f7ccc6de7c7de99eed9bfcb597c9f2ce8619ffb6f6ca9", "requires": ["008_campaigns.sql", "007_domain.sql"]},
+    {"file": "016_campaign_lifecycle.sql", "sha256": "f37b5d5d8ab834daa9a606a7b1fbf579c2f5164d92b1f9ea00d11b33464127d2", "requires": ["008_campaigns.sql"]},
+    {"file": "025_organization_persistence.sql", "sha256": "94231f1df8c1bd85cbe0b6fac2b2fb99895843810ae37aa33886d9db7c4529ed", "requires": ["006_workspaces.sql"]}
+  ],
+  "approval_required": {
+    "file": "048_campaign_creation_idempotency.sql",
+    "sha256": "257636cda80141a378b886ef70e900d05c63cc7b13db3f114855a29cb7a335b5",
+    "requires": ["014_discoveries.sql", "016_campaign_lifecycle.sql", "025_organization_persistence.sql"]
+  }
+}

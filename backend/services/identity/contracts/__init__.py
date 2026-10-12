@@ -66,7 +66,9 @@ class IdentityProvider(ABC):
         ...
 
     @abstractmethod
-    async def handle_callback(self, code: str, state: str, code_verifier: str) -> ExternalIdentity:
+    async def handle_callback(
+        self, code: str, state: str, code_verifier: str, redirect_uri: str = "",
+    ) -> ExternalIdentity:
         ...
 
     @abstractmethod

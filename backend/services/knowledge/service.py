@@ -443,6 +443,9 @@ class KnowledgeService:
         id, category/type and provenance so AI insights can be traced back.
         """
         if not owner_id:
+            if workspace_id:
+                from services.workspace.access import WorkspaceAccessDenied
+                raise WorkspaceAccessDenied(workspace_id)
             return {"items": [], "sources": [], "owner_id": "", "limit": limit}
         workspace_id = await self._resolve_workspace(owner_id, workspace_id)
         if not workspace_id:
@@ -488,22 +491,11 @@ class KnowledgeService:
         if requested_workspace_id:
             # Callers may pass an explicit active workspace, but it is still
             # only usable when the owner has an active membership there.
-            from services.workspace.access import (
-                AmbiguousWorkspaceError,
-                NoWorkspaceAvailable,
-                WorkspaceAccessDenied,
-                resolve_workspace_context,
+            from services.workspace.access import resolve_workspace_context
+            context = await asyncio.to_thread(
+                resolve_workspace_context, None, owner_id, requested_workspace_id,
             )
-            try:
-                context = await asyncio.to_thread(
-                    resolve_workspace_context,
-                    None,
-                    owner_id,
-                    requested_workspace_id,
-                )
-                return context.workspace_id
-            except (WorkspaceAccessDenied, NoWorkspaceAvailable, AmbiguousWorkspaceError):
-                return None
+            return context.workspace_id
         from services.workspace.state import _async_workspace
         return await _async_workspace(owner_id)
 

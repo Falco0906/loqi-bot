@@ -1,5 +1,5 @@
 import type { CopilotAction } from "./actionRegistry";
-import { normalizeDiscoveryRequest } from "./discovery-request";
+import { normalizeDiscoveryRequest } from "./discovery-request.ts";
 
 export type ConversationState = "idle" | "clarification" | "working" | "completed" | "failed";
 

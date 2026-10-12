@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useCallback, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Icon from "../shared/Icon";
+import WorkspaceSwitcher from "./WorkspaceSwitcher";
+import { discoveryReturnUrl } from "../../lib/discovery-context";
 import { useAuth } from "../../hooks/useAuth";
 import { useTheme } from "../../hooks/useTheme";
 
@@ -61,6 +63,9 @@ export default function Sidebar({
   onToggleCollapse,
 }: Props) {
   const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const workspaceId = searchParams.get("workspace_id") || "";
   const { user, logout } = useAuth();
   const { theme } = useTheme();
   const [profileOpen, setProfileOpen] = useState(false);
@@ -148,10 +153,20 @@ export default function Sidebar({
         </a>
       );
     }
+    const params = new URLSearchParams(item.href.split("?")[1] || "");
+    if (workspaceId) params.set("workspace_id", workspaceId);
+    const href = params.size ? `${item.href.split("?")[0]}?${params}` : item.href;
     return (
       <Link
         key={item.href}
-        href={item.href}
+        href={href}
+        onClick={(event) => {
+          if (item.href !== "/discovery" || !workspaceId) return;
+          try {
+            const restored = discoveryReturnUrl(window.sessionStorage, `${user?.id || ""}:${workspaceId}`, workspaceId);
+            if (restored !== href) { event.preventDefault(); router.push(restored); }
+          } catch { /* Use the scoped URL when browser storage is unavailable. */ }
+        }}
         title={item.label}
         className={classes}
       >
@@ -211,6 +226,7 @@ export default function Sidebar({
             </div>
           )}
         </div>
+        <WorkspaceSwitcher collapsed={collapsed} />
         {!collapsed && (
           <Link
             href="/copilot"

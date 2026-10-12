@@ -1,6 +1,7 @@
 import asyncio
 import os
 import socket
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import uuid4
@@ -20,6 +21,10 @@ class BackgroundRunner:
         self._tasks: dict[str, asyncio.Task] = {}
         self._worker_id = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex}"
         self._lease_seconds = 120
+        self._lead_tasks: set[str] = set()
+
+    def available_lead_generation_slots(self) -> int:
+        return max(0, 2 - len(self._lead_tasks))
 
     @property
     def worker_id(self) -> str:
@@ -65,6 +70,8 @@ class BackgroundRunner:
             self._run_wrapper(job, runner_fn, on_update, on_complete, claimed=claimed)
         )
         self._tasks[job.id] = task
+        if job.type == "lead_strategy":
+            self._lead_tasks.add(job.id)
         _log(f"[kickoff] start_job task created for job={job.id}")
 
     async def _renew_claim_lease(self, job_id: str) -> None:
@@ -134,6 +141,7 @@ class BackgroundRunner:
             await asyncio.to_thread(notify, status, stage, progress, error, error_kind)
 
         lease_task = asyncio.create_task(self._renew_claim_lease(job.id)) if claimed else None
+        strict_updates = {"strict": True, "lease_owner": self._worker_id} if job.type == "lead_strategy" and claimed else {}
         try:
             if not claimed:
                 await asyncio.to_thread(
@@ -193,6 +201,7 @@ class BackgroundRunner:
                     result_ready=True,
                     result=dict(result.get("result") or {}),
                     completed_at=datetime.now(timezone.utc),
+                    **strict_updates,
                 )
                 await notify_off_loop("completed", "Complete", 100)
             else:
@@ -202,7 +211,10 @@ class BackgroundRunner:
                     status=JobStatus.FAILED,
                     stage="Failed",
                     error_message=result.get("error", "Unknown error"),
+                    result=dict(result.get("result") or {}),
+                    result_ready=bool(result.get("result")),
                     completed_at=datetime.now(timezone.utc),
+                    **strict_updates,
                 )
                 await notify_off_loop(
                     "failed",
@@ -212,16 +224,23 @@ class BackgroundRunner:
                     str(result.get("provider_error_kind") or "execution"),
                 )
         except Exception as e:
-            _log(f"job {job.id} crashed: {e}")
+            if job.type == "lead_strategy":
+                # Log identifiers/type, not provider bodies or sensitive input.
+                logging.getLogger(__name__).error("lead_generation_worker_failed job_id=%s error_type=%s", job.id, type(e).__name__)
+                error_message = "Generation failed; saved partial results remain available."
+            else:
+                _log(f"job {job.id} crashed: {e}")
+                error_message = str(e)
             await asyncio.to_thread(
                 self._storage.update_job,
                 job.id,
                 status=JobStatus.FAILED,
                 stage="Failed",
-                error_message=str(e),
+                error_message=error_message,
                 completed_at=datetime.now(timezone.utc),
+                **strict_updates,
             )
-            await notify_off_loop("failed", "Failed", 0, str(e), "execution")
+            await notify_off_loop("failed", "Failed", 0, error_message, "execution")
         finally:
             if lease_task:
                 lease_task.cancel()
@@ -230,6 +249,7 @@ class BackgroundRunner:
                 except asyncio.CancelledError:
                     pass
             self._tasks.pop(job.id, None)
+            self._lead_tasks.discard(job.id)
 
     def _on_progress(self, job_id: str, stage: str, progress: int) -> None:
         self._storage.update_job(

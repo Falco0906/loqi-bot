@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useIntelligenceWorkspace } from "../../../hooks/useIntelligenceWorkspace";
 import { importLeadCsv, listWorkspaceLeads, previewLeadCsv, type WorkspaceLeadRecord } from "../../../lib/api";
 
 const token = () => typeof window === "undefined" ? "" : localStorage.getItem("loqi_active_session_token") || "";
@@ -11,45 +13,65 @@ const leadName = (lead: WorkspaceLeadRecord) => `${lead.first_name} ${lead.last_
 const errorMessage = (error: unknown, fallback: string) => error instanceof Error && error.message ? error.message : fallback;
 
 export default function ContactsPage() {
+  const params = useSearchParams();
+  const context = useIntelligenceWorkspace(params.get("workspace_id") || "", true);
+  if (!context.workspace) return <main className="p-8" role={context.error ? "alert" : "status"}>{context.error || "Loading your workspace…"}</main>;
+  return <ContactsWorkspace key={context.scope} workspaceId={context.workspace} />;
+}
+
+function ContactsWorkspace({ workspaceId }: { workspaceId: string }) {
+  const mounted = useRef(true);
+  const readController = useRef<AbortController | null>(null);
+  const importLock = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; readController.current?.abort(); }; }, []);
   const [leads, setLeads] = useState<WorkspaceLeadRecord[]>([]); const [search, setSearch] = useState(""); const [page, setPage] = useState(1); const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(new Set()); const [loading, setLoading] = useState(true); const [error, setError] = useState("");
   const [csv, setCsv] = useState(""); const [preview, setPreview] = useState<CsvPreview | null>(null); const [mapping, setMapping] = useState<Record<string, string>>({});
   const [mappingOpen, setMappingOpen] = useState(false); const [preparing, setPreparing] = useState(false); const [importing, setImporting] = useState(false); const [summary, setSummary] = useState("");
+  const [actionError, setActionError] = useState("");
+  useEffect(() => { setSelected(new Set()); }, [search]);
 
   const load = useCallback(async (nextPage = page, nextSearch = search) => {
+    readController.current?.abort();
+    const controller = new AbortController(); readController.current = controller;
+    const current = () => mounted.current && !controller.signal.aborted;
     setLoading(true);
-    try { const response = await listWorkspaceLeads(token(), nextSearch, nextPage); setLeads(response.leads); setTotal(response.total); setError(""); }
-    catch (loadError) { setLeads([]); setTotal(0); setError(errorMessage(loadError, "Could not load your lead database.")); }
-    finally { setLoading(false); }
-  }, [page, search]);
+    try { const response = await listWorkspaceLeads(token(), nextSearch, nextPage, {}, "", controller.signal, workspaceId); if (!current()) return; setLeads(response.leads); setTotal(response.total); setError(""); }
+    catch (loadError) { if (!current()) return; setLeads([]); setTotal(0); setError(errorMessage(loadError, "Could not load your lead database.")); }
+    finally { if (current()) setLoading(false); }
+  }, [page, search, workspaceId]);
   useEffect(() => { void load(); }, [load]);
 
   const inspect = useCallback(async (content = csv, nextMapping = mapping) => {
     if (!content) return; setPreparing(true);
-    try { const result = await previewLeadCsv(token(), content, nextMapping); setPreview(result); setMapping(result.mapping); setSummary(""); setError(""); }
-    catch (previewError) { setPreview(null); setError(errorMessage(previewError, "CSV could not be parsed.")); }
-    finally { setPreparing(false); }
-  }, [csv, mapping]);
+    try { const result = await previewLeadCsv(token(), content, nextMapping, workspaceId); if (!mounted.current) return; setPreview(result); setMapping(result.mapping); setSummary(""); setActionError(""); }
+    catch (previewError) { if (!mounted.current) return; setPreview(null); setActionError(errorMessage(previewError, "CSV could not be parsed.")); }
+    finally { if (mounted.current) setPreparing(false); }
+  }, [csv, mapping, workspaceId]);
 
   const upload = async (file?: File) => {
-    if (!file) return; const content = await file.text(); setCsv(content); setPreview(null); setMapping({}); setMappingOpen(false); setSummary(""); setError("");
+    if (!file) return; const content = await file.text(); if (!mounted.current) return; setCsv(content); setPreview(null); setMapping({}); setMappingOpen(false); setSummary(""); setActionError("");
     // A conventional CSV gets the suggested mapping and preview immediately.
     await inspect(content, {});
   };
   const confirm = async () => {
-    if (!preview) return; setImporting(true); setError("");
+    if (!preview || importLock.current) return; importLock.current = true; setImporting(true); setActionError("");
     try {
-      const finalPreview = await previewLeadCsv(token(), csv, mapping); const outcome = await importLeadCsv(token(), finalPreview.rows);
+      const finalPreview = await previewLeadCsv(token(), csv, mapping, workspaceId);
+      if (!mounted.current) return;
+      const outcome = await importLeadCsv(token(), finalPreview.rows, workspaceId);
+      if (!mounted.current) return;
       setSummary(`${outcome.imported} imported · ${outcome.duplicates.length} duplicates skipped · ${finalPreview.invalid_rows.length + outcome.invalid.length} invalid`);
       setPreview(null); setCsv(""); setMapping({}); setMappingOpen(false); setSearch(""); setPage(1); await load(1, "");
-    } catch (importError) { setError(errorMessage(importError, "Import could not be completed. No rows were retried automatically.")); }
-    finally { setImporting(false); }
+    } catch (importError) { if (mounted.current) setActionError(errorMessage(importError, "Import could not be completed. No rows were retried automatically.")); }
+    finally { importLock.current = false; if (mounted.current) setImporting(false); }
   };
   const allVisible = leads.length > 0 && leads.every((lead) => selected.has(lead.id)); const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const visibleRange = useMemo(() => !total ? "0 leads" : `${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, total)} of ${total} leads`, [page, total]);
   const toggleAll = () => setSelected((current) => { const next = new Set(current); leads.forEach((lead) => allVisible ? next.delete(lead.id) : next.add(lead.id)); return next; });
 
   return <main className="mx-auto max-w-[1500px] space-y-6 p-5 sm:p-8">
+    {actionError && <p role="alert" className="rounded-xl border border-error/30 p-4 text-sm text-error">{actionError}</p>}
     <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Workspace data</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">Lead Database</h1><p className="mt-2 text-sm text-on-surface-variant">Import, search, and select durable leads in your selected workspace.</p></div>{selected.size > 0 && <div className="rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-primary">{selected.size} selected</div>}</header>
     <section className="rounded-2xl border border-outline-variant/50 bg-surface p-4 shadow-sm sm:p-5"><div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div><h2 className="font-medium">Import leads from CSV</h2><p className="mt-1 text-sm text-on-surface-variant">Upload a header-based CSV. Loqi suggests the mapping and waits for your confirmation before anything is saved.</p></div><label className="inline-flex shrink-0 cursor-pointer items-center justify-center rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-on-primary"><span>{preparing ? "Reading CSV…" : "Upload CSV"}</span><input type="file" accept=".csv,text/csv" className="hidden" disabled={preparing || importing} onChange={(event) => void upload(event.target.files?.[0])}/></label></div>
       {preview && <div className="mt-5 rounded-xl border border-outline-variant/50 bg-surface-container-low p-4 sm:p-5"><div className="flex flex-col gap-3 sm:flex-row sm:justify-between"><div><h3 className="font-medium">Ready to import</h3><p className="mt-1 text-sm text-on-surface-variant">{preview.total_rows} detected · {preview.valid_rows} ready · {preview.invalid_rows.length} invalid</p></div><button type="button" className="text-left text-sm font-medium text-primary hover:underline" onClick={() => setMappingOpen((open) => !open)}>{mappingOpen ? "Hide column mapping" : "Review column mapping"}</button></div>

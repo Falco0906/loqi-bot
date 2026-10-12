@@ -30,12 +30,14 @@ function leadName(lead: Record<string, unknown> | undefined): string {
  * workspace.
  */
 function CampaignDraftsSection({
+  workspaceId = "",
   token,
   campaignId,
   generating,
   step,
   locked,
 }: {
+  workspaceId?: string;
   token: string | null;
   campaignId: string;
   generating: boolean;
@@ -48,23 +50,28 @@ function CampaignDraftsSection({
   const [approvalLockedIds, setApprovalLockedIds] = useState<Set<string>>(new Set());
   // PR-P1.4: prevents overlapping polls when a fetch outlives its interval.
   const fetchInFlight = useRef(false);
+  const mounted = useRef(true);
+  const [error, setError] = useState("");
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const fetchDrafts = useCallback(async (silent = false) => {
     if (!token || fetchInFlight.current) return;
     fetchInFlight.current = true;
     if (!silent) setLoading(true);
     try {
-      const res = await listCampaignDrafts(token, campaignId);
+      const res = await listCampaignDrafts(token, campaignId, workspaceId);
+      if (!mounted.current) return;
       if (res.ok && Array.isArray(res.drafts)) {
         setDrafts(res.drafts as CampaignDraft[]);
+        setError("");
       }
     } catch {
-      /* silent */
+      if (mounted.current) { setDrafts([]); setError("Campaign drafts could not be loaded. Refresh to try again."); }
     } finally {
       fetchInFlight.current = false;
-      if (!silent) setLoading(false);
+      if (!silent && mounted.current) setLoading(false);
     }
-  }, [token, campaignId]);
+  }, [token, campaignId, workspaceId]);
 
   useEffect(() => {
     void fetchDrafts();
@@ -94,7 +101,8 @@ function CampaignDraftsSection({
     const expectedStatus = draft.status === "approved" ? "pending" : "approved";
     setTogglingId(draft.id);
     try {
-      const res = await approveDraft(token, draft.id);
+      const res = await approveDraft(token, draft.id, workspaceId);
+      if (!mounted.current) return;
       if (res.ok) {
         const updated = res.draft;
         setDrafts((prev) =>
@@ -111,7 +119,9 @@ function CampaignDraftsSection({
         // still unknown.
         try {
           await new Promise((resolve) => window.setTimeout(resolve, 3500));
-          const durable = await listCampaignDrafts(token, campaignId);
+          if (!mounted.current) return;
+          const durable = await listCampaignDrafts(token, campaignId, workspaceId);
+          if (!mounted.current) return;
           const persisted = (durable.drafts as CampaignDraft[]).find(
             (item) => item.id === draft.id,
           );
@@ -138,6 +148,7 @@ function CampaignDraftsSection({
   const total = drafts.length;
 
   const showGenerating = generating || (total === 0 && loading);
+  if (error) return <section role="alert">{error} <button onClick={() => void fetchDrafts()}>Retry</button></section>;
 
   if (total === 0 && !generating) {
     return null;
@@ -156,7 +167,7 @@ function CampaignDraftsSection({
         </div>
         {!generating && total > 0 && !locked && (
           <a
-            href={`/draft?campaign=${encodeURIComponent(campaignId)}`}
+            href={`/draft?campaign=${encodeURIComponent(campaignId)}&workspace_id=${encodeURIComponent(workspaceId)}`}
             className="rounded-lg border border-outline-variant/30 px-3 py-2 text-xs font-semibold text-on-surface hover:border-primary/50 hover:text-primary transition-all"
           >
             Open Draft Workspace →

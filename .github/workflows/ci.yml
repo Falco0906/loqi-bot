@@ -95,12 +95,16 @@ jobs:
       - name: Run tests
         run: |
           python -m pytest tests/ -v --tb=short -q \
-            -m "not integration and not requires_db" \
+            -m "not integration and not requires_db and not requires_local_postgres" \
             --junitxml=pytest-report.xml 2>&1 | tee pytest-output.txt
           exit ${PIPESTATUS[0]}
         env:
+          LOQI_RUN_DB_INTEGRATION: "0"
+          LOQI_RUN_EXTERNAL_INTEGRATION: "0"
+          LOQI_TEST_POSTGRES_ENABLED: "0"
           SUPABASE_URL: ""
           SUPABASE_KEY: ""
+          DATABASE_URL: ""
 
       - name: Upload test report on failure
         if: failure()

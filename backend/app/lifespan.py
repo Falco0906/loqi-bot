@@ -20,6 +20,7 @@ def begin_startup(app: Any) -> float:
     from services.operations import log_config_warnings, set_startup_time, startup_diagnostics
     from services.outbound import service as outbound_service
     from workflow_dispatcher import register_workflows
+    from services.leads.generation import register_lead_generation_workflow
 
     set_starting()
     startup_started = time.time()
@@ -28,6 +29,7 @@ def begin_startup(app: Any) -> float:
     log_config_warnings()
     startup_diagnostics(app)
     register_workflows()
+    register_lead_generation_workflow()
     outbound_service.register_scheduled_send_workflow()
     return startup_started
 

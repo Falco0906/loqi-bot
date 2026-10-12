@@ -15,6 +15,7 @@ import asyncio
 import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -355,6 +356,7 @@ class TestDiscoveryEntity:
             f"/api/web/session/{authenticated_session}/campaigns",
             json={
                 "name": "HR Software ICP",
+                "idempotency_key": str(uuid4()),
                 "objective": "Open a conversation with HR platforms",
                 "search_query": "HR software startups",
                 "discovery_id": discovery_id,

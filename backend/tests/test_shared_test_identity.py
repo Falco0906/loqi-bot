@@ -1,84 +1,134 @@
-"""Safety tests for the reusable live-integration identity fixture."""
-from __future__ import annotations
+"""Mock-only coverage of test-owned creation, partial setup, and exact cleanup."""
+from types import SimpleNamespace
 
-from tests.conftest import SHARED_TEST_USER_ID, _delete_owned_test_data, _ensure_shared_test_identity
+import pytest
 
-
-class _Query:
-    def __init__(self, client, table):
-        self.client = client
-        self.table_name = table
-        self.action = "select"
-        self.column = ""
-        self.value = ""
-
-    def select(self, *_args):
-        return self
-
-    def eq(self, column, value):
-        self.column, self.value = column, value
-        return self
-
-    def delete(self):
-        self.action = "delete"
-        return self
-
-    def insert(self, payload):
-        self.action = "insert"
-        self.client.inserts.append((self.table_name, payload))
-        return self
-
-    def execute(self):
-        self.client.operations.append((self.action, self.table_name, self.column, self.value))
-        if self.action == "select":
-            return type("Response", (), {"data": self.client.rows.get((self.table_name, self.value), [])})()
-        return type("Response", (), {"data": []})()
+from tests.supabase_test_safety import OwnedRecordCleanup, validate_supabase_test_configuration
+from services.platform.test_runtime import UnsafeTestDatabaseConfiguration
 
 
-class _Client:
-    def __init__(self, rows=None):
-        self.rows = rows or {}
-        self.operations = []
-        self.inserts = []
+@pytest.fixture
+def cleanup_client(monkeypatch):
+    import supabase
 
-    def table(self, table):
-        return _Query(self, table)
+    class Query:
+        def __init__(self, client, table):
+            self.client, self.table = client, table
+            self.filters, self.action, self.payload = [], "", None
+        def insert(self, payload):
+            self.action, self.payload = "insert", payload
+            return self
+        def delete(self):
+            self.action = "delete"
+            return self
+        def eq(self, key, value):
+            self.filters.append((key, value))
+            return self
+        def execute(self):
+            if self.action == "insert":
+                self.client.created.append((self.table, self.payload))
+                if self.client.write_error: raise self.client.write_error
+            else:
+                self.client.deleted.append((self.table, self.filters))
+                if self.client.delete_error: raise self.client.delete_error
+            return SimpleNamespace(data=[])
 
+    class Client:
+        supabase_url = "https://approved-test.supabase.co"
+        supabase_key = "sentinel"
+        def __init__(self):
+            self.created, self.deleted = [], []
+            self.write_error = self.delete_error = None
+        def table(self, table): return Query(self, table)
 
-def test_shared_identity_cleanup_only_targets_the_fixed_user():
-    client = _Client({
-        ("workflow_sessions", SHARED_TEST_USER_ID): [{"id": "session-a"}],
+    monkeypatch.setattr(supabase, "Client", Client)
+    authorization = validate_supabase_test_configuration({
+        "LOQI_TEST_SUPABASE_URL": Client.supabase_url,
+        "LOQI_TEST_SUPABASE_KEY": Client.supabase_key,
+        "LOQI_TEST_SUPABASE_PROJECT_REF": "approved-test",
+        "LOQI_ALLOWED_TEST_SUPABASE_PROJECT_REFS": "approved-test",
     })
-
-    _delete_owned_test_data(client)
-
-    deletes = [operation for operation in client.operations if operation[0] == "delete"]
-    assert deletes
-    assert all(value in {SHARED_TEST_USER_ID, "session-a"} for _, _, _, value in deletes)
-    assert ("delete", "identity_users", "", "") not in deletes
-    assert ("delete", "workspaces", "owner_user_id", SHARED_TEST_USER_ID) in deletes
+    return Client(), authorization
 
 
-def test_cleanup_rejects_any_identity_other_than_the_fixed_fixture_user():
-    client = _Client()
+def test_cleanup_deletes_only_identity_created_by_this_run(cleanup_client):
+    client, authorization = cleanup_client
+    cleanup = OwnedRecordCleanup(client, authorization)
+    identity = cleanup.create_identity()
+    assert client.created[0][1]["id"] == identity == cleanup.test_run_id
+    cleanup.cleanup()
+    assert client.deleted == [("identity_users", [("id", identity), ("id", identity)])]
+    cleanup.cleanup()
+    assert len(client.deleted) == 1
 
-    try:
-        _delete_owned_test_data(client, "someone-else")
-    except AssertionError as error:
-        assert "shared test identity" in str(error)
-    else:
-        raise AssertionError("cleanup accepted an unsafe user id")
+
+def test_new_runs_cannot_share_an_identity(cleanup_client):
+    client, authorization = cleanup_client
+    first = OwnedRecordCleanup(client, authorization)
+    second = OwnedRecordCleanup(client, authorization)
+    assert first.create_identity() != second.create_identity()
 
 
-def test_shared_identity_is_created_once_and_then_reused():
-    missing = _Client()
-    assert _ensure_shared_test_identity(missing) == SHARED_TEST_USER_ID
-    assert missing.inserts == [("identity_users", {
-        "id": SHARED_TEST_USER_ID,
-        "display_name": "Loqi Test Fixture",
-        "email": "test-fixture@loqi.internal",
-    })]
+def test_cleanup_rejects_arbitrary_table_and_id_registration(cleanup_client):
+    client, authorization = cleanup_client
+    cleanup = OwnedRecordCleanup(client, authorization)
+    assert not hasattr(cleanup, "track")
+    assert not hasattr(cleanup, "register_before_create")
+    with pytest.raises(TypeError): OwnedRecordCleanup(client, authorization, "pre-existing-identity")
+    with pytest.raises(TypeError): cleanup.create_identity("users", "arbitrary-id")
+    cleanup.cleanup()
+    assert client.created == client.deleted == []
 
-    existing = _Client({("identity_users", SHARED_TEST_USER_ID): [{"id": SHARED_TEST_USER_ID}]})
-    assert _ensure_shared_test_identity(existing) == SHARED_TEST_USER_ID
-    assert existing.inserts == []
+
+def test_cleanup_cannot_be_created_without_validated_target(cleanup_client):
+    client, _ = cleanup_client
+    with pytest.raises(UnsafeTestDatabaseConfiguration): OwnedRecordCleanup(client, object())
+    assert client.deleted == []
+
+
+def test_ambiguous_write_tracks_generated_id_before_request(cleanup_client):
+    client, authorization = cleanup_client
+    cleanup = OwnedRecordCleanup(client, authorization)
+    client.write_error = TimeoutError("mock response lost")
+    with pytest.raises(TimeoutError): cleanup.create_identity()
+    cleanup.cleanup()
+    assert client.deleted == [("identity_users", [("id", cleanup.test_run_id), ("id", cleanup.test_run_id)])]
+
+
+def test_partial_setup_without_write_never_issues_cleanup(cleanup_client):
+    client, authorization = cleanup_client
+    OwnedRecordCleanup(client, authorization).cleanup()
+    assert client.deleted == []
+
+
+def test_teardown_revalidates_client_target_before_delete(cleanup_client):
+    client, authorization = cleanup_client
+    cleanup = OwnedRecordCleanup(client, authorization)
+    cleanup.create_identity()
+    client.supabase_url = "https://unknown.supabase.co"
+    with pytest.raises(UnsafeTestDatabaseConfiguration): cleanup.cleanup()
+    assert client.deleted == []
+
+
+def test_cleanup_failure_remains_observable_without_broadening_scope(cleanup_client):
+    client, authorization = cleanup_client
+    cleanup = OwnedRecordCleanup(client, authorization)
+    cleanup.create_identity()
+    client.delete_error = RuntimeError("mock cleanup failed")
+    with pytest.raises(RuntimeError, match="mock cleanup failed"): cleanup.cleanup()
+    assert client.deleted == [("identity_users", [("id", cleanup.test_run_id), ("id", cleanup.test_run_id)])]
+
+
+@pytest.mark.parametrize("table,identity,column", [
+    ("users", "this-run", "id"),
+    ("identity_users", "someone-else", "id"),
+    ("identity_users", "", "id"),
+    ("identity_users", "this-run", "user_id"),
+])
+def test_cleanup_rejects_invalid_tracking_state_before_any_delete(cleanup_client, table, identity, column):
+    client, authorization = cleanup_client
+    cleanup = OwnedRecordCleanup(client, authorization)
+    value = cleanup.test_run_id if identity == "this-run" else identity
+    cleanup._records.append((table, value, column))
+    with pytest.raises(ValueError, match="not owned"): cleanup.cleanup()
+    assert client.deleted == []

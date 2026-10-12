@@ -252,6 +252,14 @@ export async function listAuthorizedWorkspaces(signal?: AbortSignal) {
   );
 }
 
+/** Validate a requested workspace through the existing membership boundary. */
+export async function selectAuthorizedWorkspace(workspaceId: string) {
+  return fetchWithRetry<{ ok: boolean; workspace: AuthorizedWorkspace }>(
+    `${API_BASE}/api/web/session/_/workspaces/select`,
+    { method: "POST", headers: authHeaders(workspaceId), retries: 0 },
+  );
+}
+
 export async function sendMessage(sessionToken: string, text: string) {
   return fetchWithRetry<{ ok: boolean; messages: LoqiMessage[] }>(
     `${API_BASE}/api/web/session/_/messages`,
@@ -421,19 +429,19 @@ export async function batchStatus(sessionToken: string, batchId: string) {
 
 /* ─── Draft CRUD ─── */
 
-export async function listDrafts(sessionToken: string) {
+export async function listDrafts(sessionToken: string, workspaceId = "") {
   return fetchWithRetry<{ ok: boolean; drafts: unknown[] }>(
     `${API_BASE}/api/web/session/_/drafts`,
-    { headers: authHeaders() },
+    { headers: authHeaders(workspaceId) },
   );
 }
 
-export async function updateDraft(sessionToken: string, draftId: string, text: string) {
+export async function updateDraft(sessionToken: string, draftId: string, text: string, workspaceId = "") {
   return fetchWithRetry<{ ok: boolean; draft: unknown }>(
     `${API_BASE}/api/web/session/_/drafts/${draftId}`,
     {
       method: "PUT",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
+      headers: { "Content-Type": "application/json", ...authHeaders(workspaceId) },
       body: JSON.stringify({ text }),
     },
   );
@@ -455,6 +463,7 @@ export async function refineDraft(
     messaging_angle?: string;
     business_summary?: string;
   },
+  workspaceId = "",
 ) {
   const body: Record<string, unknown> = { edit_request: editRequest, previous_message: previousMessage, lead };
   if (context) {
@@ -466,7 +475,7 @@ export async function refineDraft(
     `${API_BASE}/api/web/session/_/drafts/${draftId}/refine`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
+      headers: { "Content-Type": "application/json", ...authHeaders(workspaceId) },
       body: JSON.stringify(body),
     },
   );
@@ -609,7 +618,7 @@ export async function askDraftQuestion(
   );
 }
 
-export async function approveDraft(sessionToken: string, draftId: string) {
+export async function approveDraft(sessionToken: string, draftId: string, workspaceId = "") {
   return fetchWithRetry<{
     ok: boolean;
     draft: {
@@ -630,7 +639,7 @@ export async function approveDraft(sessionToken: string, draftId: string) {
     pending_drafts?: number;
   }>(
     `${API_BASE}/api/web/session/_/drafts/${draftId}/approve`,
-    { method: "POST", headers: authHeaders() },
+    { method: "POST", headers: authHeaders(workspaceId) },
   );
 }
 
@@ -756,12 +765,13 @@ export async function addLeadToCampaign(
   campaignId: string,
   lead: Record<string, unknown>,
   discoveryId?: string,
+  workspaceId = "",
 ) {
   return fetchWithRetry<{ ok: boolean; added: boolean; campaign: Record<string, unknown> }>(
     `${API_BASE}/api/web/session/_/campaigns/${campaignId}/leads`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
+      headers: { "Content-Type": "application/json", ...authHeaders(workspaceId) },
       body: JSON.stringify({ lead, discovery_id: discoveryId || undefined }),
     },
   );
@@ -788,21 +798,21 @@ export type WorkspaceLeadRecord = {
   source: string; source_provenance: string[]; source_kind: "workspace" | "provider"; source_label: string;
 };
 export async function listWorkspaceLeads(sessionToken: string, query = "", page = 1,
-  filters: Record<string, string> = {}, discoveryId = "") {
+  filters: Record<string, string> = {}, discoveryId = "", signal?: AbortSignal, workspaceId = "") {
   const params = new URLSearchParams({ q: query, page: String(page), ...filters });
   if (discoveryId) params.set("discovery_id", discoveryId);
-  return fetchWithRetry<{ ok: boolean; leads: WorkspaceLeadRecord[]; total: number; page: number; page_size: number }>(`${API_BASE}/api/web/session/_/leads?${params}`, { headers: authHeaders(), timeout: 8000 });
+  return fetchWithRetry<{ ok: boolean; leads: WorkspaceLeadRecord[]; total: number; page: number; page_size: number; warnings?: string[] }>(`${API_BASE}/api/web/session/_/leads?${params}`, { headers: authHeaders(workspaceId), timeout: 8000, signal });
 }
-export async function previewLeadCsv(sessionToken: string, csv: string, mapping: Record<string, string>) {
-  return fetchWithRetry<{ ok: boolean; headers: string[]; mapping: Record<string, string>; unmapped_columns: string[]; total_rows: number; valid_rows: number; invalid_rows: Array<{ row: number; reason: string }>; preview: Array<{ row: number; lead: Record<string, string> }>; rows: Array<{ row: number; lead: Record<string, string> }> }>(`${API_BASE}/api/web/session/_/leads/csv-preview`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify({ csv, mapping }) });
+export async function previewLeadCsv(sessionToken: string, csv: string, mapping: Record<string, string>, workspaceId = "") {
+  return fetchWithRetry<{ ok: boolean; headers: string[]; mapping: Record<string, string>; unmapped_columns: string[]; total_rows: number; valid_rows: number; invalid_rows: Array<{ row: number; reason: string }>; preview: Array<{ row: number; lead: Record<string, string> }>; rows: Array<{ row: number; lead: Record<string, string> }> }>(`${API_BASE}/api/web/session/_/leads/csv-preview`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders(workspaceId) }, body: JSON.stringify({ csv, mapping }) });
 }
-export async function importLeadCsv(sessionToken: string, rows: Array<{ row: number; lead: Record<string, string> }>) {
+export async function importLeadCsv(sessionToken: string, rows: Array<{ row: number; lead: Record<string, string> }>, workspaceId = "") {
   // CSV import is an explicit, non-retried mutation that performs canonical
   // identity/link writes for every confirmed row. It gets its own bounded
   // response budget instead of the short interactive-action timeout.
-  return fetchWithRetry<{ ok: boolean; imported: number; duplicates: Array<{ row: number; reason: string }>; invalid: Array<{ row: number; reason: string }> }>(`${API_BASE}/api/web/session/_/leads/csv-import`, { method: "POST", timeout: 60_000, retries: 0, headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify({ rows }) });
+  return fetchWithRetry<{ ok: boolean; imported: number; duplicates: Array<{ row: number; reason: string }>; invalid: Array<{ row: number; reason: string }> }>(`${API_BASE}/api/web/session/_/leads/csv-import`, { method: "POST", timeout: 60_000, retries: 0, headers: { "Content-Type": "application/json", ...authHeaders(workspaceId) }, body: JSON.stringify({ rows }) });
 }
-export async function analyzeWorkspaceLeads(sessionToken: string, leadIds: string[]) {
+export async function analyzeWorkspaceLeads(sessionToken: string, leadIds: string[], signal?: AbortSignal, workspaceId = "") {
   return fetchWithRetry<{
     ok: boolean;
     results: Array<{
@@ -827,12 +837,18 @@ export async function analyzeWorkspaceLeads(sessionToken: string, leadIds: strin
       items: Array<{ id: string; title: string; summary: string; category: string; source_type: string }>;
       source_ids: string[];
     };
-  }>(`${API_BASE}/api/web/session/_/leads/analyze`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify({ lead_ids: leadIds }) });
+  }>(`${API_BASE}/api/web/session/_/leads/analyze`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders(workspaceId) }, body: JSON.stringify({ lead_ids: leadIds }), signal });
 }
 
-export async function generateWorkspaceLeadStrategyDrafts(sessionToken: string, leadIds: string[]) {
-  return fetchWithRetry<{
+export type LeadStrategyGeneration = {
     ok: boolean;
+    lead_ids?: string[];
+    job_id: string;
+    status: "queued" | "running" | "completed" | "failed" | "cancelled";
+    stage: string;
+    progress: number;
+    error?: string;
+    analysis?: Awaited<ReturnType<typeof analyzeWorkspaceLeads>>;
     results: Array<{
       lead_id: string;
       status: "completed" | "failed";
@@ -847,17 +863,26 @@ export async function generateWorkspaceLeadStrategyDrafts(sessionToken: string, 
       outreach?: { subject: string; body: string };
       evidence_used?: Array<{ source_type: string; statement: string }>;
     }>;
-  }>(`${API_BASE}/api/web/session/_/leads/generate-strategy`, {
+  };
+
+export async function generateWorkspaceLeadStrategyDrafts(sessionToken: string, leadIds: string[], requestKey: string, workspaceId = "") {
+  return fetchWithRetry<LeadStrategyGeneration>(`${API_BASE}/api/web/session/_/leads/generate-strategy`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ lead_ids: leadIds }),
+    headers: { "Content-Type": "application/json", ...authHeaders(workspaceId) },
+    body: JSON.stringify({ lead_ids: leadIds, request_key: requestKey }),
   });
 }
 
-export async function listCampaigns(sessionToken: string) {
+export async function recoverWorkspaceLeadGeneration(requestKey: string, signal?: AbortSignal, workspaceId = "") {
+  return fetchWithRetry<LeadStrategyGeneration>(`${API_BASE}/api/web/session/_/leads/generation?request_key=${encodeURIComponent(requestKey)}`, {
+    headers: authHeaders(workspaceId), retries: 0, signal,
+  });
+}
+
+export async function listCampaigns(sessionToken: string, workspaceId = "") {
   return fetchWithRetry<{ ok: boolean; campaigns: Array<Record<string, unknown>> }>(
     `${API_BASE}/api/web/session/_/campaigns`,
-    { headers: authHeaders() },
+    { headers: authHeaders(workspaceId) },
   );
 }
 
@@ -872,32 +897,33 @@ export async function updateCampaign(
   sessionToken: string,
   campaignId: string,
   updates: { name?: string; objective?: string; strategy?: unknown; status?: string },
+  workspaceId = "",
 ) {
   return fetchWithRetry<{ ok: boolean; campaign: Record<string, unknown> }>(
     `${API_BASE}/api/web/session/_/campaigns/${campaignId}`,
     {
       method: "PUT",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
+      headers: { "Content-Type": "application/json", ...authHeaders(workspaceId) },
       body: JSON.stringify(updates),
     },
   );
 }
 
-export async function archiveCampaign(sessionToken: string, campaignId: string) {
-  return updateCampaign(sessionToken, campaignId, { status: "archived" });
+export async function archiveCampaign(sessionToken: string, campaignId: string, workspaceId = "") {
+  return updateCampaign(sessionToken, campaignId, { status: "archived" }, workspaceId);
 }
 
-export async function deleteCampaign(sessionToken: string, campaignId: string) {
+export async function deleteCampaign(sessionToken: string, campaignId: string, workspaceId = "") {
   return fetchWithRetry<{ ok: boolean; campaign: Record<string, unknown> }>(
     `${API_BASE}/api/web/session/_/campaigns/${campaignId}`,
-    { method: "DELETE", headers: authHeaders() },
+    { method: "DELETE", headers: authHeaders(workspaceId) },
   );
 }
 
-export async function duplicateCampaign(sessionToken: string, campaignId: string) {
+export async function duplicateCampaign(sessionToken: string, campaignId: string, workspaceId = "") {
   return fetchWithRetry<{ ok: boolean; campaign: Record<string, unknown> }>(
     `${API_BASE}/api/web/session/_/campaigns/${campaignId}/duplicate`,
-    { method: "POST", headers: authHeaders() },
+    { method: "POST", headers: authHeaders(workspaceId) },
   );
 }
 
@@ -905,25 +931,26 @@ export async function attachDiscoveryToCampaign(
   sessionToken: string,
   campaignId: string,
   discoveryId: string,
+  workspaceId = "",
 ) {
   return fetchWithRetry<{ ok: boolean; added: number; campaign: Record<string, unknown> }>(
     `${API_BASE}/api/web/session/_/campaigns/${campaignId}/attach-discovery`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
+      headers: { "Content-Type": "application/json", ...authHeaders(workspaceId) },
       body: JSON.stringify({ discovery_id: discoveryId }),
     },
   );
 }
 
-export async function listCampaignDrafts(sessionToken: string, campaignId: string) {
+export async function listCampaignDrafts(sessionToken: string, campaignId: string, workspaceId = "") {
   return fetchWithRetry<{ ok: boolean; drafts: unknown[] }>(
     `${API_BASE}/api/web/session/_/campaigns/${campaignId}/drafts`,
-    { headers: authHeaders() },
+    { headers: authHeaders(workspaceId) },
   );
 }
 
-export async function getCampaignSummary(sessionToken: string) {
+export async function getCampaignSummary(sessionToken: string, workspaceId = "") {
   return fetchWithRetry<{ ok: boolean; campaigns: Array<{
     id: string;
     name: string;
@@ -933,7 +960,7 @@ export async function getCampaignSummary(sessionToken: string) {
     updated_at: string;
   }> }>(
     `${API_BASE}/api/web/session/_/campaigns/summary`,
-    { headers: authHeaders() },
+    { headers: authHeaders(workspaceId) },
   );
 }
 
@@ -1018,14 +1045,14 @@ export async function getMissionControl(sessionToken: string, onboardingUserId =
 
 /* ─── Campaign Draft Generation ─── */
 
-export async function generateCampaignDrafts(sessionToken: string, campaignId: string) {
+export async function generateCampaignDrafts(sessionToken: string, campaignId: string, workspaceId = "") {
   return fetchWithRetry<{ ok: boolean; batch_id: string; total: number }>(
     `${API_BASE}/api/web/session/_/campaigns/${campaignId}/generate-drafts`,
-    { method: "POST", headers: authHeaders(), timeout: DRAFT_BATCH_START_TIMEOUT_MS, retries: 0 },
+    { method: "POST", headers: authHeaders(workspaceId), timeout: DRAFT_BATCH_START_TIMEOUT_MS, retries: 0 },
   );
 }
 
-export async function getCampaignGenerationStatus(sessionToken: string, campaignId: string) {
+export async function getCampaignGenerationStatus(sessionToken: string, campaignId: string, workspaceId = "") {
   return fetchWithRetry<{
     ok: boolean;
     active: boolean;
@@ -1035,7 +1062,7 @@ export async function getCampaignGenerationStatus(sessionToken: string, campaign
     batch_id?: string;
   }>(
     `${API_BASE}/api/web/session/_/campaigns/${campaignId}/generation-status`,
-    { headers: authHeaders(), timeout: 20000, retries: 1 },
+    { headers: authHeaders(workspaceId), timeout: 20000, retries: 1 },
   );
 }
 
@@ -1102,6 +1129,8 @@ export async function startDiscoveryJob(
   sessionToken: string,
   query: string,
   initiation: "manual" | "automated" = "automated",
+  workspaceId = "",
+  filters?: Record<string, string>,
 ) {
   console.log("[kickoff] startDiscoveryJob: firing POST /api/discoveries", {
     tokenPrefix: sessionToken?.slice(0, 8),
@@ -1113,8 +1142,8 @@ export async function startDiscoveryJob(
       `${API_BASE}/api/discoveries`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}` },
-        body: JSON.stringify({ query, initiation }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}`, ...(workspaceId ? { "X-Workspace-Id": workspaceId } : {}) },
+        body: JSON.stringify({ query, initiation, ...(filters ? { filters } : {}) }),
         timeout: DISCOVERY_SEARCH_START_TIMEOUT_MS,
         retries: 0,
       },
@@ -1145,10 +1174,10 @@ export type DiscoveryListItemResponse = {
   metadata?: Record<string, unknown>;
 };
 
-export async function listDiscoveries(sessionToken: string) {
+export async function listDiscoveries(sessionToken: string, workspaceId = "") {
   return fetchWithRetry<{ ok: boolean; discoveries: DiscoveryListItemResponse[] }>(
     `${API_BASE}/api/discoveries`,
-    { headers: { Authorization: `Bearer ${sessionToken}` }, timeout: 8000, retries: 0 },
+    { headers: { Authorization: `Bearer ${sessionToken}`, ...(workspaceId ? { "X-Workspace-Id": workspaceId } : {}) }, timeout: 8000, retries: 0 },
   );
 }
 
@@ -1184,10 +1213,10 @@ export type DiscoveryDetailResponse = {
   }>;
 };
 
-export async function getDiscovery(sessionToken: string, discoveryId: string) {
+export async function getDiscovery(sessionToken: string, discoveryId: string, workspaceId = "") {
   return fetchWithRetry<{ ok: boolean; discovery: DiscoveryDetailResponse }>(
     `${API_BASE}/api/discoveries/${discoveryId}`,
-    { headers: { Authorization: `Bearer ${sessionToken}` }, timeout: 8000, retries: 0 },
+    { headers: { Authorization: `Bearer ${sessionToken}`, ...(workspaceId ? { "X-Workspace-Id": workspaceId } : {}) }, timeout: 8000, retries: 0 },
   );
 }
 

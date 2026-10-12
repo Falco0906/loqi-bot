@@ -36,10 +36,12 @@ def _stop_after_conversation_rehydration(monkeypatch) -> None:
 
 
 def _prepare_lifespan_before_memory_startup(monkeypatch) -> None:
+    monkeypatch.setattr(main, "is_test_runtime", lambda: False)
     monkeypatch.setattr(main.app_lifespan, "begin_startup", lambda app: 0.0)
     monkeypatch.setattr(main.app_lifespan, "validate_startup_configuration", lambda: None)
     monkeypatch.setattr(main.app_lifespan, "initialize_runtime_services", lambda registry: None)
     monkeypatch.setattr(main.app_lifespan, "register_execution_observability", lambda: None)
+    monkeypatch.setattr(main.app_lifespan, "start_conversation_rehydration", lambda tasks: None)
 
 
 def test_lifespan_creates_and_tracks_memory_consolidation_task(monkeypatch, caplog):

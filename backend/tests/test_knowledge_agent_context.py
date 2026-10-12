@@ -176,8 +176,8 @@ class TestKnowledgeAdapter:
             "services.workspace.access.resolve_workspace_context",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(WorkspaceAccessDenied("workspace-b")),
         )
-        resolved = await KnowledgeService()._resolve_workspace("owner-a", "workspace-b")
-        assert resolved is None
+        with pytest.raises(WorkspaceAccessDenied):
+            await KnowledgeService()._resolve_workspace("owner-a", "workspace-b")
 
 
 class TestReplyGenerationContext:

@@ -30,7 +30,7 @@ def test_raising_text_transport_keeps_legacy_default_timeout(monkeypatch):
     monkeypatch.setattr(ai.requests, "post", post)
 
     assert ai._send_openai_request("system", "user") == "generated text"
-    assert captured["timeout"] == 30
+    assert captured["timeout"] == (5, 30)
 
 
 def test_try_text_transport_preserves_none_failure_contract_and_timeout(monkeypatch):
@@ -45,7 +45,7 @@ def test_try_text_transport_preserves_none_failure_contract_and_timeout(monkeypa
     monkeypatch.setattr(ai.requests, "post", post)
 
     assert ai.try_send_openai_request("system", "user", timeout=15) == "generated text"
-    assert captured["timeout"] == 15
+    assert captured["timeout"] == (5, 15)
 
 
 def test_try_text_transport_returns_none_for_raising_transport_failure(monkeypatch):

@@ -3,4 +3,5 @@ asyncio_mode = "auto"
 markers = [
     "integration: requires a provisioned integration environment or external system",
     "requires_db: requires a live database with the current migration set",
+    "requires_local_postgres: requires an approved disposable Unix-socket PostgreSQL target",
 ]

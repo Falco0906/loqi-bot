@@ -99,8 +99,14 @@ class StrategicIntelligenceService:
         confidence: str | None = None,
         query: str | None = None,
         include_archived: bool = False,
+        workspace_id: str = "",
     ) -> list[dict[str, Any]]:
-        workspace_id = await self._workspace_for_owner(owner_id)
+        if workspace_id:
+            from services.workspace.access import resolve_workspace_context
+            context = await asyncio.to_thread(resolve_workspace_context, None, owner_id, workspace_id)
+            workspace_id = context.workspace_id
+        else:
+            workspace_id = await self._workspace_for_owner(owner_id)
         if not workspace_id:
             return []
         updates = await self._list_for_workspace(workspace_id, include_archived=include_archived)

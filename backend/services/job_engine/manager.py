@@ -12,6 +12,8 @@ def _log(msg: str) -> None:
 
 class JobManager:
     def __init__(self):
+        import asyncio
+        self._due_claim_lock = asyncio.Lock()
         self._storage = JobStorage()
         self._runner = BackgroundRunner(self._storage)
 
@@ -60,6 +62,10 @@ class JobManager:
         return True
 
     async def start_due_jobs(self, *, limit: int = 25) -> int:
+        async with self._due_claim_lock:
+            return await self._start_due_jobs(limit=limit)
+
+    async def _start_due_jobs(self, *, limit: int) -> int:
         """Atomically claim and start due delayed jobs for registered workflows.
 
         The database claim is the single cross-worker authority. This method
@@ -68,13 +74,25 @@ class JobManager:
         import asyncio
 
         job_types = get_registry().list_types()
+        # Selected-lead AI work uses the same durable claim mechanism, with
+        # at most two active jobs per process. Do not claim work just to wait
+        # in a process-local queue while consuming its lease.
+        lead_slots = self._runner.available_lead_generation_slots()
+        other_types = [kind for kind in job_types if kind != "lead_strategy"]
         claimed = await asyncio.to_thread(
             self._storage.claim_due_jobs,
             self._runner.worker_id,
-            job_types,
+            other_types,
             limit=limit,
             lease_seconds=self._runner.lease_seconds,
         )
+        if "lead_strategy" in job_types and lead_slots:
+            claimed += await asyncio.to_thread(
+                self._storage.claim_due_jobs, self._runner.worker_id,
+                ["lead_strategy"], limit=min(limit, lead_slots),
+                lease_seconds=self._runner.lease_seconds,
+                strict=True,
+            )
         for job in claimed:
             self._runner.start_job(job, claimed=True)
         return len(claimed)
@@ -90,7 +108,7 @@ class JobManager:
                 _log(f"due-job poll failed: {error}")
             await asyncio.sleep(interval_seconds)
 
-    async def create_search_job(self, user_id: str, query: str, on_update=None, on_complete=None, discovery_id: str = "") -> Optional[dict]:
+    async def create_search_job(self, user_id: str, query: str, on_update=None, on_complete=None, discovery_id: str = "", *, workspace_id: str = "") -> Optional[dict]:
         import asyncio
         from services.job_engine.registry import STAGES_SEARCH
 
@@ -103,6 +121,7 @@ class JobManager:
             type="search",
             query=query,
             discovery_id=discovery_id,
+            workspace_id=workspace_id,
             stage=STAGES_SEARCH[0],
             progress=0,
         )

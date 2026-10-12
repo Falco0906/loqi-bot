@@ -1,4 +1,4 @@
-"""Read-only HTTP routes for workspace-scoped campaigns."""
+"""Authorized HTTP routes for workspace-scoped campaign operations."""
 from __future__ import annotations
 
 import asyncio
@@ -148,7 +148,7 @@ async def list_campaigns(session_token: str, request: Request):
             workspace_id=workspace_id,
             include_details=False,
         ),
-        asyncio.to_thread(load_drafts_only, owner_id, workspace_id=workspace_id),
+        asyncio.to_thread(load_drafts_only, owner_id, workspace_id=workspace_id, strict=True),
     )
     log.info(
         "[perf] route=/campaigns owner=%s ms=%.0f campaigns=%d",
@@ -165,8 +165,10 @@ async def campaign_summary(session_token: str, request: Request):
     """Return the compact campaign summary used by workspace views."""
     del session_token
     owner_id, _, workspace_id = await _authorized_workspace(request)
-    campaigns = load_campaigns(owner_id, workspace_id=workspace_id)
-    drafts = load_drafts_only(owner_id, workspace_id=workspace_id)
+    campaigns, drafts = await asyncio.gather(
+        asyncio.to_thread(load_campaigns, owner_id, workspace_id=workspace_id),
+        asyncio.to_thread(load_drafts_only, owner_id, workspace_id=workspace_id, strict=True),
+    )
     enriched = enrich_campaigns(campaigns, drafts)
     items = [{
         "id": campaign.get("id", ""),
@@ -184,8 +186,10 @@ async def get_campaign(session_token: str, campaign_id: str, request: Request):
     """Return one enriched campaign scoped to the selected workspace."""
     del session_token
     owner_id, bearer_token, workspace_id = await _authorized_workspace(request)
-    campaigns = load_campaigns(owner_id, workspace_id=workspace_id)
-    drafts = load_drafts_only(owner_id, workspace_id=workspace_id)
+    campaigns, drafts = await asyncio.gather(
+        asyncio.to_thread(load_campaigns, owner_id, workspace_id=workspace_id),
+        asyncio.to_thread(load_drafts_only, owner_id, workspace_id=workspace_id, strict=True),
+    )
     target = next(
         (campaign for campaign in enrich_campaigns(campaigns, drafts)
          if campaign.get("id") == campaign_id),
@@ -202,7 +206,7 @@ async def campaign_launch_progress(session_token: str, campaign_id: str, request
     """Return canonical launch counters for one selected-workspace campaign."""
     del session_token
     owner_id, _, workspace_id = await _authorized_workspace(request)
-    campaigns = load_campaigns(owner_id, workspace_id=workspace_id)
+    campaigns = await asyncio.to_thread(load_campaigns, owner_id, workspace_id=workspace_id)
     target = next((campaign for campaign in campaigns if campaign.get("id") == campaign_id), None)
     if not target:
         raise HTTPException(status_code=404, detail="Campaign not found")

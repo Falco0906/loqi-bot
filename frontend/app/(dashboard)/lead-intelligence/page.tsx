@@ -1,49 +1,142 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   analyzeWorkspaceLeads,
   generateWorkspaceLeadStrategyDrafts,
+  recoverWorkspaceLeadGeneration,
+  ApiError,
 } from "../../../lib/api";
+import { observeLeadGeneration } from "../../../lib/lead-generation-recovery";
+import { generationMatchesSelection } from "../../../lib/lead-generation-recovery";
+import { useIntelligenceWorkspace } from "../../../hooks/useIntelligenceWorkspace";
 
 type Analysis = Awaited<ReturnType<typeof analyzeWorkspaceLeads>>;
 type GeneratedDrafts = Awaited<ReturnType<typeof generateWorkspaceLeadStrategyDrafts>>;
 
-export default function LeadIntelligencePage() {
+function LeadIntelligenceWorkspace({ ids, workspaceId }: { ids: string[]; workspaceId: string }) {
   const params = useSearchParams();
-  const ids = (params.get("lead_ids") || "").split(",").filter(Boolean);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [generatedDrafts, setGeneratedDrafts] = useState<GeneratedDrafts | null>(null);
   const [busy, setBusy] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
+  const [generationMessage, setGenerationMessage] = useState("");
+  const [generationPending, setGenerationPending] = useState(false);
+  const [requestUnknown, setRequestUnknown] = useState(false);
+  const requestKey = useRef("");
+  const actionPending = useRef(false);
+  const observer = useRef<AbortController | null>(null);
+  const mounted = useRef(true);
+  const analysisController = useRef<AbortController | null>(null);
+  const urlKey = params.get("generation_key") || "";
 
-  const analyze = async () => {
-    setBusy(true);
-    setError("");
+  const reconcile = async (key: string) => {
+    if (!mounted.current) return;
+    observer.current?.abort();
+    const controller = new AbortController();
+    observer.current = controller;
+    setGenerating(true);
     try {
-      const token = localStorage.getItem("loqi_active_session_token") || "";
-      setAnalysis(await analyzeWorkspaceLeads(token, ids));
-      setGeneratedDrafts(null);
+      const outcome = await observeLeadGeneration(
+        () => recoverWorkspaceLeadGeneration(key, controller.signal, workspaceId),
+        (state) => {
+          if (!mounted.current || controller.signal.aborted) return;
+          if (!generationMatchesSelection(state, ids)) throw new ApiError("This generation belongs to a different lead selection. Start a new generation explicitly.", 409);
+          setRequestUnknown(false);
+          setGeneratedDrafts(state);
+          if (state.analysis) setAnalysis(state.analysis);
+          const pending = ["queued", "running"].includes(state.status);
+          setGenerationPending(pending);
+          setGenerationMessage(pending ? `${state.stage || "Generation is processing"} · ${state.results.length} results saved` : "");
+          if (state.status === "failed" || state.status === "cancelled") setError(state.error || "Generation did not complete. Saved results remain available.");
+        }, controller.signal,
+      );
+      if (!controller.signal.aborted && outcome === "paused") setGenerationMessage("Generation may still be processing. Check status to recover saved results.");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Analysis failed");
+      if (!controller.signal.aborted) {
+        if (caught instanceof ApiError && caught.status < 500 && caught.status !== 404) setGenerationPending(false);
+        if (caught instanceof ApiError && caught.status === 404) setRequestUnknown(true);
+        setError(caught instanceof Error ? caught.message : "Generation status is unavailable.");
+      }
     } finally {
-      setBusy(false);
+      if (!controller.signal.aborted) setGenerating(false);
     }
   };
 
-  const generate = async () => {
-    setGenerating(true);
+  useEffect(() => {
+    mounted.current = true;
+    if (requestKey.current !== urlKey) {
+      requestKey.current = urlKey;
+      actionPending.current = false;
+      setBusy(false);
+      setGeneratedDrafts(null);
+      setGenerationPending(false);
+      setGenerating(false);
+      setRequestUnknown(false);
+      setGenerationMessage("");
+    }
+    if (urlKey) {
+      requestKey.current = urlKey;
+      setGenerationPending(true);
+      void reconcile(urlKey); // Read-only recovery; never starts AI work.
+    }
+    return () => { mounted.current = false; observer.current?.abort(); analysisController.current?.abort(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlKey]);
+
+  const analyze = async () => {
+    if (actionPending.current || generationPending) return;
+    actionPending.current = true;
+    setBusy(true);
     setError("");
+    const controller = new AbortController();
+    analysisController.current = controller;
     try {
       const token = localStorage.getItem("loqi_active_session_token") || "";
-      setGeneratedDrafts(await generateWorkspaceLeadStrategyDrafts(token, ids));
+      const result = await analyzeWorkspaceLeads(token, ids, controller.signal, workspaceId);
+      if (!mounted.current || controller.signal.aborted) return;
+      setAnalysis(result);
+      setGeneratedDrafts(null);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Strategy generation failed");
+      if (!mounted.current || controller.signal.aborted) return;
+      setError(caught instanceof Error ? caught.message : "Analysis failed");
     } finally {
-      setGenerating(false);
+      if (mounted.current && !controller.signal.aborted) { actionPending.current = false; setBusy(false); }
+    }
+  };
+
+  const generate = async (recoverRequest = false) => {
+    if (actionPending.current || generating || (generationPending && !recoverRequest)) return;
+    actionPending.current = true;
+    setGenerating(true);
+    setError("");
+    if (!recoverRequest) requestKey.current = crypto.randomUUID();
+    const generationKey = requestKey.current;
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("generation_key", requestKey.current);
+      window.history.replaceState(window.history.state, "", url.toString());
+      setGenerationPending(true);
+      const token = localStorage.getItem("loqi_active_session_token") || "";
+      const generated = await generateWorkspaceLeadStrategyDrafts(token, ids, requestKey.current, workspaceId);
+      if (!mounted.current || generationKey !== requestKey.current) return;
+      setGeneratedDrafts(generated);
+      await reconcile(requestKey.current);
+    } catch (caught) {
+      if (!mounted.current || generationKey !== requestKey.current) return;
+      if (caught instanceof ApiError && caught.status < 500) {
+        setGenerationPending(false);
+        setError(caught.message);
+      } else {
+        setRequestUnknown(true);
+        setGenerationMessage("Generation outcome is unknown. Checking saved results…");
+        await reconcile(requestKey.current);
+      }
+    } finally {
+      if (mounted.current && generationKey === requestKey.current) { actionPending.current = false; setGenerating(false); }
     }
   };
 
@@ -67,12 +160,15 @@ export default function LeadIntelligencePage() {
         <p className="text-on-surface-variant">{ids.length} selected lead{ids.length === 1 ? "" : "s"}. Analysis starts only when you choose it.</p>
       </header>
 
-      <button disabled={busy || generating} onClick={() => void analyze()} className="rounded-lg bg-primary px-4 py-2 text-on-primary disabled:opacity-50">
+      <button disabled={busy || generating || generationPending} onClick={() => void analyze()} className="rounded-lg bg-primary px-4 py-2 text-on-primary disabled:opacity-50">
         {busy ? "Analyzing selected leads…" : "Analyze with Loqi"}
       </button>
-      {analysis && <button disabled={busy || generating} onClick={() => void generate()} className="rounded-lg border border-primary px-4 py-2 text-primary disabled:opacity-50">
+      {analysis && <button disabled={busy || generating || generationPending} onClick={() => void generate()} className="rounded-lg border border-primary px-4 py-2 text-primary disabled:opacity-50">
         {generating ? "Generating strategy & draft…" : "Generate strategy & draft"}
       </button>}
+      {generationMessage && <p role="status" className="text-sm text-on-surface-variant">{generationMessage}</p>}
+      {generationPending && !generating && <button onClick={() => void reconcile(requestKey.current)} className="rounded border px-3 py-1 text-sm">Check generation status</button>}
+      {requestUnknown && !generating && <button onClick={() => void generate(true)} className="rounded border px-3 py-1 text-sm">Recover generation request</button>}
       {error && <p className="text-error">{error}</p>}
       {copyMessage && <p className="text-sm text-on-surface-variant">{copyMessage}</p>}
 
@@ -102,6 +198,14 @@ export default function LeadIntelligencePage() {
       })}
     </main>
   );
+}
+
+export default function LeadIntelligencePage() {
+  const params = useSearchParams();
+  const ids = [...new Set((params.get("lead_ids") || "").split(",").map((id) => id.trim()).filter(Boolean))].sort();
+  const context = useIntelligenceWorkspace(params.get("workspace_id") || "");
+  if (!context.workspace) return <main className="p-8" role={context.error ? "alert" : "status"}>{context.error || "Loading your workspace…"}</main>;
+  return <LeadIntelligenceWorkspace key={`${context.scope}:${ids.join(",")}`} ids={ids} workspaceId={context.workspace} />;
 }
 
 function GeneratedDraft({

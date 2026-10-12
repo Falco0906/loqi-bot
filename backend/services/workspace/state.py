@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import hashlib
+import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -58,6 +61,14 @@ class CampaignUpdatePersistenceResult:
 
     revision: CampaignRevisionResult
     strategy_error: Exception | None = None
+
+
+@dataclass(frozen=True)
+class CampaignLeadPersistenceResult:
+    """Canonical lead identity and the link row owned by this write, if new."""
+
+    lead_id: str
+    created_link_id: str | None = None
 
 
 def _utc_iso(dt: datetime | None = None) -> str:
@@ -113,11 +124,16 @@ def _run(async_fn):
         threading.Thread(target=_thread, daemon=True).start()
 
 
+_compatibility_workers = ThreadPoolExecutor(max_workers=4, thread_name_prefix="loqi-sync-bridge")
+
+
 def _run_sync(coro_or_fn, timeout: float = 30.0):
     """Run a coroutine to completion from either a sync or async context.
 
     Accepts either an already-created coroutine or a zero-arg callable that
-    returns one.
+    returns one. Async request owners must offload this synchronous boundary.
+    ``timeout`` remains signature-compatible but is not a completion deadline:
+    returning early would discard a still-running worker's outcome.
     """
     coro = coro_or_fn if inspect.iscoroutine(coro_or_fn) else coro_or_fn()
     try:
@@ -125,17 +141,9 @@ def _run_sync(coro_or_fn, timeout: float = 30.0):
     except RuntimeError:
         return asyncio.run(coro)
 
-    # Inside a running loop: run in a dedicated thread's loop and block.
-    import threading
-    holder: dict[str, object] = {}
-
-    def runner():
-        holder["value"] = asyncio.run(coro)
-
-    thread = threading.Thread(target=runner, daemon=True)
-    thread.start()
-    thread.join(timeout=timeout)
-    return holder.get("value")
+    # Bounded legacy compatibility, not a new execution/job authority.
+    # Future.result re-raises the original worker exception and traceback.
+    return _compatibility_workers.submit(asyncio.run, coro).result()
 
 
 def _workflow_session_id(user_id: str) -> str:
@@ -329,7 +337,7 @@ async def duplicate_campaign(user_id: str, campaign_id: str, workspace_id: str =
             added_by=user_id,
         ))
 
-    append_event(user_id, "campaign.created", {"campaign": {
+    await asyncio.to_thread(append_event, user_id, "campaign.created", {"campaign": {
         "id": new_id,
         "name": entity.name,
         "objective": entity.objective,
@@ -387,10 +395,14 @@ async def delete_campaign_row_awaited(user_id: str, campaign_id: str, workspace_
 
 
 async def remove_campaign_lead_links_awaited(
-    user_id: str, campaign_id: str, lead_ids: list[str], workspace_id: str = "",
+    user_id: str, campaign_id: str, link_ids: list[str], workspace_id: str = "",
 ) -> bool:
-    """Compensate required campaign-link writes without touching workspace leads."""
-    if not campaign_id or not lead_ids:
+    """Delete only exact campaign-link rows created by the failed operation.
+
+    Callers must supply owned link IDs, never canonical workspace-lead IDs.
+    This preserves pre-existing links and replacements created concurrently.
+    """
+    if not campaign_id or not link_ids:
         return True
     try:
         workspace = await _async_workspace(user_id, workspace_id=workspace_id)
@@ -400,15 +412,21 @@ async def remove_campaign_lead_links_awaited(
         client = CampaignLeadRepository()._client()
         if client is None:
             return False
-        unique_ids = list(dict.fromkeys(str(value) for value in lead_ids if value))
+        unique_ids = list(dict.fromkeys(str(value) for value in link_ids if value))
         await asyncio.to_thread(
             lambda: client.table("campaign_leads").delete()
-            .eq("campaign_id", campaign_id).in_("lead_id", unique_ids).execute()
+            .eq("campaign_id", campaign_id).in_("id", unique_ids).execute()
         )
-        remaining = await CampaignLeadRepository().list_for_campaign(campaign_id)
-        return not any(link.lead_id in set(unique_ids) for link in remaining)
+        remaining = await asyncio.to_thread(
+            lambda: client.table("campaign_leads").select("id")
+            .eq("campaign_id", campaign_id).in_("id", unique_ids).execute()
+        )
+        if not isinstance(remaining.data, list):
+            raise RuntimeError("Campaign link rollback verification returned invalid data")
+        return not remaining.data
     except Exception as error:
-        print(f"[workspace_state] campaign link compensation failed: {error}")
+        print(f"[workspace_state] campaign link compensation failed campaign={campaign_id} "
+              f"workspace={workspace_id} error_type={type(error).__name__} code={getattr(error, 'code', '')}")
         return False
 async def _write_campaign_row(user_id: str, campaign: dict[str, Any],
                               workspace_id: str = "") -> None:
@@ -750,7 +768,7 @@ async def persist_campaign_update_with_revision_awaited(
             print(f"[workspace_state] campaign strategy update failed: {error}")
             return CampaignUpdatePersistenceResult(revision=revision, strategy_error=error)
     try:
-        append_event(user_id, "campaign.updated", {
+        await asyncio.to_thread(append_event, user_id, "campaign.updated", {
             "campaign_id": campaign_id,
             "updates": updates,
         })
@@ -798,23 +816,37 @@ async def persist_campaign_lead_id_awaited(
     helper remains the compatibility path for non-Copilot callers.
     """
     try:
-        lead_id = await _persist_campaign_lead_id_row(
+        result = await persist_campaign_lead_link_awaited(
             user_id, campaign_id, lead, workspace_id=workspace_id,
         )
     except Exception as error:
         print(f"[workspace_state] campaign lead write failed: {error}")
         return None
-    if not lead_id:
+    return result.lead_id if result else None
+
+
+async def persist_campaign_lead_link_awaited(
+    user_id: str, campaign_id: str, lead: dict[str, Any], workspace_id: str = "",
+) -> CampaignLeadPersistenceResult | None:
+    """Persist a link with explicit ownership for safe batch compensation.
+
+    Unlike the ID-only compatibility helper, persistence errors propagate so
+    the batch can roll back owned links while retaining the original cause.
+    """
+    result = await _persist_campaign_lead_link_row(
+        user_id, campaign_id, lead, workspace_id=workspace_id,
+    )
+    if result is None:
         return None
     try:
         append_event(user_id, "campaign.lead_added", {
             "campaign_id": campaign_id,
             "lead": lead,
-            "lead_id": lead_id,
+            "lead_id": result.lead_id,
         })
     except Exception as error:
         print(f"[workspace_state] campaign lead event append failed: {error}")
-    return lead_id
+    return result
 
 
 async def _update_campaign_row(user_id: str, campaign_id: str, updates: dict[str, Any], workspace_id: str = "") -> None:
@@ -887,6 +919,15 @@ async def _persist_campaign_lead_id_row(
     lead: dict[str, Any],
     workspace_id: str = "",
 ) -> str | None:
+    result = await _persist_campaign_lead_link_row(
+        user_id, campaign_id, lead, workspace_id=workspace_id,
+    )
+    return result.lead_id if result else None
+
+
+async def _persist_campaign_lead_link_row(
+    user_id: str, campaign_id: str, lead: dict[str, Any], workspace_id: str = "",
+) -> CampaignLeadPersistenceResult | None:
     # The endpoint has already resolved and authorized the selected workspace.
     # Never silently fall back to the owner's default workspace here: that
     # would attach a correctly-authorized campaign to a lead in another
@@ -898,25 +939,36 @@ async def _persist_campaign_lead_id_row(
     campaign = await campaign_repo.get_for_workspace(campaign_id, workspace)
     if campaign is None:
         return None
-    try:
-        lead_id = await _normalize_lead(workspace, lead)
-    except Exception:
-        # Concurrent lead adds race the unique email/domain indexes: a second
-        # normalizer may have created the global rows just before this one.
-        # Retry once — the second pass finds and links the existing rows.
-        lead_id = await _normalize_lead(workspace, lead)
+    if lead.get("workspace_lead_id"):
+        # Explicit saved-lead attachments must never recreate or move a lead.
+        saved = await WorkspaceLeadRepository().get_for_workspace(str(lead["workspace_lead_id"]), workspace)
+        lead_id = saved.id if saved is not None else None
+    else:
+        try:
+            lead_id = await _normalize_lead(workspace, lead)
+        except Exception:
+            # Preserve the existing legacy normalization/retry contract.
+            lead_id = await _normalize_lead(workspace, lead)
     if not lead_id:
         return None
     cl_repo = CampaignLeadRepository()
     link = await cl_repo.find_link(campaign_id, lead_id)
     if link is not None:
-        return lead_id
+        return CampaignLeadPersistenceResult(lead_id)
+    new_link = CampaignLead(campaign_id=campaign_id, lead_id=lead_id, added_by=user_id)
     try:
-        await cl_repo.save(CampaignLead(campaign_id=campaign_id, lead_id=lead_id, added_by=user_id))
-    except Exception:
-        if await cl_repo.find_link(campaign_id, lead_id) is None:
+        await cl_repo.save(new_link)
+    except Exception as error:
+        if not _is_unique_constraint_error(error):
             raise
-    return lead_id
+        link = await cl_repo.find_link(campaign_id, lead_id)
+        if link is None:
+            raise
+        # A competing insert is not ours. A retry of our exact row is ours.
+        return CampaignLeadPersistenceResult(
+            lead_id, link.id if link.id == new_link.id else None,
+        )
+    return CampaignLeadPersistenceResult(lead_id, new_link.id)
 
 
 async def import_workspace_lead(workspace_id: str, lead: dict[str, Any]) -> str | None:
@@ -1021,7 +1073,7 @@ async def _normalize_lead(workspace_id: str, lead: dict[str, Any]) -> str | None
             existing.company_id = company_id
         for key in ("first_name", "last_name", "title", "phone", "linkedin_url"):
             value = lead.get(key)
-            if value:
+            if value and (source == "csv_import" or not getattr(existing, key, "")):
                 setattr(existing, key, str(value))
         status = lead.get("status") or lead.get("lead_status")
         if status:
@@ -1035,7 +1087,7 @@ async def _normalize_lead(workspace_id: str, lead: dict[str, Any]) -> str | None
         existing.metadata = _with_source_provenance(
             existing.metadata, existing.source, source,
         )
-        qualification = _qualification_metadata(lead)
+        qualification = _qualification_metadata(lead, existing.metadata)
         if qualification:
             existing.metadata.update(qualification)
         existing.updated_at = datetime.now(timezone.utc)
@@ -1048,11 +1100,11 @@ async def _normalize_lead(workspace_id: str, lead: dict[str, Any]) -> str | None
         lead_id=profile.id,
         company_id=company_id,
         email=email,
-        first_name=profile.first_name,
-        last_name=profile.last_name,
-        title=profile.title,
-        phone=profile.phone,
-        linkedin_url=profile.linkedin_url,
+        first_name=lead.get("first_name") or profile.first_name,
+        last_name=lead.get("last_name") or profile.last_name,
+        title=lead.get("title") or profile.title,
+        phone=lead.get("phone") or profile.phone,
+        linkedin_url=lead.get("linkedin_url") or profile.linkedin_url,
         lead_status=_canonical_lead_status(lead.get("status") or lead.get("lead_status")),
         confidence=_to_float(lead.get("confidence")),
         source=source or str(lead.get("source") or ""),
@@ -1117,7 +1169,8 @@ async def _normalize_company_lead(workspace_id: str, lead: dict[str, Any]) -> st
                     raise
                 if await ws_company_repo.find(workspace_id, company_id) is None:
                     raise
-        existing = await ws_lead_repo.find_by_company(workspace_id, company_id)
+        existing = (await ws_lead_repo.find_by_company(workspace_id, company_id)
+                    if not (lead.get("first_name") or lead.get("last_name")) else None)
         if existing is not None:
             changed = False
             if source and not existing.source:
@@ -1127,7 +1180,7 @@ async def _normalize_company_lead(workspace_id: str, lead: dict[str, Any]) -> st
             if provenance != existing.metadata:
                 existing.metadata = provenance
                 changed = True
-            qualification = _qualification_metadata(lead)
+            qualification = _qualification_metadata(lead, existing.metadata)
             if qualification:
                 existing.metadata.update(qualification)
                 changed = True
@@ -1142,11 +1195,25 @@ async def _normalize_company_lead(workspace_id: str, lead: dict[str, Any]) -> st
     source_identity = str(lead.get("source") or lead.get("provider") or "").strip()
     if source_identity and raw_id:
         canonical_id = f"provider:{source_identity}:{raw_id}"
+    elif company_id and not (lead.get("first_name") or lead.get("last_name")):
+        canonical_id = f"company:{company_id}:{workspace_id}"
     else:
-        canonical_id = f"company:{company_id or 'anonymous'}:{workspace_id}"
+        identity_fields = [lead.get(key) or "" for key in
+                           ("first_name", "last_name", "company", "website", "domain", "linkedin_url")]
+        if not any(identity_fields):
+            return None
+        identity = json.dumps([str(value).strip().casefold() for value in identity_fields])
+        canonical_id = f"contact:{workspace_id}:{hashlib.sha256(identity.encode()).hexdigest()}"
 
     lead_repo = LeadRepository()
     profile = await lead_repo.find_by_canonical_id(canonical_id)
+    if profile is not None:
+        existing = await ws_lead_repo.find_in_workspace(workspace_id, profile.id)
+        if existing is not None:
+            existing.metadata = _with_source_provenance(existing.metadata, existing.source, source)
+            existing.metadata.update(_qualification_metadata(lead, existing.metadata))
+            await ws_lead_repo.save(existing)
+            return existing.id
     if profile is None:
         try:
             profile = await lead_repo.save(Lead(
@@ -1166,6 +1233,8 @@ async def _normalize_company_lead(workspace_id: str, lead: dict[str, Any]) -> st
         workspace_id=workspace_id,
         lead_id=profile.id,
         company_id=company_id,
+        first_name=profile.first_name,
+        last_name=profile.last_name,
         title=str(lead.get("title") or ""),
         linkedin_url=str(lead.get("linkedin_url") or ""),
         lead_status=_canonical_lead_status(lead.get("status") or lead.get("lead_status")),
@@ -1178,7 +1247,10 @@ async def _normalize_company_lead(workspace_id: str, lead: dict[str, Any]) -> st
     except Exception as error:
         if not _is_unique_constraint_error(error):
             raise
-        if company_id:
+        existing = await ws_lead_repo.find_in_workspace(workspace_id, profile.id)
+        if existing is not None:
+            return existing.id
+        if company_id and not (lead.get("first_name") or lead.get("last_name")):
             existing = await ws_lead_repo.find_by_company(workspace_id, company_id)
             if existing is not None:
                 return existing.id
@@ -1186,12 +1258,29 @@ async def _normalize_company_lead(workspace_id: str, lead: dict[str, Any]) -> st
     return saved.id
 
 
-def _qualification_metadata(lead: dict[str, Any]) -> dict[str, Any]:
+def _qualification_metadata(lead: dict[str, Any], existing_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
     """Persist qualification explanation without changing the lead model."""
     metadata: dict[str, Any] = {}
     breakdown = lead.get("commercial_score_breakdown")
     if isinstance(breakdown, dict):
         metadata["qualification"] = breakdown
+    # Keep provider display context on the workspace row as a fallback, not
+    # as a replacement for CSV facts or global canonical company records.
+    if str(lead.get("source") or lead.get("provider") or "") != "csv_import":
+        context = {
+            key: value.strip() for key, value in lead.items()
+            if key in {"company", "website", "domain", "location", "industry"}
+            and isinstance(value, str) and value.strip()
+        }
+        previous = (existing_metadata or {}).get("provider_context")
+        if isinstance(previous, dict):
+            context = {**context, **{
+                key: value for key, value in previous.items()
+                if key in {"company", "website", "domain", "location", "industry"}
+                and isinstance(value, str) and value.strip()
+            }}
+        if context:
+            metadata["provider_context"] = context
     # A CSV may contain useful workspace context even when there is no domain
     # from which to form a globally deduplicated company relation. Keep that
     # bounded, user-supplied context on the canonical workspace-lead record.
@@ -1208,11 +1297,14 @@ def _canonicalize_lead_payload(lead: dict[str, Any]) -> dict[str, Any]:
     """Map documented provider lead fields onto canonical lead fields.
 
     The function is deliberately data-only: it does not validate, persist, or
-    infer information. CSV payloads already use these canonical names and are
-    returned unchanged except for a defensive copy.
+    infer information. CSV and provider inputs share trimmed scalar fields;
+    original provider payloads remain in their existing archive.
     """
     normalized = dict(lead or {})
     aliases = {
+        "company": "company_name",
+        "title": "job_title",
+        "name": "full_name",
         "website": "company_website",
         "industry": "company_industry",
         "description": "company_description",
@@ -1224,6 +1316,19 @@ def _canonicalize_lead_payload(lead: dict[str, Any]) -> dict[str, Any]:
     for canonical, provider_field in aliases.items():
         if not normalized.get(canonical) and normalized.get(provider_field):
             normalized[canonical] = normalized[provider_field]
+
+    # Containers in scalar provider fields are not facts. Preserve the raw
+    # payload separately, but never stringify them into names or domains.
+    for field in {"company", "website", "domain", "location", "industry", "name",
+                  "first_name", "last_name", "title", "email", "phone", "linkedin_url",
+                  "city", "country", "description", "revenue_band"}:
+        value = normalized.get(field)
+        normalized[field] = value.strip() if isinstance(value, str) else ""
+    if not normalized["first_name"] and normalized["name"]:
+        parts = normalized["name"].split(None, 1)
+        normalized["first_name"] = parts[0]
+        if not normalized["last_name"] and len(parts) > 1:
+            normalized["last_name"] = parts[1]
 
     if not normalized.get("location"):
         location = ", ".join(
@@ -1317,11 +1422,13 @@ def _canonical_lead_status(value: Any) -> str:
 
 def _lead_domain(lead: dict[str, Any]) -> str | None:
     raw = str(lead.get("domain") or "").strip().lower()
-    if not raw:
-        website = str(lead.get("website") or "").strip().lower()
-        if website:
+    website = raw or str(lead.get("website") or "").strip().lower()
+    if website:
+        try:
             host = urlparse(website if "//" in website else f"//{website}").hostname or ""
-            raw = host.removeprefix("www.") if host else ""
+        except ValueError:
+            host = ""
+        raw = host.removeprefix("www.") if host else ""
     if not raw:
         email = str(lead.get("email") or "").strip().lower()
         if "@" in email:
@@ -1421,7 +1528,7 @@ def persist_draft(user_id: str, draft: dict[str, Any]) -> bool:
     return append_event(user_id, "draft.created", {"draft": draft})
 
 
-async def persist_draft_awaited(user_id: str, draft: dict[str, Any], workspace_id: str = "") -> bool:
+async def persist_draft_awaited(user_id: str, draft: dict[str, Any], workspace_id: str = "", *, strict: bool = False) -> bool:
     """Durable (awaited) draft write for batch generation.
 
     Draft generation must not treat an event-append as success: the draft row
@@ -1430,10 +1537,12 @@ async def persist_draft_awaited(user_id: str, draft: dict[str, Any], workspace_i
     never double-persist.
     """
     try:
-        if not await _write_draft_row(user_id, draft, workspace_id=workspace_id):
+        if not await _write_draft_row(user_id, draft, workspace_id=workspace_id, strict=strict):
             return False
     except Exception as error:
-        print(f"[workspace_state] draft write failed: {error}")
+        if strict:
+            raise
+        print(f"[workspace_state] draft write failed error_type={type(error).__name__}")
         return False
     # Mirror persist_draft: the draft.created event keeps the events-fallback
     # projection consistent with the durable row. Without it, any transient
@@ -1441,18 +1550,19 @@ async def persist_draft_awaited(user_id: str, draft: dict[str, Any], workspace_i
     # workflow UI and approval endpoints 404. The row write remains the source
     # of truth for the success return value.
     try:
-        append_event(user_id, "draft.created", {"draft": draft})
+        await asyncio.to_thread(append_event, user_id, "draft.created", {"draft": draft})
     except Exception as error:
-        print(f"[workspace_state] draft event append failed: {error}")
+        print(f"[workspace_state] draft event append failed error_type={type(error).__name__}")
     return True
 
 
-async def _write_draft_row(user_id: str, draft: dict[str, Any], workspace_id: str = "") -> bool:
+async def _write_draft_row(user_id: str, draft: dict[str, Any], workspace_id: str = "", *, strict: bool = False) -> bool:
     workspace = await _async_workspace(user_id, workspace_id=workspace_id)
     if not workspace:
         return False
     repo = DraftRepository()
-    existing = await repo.get(str(draft.get("id")))
+    existing = (await repo.get_for_workspace(str(draft.get("id")), workspace, strict=True)
+                if strict else await repo.get(str(draft.get("id"))))
     if existing is not None:
         return existing.workspace_id == workspace
     lead_snapshot = draft.get("lead") if isinstance(draft.get("lead"), dict) else {}
@@ -1481,6 +1591,8 @@ async def _write_draft_row(user_id: str, draft: dict[str, Any], workspace_id: st
         created_at=draft.get("created_at") or datetime.now(timezone.utc),
     )
     await repo.save(entity)
+    if strict and await repo.get_for_workspace(entity.id, workspace, strict=True) is None:
+        raise RuntimeError("Draft persistence was not confirmed")
     return True
 
 
@@ -1493,7 +1605,7 @@ def persist_draft_update(user_id: str, draft_id: str, updates: dict[str, Any]) -
     })
 
 
-async def persist_draft_update_awaited(user_id: str, draft_id: str, updates: dict[str, Any], workspace_id: str = "") -> bool:
+async def persist_draft_update_awaited(user_id: str, draft_id: str, updates: dict[str, Any], workspace_id: str = "", *, strict: bool = False) -> bool:
     """Durable (awaited) draft update for interactive endpoints."""
     if not draft_id:
         return False
@@ -1501,6 +1613,8 @@ async def persist_draft_update_awaited(user_id: str, draft_id: str, updates: dic
         if not await _update_draft_row(user_id, draft_id, updates, workspace_id=workspace_id):
             return False
     except Exception as error:
+        if strict:
+            raise
         print(f"[workspace_state] draft update failed: {error}")
         return False
     # Keep the events-fallback projection consistent with the durable row so a
@@ -1591,6 +1705,17 @@ async def _update_draft_row(user_id: str, draft_id: str, updates: dict[str, Any]
     resolved = await _async_workspace(user_id, workspace_id=workspace_id)
     if not resolved or entity.workspace_id != resolved:
         return False
+    updates = dict(updates)
+    # Web review and legacy refinement submit text; drafts canonically store
+    # body and subject separately. Never report an edit that wasn't written.
+    if "text" in updates and "body" not in updates:
+        text = str(updates["text"])
+        header, separator, body = text.partition("\n")
+        if header.startswith("Subject:") and separator:
+            updates["subject"] = header[len("Subject:"):].strip()
+            updates["body"] = body.lstrip("\r\n")
+        else:
+            updates["body"] = text
     for key in ("subject", "status", "tone", "length", "body"):
         if updates.get(key) is not None:
             setattr(entity, key, str(updates[key]))
@@ -1696,6 +1821,7 @@ def load_workspace_state(
     include_details: bool = True,
     workspace_id: str = "",
     canonical_only: bool = False,
+    strict: bool = False,
 ) -> dict[str, Any]:
     """Return {campaigns, drafts, approved_leads} for the user's workspace.
 
@@ -1722,14 +1848,20 @@ def load_workspace_state(
             if projection is not None:
                 return projection
         except Exception as error:
+            if strict:
+                raise
             disposition = "returning empty canonical projection" if canonical_only else "falling back"
             print(f"[workspace_state] canonical read failed, {disposition}: {error}")
+    if strict:
+        if client is None:
+            raise RuntimeError("Workspace persistence is unavailable")
+        return {"campaigns": [], "drafts": [], "approved_leads": []}
     if canonical_only:
         return {"campaigns": [], "drafts": [], "approved_leads": []}
     return _project_from_events(_events(user_id))
 
 
-def load_drafts_only(user_id: str, workspace_id: str = "") -> list[dict[str, Any]]:
+def load_drafts_only(user_id: str, workspace_id: str = "", *, strict: bool = False) -> list[dict[str, Any]]:
     """Return just the workspace's draft dicts — one query, no graph fan-out.
 
     Same per-draft shape as ``load_workspace_state()["drafts"]`` so list/edit/
@@ -1744,7 +1876,11 @@ def load_drafts_only(user_id: str, workspace_id: str = "") -> list[dict[str, Any
             if rows is not None:
                 return [_draft_as_dict(d) for d in rows]
         except Exception as error:
+            if strict:
+                raise
             print(f"[workspace_state] drafts-only read failed, falling back: {error}")
+    if strict:
+        raise RuntimeError("Draft persistence is unavailable")
     return _project_from_events(_events(user_id)).get("drafts", [])
 
 

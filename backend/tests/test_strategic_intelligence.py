@@ -46,8 +46,7 @@ CAMPAIGN_B = "campaign-b"
 
 def _install_db(store):
     client = FakeSupabaseClient(store)
-    manager = SupabaseConnectionManager(url="http://test", key="test-key")
-    manager._client = client
+    manager = SupabaseConnectionManager(client=client)
     set_connection_manager(manager)
 
 

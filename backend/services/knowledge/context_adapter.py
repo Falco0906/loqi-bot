@@ -56,10 +56,13 @@ async def retrieve_knowledge_context(
 ) -> KnowledgePromptContext:
     """Retrieve Knowledge through the canonical owner-scoped service.
 
-    A retrieval failure is treated as an empty context so existing generation
-    remains functional when Knowledge is unavailable or has not been created.
+    Legacy owner-only retrieval remains optional/fail-soft. Explicit workspace
+    authorization or loading failures propagate; a valid empty read stays empty.
     """
     if not owner_id:
+        if workspace_id:
+            from services.workspace.access import WorkspaceAccessDenied
+            raise WorkspaceAccessDenied(workspace_id)
         return KnowledgePromptContext(query=query, categories=tuple(categories or ()))
     try:
         result = await get_knowledge_context(
@@ -70,6 +73,8 @@ async def retrieve_knowledge_context(
             workspace_id=workspace_id,
         )
     except Exception:
+        if workspace_id:
+            raise
         return KnowledgePromptContext(query=query, categories=tuple(categories or ()))
 
     return KnowledgePromptContext(

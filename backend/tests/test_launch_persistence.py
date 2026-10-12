@@ -65,8 +65,7 @@ def _mock_client():
 @pytest.fixture
 def mock_cm():
     client = _mock_client()
-    cm = SupabaseConnectionManager(url="http://test", key="test-key")
-    cm._client = client
+    cm = SupabaseConnectionManager(client=client)
     set_connection_manager(cm)
     return cm, client
 
@@ -280,8 +279,7 @@ class TestWorkspaceStateCanonicalFlip:
 
     def _shared_client(self, tables):
         client = _ScriptedClient(tables)
-        cm = SupabaseConnectionManager(url="http://test", key="test-key")
-        cm._client = client
+        cm = SupabaseConnectionManager(client=client)
         set_connection_manager(cm)
         return client
 
@@ -471,8 +469,7 @@ class TestEnsureWorkspace:
 
     def _shared_client(self, tables):
         client = _ScriptedClient(tables)
-        cm = SupabaseConnectionManager(url="http://test", key="test-key")
-        cm._client = client
+        cm = SupabaseConnectionManager(client=client)
         return client, cm
 
     def test_creates_workspace_and_owner_member(self):
@@ -604,8 +601,7 @@ class TestGlobalLeadDedup:
             "workspace_companies": [],
         }
         client = _ScriptedClient(tables)
-        cm = SupabaseConnectionManager(url="http://test", key="test-key")
-        cm._client = client
+        cm = SupabaseConnectionManager(client=client)
         set_connection_manager(cm)
 
         with patch("services.conversations.compatibility.get_supabase_client",
@@ -645,8 +641,7 @@ class TestGlobalLeadDedup:
             "workspace_companies": [],
         }
         client = _ScriptedClient(tables)
-        cm = SupabaseConnectionManager(url="http://test", key="test-key")
-        cm._client = client
+        cm = SupabaseConnectionManager(client=client)
         set_connection_manager(cm)
 
         with patch("services.conversations.compatibility.get_supabase_client",

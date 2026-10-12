@@ -21,6 +21,9 @@ async def _enter_lifespan() -> None:
 
 
 def test_lifespan_warns_for_migration_failure_but_registers_runtime_dependencies(monkeypatch, caplog):
+    # Only this mocked startup graph exercises the production branch.
+    monkeypatch.setattr(main, "is_test_runtime", lambda: False)
+    monkeypatch.setattr(main.app_lifespan, "is_test_runtime", lambda: False)
     calls: list[str] = []
     monkeypatch.setattr(main.app_lifespan, "begin_startup", lambda app: 0.0)
     monkeypatch.setattr(main.app_lifespan, "validate_startup_configuration", lambda: None)

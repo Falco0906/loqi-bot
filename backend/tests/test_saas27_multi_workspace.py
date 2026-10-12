@@ -215,8 +215,7 @@ class TestWorkspaceSwitchChangesResourceBoundary:
         from services.persistence.database import SupabaseConnectionManager
         db = _two_workspace_db()
         self._seed(db)
-        cm = SupabaseConnectionManager(url="http://test", key="k")
-        cm._client = db
+        cm = SupabaseConnectionManager(client=db)
         set_connection_manager(cm)
         set_repository_provider(RepositoryProvider.SUPABASE)
         try:
@@ -238,8 +237,7 @@ class TestWorkspaceSwitchChangesResourceBoundary:
         )
         from services.persistence.database import SupabaseConnectionManager
         db = _two_workspace_db()
-        cm = SupabaseConnectionManager(url="http://test", key="k")
-        cm._client = db
+        cm = SupabaseConnectionManager(client=db)
         set_connection_manager(cm)
         set_repository_provider(RepositoryProvider.SUPABASE)
         try:
@@ -372,8 +370,7 @@ class TestSelectedWorkspacePropagation:
         )
         from services.persistence.database import SupabaseConnectionManager
         db = self._db()
-        cm = SupabaseConnectionManager(url="http://test", key="k")
-        cm._client = db
+        cm = SupabaseConnectionManager(client=db)
         set_connection_manager(cm)
         set_repository_provider(RepositoryProvider.SUPABASE)
         try:
@@ -431,8 +428,7 @@ class TestSelectedWorkspacePropagation:
         )
         from services.persistence.database import SupabaseConnectionManager
         db = self._db()
-        cm = SupabaseConnectionManager(url="http://test", key="k")
-        cm._client = db
+        cm = SupabaseConnectionManager(client=db)
         set_connection_manager(cm)
         set_repository_provider(RepositoryProvider.SUPABASE)
         try:

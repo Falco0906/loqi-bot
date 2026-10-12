@@ -17,6 +17,7 @@ import {
   getRegistrationStatus,
   fetchMe,
   getGoogleOAuthUrl,
+  localGoogleOAuthCallbackUri,
   oauthCallback,
   type TokenResponse,
   type MeResponse,
@@ -376,7 +377,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const initiateGoogleLogin = useCallback(async () => {
-    const { authorize_url } = await getGoogleOAuthUrl();
+    const redirectUri = localGoogleOAuthCallbackUri(window.location.origin);
+    const { authorize_url } = await getGoogleOAuthUrl(redirectUri);
     window.location.href = authorize_url;
   }, []);
 

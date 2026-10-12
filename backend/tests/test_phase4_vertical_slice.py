@@ -67,6 +67,9 @@ def pipeline(monkeypatch):
     import services.discovery.plan as dp_mod
     monkeypatch.setattr(dp_mod, "derive_discovery_plan",
                         lambda query, existing_context=None: None)
+    async def context(_owner, **_kwargs):
+        return {}
+    monkeypatch.setattr("services.discovery.context.retrieve_discovery_context", context)
     # follow-up readiness pass is irrelevant here
     import services.communication.inbox_sync_engine as ise
     async def _noop_ready():
@@ -111,7 +114,7 @@ def pipeline(monkeypatch):
     # ── discovery metadata writes capture ──
     meta_calls: list[tuple[str, str, int]] = []
 
-    async def fake_update_progress(discovery_id, stage, pct):
+    def fake_update_progress(discovery_id, stage, pct):
         meta_calls.append((discovery_id, stage, pct))
         return True
 
@@ -137,6 +140,7 @@ def test_vertical_slice_lifecycle(pipeline, monkeypatch):
         id=JOB_ID, user_id=USER, type="search", status="queued",
         stage="", progress=0, query="CRM for startups", error_message=None,
         result_ready=False, created_at="", updated_at="",
+        workspace_id="workspace-vs",
     )
     object.__setattr__(job, "discovery_id", DISCOVERY)
 

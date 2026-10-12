@@ -1,6 +1,23 @@
 const API_BASE =
   process.env.NEXT_PUBLIC_LOQI_API_BASE_URL || "http://127.0.0.1:10000";
 
+export function localGoogleOAuthCallbackUri(origin: string): string | undefined {
+  try {
+    const parsed = new URL(origin);
+    if (
+      parsed.protocol === "http:"
+      && !parsed.username
+      && !parsed.password
+      && (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1")
+    ) {
+      return `${parsed.origin}/auth/google/callback`;
+    }
+  } catch {
+    // Invalid origins are not forwarded as callback destinations.
+  }
+  return undefined;
+}
+
 export async function authFetch<T>(
   url: string,
   options: RequestInit = {},

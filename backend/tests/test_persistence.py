@@ -117,8 +117,7 @@ def _reset():
 def mock_cm():
     """Set up a connection manager with a mock client."""
     client = _mock_client()
-    cm = SupabaseConnectionManager(url="http://test", key="test-key")
-    cm._client = client
+    cm = SupabaseConnectionManager(client=client)
     set_connection_manager(cm)
     return cm, client
 

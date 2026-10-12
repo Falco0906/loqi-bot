@@ -169,8 +169,7 @@ def db(monkeypatch):
 
     def _install(client_store: dict | None = None):
         client = FakeSupabaseClient(client_store if client_store is not None else store)
-        cm = SupabaseConnectionManager(url="http://test", key="test-key")
-        cm._client = client
+        cm = SupabaseConnectionManager(client=client)
         set_connection_manager(cm)
         return client
 
@@ -460,8 +459,7 @@ class TestRestartDurability:
         # simulate backend restart: fresh client + fresh manager + fresh repos
         reset_connection_manager()
         client = FakeSupabaseClient(store)
-        cm = SupabaseConnectionManager(url="http://test", key="test-key")
-        cm._client = client
+        cm = SupabaseConnectionManager(client=client)
         set_connection_manager(cm)
 
         svc2 = KnowledgeService()
@@ -494,8 +492,7 @@ class TestRestartDurability:
 
         reset_connection_manager()
         client = FakeSupabaseClient(store)
-        cm = SupabaseConnectionManager(url="http://test", key="test-key")
-        cm._client = client
+        cm = SupabaseConnectionManager(client=client)
         set_connection_manager(cm)
 
         svc2 = KnowledgeService()

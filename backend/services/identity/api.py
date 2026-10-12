@@ -9,6 +9,7 @@ from services.identity.dependencies import AuthContext, get_current_auth
 from services.identity.metrics import get_metrics
 from services.identity.models import RegistrationSessionStatus
 from services.identity.models.oauth_session import OAuthSession
+from services.identity.config import IDENTITY_CONFIG, resolve_google_oauth_redirect_uri
 from services.identity.providers import (
     ConsoleEmailProvider,
     EmailProvider,
@@ -269,14 +270,19 @@ def reset_oauth_session_repo() -> None:
     response_description="Google OAuth authorization URL",
 )
 async def oauth_google(redirect_uri: str = ""):
+    try:
+        callback_uri = resolve_google_oauth_redirect_uri(redirect_uri)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid Google OAuth callback URI") from exc
     registry = get_provider_registry()
     provider = registry.get("google")
-    auth_req = await provider.initiate_auth(redirect_uri)
+    auth_req = await provider.initiate_auth(callback_uri)
 
     oauth_session = OAuthSession(
         provider_type="google",
         state=auth_req.state,
         code_verifier=auth_req.code_verifier,
+        redirect_uri=callback_uri,
         expires_at=auth_req.expires_at,
     )
     repo = _get_oauth_session_repo()
@@ -321,6 +327,7 @@ async def oauth_google_callback(code: str = "", state: str = ""):
             code=code,
             state=state,
             code_verifier=oauth_session.code_verifier,
+            redirect_uri=oauth_session.redirect_uri or IDENTITY_CONFIG.google_oauth.redirect_uri,
         )
     except Exception as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc

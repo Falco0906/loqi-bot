@@ -53,7 +53,7 @@ class GoogleIdentityProvider(IdentityProvider):
 
         params = {
             "client_id": cfg.client_id,
-            "redirect_uri": cfg.redirect_uri,
+            "redirect_uri": redirect_uri or cfg.redirect_uri,
             "response_type": "code",
             "scope": cfg.scopes,
             "state": state,
@@ -74,11 +74,11 @@ class GoogleIdentityProvider(IdentityProvider):
         )
 
     async def handle_callback(
-        self, code: str, state: str, code_verifier: str,
+        self, code: str, state: str, code_verifier: str, redirect_uri: str = "",
     ) -> ExternalIdentity:
         cfg = IDENTITY_CONFIG.google_oauth
 
-        id_token = await self._exchange_code(code, code_verifier, cfg)
+        id_token = await self._exchange_code(code, code_verifier, cfg, redirect_uri)
 
         payload = self._validate_id_token(id_token, cfg)
         email = payload.get("email", "")
@@ -97,14 +97,14 @@ class GoogleIdentityProvider(IdentityProvider):
         )
 
     async def _exchange_code(
-        self, code: str, code_verifier: str, cfg: Any,
+        self, code: str, code_verifier: str, cfg: Any, redirect_uri: str = "",
     ) -> dict[str, Any]:
         import httpx
         data = {
             "code": code,
             "client_id": cfg.client_id,
             "client_secret": cfg.client_secret,
-            "redirect_uri": cfg.redirect_uri,
+            "redirect_uri": redirect_uri or cfg.redirect_uri,
             "grant_type": "authorization_code",
             "code_verifier": code_verifier,
         }
@@ -222,7 +222,7 @@ class InMemoryGoogleIdentityProvider(GoogleIdentityProvider):
         )
 
     async def handle_callback(
-        self, code: str, state: str, code_verifier: str,
+        self, code: str, state: str, code_verifier: str, redirect_uri: str = "",
     ) -> ExternalIdentity:
         if self._exchange_error is not None:
             raise self._exchange_error

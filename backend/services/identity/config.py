@@ -52,6 +52,7 @@ class GoogleOAuthConfig:
     client_id: str = ""
     client_secret: str = ""
     redirect_uri: str = ""
+    local_redirect_uris: tuple[str, ...] = ("http://localhost:3000/auth/google/callback",)
     scopes: str = "openid email profile"
     auth_uri: str = "https://accounts.google.com/o/oauth2/v2/auth"
     token_uri: str = "https://oauth2.googleapis.com/token"
@@ -81,3 +82,28 @@ load_dotenv()
 IDENTITY_CONFIG.google_oauth.client_id = os.getenv("GOOGLE_CLIENT_ID", "")
 IDENTITY_CONFIG.google_oauth.client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
 IDENTITY_CONFIG.google_oauth.redirect_uri = f"{os.getenv('FRONTEND_URL', 'http://localhost:3000')}/auth/google/callback"
+
+_SUPPORTED_LOCAL_CALLBACKS = {
+    "http://localhost:3000/auth/google/callback",
+    "http://127.0.0.1:3000/auth/google/callback",
+}
+_local_callbacks = tuple(
+    value.strip()
+    for value in os.getenv(
+        "GOOGLE_OAUTH_LOCAL_REDIRECT_URIS",
+        "http://localhost:3000/auth/google/callback",
+    ).split(",")
+    if value.strip()
+)
+if any(value not in _SUPPORTED_LOCAL_CALLBACKS for value in _local_callbacks):
+    raise ValueError("GOOGLE_OAUTH_LOCAL_REDIRECT_URIS contains an unsupported callback URI")
+IDENTITY_CONFIG.google_oauth.local_redirect_uris = _local_callbacks
+
+
+def resolve_google_oauth_redirect_uri(override: str = "") -> str:
+    """Use the configured callback unless an exact allowlisted local URI is requested."""
+    if not override:
+        return IDENTITY_CONFIG.google_oauth.redirect_uri
+    if override not in IDENTITY_CONFIG.google_oauth.local_redirect_uris:
+        raise ValueError("Google OAuth callback URI is not allowed")
+    return override

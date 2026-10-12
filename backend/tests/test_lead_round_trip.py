@@ -15,6 +15,7 @@ discovery -> new-campaign creation flow.
 import asyncio
 import time
 from datetime import datetime, timezone
+from uuid import uuid4
 
 import pytest
 
@@ -149,10 +150,12 @@ def _lead_payload(company: dict) -> dict:
 
 
 def _create_campaign(client, token, name, objective):
+    creation_key = str(uuid4())  # One explicit creation intent, not a retry key factory.
     resp = client.post(
         f"/api/web/session/{token}/campaigns",
         json={
             "name": name,
+            "idempotency_key": creation_key,
             "objective": objective,
             "search_query": "HR software startups",
             "lead_count": 0,
@@ -316,6 +319,7 @@ class TestLeadRoundTrip:
             f"/api/web/session/{authenticated_session}/campaigns",
             json={
                 "name": "From Discovery",
+                "idempotency_key": str(uuid4()),
                 "objective": "Open conversations",
                 "search_query": "AI startups",
                 "discovery_id": discovery_id,

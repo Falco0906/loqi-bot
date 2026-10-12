@@ -8,7 +8,6 @@ from services.leads.service import (
     LeadImportError,
     LeadDatabaseUnavailable,
     analyze_workspace_leads,
-    generate_workspace_lead_strategy_drafts,
     import_csv_rows,
     list_workspace_leads,
     parse_csv_preview,
@@ -24,6 +23,9 @@ class CsvImportRequest(BaseModel):
     rows: list[dict]
 class LeadAnalysisRequest(BaseModel):
     lead_ids: list[str] = Field(min_length=1, max_length=50)
+
+class LeadGenerationRequest(LeadAnalysisRequest):
+    request_key: str = Field(min_length=1, max_length=128)
 
 async def _scope(request: Request) -> tuple[str, str]:
     token = identity_dependencies.web_session_token(request)
@@ -76,11 +78,28 @@ async def analyze_leads(session_token: str, payload: LeadAnalysisRequest, reques
 
 
 @router.post("/api/web/session/{session_token}/leads/generate-strategy")
-async def generate_lead_strategy_drafts(session_token: str, payload: LeadAnalysisRequest, request: Request):
+async def generate_lead_strategy_drafts(session_token: str, payload: LeadGenerationRequest, request: Request):
     """Explicit Phase 4C action; scope is derived from the authenticated session."""
     del session_token
     owner_id, workspace_id = await _scope(request)
+    from services.leads.generation import start_lead_generation
     try:
-        return {"ok": True, **await generate_workspace_lead_strategy_drafts(workspace_id, owner_id, payload.lead_ids)}
+        return await start_lead_generation(workspace_id, owner_id, payload.lead_ids, payload.request_key)
     except LeadImportError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@router.get("/api/web/session/{session_token}/leads/generation")
+async def recover_lead_generation(session_token: str, request: Request, request_key: str):
+    del session_token
+    owner_id, workspace_id = await _scope(request)
+    from services.leads.generation import generation_id, generation_status
+    return await generation_status(workspace_id, owner_id, generation_id(workspace_id, owner_id, request_key))
+
+
+@router.get("/api/web/session/{session_token}/leads/generation/{job_id}")
+async def lead_generation_status(session_token: str, job_id: str, request: Request):
+    del session_token
+    owner_id, workspace_id = await _scope(request)
+    from services.leads.generation import generation_status
+    return await generation_status(workspace_id, owner_id, job_id)

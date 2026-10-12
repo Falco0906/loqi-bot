@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import DiscoveryHistory from "../../../components/dashboard/DiscoveryHistory";
+import DiscoveryCampaignActions from "../../../components/dashboard/DiscoveryCampaignActions";
 import {
   DiscoveryExecutionPanel,
   DiscoveryLeadDetails,
@@ -12,6 +12,9 @@ import {
 import { useBetaFeature } from "../../../contexts/BetaFeaturesContext";
 import { listWorkspaceLeads, type WorkspaceLeadRecord } from "../../../lib/api";
 import { parseDiscoveryMode } from "../../../lib/discovery-mode";
+import { useIntelligenceWorkspace } from "../../../hooks/useIntelligenceWorkspace";
+import { getNavState, setNavState } from "../../../lib/nav-state";
+import { DISCOVERY_CONTEXT_KEY, discoverySelectionScope, discoveryResponseIsCurrent, discoverySavedFilters, rememberDiscoveryContext, restoredDiscoveryContext } from "../../../lib/discovery-context";
 import {
   fetchDiscoveryFresh,
   fetchDiscoveryListFresh,
@@ -39,32 +42,9 @@ function activeSessionToken(): string {
   return window.localStorage.getItem("loqi_active_session_token") || "";
 }
 
-// This is a navigation hint, not a second discovery state store. The durable
-// discovery row remains authoritative and is always re-authorized by the API
-// before the page restores it. Keeping only its id lets a mounted page reconnect
-// after route navigation without coupling a server-side job to React's lifetime.
-const ACTIVE_DISCOVERY_KEY = "loqi_active_discovery";
-
-function rememberedDiscoveryId(): string {
-  try {
-    return window.sessionStorage.getItem(ACTIVE_DISCOVERY_KEY) || "";
-  } catch {
-    return "";
-  }
-}
-
-function rememberDiscovery(id: string): void {
-  try {
-    if (id) window.sessionStorage.setItem(ACTIVE_DISCOVERY_KEY, id);
-  } catch {
-    // URL state and the workspace-scoped API remain sufficient when storage
-    // is unavailable (for example, a privacy-restricted browser session).
-  }
-}
-
 function forgetRememberedDiscovery(): void {
   try {
-    window.sessionStorage.removeItem(ACTIVE_DISCOVERY_KEY);
+    window.sessionStorage.removeItem(DISCOVERY_CONTEXT_KEY);
   } catch {
     // See rememberDiscovery.
   }
@@ -87,15 +67,19 @@ function terminalDiscoveryMessage(run: DiscoveryData): string {
 }
 
 function FilterRail({
+  workspaceId,
   filters,
   hasFilters,
   onChange,
   onClear,
+  disabled,
 }: {
+  workspaceId: string;
   filters: Record<string, string>;
   hasFilters: boolean;
   onChange: (key: string, value: string) => void;
   onClear: () => void;
+  disabled: boolean;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -105,7 +89,7 @@ function FilterRail({
         <h1 className="text-sm font-semibold text-on-surface">Filters</h1>
         <button
           type="button"
-          disabled={!hasFilters}
+          disabled={!hasFilters || disabled}
           onClick={onClear}
           className="text-xs font-medium text-primary disabled:text-on-surface-variant/35"
         >
@@ -133,6 +117,7 @@ function FilterRail({
                   <input
                     aria-label={`Filter by ${filter.label}`}
                     value={filters[filter.key] || ""}
+                    disabled={disabled}
                     placeholder={filter.placeholder}
                     onChange={(event) => onChange(filter.key, event.target.value)}
                     className="w-full rounded-lg border border-outline-variant/20 bg-surface-container-low px-3 py-2 text-sm text-on-surface outline-none placeholder:text-on-surface-variant/40 focus:border-primary/50"
@@ -144,7 +129,7 @@ function FilterRail({
         })}
       </div>
       <Link
-        href="/discovery/history"
+        href={`/discovery/history?workspace_id=${encodeURIComponent(workspaceId)}`}
         className="mt-auto flex items-center justify-between border-t border-outline-variant/15 px-1 pt-5 text-left text-sm text-on-surface-variant transition-colors hover:text-primary"
       >
         <span>Search history</span>
@@ -163,6 +148,7 @@ function LeadResultsTable({
   onToggleVisible,
   onToggleLead,
   onToggleExpand,
+  disabled,
 }: {
   leads: WorkspaceLeadRecord[];
   selected: Set<string>;
@@ -172,6 +158,7 @@ function LeadResultsTable({
   onToggleVisible: () => void;
   onToggleLead: (leadId: string) => void;
   onToggleExpand: (leadId: string) => void;
+  disabled: boolean;
 }) {
   return (
     <div className="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-lowest">
@@ -182,6 +169,7 @@ function LeadResultsTable({
               <input
                 aria-label="Select all visible leads"
                 type="checkbox"
+                disabled={disabled}
                 checked={selectedOnPage}
                 onChange={onToggleVisible}
               />
@@ -206,6 +194,7 @@ function LeadResultsTable({
                     <input
                       aria-label={`Select ${name || lead.email || "lead"}`}
                       type="checkbox"
+                      disabled={disabled}
                       checked={selected.has(lead.id)}
                       onChange={() => onToggleLead(lead.id)}
                     />
@@ -310,30 +299,69 @@ function DiscoverySearchStatus({
   );
 }
 
-function DiscoveryWorkspace() {
+function DiscoveryWorkspace({ workspaceId, scope }: { workspaceId: string; scope: string }) {
   const router = useRouter();
   const params = useSearchParams();
   const providerSearchEnabled = useBetaFeature("lead_search");
   const query = params.get("q") || "";
   const page = Math.max(Number(params.get("page") || "1") || 1, 1);
   const providerDiscoveryId = params.get("provider_discovery") || "";
+  const campaignMode = parseDiscoveryMode(params);
+  const campaignContext = campaignMode.mode === "campaign_attach" ? campaignMode.context?.campaignId || "" : null;
   const filters = useMemo(
     () => Object.fromEntries(FILTERS.map(({ key }) => [key, params.get(key) || ""])),
     [params],
   );
+  // The existing navigation cache keeps only IDs for this exact workspace/search.
+  // URL context and server authorization remain authoritative.
+  const selectionScope = discoverySelectionScope(scope, new URLSearchParams(params.toString()));
   const [draftQuery, setDraftQuery] = useState(query);
+  const draftInput = useRef(draftQuery);
+  draftInput.current = draftQuery;
   const [workspaceLeads, setWorkspaceLeads] = useState<WorkspaceLeadRecord[]>([]);
   const [workspaceTotal, setWorkspaceTotal] = useState(0);
+  const [loadedScope, setLoadedScope] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [providerRun, setProviderRun] = useState<DiscoveryData | null>(null);
-  const [providerError, setProviderError] = useState("");
+  const [resultWarning, setResultWarning] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(getNavState<string[]>(`discovery:${scope}`, selectionScope) || []));
+  const [selectedScope, setSelectedScope] = useState(selectionScope);
+  const [campaignBusy, setCampaignBusy] = useState(false);
+  const campaignBusyRef = useRef(false);
+  const [loadedRun, setProviderRun] = useState<DiscoveryData | null>(null);
+  const providerRun = loadedRun?.id === providerDiscoveryId ? loadedRun : null;
+  const [providerFailure, setProviderFailure] = useState({ scope: "", message: "" });
+  const providerErrorScope = `${query}:${providerDiscoveryId}`;
+  const providerError = providerFailure.scope === providerErrorScope ? providerFailure.message : providerRun?.status === "failed" || providerRun?.status === "cancelled" ? terminalDiscoveryMessage(providerRun) : "";
+  const setProviderError = (message: string, failureScope = providerErrorScope) => setProviderFailure({ scope: failureScope, message });
+  const providerErrorWriter = useRef(setProviderError);
+  providerErrorWriter.current = setProviderError;
+  const currentRunId = useRef(providerDiscoveryId);
+  currentRunId.current = providerDiscoveryId;
   const [startingSearch, setStartingSearch] = useState(false);
   const startingSearchRef = useRef(false);
   const restoredRunRef = useRef(false);
   const [pendingQuery, setPendingQuery] = useState("");
+  const pendingSearch = useRef(pendingQuery);
+  pendingSearch.current = pendingQuery;
   const [expandedLeadId, setExpandedLeadId] = useState<string | null>(null);
+  const mounted = useRef(true);
+  const intent = useRef(0);
+  const resultRequest = useRef(0);
+  const searchRequest = useRef(0);
+  const resultController = useRef<AbortController | null>(null);
+  const selectionOwner = useRef(selectionScope);
+  const observedUrl = useRef(params.toString());
+  if (observedUrl.current !== params.toString()) {
+    observedUrl.current = params.toString();
+    intent.current++;
+    resultRequest.current++;
+    searchRequest.current++;
+  }
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; intent.current++; resultController.current?.abort(); };
+  }, []);
   const hasSearch = Boolean(query.trim());
   const hasFilters = Object.values(filters).some(Boolean);
   const runIsActive = Boolean(pendingQuery)
@@ -342,87 +370,137 @@ function DiscoveryWorkspace() {
     || providerRun?.status === "queued"
     || providerRun?.status === "searching";
 
+  // Pagination preserves selection; a different search/filter/run/destination does not.
+  const currentSelection = selectionOwner.current === selectionScope ? selected : new Set<string>();
+  const currentResultScope = useRef("");
+  currentResultScope.current = `${selectionScope}:${page}`;
+  useEffect(() => {
+    if (selectionOwner.current !== selectionScope) {
+      selectionOwner.current = selectionScope;
+      setSelected(new Set());
+      setSelectedScope(selectionScope);
+    }
+    setExpandedLeadId(null);
+    setWorkspaceLeads([]);
+    setWorkspaceTotal(0);
+    campaignBusyRef.current = false;
+    setCampaignBusy(false);
+  }, [selectionScope]);
+
+  useEffect(() => {
+    if (selectedScope === selectionScope) setNavState(`discovery:${scope}`, selectionScope, [...selected]);
+  }, [selected, selectedScope, selectionScope, scope]);
+
   useEffect(() => {
     setDraftQuery(query);
-    if (pendingQuery && query === pendingQuery) setPendingQuery("");
-  }, [providerDiscoveryId, query]);
+    setPendingQuery("");
+    setStartingSearch(false);
+    startingSearchRef.current = false;
+  }, [params.toString()]);
 
   const writeState = (
     next: Record<string, string>,
     nextProviderDiscoveryId = providerDiscoveryId,
     history: "push" | "replace" = "replace",
   ) => {
+    intent.current++;
+    resultRequest.current++;
+    resultController.current?.abort();
     const url = new URLSearchParams();
+    url.set("workspace_id", workspaceId);
+    const creationKey = params.get("campaign_creation_key");
+    if (creationKey) url.set("campaign_creation_key", creationKey);
+    if (campaignContext !== null) {
+      url.set("mode", "campaign_attach");
+      url.set("campaign_id", campaignContext);
+      for (const key of ["campaign_name", "objective", "audience", "messaging_angle"]) {
+        const value = params.get(key);
+        if (value) url.set(key, value);
+      }
+    }
     Object.entries(next).forEach(([key, value]) => {
       if (value) url.set(key, value);
     });
     if (nextProviderDiscoveryId) url.set("provider_discovery", nextProviderDiscoveryId);
+    if (discoverySelectionScope(scope, url) !== selectionScope) setSelected(new Set());
     const path = `/discovery${url.size ? `?${url.toString()}` : ""}`;
     if (history === "push") router.push(path);
     else router.replace(path);
   };
 
   useEffect(() => {
-    // URL state remains the shareable source for a particular run. When a
-    // user leaves Discover through normal navigation, this session-scoped
-    // pointer reconnects the page to the already-durable run on return. It
-    // never starts, cancels, or mutates the server-side job.
-    if (providerDiscoveryId || query || restoredRunRef.current) return;
+    if (query) {
+      restoredRunRef.current = true;
+      try { rememberDiscoveryContext(window.sessionStorage, scope, new URLSearchParams(params.toString())); } catch { /* URL remains available. */ }
+      return;
+    }
+    if (params.size) { restoredRunRef.current = true; return; }
+    if (restoredRunRef.current) return;
     restoredRunRef.current = true;
     let active = true;
-
+    const revision = intent.current;
     const restoreDurableRun = async () => {
-      const remembered = rememberedDiscoveryId();
-      const candidates = remembered
-        ? [remembered]
-        : (await fetchDiscoveryListFresh() || [])
+      const remembered = restoredDiscoveryContext(window.sessionStorage, scope, new URLSearchParams());
+      if (remembered) { if (active && revision === intent.current) router.replace(remembered); return; }
+      const candidates = (await fetchDiscoveryListFresh(workspaceId) || [])
           .filter((item) => item.status === "queued" || item.status === "searching")
           .slice(0, 1)
           .map((item) => item.id);
 
       for (const discoveryId of candidates) {
-        const run = await fetchDiscoveryFresh(discoveryId);
-        if (!active) return;
+        const run = await fetchDiscoveryFresh(discoveryId, workspaceId);
+        if (!active || revision !== intent.current || draftInput.current.trim()) return;
         if (!run || (run.status !== "queued" && run.status !== "searching")) {
-          if (discoveryId === remembered) forgetRememberedDiscovery();
           continue;
         }
-        rememberDiscovery(run.id);
         writeState({ q: run.query, page: "1" }, run.id);
         return;
       }
     };
 
     void restoreDurableRun().catch(() => {
-      // A recovery hint must not make a normal first visit fail. The
-      // workspace-scoped run will be retried the next time Discover mounts.
+      if (active && revision === intent.current && !draftInput.current.trim()) setProviderError("Previous search could not be restored. Start a new search or open Search history.");
     });
     return () => { active = false; };
     // Intentionally restores once per mounted blank Discover route.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [providerDiscoveryId, query]);
+  }, [params.toString(), scope]);
 
   const loadWorkspaceLeads = async () => {
     if (!hasSearch) return;
+    const resultScope = currentResultScope.current;
+    const revision = ++resultRequest.current;
+    resultController.current?.abort();
+    const controller = new AbortController();
+    resultController.current = controller;
+    const isCurrent = () => discoveryResponseIsCurrent({ scope: resultScope, revision }, { scope: currentResultScope.current, revision: resultRequest.current }, mounted.current, controller.signal);
     setLoading(true);
     setError("");
     try {
-      const result = await listWorkspaceLeads(activeSessionToken(), query, page, filters, providerDiscoveryId);
+      const result = await listWorkspaceLeads(activeSessionToken(), query, page, filters, providerDiscoveryId, controller.signal, workspaceId);
+      if (!isCurrent()) return;
       setWorkspaceLeads(result.leads);
       setWorkspaceTotal(result.total);
+      setResultWarning((result.warnings || []).join(" "));
+      setLoadedScope(resultScope);
     } catch {
+      if (!isCurrent()) return;
       setWorkspaceLeads([]);
       setWorkspaceTotal(0);
+      setResultWarning("");
       setError("Could not load search results. Please try again.");
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   };
+  const resultLoader = useRef(loadWorkspaceLeads);
+  resultLoader.current = loadWorkspaceLeads;
 
   useEffect(() => {
     if (!hasSearch) {
       setWorkspaceLeads([]);
       setWorkspaceTotal(0);
+      setResultWarning("");
       setError("");
       setLoading(false);
       return;
@@ -438,31 +516,38 @@ function DiscoveryWorkspace() {
       return;
     }
     let active = true;
+    setProviderRun(null);
+    setProviderError("");
     let retryTimer: number | undefined;
     const refresh = async () => {
       try {
-        const next = await fetchDiscoveryFresh(providerDiscoveryId);
-        if (!active) return;
+        const next = await fetchDiscoveryFresh(providerDiscoveryId, workspaceId);
+        if (!active || currentRunId.current !== providerDiscoveryId) return;
+        if (startingSearchRef.current || pendingSearch.current) {
+          retryTimer = window.setTimeout(() => void refresh(), 4000);
+          return;
+        }
         if (!next) {
           setProviderRun(null);
-          setProviderError("This saved search is unavailable or could not be refreshed.");
+          providerErrorWriter.current("This saved search is unavailable or could not be refreshed.");
           return;
         }
         setProviderRun(next);
+        if (!new URLSearchParams(observedUrl.current).get("q")) {
+          const savedFilters = discoverySavedFilters(next.metadata);
+          writeState({ ...savedFilters, ...Object.fromEntries(Object.entries(filters).filter(([key]) => params.has(key))), q: next.query, page: String(page) }, next.id);
+        }
         if (next?.status === "queued" || next?.status === "searching") {
-          rememberDiscovery(next.id);
-          setProviderError("");
+          providerErrorWriter.current("");
           retryTimer = window.setTimeout(() => void refresh(), 4000);
         } else if (next?.status === "completed") {
-          forgetRememberedDiscovery();
-          setProviderError("");
-          void loadWorkspaceLeads();
+          providerErrorWriter.current("");
+          void resultLoader.current();
         } else if (next?.status === "failed" || next?.status === "cancelled") {
-          forgetRememberedDiscovery();
-          setProviderError(terminalDiscoveryMessage(next));
+          providerErrorWriter.current(terminalDiscoveryMessage(next));
         }
       } catch {
-        if (active) setProviderError("Discovery search could not be loaded.");
+        if (active && currentRunId.current === providerDiscoveryId && !startingSearchRef.current && !pendingSearch.current) providerErrorWriter.current("Discovery search could not be loaded.");
       }
     };
     void refresh();
@@ -475,8 +560,14 @@ function DiscoveryWorkspace() {
   }, [providerDiscoveryId]);
 
   const runSearch = async (requestedQuery = draftQuery) => {
+    if (campaignBusyRef.current) return;
     const nextQuery = requestedQuery.trim();
     if (!nextQuery || startingSearchRef.current) return;
+    const revision = ++intent.current;
+    const submission = ++searchRequest.current;
+    resultRequest.current++;
+    resultController.current?.abort();
+    setSelected(new Set());
     startingSearchRef.current = true;
     setDraftQuery(nextQuery);
     setPendingQuery(nextQuery);
@@ -492,52 +583,61 @@ function DiscoveryWorkspace() {
     setStartingSearch(true);
     setProviderRun(null);
     try {
-      const started = await startDiscoverySearch(nextQuery, "manual");
+      const started = await startDiscoverySearch(nextQuery, "manual", workspaceId, filters);
+      if (!mounted.current || revision !== intent.current) return;
       if (!started?.discoveryId) throw new Error("Search could not be started.");
-      rememberDiscovery(started.discoveryId);
       writeState({ ...filters, q: nextQuery, page: "1" }, started.discoveryId, "push");
     } catch {
+      if (!mounted.current || revision !== intent.current) return;
       // A run failure never removes the user's canonical workspace results.
-      setProviderError("Discovery search could not be started.");
+      setProviderError("Discovery search could not be started.", `${nextQuery}:`);
       writeState({ ...filters, q: nextQuery, page: "1" }, "", "push");
       setPendingQuery("");
     } finally {
-      setStartingSearch(false);
-      startingSearchRef.current = false;
+      if (mounted.current && submission === searchRequest.current) { setStartingSearch(false); startingSearchRef.current = false; }
     }
   };
 
   const updateFilter = (key: string, value: string) => {
+    if (campaignBusyRef.current || startingSearchRef.current) return;
     writeState({ ...filters, q: query, page: "1", [key]: value });
   };
   const clearSearch = () => {
+    if (campaignBusyRef.current || startingSearchRef.current) return;
     setDraftQuery("");
     setSelected(new Set());
     setProviderError("");
     setPendingQuery("");
     setExpandedLeadId(null);
     forgetRememberedDiscovery();
-    writeState({}, "", "push");
+    writeState({ fresh: "1" }, "", "push");
   };
   const clearFilters = () => {
+    if (campaignBusyRef.current || startingSearchRef.current) return;
     writeState(query ? { q: query, page: "1" } : {}, providerDiscoveryId, "push");
   };
 
-  const selectedOnPage = workspaceLeads.length > 0 && workspaceLeads.every((lead) => selected.has(lead.id));
-  const toggleVisible = () => setSelected((current) => {
+  const selectedOnPage = workspaceLeads.length > 0 && workspaceLeads.every((lead) => currentSelection.has(lead.id));
+  const toggleVisible = () => {
+    if (campaignBusyRef.current || loading || loadedScope !== currentResultScope.current) return;
+    setSelected((current) => {
     const next = new Set(current);
     workspaceLeads.forEach((lead) => {
       if (selectedOnPage) next.delete(lead.id);
       else next.add(lead.id);
     });
     return next;
-  });
-  const toggleLead = (leadId: string) => setSelected((current) => {
+    });
+  };
+  const toggleLead = (leadId: string) => {
+    if (campaignBusyRef.current || loading || loadedScope !== currentResultScope.current || !workspaceLeads.some((lead) => lead.id === leadId)) return;
+    setSelected((current) => {
     const next = new Set(current);
     if (next.has(leadId)) next.delete(leadId);
     else next.add(leadId);
     return next;
-  });
+    });
+  };
   const toggleExpandedLead = (leadId: string) => {
     setExpandedLeadId((current) => current === leadId ? null : leadId);
   };
@@ -596,19 +696,30 @@ function DiscoveryWorkspace() {
       </div>
       <button
         type="submit"
-        disabled={!draftQuery.trim() || startingSearch}
+        disabled={!draftQuery.trim() || startingSearch || campaignBusy}
         className="rounded-lg bg-primary px-5 py-3 text-sm font-medium text-on-primary transition-opacity disabled:opacity-40"
       >
         {startingSearch ? "Starting…" : "Search"}
       </button>
+      {(hasSearch || providerDiscoveryId) && <button type="button" disabled={startingSearch || campaignBusy} onClick={clearSearch} className="text-sm text-on-surface-variant">New search</button>}
     </form>
   );
 
   return (
     <main className="flex h-full min-h-0 bg-surface">
-      <FilterRail filters={filters} hasFilters={hasFilters} onChange={updateFilter} onClear={clearFilters} />
+      <FilterRail workspaceId={workspaceId} filters={filters} hasFilters={hasFilters} onChange={updateFilter} onClear={clearFilters} disabled={campaignBusy || startingSearch} />
       <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        {!hasSearch && !runIsActive ? (
+        <div className="shrink-0 px-5 md:px-6">
+          <DiscoveryCampaignActions
+            key={selectionScope}
+            workspaceId={workspaceId}
+            leadIds={[...currentSelection]}
+            campaignContext={campaignContext}
+            onComplete={(attachedIds) => { if (selectionOwner.current === selectionScope) setSelected((current) => new Set([...current].filter((id) => !attachedIds.includes(id)))); }}
+            onBusy={(busy) => { if (selectionOwner.current === selectionScope) { campaignBusyRef.current = busy; setCampaignBusy(busy); } }}
+          />
+        </div>
+        {!hasSearch && !runIsActive && !providerError ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 md:px-6">
             <div className="mx-auto flex min-h-full max-w-3xl flex-col justify-center">
               <div>
@@ -647,23 +758,17 @@ function DiscoveryWorkspace() {
                   <DiscoveryResearchBriefing view={providerRun} resultCount={workspaceTotal} />
                 )}
 
-                {!runIsActive && (
+                {!runIsActive && loadedScope === currentResultScope.current && resultWarning && <p role="alert" className="text-sm text-on-surface-variant">{resultWarning}</p>}
+                {!runIsActive && hasSearch && (
                   <>
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <p className="text-sm text-on-surface-variant">
                         <span className="font-semibold text-on-surface">{workspaceTotal}</span> result{workspaceTotal === 1 ? "" : "s"}
                       </p>
-                      {selected.size > 0 && (
+                      {currentSelection.size > 0 && (
                         <div className="flex items-center gap-3">
-                          <span className="text-sm font-medium text-primary">{selected.size} selected</span>
-                          <button
-                            type="button"
-                            className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-on-primary"
-                            onClick={() => router.push(`/lead-intelligence?lead_ids=${encodeURIComponent([...selected].join(","))}`)}
-                          >
-                            Analyze with Loqi
-                          </button>
-                          <button type="button" onClick={() => setSelected(new Set())} className="text-sm text-on-surface-variant hover:text-primary">
+                          <span className="text-sm font-medium text-primary">{currentSelection.size} selected</span>
+                          <button type="button" disabled={campaignBusy} onClick={() => setSelected(new Set())} className="text-sm text-on-surface-variant hover:text-primary">
                             Clear selection
                           </button>
                         </div>
@@ -674,27 +779,28 @@ function DiscoveryWorkspace() {
                         <p className="font-medium text-error">{error}</p>
                         <button type="button" onClick={() => void loadWorkspaceLeads()} className="mt-3 text-sm text-primary hover:underline">Try again</button>
                       </div>
-                    ) : loading ? (
+                    ) : loading || loadedScope !== currentResultScope.current ? (
                       <div className="flex min-h-64 items-center justify-center rounded-xl border border-outline-variant/20 bg-surface-lowest text-sm text-on-surface-variant">
                         <span className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />
                         Loading matching leads…
                       </div>
                     ) : workspaceLeads.length === 0 ? (
                       <div className="flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed border-outline-variant/30 bg-surface-lowest p-8 text-center">
-                        <p className="font-medium text-on-surface">No leads match this search.</p>
+                        <p className="font-medium text-on-surface">{resultWarning ? "Search results are temporarily incomplete." : "No leads match this search."}</p>
                         <p className="mt-1 text-sm text-on-surface-variant">Try a broader query or adjust the filters.</p>
                       </div>
                     ) : (
                       <>
                         <LeadResultsTable
                           leads={workspaceLeads}
-                          selected={selected}
+                          selected={currentSelection}
                           selectedOnPage={selectedOnPage}
                           expandedLeadId={expandedLeadId}
                           detailsByLeadId={detailsByLeadId}
                           onToggleVisible={toggleVisible}
                           onToggleLead={toggleLead}
                           onToggleExpand={toggleExpandedLead}
+                          disabled={campaignBusy}
                         />
                         {workspaceTotal > PAGE_SIZE && (
                           <nav className="flex items-center justify-between" aria-label="Lead results pagination">
@@ -732,6 +838,7 @@ function DiscoveryWorkspace() {
 
 export default function DiscoveryPage() {
   const params = useSearchParams();
-  if (parseDiscoveryMode(params).mode === "campaign_attach") return <DiscoveryHistory />;
-  return <DiscoveryWorkspace />;
+  const context = useIntelligenceWorkspace(params.get("workspace_id") || "", params.size === 0);
+  if (!context.workspace) return <div role={context.error ? "alert" : "status"} className="p-6">{context.error || "Loading your workspace…"}</div>;
+  return <DiscoveryWorkspace key={context.scope} workspaceId={context.workspace} scope={context.scope} />;
 }

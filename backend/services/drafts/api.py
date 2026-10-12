@@ -98,15 +98,15 @@ async def list_drafts(session_token: str, request: Request):
 @router.put("/api/web/session/{session_token}/drafts/{draft_id}")
 async def update_draft(session_token: str, draft_id: str, payload: UpdateDraftRequest, request: Request):
     del session_token
-    owner_id, bearer_token = await _authorized_identity(request)
-    return await service.update_draft(bearer_token, owner_id, draft_id, payload.text)
+    owner_id, bearer_token, workspace_id = await _authorized_workspace(request)
+    return await service.update_draft(bearer_token, owner_id, draft_id, payload.text, workspace_id=workspace_id)
 
 
 @router.post("/api/web/session/{session_token}/drafts/{draft_id}/refine")
 async def refine_draft(session_token: str, draft_id: str, payload: RefineDraftRequest, request: Request):
     del session_token
-    owner_id, bearer_token = await _authorized_identity(request)
-    return await service.refine_draft(bearer_token, owner_id, draft_id, payload.model_dump())
+    owner_id, bearer_token, workspace_id = await _authorized_workspace(request)
+    return await service.refine_draft(bearer_token, owner_id, draft_id, payload.model_dump(), workspace_id=workspace_id)
 
 
 @router.post("/api/web/session/{session_token}/drafts/analyze")

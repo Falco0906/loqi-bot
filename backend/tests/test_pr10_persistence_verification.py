@@ -68,6 +68,9 @@ class TestSupabaseConnectionConfig:
     def test_is_connected_when_env_present(self, monkeypatch):
         # Presence-only check; never reads or exposes the value.
         from services.persistence.database import SupabaseConnectionManager
+        # Characterize production configuration without disabling the process
+        # guard at the client factory or creating any SDK client.
+        monkeypatch.setattr("services.persistence.database.is_test_runtime", lambda: False)
         monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
         monkeypatch.setenv("SUPABASE_KEY", "service-role-placeholder-not-a-real-key")
         assert SupabaseConnectionManager().is_connected is True

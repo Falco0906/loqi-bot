@@ -617,9 +617,15 @@ class AuthService:
         code: str,
         state: str,
         code_verifier: str,
+        redirect_uri: str = "",
     ) -> LoginResult:
         provider = self._provider_registry.get(provider_type)
-        external_dto = await provider.handle_callback(code, state, code_verifier)
+        if redirect_uri:
+            external_dto = await provider.handle_callback(
+                code, state, code_verifier, redirect_uri=redirect_uri,
+            )
+        else:
+            external_dto = await provider.handle_callback(code, state, code_verifier)
         external_dto.email = self._normalize_email(external_dto.email)
 
         legacy_user = await self._resolve_legacy_oauth_user(external_dto)

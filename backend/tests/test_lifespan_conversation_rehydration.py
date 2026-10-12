@@ -19,6 +19,7 @@ async def _enter_lifespan() -> None:
 
 
 def _prepare_lifespan_before_conversation_reload(monkeypatch) -> list[str]:
+    monkeypatch.setattr(main, "is_test_runtime", lambda: False)
     calls: list[str] = []
     monkeypatch.setattr(main.app_lifespan, "begin_startup", lambda app: 0.0)
     monkeypatch.setattr(main.app_lifespan, "validate_startup_configuration", lambda: None)

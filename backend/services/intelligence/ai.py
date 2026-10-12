@@ -41,13 +41,16 @@ def _parse_json_result(result: str) -> dict:
 
 class OpenAIError(Exception):
     """Raised when OpenAI fails and should not return fake data"""
-    pass
+    def __init__(self, message: str, *, kind: str = "provider", retryable: bool = False):
+        super().__init__(message)
+        self.kind = kind
+        self.retryable = retryable
 
 
 def _request_openai_text(system_text: str, user_text: str, *, timeout: int) -> str:
     """Send one OpenAI Responses text request or raise ``OpenAIError``."""
     if not OPENAI_API_KEY:
-        raise OpenAIError("OPENAI_API_KEY not configured. AI unavailable.")
+        raise OpenAIError("OPENAI_API_KEY not configured. AI unavailable.", kind="credentials")
 
     payload = {
         "model": OPENAI_MODEL,
@@ -75,16 +78,18 @@ def _request_openai_text(system_text: str, user_text: str, *, timeout: int) -> s
             OPENAI_RESPONSES_URL,
             headers=headers,
             json=payload,
-            timeout=timeout,
+            # Socket connect/read deadlines, not a claim that a worker thread
+            # or accepted provider operation is cancelled by an HTTP client.
+            timeout=(min(5, timeout), timeout),
         )
         
         # Handle HTTP errors
         if response.status_code == 401:
-            raise OpenAIError("OpenAI API key is invalid")
+            raise OpenAIError("OpenAI API key is invalid", kind="credentials")
         if response.status_code == 429:
-            raise OpenAIError("OpenAI API quota exceeded")
+            raise OpenAIError("OpenAI API quota exceeded", kind="rate_limit")
         if response.status_code >= 500:
-            raise OpenAIError(f"OpenAI API server error: {response.status_code}")
+            raise OpenAIError(f"OpenAI API server error: {response.status_code}", retryable=True)
             
         response.raise_for_status()
         
@@ -98,16 +103,16 @@ def _request_openai_text(system_text: str, user_text: str, *, timeout: int) -> s
 
         raise OpenAIError("OpenAI response missing output text")
         
-    except requests.Timeout:
-        raise OpenAIError("OpenAI request timed out")
+    except requests.Timeout as error:
+        raise OpenAIError("OpenAI request timed out", kind="provider_timeout", retryable=True) from error
     except requests.ConnectionError as e:
-        raise OpenAIError(f"OpenAI connection failed: {e}")
+        raise OpenAIError("OpenAI connection failed", kind="connection", retryable=True) from e
     except OpenAIError:
         raise
-    except Exception as error:
-        status = response.status_code if 'response' in dir() else "unknown"
-        _log(f"_send_openai_request error: {error} status={status}")
-        raise OpenAIError(f"OpenAI request failed: {error}")
+    except requests.HTTPError as error:
+        raise OpenAIError("OpenAI request was rejected") from error
+    except (json.JSONDecodeError, requests.exceptions.JSONDecodeError) as error:
+        raise OpenAIError("OpenAI returned malformed response data", kind="invalid_output") from error
 
 
 def _send_openai_request(system_text: str, user_text: str) -> str:
@@ -171,7 +176,7 @@ def classify_intent(user_message: str, context: dict) -> str:
 
 def rewrite_message(instruction: str, previous_message: str, context: dict | None = None) -> str:
     """Rewrite a message based on instruction. Returns rewritten text or raises OpenAIError."""
-    print("[AI INSTRUCTION]:", instruction)
+    _log("rewrite requested")
     system_text = (
         "You are an expert cold email editor. You rewrite outreach messages strictly following the instruction.\n"
         "You edit the existing message — you do not write a new one from scratch.\n"
@@ -218,7 +223,7 @@ def rewrite_message(instruction: str, previous_message: str, context: dict | Non
         "- Return only the rewritten message — no explanation, no prefix"
     )
     rewritten = _send_openai_request(system_text, user_text)
-    print("[AI OUTPUT]:", rewritten)
+    _log("rewrite completed")
 
     if not rewritten or rewritten.strip() == previous_message.strip():
         raise OpenAIError("Message rewrite produced no meaningful changes")
@@ -432,7 +437,7 @@ def generate_outreach_email(
     deterministic variation assignment so campaign drafts diverge in opening,
     transition, CTA phrasing and pacing while staying evidence-first.
     """
-    _log(f"generate_outreach_email called: lead={lead}")
+    _log("generate_outreach_email called")
 
     first_name = ((lead.get("name") or "").split() or [""])[0]
     company = (lead.get("company") or "").strip()
@@ -548,8 +553,7 @@ def generate_outreach_email(
     try:
         data = _parse_json_result(result)
     except json.JSONDecodeError as error:
-        _log(f"generate_outreach_email parse error: {error}")
-        _log(f"generate_outreach_email raw result: {result}")
+        _log(f"generate_outreach_email parse error_type={type(error).__name__}")
         raise OpenAIError(f"Failed to parse AI response as JSON: {error}")
 
     subject = (data.get("subject") or "").strip()
@@ -994,7 +998,7 @@ def generate_campaign_strategy(objective: str, context: dict | None = None) -> d
     persona, offer, objections) PLUS the full 16-section Sales Playbook
     under ``content``. Raises OpenAIError when the model fails.
     """
-    _log(f"generate_campaign_strategy called: objective={objective}")
+    _log("generate_campaign_strategy called")
 
     leads = context.get("leads") if isinstance(context, dict) else None
     lead_block = ""
@@ -1101,8 +1105,7 @@ def generate_campaign_strategy(objective: str, context: dict | None = None) -> d
     try:
         data = _parse_json_result(result)
     except json.JSONDecodeError as error:
-        _log(f"generate_campaign_strategy parse error: {error}")
-        _log(f"generate_campaign_strategy raw result: {result}")
+        _log(f"generate_campaign_strategy parse error_type={type(error).__name__}")
         raise OpenAIError(f"Failed to parse AI response as JSON: {error}")
 
     def _strings(key: str, limit: int = 6) -> list[str]:

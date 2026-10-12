@@ -17,6 +17,7 @@ export const STANDALONE_MODE = "standalone" as const;
 
 export type CampaignAttachContext = {
   campaignId: string;
+  workspaceId?: string;
   campaignName?: string;
   objective?: string;
   audience?: string;
@@ -32,6 +33,7 @@ export function buildResearchUrl(ctx: CampaignAttachContext): string {
   const params = new URLSearchParams();
   params.set("mode", ATTACH_MODE);
   params.set("campaign_id", ctx.campaignId);
+  if (ctx.workspaceId) params.set("workspace_id", ctx.workspaceId);
   if (ctx.campaignName) params.set("campaign_name", ctx.campaignName);
   if (ctx.objective) params.set("objective", ctx.objective);
   if (ctx.audience) params.set("audience", ctx.audience);
@@ -44,6 +46,7 @@ export function discoveryDetailUrl(discoveryId: string, ctx: CampaignAttachConte
   const params = new URLSearchParams();
   params.set("mode", ATTACH_MODE);
   params.set("campaign_id", ctx.campaignId);
+  if (ctx.workspaceId) params.set("workspace_id", ctx.workspaceId);
   if (ctx.campaignName) params.set("campaign_name", ctx.campaignName);
   if (ctx.objective) params.set("objective", ctx.objective);
   if (ctx.audience) params.set("audience", ctx.audience);
@@ -59,6 +62,7 @@ export function parseDiscoveryMode(
       mode: ATTACH_MODE,
       context: {
         campaignId: params.get("campaign_id") || "",
+        workspaceId: params.get("workspace_id") || undefined,
         campaignName: params.get("campaign_name") || undefined,
         objective: params.get("objective") || undefined,
         audience: params.get("audience") || undefined,

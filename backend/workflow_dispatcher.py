@@ -16,7 +16,7 @@ from services.job_engine.registry import (
     STAGES_SEARCH,
     get_registry,
 )
-from services.job_engine.storage import JobStorage
+from services.job_engine.storage import JobStorage, SearchResultPersistenceError
 from services.discovery.providers import search_with_expansion
 
 
@@ -81,10 +81,7 @@ def _search_with_progress(
     # PR-4: first-result hook fires AFTER stage ticks so the "N leads found"
     # progress write isn't immediately overwritten by a later stage label.
     if on_results and result.get("leads"):
-        try:
-            on_results(result["leads"])
-        except Exception as error:
-            print(f"[workflow_dispatcher] first-result persistence failed: {error}")
+        on_results(result["leads"])
 
     on_stage(4)
 
@@ -97,10 +94,21 @@ async def run_search_workflow(job: Job, on_progress) -> dict:
         return {"ok": False, "error": "Empty query"}
 
     discovery_context: dict = {}
+    workspace_id = job.workspace_id
+    if not workspace_id and job.discovery_id:
+        # Older durable search jobs omitted this field. Recover the scope
+        # from their canonical Discovery, never from the owner's default.
+        from services.discovery.service import get_discovery
+        discovery = await asyncio.to_thread(get_discovery, job.discovery_id, strict=True)
+        workspace_id = str((discovery or {}).get("workspace_id") or "")
+        if not workspace_id:
+            raise RuntimeError("Discovery workspace could not be loaded")
     try:
         from services.discovery.context import retrieve_discovery_context
-        discovery_context = await retrieve_discovery_context(job.user_id, query=query)
+        discovery_context = await retrieve_discovery_context(job.user_id, query=query, workspace_id=workspace_id)
     except Exception as e:
+        if workspace_id:
+            raise
         _log(f"workspace context retrieval failed, continuing without it: {e}")
 
     plan = None
@@ -149,59 +157,50 @@ async def run_search_workflow(job: Job, on_progress) -> dict:
     # The sync pipeline runs in an executor thread; when the provider returns
     # its first batch we IMMEDIATELY persist it and notify the user — long
     # before finalize. Rank offsets keep multi-batch inserts stable.
-    from services.job_engine.storage import JobStorage as _JS
     rank_offset = {"n": 0}
     leads_found = {"n": 0}
+    provider_leads_seen = {"n": 0}
+    staging_failures = {"n": 0}
+    workflow_loop = asyncio.get_running_loop()
 
     def persist_partial(leads: list) -> None:
         """Runs INSIDE the executor thread (no event loop) — sync by design."""
+        from services.discovery.service import update_discovery_progress
+        provider_leads_seen["n"] += len(leads)
+        ranked = [{**lead, "_rank": rank_offset["n"] + i + 1} for i, lead in enumerate(leads)]
         try:
-            from services.discovery.service import update_discovery_progress
-            ranked = []
-            for lead in leads:
-                rank_offset["n"] += 1
-                ranked.append({**lead, "_rank": rank_offset["n"]})
-            JobStorage().append_search_results(job.id, ranked)
-            leads_found["n"] += len(ranked)
-            if job.discovery_id:
-                # async helper; we're on a worker thread with no running
-                # loop, so drive it with a dedicated loop.
-                asyncio.run(update_discovery_progress(
-                    job.discovery_id,
-                    f"{leads_found['n']} leads found",
-                    min(99, 10 + leads_found["n"]),
-                ))
-            # PR-4: notify the SSE/event layer (best-effort). We're on a
-            # worker thread with no loop; hand off to the main loop if one
-            # is running, otherwise publish inline via a fresh loop.
-            from services.events.bus import EventBus
-            bus = EventBus()
+            persisted = JobStorage().append_search_results(job.id, ranked)
+        except SearchResultPersistenceError as error:
+            cause = error.__cause__ or error
+            _log(f"staged result write error job={job.id} error_type={type(cause).__name__} code={getattr(cause, 'code', '')}")
+            persisted = False
+        if not persisted:
+            staging_failures["n"] += 1
+            _log(f"staged result write failed job={job.id} persisted_count={leads_found['n']}")
+            return
+        rank_offset["n"] += len(ranked)
+        leads_found["n"] += len(ranked)
+        if job.discovery_id:
+            if not update_discovery_progress(
+                job.discovery_id,
+                f"{leads_found['n']} leads found",
+                min(99, 10 + leads_found["n"]),
+            ):
+                _log(f"discovery progress update failed job={job.id}")
+        # Publish on the workflow's owning loop after the confirmed write.
+        from services.events.bus import EventBus
+        bus = EventBus()
 
-            async def _publish():
-                await bus.publish_user_event(
-                    job.user_id, "discovery.leads",
-                    {"discovery_id": job.discovery_id or ""},
-                    job_id=job.id,
-                    status="running",
-                    progress=leads_found["n"],
-                )
+        async def _publish():
+            await bus.publish_user_event(
+                job.user_id, "discovery.leads",
+                {"discovery_id": job.discovery_id or ""},
+                job_id=job.id,
+                status="running",
+                progress=leads_found["n"],
+            )
 
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-            if loop is not None:
-                loop.create_task(_publish())
-            else:
-                asyncio.run(_publish())
-        except Exception as error:
-            print(f"[workflow_dispatcher] partial persistence failed: {error}")
-
-    def _store_batch(job_id: str, ranked: list) -> None:
-        from services.job_engine.storage import JobStorage
-        client_ok = JobStorage().append_search_results(job_id, ranked)
-        if not client_ok:
-            print("[workflow_dispatcher] append_search_results failed")
+        asyncio.run_coroutine_threadsafe(_publish(), workflow_loop).result()
 
     def progress_callback(stage: str, pct: int) -> None:
         on_progress(job.id, stage, pct)
@@ -220,9 +219,19 @@ async def run_search_workflow(job: Job, on_progress) -> dict:
     # The first-result hook already persisted the provider batch. Inserting
     # the same final batch again doubled Copilot's reported lead count and
     # could make result reads disagree with the finalized Discovery.
-    if result.get("ok") and result.get("leads") and leads_found["n"] == 0:
-        storage = JobStorage()
-        storage.store_search_results(job.id, result["leads"])
+    if result.get("ok") and result.get("leads") and leads_found["n"] == 0 and not staging_failures["n"]:
+        await asyncio.to_thread(persist_partial, result["leads"])
+
+    if staging_failures["n"]:
+        # Persist the incomplete-staging diagnosis before finalization. The
+        # finalizer still links confirmed rows, but must not declare success.
+        job.result = {**(job.result or {}), "search_staging": {
+            "failed_batches": staging_failures["n"],
+            "persisted_lead_count": leads_found["n"],
+            "provider_lead_count": provider_leads_seen["n"],
+        }}
+        if not await asyncio.to_thread(JobStorage().update_job, job.id, result=job.result):
+            raise SearchResultPersistenceError("Search staging failure could not be recorded")
 
     return result
 

@@ -7,7 +7,7 @@ const page = await readFile(new URL("../app/(dashboard)/lead-intelligence/page.t
 test("Lead Intelligence waits for an explicit analysis action", () => {
   assert.match(page, /const analyze = async/);
   assert.match(page, /onClick=\{\(\) => void analyze\(\)\}/);
-  assert.doesNotMatch(page, /useEffect/);
+  assert.match(page, /Read-only recovery; never starts AI work/);
 });
 
 test("Lead Intelligence renders distinct fact, signal, assessment, and guidance sections", () => {
@@ -27,7 +27,7 @@ test("Lead Intelligence makes AI drafting an explicit, review-only action", () =
   assert.match(page, /Generate strategy & draft/);
   assert.match(page, /AI-generated strategy and outreach draft/);
   assert.match(page, /Copy draft/);
-  assert.doesNotMatch(page, /useEffect/);
+  assert.match(page, /generateWorkspaceLeadStrategyDrafts\(token, ids, requestKey\.current, workspaceId\)/);
 });
 
 test("Lead Intelligence reports copy success or a safe manual-copy fallback", () => {

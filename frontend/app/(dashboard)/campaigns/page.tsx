@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useIntelligenceWorkspace } from "../../../hooks/useIntelligenceWorkspace";
 import { listCampaigns, updateCampaign, archiveCampaign, duplicateCampaign, deleteCampaign } from "../../../lib/api";
 import CampaignCard from "../../../components/campaigns/CampaignCard";
 import Icon from "../../../components/shared/Icon";
@@ -18,6 +20,13 @@ import { filterCampaigns, canonicalTotal } from "../../../lib/campaign-filters";
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
 
 export default function CampaignsPage() {
+  const params = useSearchParams();
+  const context = useIntelligenceWorkspace(params.get("workspace_id") || "", true);
+  if (!context.workspace) return <main role={context.error ? "alert" : "status"} className="p-8">{context.error || "Loading your workspace…"}</main>;
+  return <CampaignsWorkspace key={context.scope} workspaceId={context.workspace} />;
+}
+
+function CampaignsWorkspace({ workspaceId }: { workspaceId: string }) {
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [campaigns, setCampaigns] = useState<Array<Record<string, unknown>>>([]);
   const [loading, setLoading] = useState(true);
@@ -63,7 +72,7 @@ export default function CampaignsPage() {
   async function fetchCampaigns() {
     if (!sessionToken) return;
     // PR-3C: stale-while-revalidate — skeleton only when nothing is cached.
-    const key = scopedKey(sessionToken, "campaigns");
+    const key = scopedKey(sessionToken, "campaigns", workspaceId);
     if (!peekCache<any>(key)) setLoading(true);
 
     // PR-3D-FIX: generation guard — a slow/late resolution (including an
@@ -73,7 +82,7 @@ export default function CampaignsPage() {
       const result = await swrFetch<Array<Record<string, unknown>>>(
         key,
         async () => {
-          const res = await listCampaigns(sessionToken);
+          const res = await listCampaigns(sessionToken, workspaceId);
           // PR-3D-FIX: never convert a failed response into [] — throw so
           // the error path runs instead of the authoritative-empty path.
           if (!res.ok || !Array.isArray(res.campaigns)) {
@@ -100,7 +109,7 @@ export default function CampaignsPage() {
   }
 
   function invalidateCampaigns() {
-    if (sessionToken) invalidateClientCache(scopedKey(sessionToken, "campaigns"));
+    if (sessionToken) invalidateClientCache(scopedKey(sessionToken, "campaigns", workspaceId));
   }
 
   function mergeCampaign(campaign: Record<string, unknown>) {
@@ -123,12 +132,12 @@ export default function CampaignsPage() {
 
   useEffect(() => {
     fetchCampaigns();
-  }, [sessionToken]);
+  }, [sessionToken, workspaceId]);
 
   async function handleArchive(id: string) {
     if (!sessionToken) return;
     try {
-      const res = await archiveCampaign(sessionToken, id);
+      const res = await archiveCampaign(sessionToken, id, workspaceId);
       if (!res.ok || !res.campaign) throw new Error("archive failed");
       mergeCampaign(res.campaign);
       toast("success", "Campaign archived");
@@ -140,7 +149,7 @@ export default function CampaignsPage() {
     const newName = window.prompt("Rename campaign", currentName);
     if (!newName || newName.trim() === currentName || !sessionToken) return;
     try {
-      const res = await updateCampaign(sessionToken, id, { name: newName.trim() });
+      const res = await updateCampaign(sessionToken, id, { name: newName.trim() }, workspaceId);
       if (!res.ok || !res.campaign) throw new Error("rename failed");
       mergeCampaign(res.campaign);
       toast("success", "Campaign renamed");
@@ -151,7 +160,7 @@ export default function CampaignsPage() {
   async function handleUnarchive(id: string) {
     if (!sessionToken) return;
     try {
-      const res = await updateCampaign(sessionToken, id, { status: "planning" });
+      const res = await updateCampaign(sessionToken, id, { status: "planning" }, workspaceId);
       if (!res.ok || !res.campaign) throw new Error("restore failed");
       mergeCampaign(res.campaign);
       toast("success", "Campaign restored");
@@ -162,7 +171,7 @@ export default function CampaignsPage() {
   async function handleDuplicate(id: string) {
     if (!sessionToken) return;
     try {
-      const res = await duplicateCampaign(sessionToken, id);
+      const res = await duplicateCampaign(sessionToken, id, workspaceId);
       if (!res.ok) throw new Error("duplicate failed");
       const copy = res.campaign as Record<string, unknown>;
       if (!copy) throw new Error("duplicate response missing campaign");
@@ -176,7 +185,7 @@ export default function CampaignsPage() {
     if (!sessionToken) return;
     if (!window.confirm("Delete this campaign? This removes it from your workspace. Its strategy and leads are removed with it.")) return;
     try {
-      const res = await deleteCampaign(sessionToken, id);
+      const res = await deleteCampaign(sessionToken, id, workspaceId);
       if (!res.ok) throw new Error("delete failed");
       removeCampaign(id);
       toast("success", "Campaign deleted");
@@ -187,14 +196,14 @@ export default function CampaignsPage() {
   useActionHandlers({
     generate_strategy: (params) => {
       const campaignId = (params?.campaignId as string) || String(campaigns[0]?.id || "");
-      if (campaignId) window.location.href = `/campaigns/${campaignId}`;
+      if (campaignId) window.location.href = `/campaigns/${campaignId}?workspace_id=${encodeURIComponent(workspaceId)}`;
     },
     add_leads: (params) => {
       const campaignId = (params?.campaignId as string) || String(campaigns[0]?.id || "");
       if (campaignId) {
         const target = campaigns.find((c) => String(c.id) === campaignId) || null;
         const ctx = campaignAttachContext(target || { id: campaignId });
-        if (ctx) window.location.href = buildResearchUrl(ctx);
+        if (ctx) window.location.href = buildResearchUrl({ ...ctx, workspaceId });
       }
     },
     duplicate_campaign: async (params) => {
@@ -207,7 +216,7 @@ export default function CampaignsPage() {
     },
     open_campaign: (params) => {
       const campaignId = params?.campaignId as string | undefined;
-      if (campaignId) window.location.href = `/campaigns/${campaignId}`;
+      if (campaignId) window.location.href = `/campaigns/${campaignId}?workspace_id=${encodeURIComponent(workspaceId)}`;
     },
   });
 
@@ -247,7 +256,7 @@ export default function CampaignsPage() {
               ? "Loading campaigns\u2026"
               : `${campaigns.length} campaign${campaigns.length !== 1 ? "s" : ""} total${activeCampaigns.length > 0 ? ` \u00b7 ${activeCampaigns.length} active` : ""}`}
           </span>
-          <a href="/campaigns/new" className="rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-on-primary hover:brightness-110">Create Campaign</a>
+          <a href={`/campaigns/new?workspace_id=${encodeURIComponent(workspaceId)}`} className="rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-on-primary hover:brightness-110">Create Campaign</a>
         </div>
 
         {loading ? (
@@ -282,7 +291,7 @@ export default function CampaignsPage() {
                 Find leads in Discovery and create a campaign from the batch actions bar.
               </p>
               <a
-                href="/discovery"
+                href={`/discovery?workspace_id=${encodeURIComponent(workspaceId)}&fresh=1`}
                 className="mt-6 inline-flex items-center justify-center rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-on-primary hover:brightness-110 active:scale-[0.97] transition-all"
               >
                 Discover Leads
@@ -362,6 +371,7 @@ export default function CampaignsPage() {
                   <div key={c.id as string} className="animate-slide-up" style={{ animationDelay: `${i * 0.04}s` }}>
                     <CampaignCard
                       id={c.id as string}
+                      workspaceId={workspaceId}
                       name={c.name as string}
                       status={c.status as string}
                       step={c.current_step as string}
@@ -390,6 +400,7 @@ export default function CampaignsPage() {
                     <CampaignCard
                       key={c.id as string}
                       id={c.id as string}
+                      workspaceId={workspaceId}
                       name={c.name as string}
                       status={c.status as string}
                       step={c.current_step as string}

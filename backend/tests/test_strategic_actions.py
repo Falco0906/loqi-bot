@@ -26,6 +26,7 @@ from services.strategic.api import (
 from tests.test_knowledge_service import FakeSupabaseClient  # noqa: E402
 import main as main_module  # noqa: E402
 from services.strategic import api as strategic_api
+from unittest.mock import AsyncMock
 
 
 OWNER_A = "action-owner-a"
@@ -35,8 +36,7 @@ WS_B = "action-ws-b"
 
 
 def _install(store):
-    manager = SupabaseConnectionManager(url="http://test", key="test-key")
-    manager._client = FakeSupabaseClient(store)
+    manager = SupabaseConnectionManager(client=FakeSupabaseClient(store))
     set_connection_manager(manager)
 
 
@@ -79,6 +79,9 @@ def setup(monkeypatch):
     store = {}
     _install(store)
     monkeypatch.setattr("services.workspace.state._async_workspace", _workspace)
+    # Authorization is exercised separately against canonical fake memberships.
+    monkeypatch.setattr("services.workspace.access.resolve_workspace_context", lambda *_args: None)
+    monkeypatch.setattr("services.campaigns.creation.recover_creation", AsyncMock(return_value=None))
     return store
 
 
@@ -166,11 +169,12 @@ class TestActionExecution:
         asyncio.run(service.approve(OWNER_A, action["id"]))
         persisted = []
 
-        async def fake_persist(owner_id, campaign):
+        async def fake_persist(workspace_id, owner_id, identity, fingerprint, campaign):
+            assert workspace_id == WS_A and campaign["id"] == identity and fingerprint
             persisted.append((owner_id, campaign))
             return True
 
-        monkeypatch.setattr("services.workspace.state.persist_campaign_row", fake_persist)
+        monkeypatch.setattr("services.campaigns.creation.persist_creation", fake_persist)
         monkeypatch.setattr(
             "services.workspace.state.load_workspace_state",
             lambda owner_id, include_details=False: {"campaigns": []},
@@ -193,10 +197,10 @@ class TestActionExecution:
             asyncio.run(service.execute(OWNER_A, action["id"]))
         asyncio.run(service.approve(OWNER_A, action["id"]))
 
-        async def fail_persist(owner_id, campaign):
-            return False
+        async def fail_persist(*_args):
+            raise RuntimeError("Campaign could not be persisted")
 
-        monkeypatch.setattr("services.workspace.state.persist_campaign_row", fail_persist)
+        monkeypatch.setattr("services.campaigns.creation.persist_creation", fail_persist)
         monkeypatch.setattr(
             "services.workspace.state.load_workspace_state",
             lambda owner_id, include_details=False: {"campaigns": []},
@@ -205,10 +209,10 @@ class TestActionExecution:
         assert failed["status"] == "failed"
         assert failed["error"]
 
-        async def succeed_persist(owner_id, campaign):
+        async def succeed_persist(*_args):
             return True
 
-        monkeypatch.setattr("services.workspace.state.persist_campaign_row", succeed_persist)
+        monkeypatch.setattr("services.campaigns.creation.persist_creation", succeed_persist)
         completed = asyncio.run(service.execute(OWNER_A, action["id"]))
         assert completed["status"] == "completed"
 

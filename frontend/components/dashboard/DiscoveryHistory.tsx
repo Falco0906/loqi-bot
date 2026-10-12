@@ -1,6 +1,7 @@
 "use client";
+import { discoveryHistoryUrl } from "../../lib/discovery-context";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import AppPage from "../primitives/AppPage";
@@ -63,11 +64,11 @@ function statusBadge(status: DiscoveryListItem["status"]) {
   }
 }
 
-function DiscoveryRow({ item }: { item: DiscoveryListItem }) {
+function DiscoveryRow({ item, workspaceId }: { item: DiscoveryListItem; workspaceId: string }) {
   const brief = (item.summary?.brief as string) || "";
   return (
     <Link
-      href={`/discovery?q=${encodeURIComponent(item.query)}&page=1&provider_discovery=${encodeURIComponent(item.id)}`}
+      href={discoveryHistoryUrl(item, workspaceId)}
       onClick={() => setNavState("discovery", "selected", { id: item.id, at: Date.now() })}
       className="group flex items-center justify-between gap-4 px-4 md:px-6 py-5 border-b border-outline-variant/20 transition-colors hover:bg-surface-container-low"
     >
@@ -89,7 +90,7 @@ function DiscoveryRow({ item }: { item: DiscoveryListItem }) {
   );
 }
 
-export default function DiscoveryHistory() {
+export default function DiscoveryHistory({ workspaceId = "" }: { workspaceId?: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const parsed = useMemo(() => parseDiscoveryMode(searchParams), [searchParams]);
@@ -98,7 +99,8 @@ export default function DiscoveryHistory() {
   const [attachAttempt, setAttachAttempt] = useState(0);
   const [attachState, setAttachState] = useState<"idle" | "starting" | "failed">("idle");
   const [inputQuery, setInputQuery] = useState("");
-  const { data, loading, error, retry } = useData(fetchDiscoveryListFresh);
+  const loadHistory = useCallback(() => fetchDiscoveryListFresh(workspaceId), [workspaceId]);
+  const { data, loading, error, retry } = useData(loadHistory);
   const [searching, setSearching] = useState(false);
   const autonomousLeadSourcingEnabled = useBetaFeature("autonomous_lead_sourcing");
 
@@ -359,7 +361,7 @@ export default function DiscoveryHistory() {
                       </h2>
                       <div className="w-full bg-surface-lowest border border-outline-variant/20 rounded-xl overflow-hidden shadow-sm">
                         {section.items.map((item) => (
-                          <DiscoveryRow key={item.id} item={item} />
+                          <DiscoveryRow key={item.id} item={item} workspaceId={workspaceId} />
                         ))}
                       </div>
                     </section>
@@ -373,7 +375,7 @@ export default function DiscoveryHistory() {
                   </h2>
                   <div className="w-full bg-surface-lowest border border-outline-variant/20 rounded-xl overflow-hidden shadow-sm">
                     {older.slice(0, 20).map((item) => (
-                      <DiscoveryRow key={item.id} item={item} />
+                      <DiscoveryRow key={item.id} item={item} workspaceId={workspaceId} />
                     ))}
                   </div>
                 </section>

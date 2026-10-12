@@ -1,10 +1,21 @@
 import asyncio
 from types import SimpleNamespace
+import pytest
+from services.knowledge.context_adapter import KnowledgePromptContext
 
 import services.drafts.service as drafts
 import services.drafts.api as drafts_api
 from services.drafts.api import BatchDraftRequest, batch_draft
 from services.job_engine.models import BatchItem, BatchItemStatus, Job
+
+
+@pytest.fixture(autouse=True)
+def valid_empty_workspace_knowledge(monkeypatch):
+    monkeypatch.setattr(drafts, "_recover_batch_draft", lambda *_args: asyncio.sleep(0, result=None))
+    async def context(*_args, **kwargs):
+        assert kwargs["workspace_id"] == "workspace"
+        return KnowledgePromptContext()
+    monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", context)
 
 
 async def test_enqueue_persists_items_before_queueing(monkeypatch):
@@ -73,8 +84,8 @@ async def test_draft_batch_runner_completes_durable_item(monkeypatch):
     updates = []
 
     class Storage:
-        def list_batch_resume_items(self, *_): return [item]
-        def list_batch_items(self, *_): return [item]
+        def list_batch_resume_items(self, *_, **__): return [item]
+        def list_batch_items(self, *_, **__): return [item]
         def mark_batch_item_generating(self, *_): return True
         def mark_batch_item_completed(self, *_):
             item.status = BatchItemStatus.COMPLETED
@@ -83,7 +94,7 @@ async def test_draft_batch_runner_completes_durable_item(monkeypatch):
         def mark_batch_item_failed(self, *_): updates.append("failed"); return True
 
     monkeypatch.setattr("services.job_engine.job_manager._storage", Storage())
-    monkeypatch.setattr(drafts, "_run_draft_with_retry", lambda *_: asyncio.sleep(0, result={"message": "Draft ready: ---\nHello\n---", "subject": "Hi"}))
+    monkeypatch.setattr(drafts, "_run_draft_with_retry", lambda *_: asyncio.sleep(0, result={"ok": True, "message": "Draft ready: ---\nHello\n---", "subject": "Hi"}))
     monkeypatch.setattr("services.workspace.state.persist_draft_awaited", lambda *_, **__: asyncio.sleep(0, result=True))
     monkeypatch.setattr("services.workspace.state.load_campaign_state", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(drafts, "publish", lambda *_args, **_kwargs: None)
@@ -119,8 +130,8 @@ async def test_draft_batch_activity_failure_does_not_undo_completed_item(monkeyp
     updates = []
 
     class Storage:
-        def list_batch_resume_items(self, *_): return [item]
-        def list_batch_items(self, *_): return [item]
+        def list_batch_resume_items(self, *_, **__): return [item]
+        def list_batch_items(self, *_, **__): return [item]
         def mark_batch_item_generating(self, *_): return True
         def mark_batch_item_completed(self, *_): item.status = BatchItemStatus.COMPLETED; updates.append("completed"); return True
         def mark_batch_item_failed(self, *_): updates.append("failed"); return True
@@ -129,7 +140,7 @@ async def test_draft_batch_activity_failure_does_not_undo_completed_item(monkeyp
         def append_draft_generated(self, **_kwargs): raise RuntimeError("storage unavailable")
 
     monkeypatch.setattr("services.job_engine.job_manager._storage", Storage())
-    monkeypatch.setattr(drafts, "_run_draft_with_retry", lambda *_: asyncio.sleep(0, result={"message": "Draft ready: ---\nHello\n---", "subject": "Hi"}))
+    monkeypatch.setattr(drafts, "_run_draft_with_retry", lambda *_: asyncio.sleep(0, result={"ok": True, "message": "Draft ready: ---\nHello\n---", "subject": "Hi"}))
     monkeypatch.setattr("services.workspace.state.persist_draft_awaited", lambda *_, **__: asyncio.sleep(0, result=True))
     monkeypatch.setattr("services.workspace.state.load_campaign_state", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(drafts, "get_activity_repository", lambda: FailingActivityRepository())

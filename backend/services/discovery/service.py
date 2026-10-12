@@ -124,6 +124,7 @@ def create_discovery(
     user_id: str,
     query: str,
     title: Optional[str] = None,
+    ui_filters: dict[str, str] | None = None,
 ) -> Optional[dict]:
     """Persist a new discovery row (no job link yet).
 
@@ -149,7 +150,7 @@ def create_discovery(
         "last_viewed_at": now,
         "last_refreshed_at": now,
         "summary": {},
-        "metadata": {},
+        "metadata": {"ui_filters": ui_filters} if ui_filters else {},
         "filters": [],
         "provider_provenance": {},
         "created_by": user_id,
@@ -175,6 +176,7 @@ async def create_search_run(
     workspace_id: str = "",
     on_update=None,
     initiation: Literal["manual", "automated"] = "automated",
+    ui_filters: dict[str, str] | None = None,
 ) -> dict:
     """Create a durable Discovery, then schedule its linked search job.
 
@@ -215,6 +217,7 @@ async def create_search_run(
             user_id,
             query,
             display_title,
+            **({"ui_filters": ui_filters} if ui_filters else {}),
         )
     discovery_id = str((discovery or {}).get("id") or "")
     if not discovery_id:
@@ -294,6 +297,7 @@ async def create_search_run(
         user_id=user_id,
         query=query,
         discovery_id=discovery_id,
+        workspace_id=workspace_id,
         on_update=handle_update,
         on_complete=finalize_discovery,
     )
@@ -627,15 +631,18 @@ def list_discoveries(workspace_id: str, limit: int = 100) -> list[dict]:
         return []
 
 
-def get_discovery(discovery_id: str, workspace_id: str = "") -> Optional[dict]:
+def get_discovery(discovery_id: str, workspace_id: str = "", *, strict: bool = False) -> Optional[dict]:
     """Full discovery detail: row + surfaced companies + leads (joined).
 
     When ``workspace_id`` is supplied (request path), the lookup is constrained
     to that workspace so a foreign discovery id cannot return another tenant's
     PII. Internal/worker callers may omit it (trusted, server-derived ids).
+    Context readers use ``strict`` to distinguish missing rows from outages.
     """
     client = get_supabase_client()
     if not client:
+        if strict:
+            raise RuntimeError("Discovery context persistence is unavailable")
         return None
     try:
         query = (
@@ -655,9 +662,13 @@ def get_discovery(discovery_id: str, workspace_id: str = "") -> Optional[dict]:
         if workspace_id:
             query = query.eq("workspace_id", workspace_id)
         result = query.is_("deleted_at", "null").limit(1).execute()
+        if strict and not isinstance(getattr(result, "data", None), list):
+            raise RuntimeError("Discovery context read returned invalid data")
         rows = getattr(result, "data", None) or []
         return rows[0] if rows else None
     except Exception as e:
+        if strict:
+            raise
         _log(f"get_discovery error: {e}")
         return None
 
@@ -677,7 +688,7 @@ def get_discovery_lead_provenance(
         return {}
     client = get_supabase_client()
     if not client:
-        return {}
+        raise RuntimeError("Discovery persistence is unavailable")
     try:
         result = (
             client.table("discoveries")
@@ -688,7 +699,9 @@ def get_discovery_lead_provenance(
             .limit(1)
             .execute()
         )
-        rows = getattr(result, "data", None) or []
+        rows = getattr(result, "data", None)
+        if not isinstance(rows, list):
+            raise ValueError("Invalid Discovery provenance response")
         links = rows[0].get("discovery_leads", []) if rows else []
         provenance: dict[str, list[str]] = {}
         for link in links if isinstance(links, list) else []:
@@ -709,7 +722,7 @@ def get_discovery_lead_provenance(
             "get_discovery_lead_provenance error: "
             f"{type(error).__name__}"
         )
-        return {}
+        raise
 
 
 def mark_discovery_status(
@@ -746,8 +759,8 @@ async def finalize_discovery(job) -> bool:
     """Move a discovery to ``completed`` using its job's stored results.
 
     Called from the runner's ``on_complete`` hook (event loop context).
-    Idempotent — a discovery is never re-finalized. Every step degrades
-    gracefully so a partial failure can never lose an otherwise good run.
+    Idempotent for completed runs. Confirmed staged rows are retained even
+    when another batch failed, but unavailable staging can never mean zero.
     """
     try:
         discovery_id = str(getattr(job, "discovery_id", "") or "")
@@ -805,7 +818,9 @@ async def finalize_discovery(job) -> bool:
             providers[provider] = providers.get(provider, 0) + 1
             email = str(lead.get("email") or "").strip().lower()
             fallback = str(lead.get("lead_id") or lead.get("id") or lead.get("linkedin_url") or "").strip().lower()
-            source_key = email or (f"{provider}:{fallback}" if fallback else "")
+            # Collapse duplicates within a source, but let each source reach
+            # canonical normalization so its durable provenance is retained.
+            source_key = f"{provider}:{email or fallback}" if email or fallback else ""
             if source_key and source_key in source_keys:
                 continue
             if source_key:
@@ -867,8 +882,11 @@ async def finalize_discovery(job) -> bool:
         _link_companies, discovery_id, workspace_id, ws_lead_ids
     )
 
-    if normalization_errors or linked is None or companies_linked is None:
+    staging = (getattr(job, "result", None) or {}).get("search_staging") or {}
+    if staging.get("failed_batches") or normalization_errors or linked is None or companies_linked is None:
         reasons = normalization_errors[:3]
+        if staging.get("failed_batches"):
+            reasons.append("Some provider results could not be staged")
         if linked is None:
             reasons.append("Discovery lead links could not be persisted")
         if companies_linked is None:
@@ -876,10 +894,12 @@ async def finalize_discovery(job) -> bool:
         error = "; ".join(reasons) or "Discovery persistence failed"
         summary = {
             "error": error,
-            "provider_lead_count": len(leads),
+            "provider_lead_count": staging.get("provider_lead_count", len(leads)),
             "persisted_lead_count": len(ws_lead_ids),
             "skipped_provider_record_count": skipped_records,
-            "persistence": "partial_failed",
+            "persistence": "partial_failed" if ws_lead_ids else "failed",
+            "staged_lead_count": len(leads),
+            "failed_staging_batches": staging.get("failed_batches", 0),
         }
         await asyncio.to_thread(
             mark_discovery_status,
@@ -1161,8 +1181,7 @@ def update_discovery_progress(discovery_id: str, stage: str, progress: int) -> b
     """Persist the live execution tick (stage label + percent) onto metadata."""
     if not discovery_id:
         return False
-    _merge_metadata(discovery_id, {"progress": {"stage": stage, "progress": progress}})
-    return True
+    return _merge_metadata(discovery_id, {"progress": {"stage": stage, "progress": progress}})
 
 
 def _match_score(lead: dict) -> float:

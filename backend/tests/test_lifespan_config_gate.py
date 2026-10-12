@@ -19,6 +19,9 @@ async def _enter_lifespan() -> None:
 
 
 def test_lifespan_logs_configuration_warnings_then_allows_startup(monkeypatch, caplog):
+    # Exercise the normal lifespan branch while replacing every startup
+    # operation before it can reach integrations.
+    monkeypatch.setattr(main, "is_test_runtime", lambda: False)
     calls: list[str] = []
     monkeypatch.setattr(main.app_lifespan, "begin_startup", lambda app: 0.0)
     monkeypatch.setattr(
@@ -45,6 +48,7 @@ def test_lifespan_logs_configuration_warnings_then_allows_startup(monkeypatch, c
 
 
 def test_lifespan_marks_failed_and_reraises_invalid_configuration(monkeypatch, caplog):
+    monkeypatch.setattr(main, "is_test_runtime", lambda: False)
     failures: list[str] = []
     monkeypatch.setattr(main.app_lifespan, "begin_startup", lambda app: 0.0)
     monkeypatch.setattr(

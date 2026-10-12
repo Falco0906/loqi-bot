@@ -163,7 +163,7 @@ def _source_provenance(row: Any, run_sources: list[str] | None = None) -> list[s
     values = raw_values if isinstance(raw_values, list) else []
     sources: list[str] = []
     for value in [*values, getattr(row, "source", ""), *(run_sources or [])]:
-        source = str(value or "").strip()
+        source = value.strip() if isinstance(value, str) else ""
         if source and source not in sources:
             sources.append(source)
     return sources
@@ -191,18 +191,32 @@ async def _provider_sources_for_discovery(
     """Read optional per-run provenance without weakening lead-list reads."""
     if not discovery_id:
         return {}
-    try:
-        return await asyncio.to_thread(
-            get_discovery_lead_provenance, discovery_id, workspace_id,
-        )
-    except Exception as error:
-        # A provider/run read is an optional Discovery projection.  The
-        # canonical lead list remains available when that projection fails.
-        log.warning(
-            "discovery lead provenance unavailable workspace_id=%s error_type=%s",
-            workspace_id, type(error).__name__,
-        )
-        return {}
+    return await asyncio.to_thread(
+        get_discovery_lead_provenance, discovery_id, workspace_id,
+    )
+
+
+def _canonical_display_fields(row: Any, profile: Any, company: Any) -> dict[str, str]:
+    """Shared persisted-field projection for search and selected intelligence."""
+    def text(value):
+        return value.strip() if isinstance(value, str) else ""
+
+    metadata = getattr(row, "metadata", {})
+    metadata = metadata if isinstance(metadata, dict) else {}
+    imported = metadata.get("csv_import")
+    imported = imported if isinstance(imported, dict) else {}
+    provider = metadata.get("provider_context")
+    provider = provider if isinstance(provider, dict) else {}
+    fields = {
+        field: text(getattr(row, field, "")) or text(getattr(profile, field, ""))
+        for field in ("first_name", "last_name", "email", "title", "phone", "linkedin_url")
+    }
+    for field, company_field in (("company", "name"), ("website", "website"),
+                                 ("location", "location"), ("industry", "industry")):
+        fields[field] = (text(imported.get(field)) or text(getattr(company, company_field, ""))
+                         or text(provider.get(field)))
+    fields["website"] = fields["website"] or text(getattr(company, "domain", "")) or text(provider.get("domain"))
+    return fields
 
 
 async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1, page_size: int = 50,
@@ -217,9 +231,14 @@ async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1
             error, operation="workspace_lead_list", workspace_id=workspace_id,
         )
 
-    run_sources_by_lead = await _provider_sources_for_discovery(
-        discovery_id, workspace_id,
-    )
+    warnings: list[str] = []
+    try:
+        run_sources_by_lead = await _provider_sources_for_discovery(discovery_id, workspace_id)
+    except Exception as error:
+        log.exception("discovery lead provenance unavailable workspace_id=%s error_type=%s",
+                      workspace_id, type(error).__name__)
+        run_sources_by_lead = {}
+        warnings.append("Saved search results could not be fully loaded. Available workspace matches are shown.")
 
     # ``workspace_leads`` owns the Lead Database. Global lead/company rows
     # enrich display fields when available, but must never make an imported
@@ -249,28 +268,21 @@ async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1
     for row in workspace_rows:
         profile = profile_by_id.get(row.lead_id)
         company = company_by_id.get(row.company_id or "")
-        metadata = getattr(row, "metadata", {})
-        imported_metadata = metadata.get("csv_import", {}) if isinstance(metadata, dict) else {}
-        if not isinstance(imported_metadata, dict):
-            imported_metadata = {}
         sources = _source_provenance(row, run_sources_by_lead.get(row.id))
         source_kind, source_label = _source_presentation(sources)
         record = {
-            "id": row.id, "first_name": row.first_name or getattr(profile, "first_name", ""),
-            "last_name": row.last_name or getattr(profile, "last_name", ""),
-            "email": row.email or getattr(profile, "email", ""), "title": row.title or getattr(profile, "title", ""),
-            "phone": row.phone or getattr(profile, "phone", ""), "linkedin_url": row.linkedin_url or getattr(profile, "linkedin_url", ""),
-            "company": getattr(company, "name", "") or imported_metadata.get("company", ""),
-            "website": getattr(company, "website", "") or imported_metadata.get("website", ""),
-            "location": getattr(company, "location", "") or imported_metadata.get("location", ""),
-            "industry": getattr(company, "industry", "") or imported_metadata.get("industry", ""),
+            "id": row.id, **_canonical_display_fields(row, profile, company),
             "status": row.lead_status,
             "source": str(getattr(row, "source", "") or ""),
             "source_provenance": sources,
             "source_kind": source_kind,
             "source_label": source_label,
         }
-        searchable = " ".join(str(value or "") for value in record.values()).lower()
+        # Internal IDs/status and provenance labels are not prospect keywords.
+        searchable = " ".join(record[field] for field in (
+            "first_name", "last_name", "email", "title", "company", "website",
+            "location", "industry", "linkedin_url", "phone",
+        )).lower()
         matches_filters = all(
             not value or value.lower() in str(record.get(field, "") or "").lower()
             for field, value in filters.items() if field != "keywords"
@@ -284,9 +296,12 @@ async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1
         matches_keywords = not keyword_needle or keyword_needle in searchable
         if (not needle or needle in searchable or included_by_discovery) and matches_filters and matches_keywords:
             records.append(record)
-    records.sort(key=lambda record: (record["company"].lower(), record["last_name"].lower(), record["first_name"].lower()))
+    records.sort(key=lambda record: (record["company"].lower(), record["last_name"].lower(), record["first_name"].lower(), record["id"]))
     total = len(records); start = max(page - 1, 0) * page_size
-    return {"leads": records[start:start + page_size], "total": total, "page": page, "page_size": page_size}
+    response = {"leads": records[start:start + page_size], "total": total, "page": page, "page_size": page_size}
+    if warnings:
+        response["warnings"] = warnings
+    return response
 
 
 async def analyze_workspace_leads(
@@ -310,18 +325,25 @@ async def analyze_workspace_leads(
 
     guidance = await _business_guidance(actor_user_id, workspace_id)
     results: list[dict[str, Any]] = []
-    for lead in selected_leads:
+    slots = asyncio.Semaphore(8)
+
+    async def analyze_one(lead):
+        async with slots:
+            return await analyze_one_scoped(lead)
+
+    async def analyze_one_scoped(lead):
         try:
-            results.append(await _analyze_selected_lead(lead))
+            return await _analyze_selected_lead(lead)
         except Exception as error:
             # A malformed canonical record must not discard useful analysis for
             # other explicitly selected leads. Do not include PII in the log.
             log.exception("lead intelligence failed for workspace_lead_id=%s", lead["id"])
-            results.append({
+            return {
                 "lead": _lead_display(lead),
                 "status": "failed",
                 "error": "This lead could not be analyzed from its current data.",
-            })
+            }
+    results = list(await asyncio.gather(*(analyze_one(lead) for lead in selected_leads)))
     return {"results": results, "business_guidance": guidance}
 
 
@@ -336,18 +358,28 @@ async def generate_workspace_lead_strategy_drafts(
     rather than client state or URL parameters, the authority for every model
     input. This function neither persists nor sends generated content.
     """
+    analysis = await analyze_workspace_leads(workspace_id, actor_user_id, lead_ids)
+    return await generate_strategy_from_analysis(analysis)
+
+
+async def generate_strategy_from_analysis(analysis: dict[str, Any], *, existing_results=None, on_result=None):
+    """Consume one authorized evidence snapshot; checkpoint each lead if requested."""
     from services.intelligence.ai import OpenAIError, generate_evidence_grounded_lead_strategy
 
-    analysis = await analyze_workspace_leads(workspace_id, actor_user_id, lead_ids)
-    results: list[dict[str, Any]] = []
+    results = list(existing_results or [])
+    finished_ids = {item["lead_id"] for item in results}
     for item in analysis["results"]:
         lead = item["lead"]
+        if lead["id"] in finished_ids:
+            continue
         if item["status"] != "completed":
             results.append({
                 "lead_id": lead["id"],
                 "status": "failed",
                 "error": "Strategy and draft require completed lead intelligence.",
             })
+            if on_result:
+                await on_result(results)
             continue
         try:
             generated = await asyncio.to_thread(
@@ -368,8 +400,16 @@ async def generate_workspace_lead_strategy_drafts(
             results.append({
                 "lead_id": lead["id"],
                 "status": "failed",
-                "error": "Strategy and draft could not be generated right now.",
+                "error": {
+                    "credentials": "AI generation credentials are unavailable. Contact your administrator.",
+                    "provider_timeout": "The AI provider did not return in time. No draft was generated for this lead.",
+                    "rate_limit": "The AI provider is rate limited. Generate again when capacity is available.",
+                    "invalid_output": "The AI response could not be validated. No draft was generated for this lead.",
+                }.get(error.kind, "Strategy and draft could not be generated right now."),
+                "error_kind": getattr(error, "kind", "provider"),
             })
+        if on_result:
+            await on_result(results)
     return {"results": results}
 
 
@@ -381,46 +421,56 @@ async def _load_selected_workspace_leads(
     workspace_leads = WorkspaceLeadRepository()
     profiles = LeadRepository()
     companies = CompanyRepository()
-    selected: list[dict[str, Any]] = []
-    for lead_id in lead_ids:
-        row = await workspace_leads.get_for_workspace(lead_id, workspace_id)
-        if row is None or getattr(row, "deleted_at", None) is not None:
-            continue
-        profile = await profiles.get(row.lead_id) if row.lead_id else None
-        company = await companies.get(row.company_id) if row.company_id else None
-        selected.append(_canonical_analysis_lead(row, profile, company))
-    return selected
+    slots = asyncio.Semaphore(8)
+
+    async def read(operation, *args):
+        async with slots:
+            return await operation(*args)
+
+    rows = await asyncio.gather(*(read(workspace_leads.get_for_workspace, lead_id, workspace_id) for lead_id in lead_ids))
+    rows = [row for row in rows if row is not None and getattr(row, "deleted_at", None) is None]
+    if len(rows) != len(lead_ids):
+        raise LeadImportError("One or more selected leads are unavailable in this workspace")
+    profile_ids = list(dict.fromkeys(row.lead_id for row in rows if row.lead_id))
+    company_ids = list(dict.fromkeys(row.company_id for row in rows if row.company_id))
+    profile_values, company_values = await asyncio.gather(
+        asyncio.gather(*(read(profiles.get, identity) for identity in profile_ids)),
+        asyncio.gather(*(read(companies.get, identity) for identity in company_ids)),
+    )
+    profile_map, company_map = dict(zip(profile_ids, profile_values)), dict(zip(company_ids, company_values))
+    return [_canonical_analysis_lead(row, profile_map.get(row.lead_id), company_map.get(row.company_id)) for row in rows]
 
 
 def _canonical_analysis_lead(row: Any, profile: Any, company: Any) -> dict[str, Any]:
     """Make the bounded canonical record accepted by deterministic services."""
-    first_name = row.first_name or getattr(profile, "first_name", "")
-    last_name = row.last_name or getattr(profile, "last_name", "")
-    industry = getattr(company, "industry", "") or ""
-    company_metadata = getattr(company, "metadata", {}) or {}
+    display = _canonical_display_fields(row, profile, company)
+    first_name, last_name = display["first_name"], display["last_name"]
     workspace_metadata = getattr(row, "metadata", {}) or {}
+    workspace_metadata = workspace_metadata if isinstance(workspace_metadata, dict) else {}
+    imported = workspace_metadata.get("csv_import")
+    imported = imported if isinstance(imported, dict) else {}
+    company_size = imported.get("company_size")
+    industry = display["industry"]
+    company_metadata = getattr(company, "metadata", {}) or {}
+    company_metadata = company_metadata if isinstance(company_metadata, dict) else {}
     record = {
         "id": row.id,
+        **display,
         "first_name": first_name,
         "last_name": last_name,
         "name": f"{first_name} {last_name}".strip(),
-        "email": row.email or getattr(profile, "email", ""),
-        "title": row.title or getattr(profile, "title", ""),
-        "phone": row.phone or getattr(profile, "phone", ""),
-        "linkedin_url": row.linkedin_url or getattr(profile, "linkedin_url", ""),
-        "company": getattr(company, "name", "") or "",
-        "website": getattr(company, "website", "") or "",
-        "location": getattr(company, "location", "") or "",
         "industry": industry,
         "company_industry": industry,
         "company_description": getattr(company, "description", "") or "",
         "company_employees": getattr(company, "employee_count", None) or 0,
+        "company_size": company_size.strip() if isinstance(company_size, str) else "",
         "company_revenue_band": getattr(company, "revenue_band", "") or "",
         "company_growth_stage": str(company_metadata.get("growth_stage") or ""),
         "company_technology": company_metadata.get("technology") or {},
         "buying_signals": list(company_metadata.get("buying_signals") or []),
         "recent_events": list(company_metadata.get("recent_events") or []),
         "pain_points": list(company_metadata.get("pain_points") or []),
+        "source_provenance": list(workspace_metadata.get("source_provenance") or []),
     }
     # The canonical normalizer stores provider qualification under this key.
     # Omit absent scores so generate_lead_intelligence keeps its established
@@ -443,7 +493,7 @@ async def _analyze_selected_lead(lead: dict[str, Any]) -> dict[str, Any]:
         "name": lead["company"],
         "website": lead["website"],
         "industry": lead["industry"],
-        "size": str(lead["company_employees"] or ""),
+        "size": lead.get("company_size") or str(lead["company_employees"] or ""),
         "buying_signals": lead["buying_signals"],
         "recent_events": lead["recent_events"],
     }, enrichment)
@@ -480,7 +530,7 @@ async def _analyze_selected_lead(lead: dict[str, Any]) -> dict[str, Any]:
 def _lead_display(lead: dict[str, Any]) -> dict[str, Any]:
     return {
         key: lead.get(key, "")
-        for key in ("id", "first_name", "last_name", "email", "title", "company", "website", "location", "industry")
+        for key in ("id", "first_name", "last_name", "email", "title", "company", "website", "location", "industry", "source_provenance")
     }
 
 
@@ -493,7 +543,7 @@ def _facts(lead: dict[str, Any]) -> list[dict[str, str]]:
         ("Website", lead["website"]),
         ("Location", lead["location"]),
         ("Industry", lead["industry"]),
-        ("Company size", str(lead["company_employees"] or "")),
+        ("Company size", lead.get("company_size") or str(lead["company_employees"] or "")),
     )
     return [
         {"label": label, "value": value, "source": "canonical workspace lead data"}

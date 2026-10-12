@@ -192,8 +192,7 @@ def _attach_client(db):
     """Point the global launch repos + workspace_state reads at a fake DB."""
     import services.platform.supabase as platform_supabase
 
-    cm = SupabaseConnectionManager(url="http://test", key="test-key")
-    cm._client = db
+    cm = SupabaseConnectionManager(client=db)
     set_connection_manager(cm)
     platform_supabase._client = db
 

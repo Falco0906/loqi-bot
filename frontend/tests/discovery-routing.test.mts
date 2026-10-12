@@ -87,8 +87,8 @@ assert.strictEqual(nextState("idle", { type: "instruction", kind: "research" }),
 // lets "Found 25 companies" open the exact run instead of a stale singleton.
 const DEEP_LINK = "/discovery/0190-cafe-babe-deadbeef";
 const researchActions = completionActions(TASKS.research, DEEP_LINK);
-const primary = researchActions.find((a) => a.label === "View Discovery");
-assert.ok(primary, "completion actions must include a View Discovery action");
+const primary = researchActions.find((a) => a.label === "View results");
+assert.ok(primary, "completion actions must include a View results action");
 assert.strictEqual(primary.path, DEEP_LINK, "View Discovery must point at the run's own discovery");
 
 // Other task kinds keep their default workspace destinations when no

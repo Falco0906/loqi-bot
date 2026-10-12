@@ -278,10 +278,15 @@ class CompanyRepository(LaunchRepository[Company]):
         return await self._first_where([("domain", "eq", domain)])
 
     async def list_by_ids(self, company_ids: list[str]) -> list[Company]:
-        """Load a bounded set of canonical companies in one query."""
+        """Load canonical companies in bounded queries, without response truncation."""
         if not company_ids:
             return []
-        return await self._list([("id", "in", company_ids)], limit=len(company_ids))
+        rows: list[Company] = []
+        ids = list(dict.fromkeys(company_ids))
+        for start in range(0, len(ids), 200):
+            batch = ids[start:start + 200]
+            rows.extend(await self._list([("id", "in", batch)], limit=len(batch)))
+        return rows
 
 
 class WorkspaceCompanyRepository(LaunchRepository[WorkspaceCompany]):
@@ -329,10 +334,15 @@ class LeadRepository(LaunchRepository[Lead]):
         return await self._first_where([("canonical_id", "eq", canonical_id)])
 
     async def list_by_ids(self, lead_ids: list[str]) -> list[Lead]:
-        """Load a bounded set of canonical leads in one query."""
+        """Load canonical profiles in bounded queries, without response truncation."""
         if not lead_ids:
             return []
-        return await self._list([("id", "in", lead_ids)], limit=len(lead_ids))
+        rows: list[Lead] = []
+        ids = list(dict.fromkeys(lead_ids))
+        for start in range(0, len(ids), 200):
+            batch = ids[start:start + 200]
+            rows.extend(await self._list([("id", "in", batch)], limit=len(batch)))
+        return rows
 
 
 class WorkspaceLeadRepository(LaunchRepository[WorkspaceLead]):
@@ -357,10 +367,26 @@ class WorkspaceLeadRepository(LaunchRepository[WorkspaceLead]):
         ])
 
     async def list_for_workspace(self, workspace_id: str) -> list[WorkspaceLead]:
-        return await self._list([
-            ("workspace_id", "eq", workspace_id),
-            ("deleted_at", "is", "null"),
-        ])
+        # PostgREST caps each response; increasing limit alone does not make
+        # search complete. Read bounded pages in a unique, stable order.
+        client = self._client()
+        if client is None:
+            raise RuntimeError("Workspace lead persistence is not configured")
+        rows: list[WorkspaceLead] = []
+        offset, batch_size = 0, 500
+        while True:
+            def read_page():
+                return (client.table(self._table_name).select("*")
+                        .eq("workspace_id", workspace_id).is_("deleted_at", "null")
+                        .order("id").range(offset, offset + batch_size - 1).execute())
+            response = await asyncio.to_thread(read_page)
+            data = getattr(response, "data", None)
+            if not isinstance(data, list):
+                raise ValueError("Invalid workspace lead persistence response")
+            rows.extend(self._from_row(row) for row in data)
+            if len(data) < batch_size:
+                return rows
+            offset += len(data)
 
     async def list_by_email(self, workspace_id: str, email: str) -> list[WorkspaceLead]:
         return await self._list([
@@ -455,7 +481,6 @@ class CampaignRepository(LaunchRepository[Campaign]):
             raise RuntimeError("Invalid campaign creation read response")
         return self._from_row(result.data[0]) if result.data else None
 
-
     async def create_once(self, *, campaign_id: str, workspace_id: str, actor_user_id: str,
                           request_hash: str, campaign: dict[str, Any], lead_ids: list[str]) -> tuple[Campaign, bool]:
         """Atomically commit one campaign + attachments, or recover its prior commit."""
@@ -475,7 +500,6 @@ class CampaignRepository(LaunchRepository[Campaign]):
                 or entity.metadata.get("creation_request_hash") != request_hash):
             raise RuntimeError("Campaign creation returned inconsistent identity")
         return entity, data["created"]
-
 
     async def update_for_workspace_with_revision(
         self,
@@ -578,8 +602,17 @@ class DraftRepository(LaunchRepository[Draft]):
     async def list_for_workspace(self, workspace_id: str) -> list[Draft]:
         return await self._list([("workspace_id", "eq", workspace_id)])
 
-    async def get_for_workspace(self, entity_id: str, workspace_id: str) -> Draft | None:
+    async def get_for_workspace(self, entity_id: str, workspace_id: str, *, strict: bool = False) -> Draft | None:
         """Fetch by id constrained to a workspace (tenant-scoped lookup)."""
+        if strict:
+            client = self._client()
+            if client is None:
+                raise RuntimeError("Draft persistence unavailable")
+            result = await asyncio.to_thread(lambda: client.table("drafts").select("*")
+                .eq("id", entity_id).eq("workspace_id", workspace_id).limit(1).execute())
+            if not isinstance(result.data, list):
+                raise RuntimeError("Invalid draft persistence response")
+            return self._from_row(result.data[0]) if result.data else None
         return await self._first_where([
             ("id", "eq", entity_id),
             ("workspace_id", "eq", workspace_id),

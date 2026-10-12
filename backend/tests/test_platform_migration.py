@@ -40,6 +40,8 @@ def test_manual_migration_instructions_use_safe_placeholder_without_project_conf
 
 def test_apply_migrations_logs_configured_project_instructions(monkeypatch):
     messages: list[str] = []
+    # Exercise the ordinary runtime branch with the database probe mocked.
+    monkeypatch.setattr(migration, "is_test_runtime", lambda: False)
     monkeypatch.setenv("SUPABASE_URL", "https://configured-project.supabase.co")
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setattr(migration, "_check_table_exists", lambda: False)

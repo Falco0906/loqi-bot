@@ -10,6 +10,7 @@ import { useBetaFeature } from "../../contexts/BetaFeaturesContext";
 
 type Props = {
   id: string;
+  workspaceId?: string;
   name: string;
   status: string;
   step?: string;
@@ -44,6 +45,7 @@ const STEP_ACTIONS: Record<string, { primary: string; link: (id: string) => stri
 
 export default function CampaignCard({
   id,
+  workspaceId = "",
   name,
   status,
   step,
@@ -73,12 +75,19 @@ export default function CampaignCard({
   }, []);
 
   const stepAction = STEP_ACTIONS[step || ""] || (status === "planning" ? STEP_ACTIONS.research : null);
+  const scopedHref = (href: string) => {
+    if (!workspaceId) return href;
+    const [path, query = ""] = href.split("?");
+    const params = new URLSearchParams(query);
+    params.set("workspace_id", workspaceId);
+    return `${path}?${params}`;
+  };
 
   const primaryAction = (() => {
     if (status === "archived") {
       return (
         <Link
-          href={`/campaigns/${id}`}
+          href={scopedHref(`/campaigns/${id}`)}
       onClick={() => setNavState("campaign", "selected", { id, at: Date.now() })}
           className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
         >
@@ -89,7 +98,7 @@ export default function CampaignCard({
     if (step === "review") {
       return (
         <Link
-          href={stepAction?.link(id) || `/draft?campaign=${encodeURIComponent(id)}`}
+          href={scopedHref(stepAction?.link(id) || `/draft?campaign=${encodeURIComponent(id)}`)}
           className="px-3 py-1.5 rounded-lg bg-secondary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
         >
           {stepAction?.primary || "Review Drafts"}
@@ -99,7 +108,7 @@ export default function CampaignCard({
     if (step === "sending" && outboundDeliveryEnabled) {
       return (
         <Link
-          href={stepAction?.link(id) || `/campaigns/${id}`}
+          href={scopedHref(stepAction?.link(id) || `/campaigns/${id}`)}
           className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
         >
           <Icon name="rocket_launch" className="text-xs mr-1 align-middle inline-block" />
@@ -109,7 +118,7 @@ export default function CampaignCard({
     }
     return (
       <Link
-        href={stepAction?.link(id) || `/campaigns/${id}`}
+        href={scopedHref(stepAction?.link(id) || `/campaigns/${id}`)}
         className="px-3 py-1.5 rounded-lg bg-primary text-on-primary text-xs font-bold transition-all duration-150 hover:brightness-110 active:scale-[0.95]"
       >
         {step === "sending" ? "Review outreach" : stepAction?.primary || "Continue Planning"}
@@ -121,7 +130,7 @@ export default function CampaignCard({
     if (status !== "archived" && (step === "review" || step === "sending")) {
       return (
         <Link
-          href={`/campaigns/${id}`}
+          href={scopedHref(`/campaigns/${id}`)}
       onClick={() => setNavState("campaign", "selected", { id, at: Date.now() })}
           className="px-3 py-1.5 rounded-lg border border-outline-variant/20 text-on-surface text-xs font-medium transition-all duration-150 hover:border-primary/40 hover:text-primary active:scale-[0.95]"
         >
@@ -140,7 +149,7 @@ export default function CampaignCard({
             <Icon name="campaign" className="text-primary text-lg" />
           </div>
           <div className="min-w-0">
-            <Link href={`/campaigns/${id}`}
+            <Link href={scopedHref(`/campaigns/${id}`)}
       onClick={() => setNavState("campaign", "selected", { id, at: Date.now() })} className="hover:underline">
               <h3 className="text-body-lg text-on-surface font-bold truncate">{name}</h3>
             </Link>

@@ -159,11 +159,18 @@ class TestOAuthInitiate:
         assert session is not None
         assert session.provider_type == "google"
 
-    def test_redirect_uri_param(self, client, mock_provider):
-        resp = client.get("/api/v1/auth/oauth/google", params={"redirect_uri": "http://localhost/custom"})
+    def test_redirect_uri_param(self, client, mock_provider, monkeypatch):
+        callback_uri = "http://localhost:3000/auth/google/callback"
+        monkeypatch.setattr(IDENTITY_CONFIG.google_oauth, "local_redirect_uris", (callback_uri,))
+        resp = client.get("/api/v1/auth/oauth/google", params={"redirect_uri": callback_uri})
         assert resp.status_code == 200
-        data = resp.json()
-        assert "redirect_uri=http%3A%2F%2Flocalhost%2Fcustom" in data["authorize_url"]
+        params = _extract_params(resp.json()["authorize_url"])
+        assert params["redirect_uri"] == callback_uri
+
+        from services.identity.api import _get_oauth_session_repo
+        session = asyncio_run(_get_oauth_session_repo().find_by_state(params["state"]))
+        assert session is not None
+        assert session.redirect_uri == callback_uri
 
 
 # ═══════════════════════════════════════════════════════════════════════

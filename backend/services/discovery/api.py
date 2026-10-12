@@ -6,7 +6,7 @@ import logging
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from services.identity import dependencies as identity_dependencies
 from services.workspace import access as workspace_access
@@ -44,6 +44,14 @@ class StartSearchRequest(BaseModel):
 class CreateDiscoveryRequest(BaseModel):
     query: str
     initiation: Literal["manual", "automated"] = "automated"
+    filters: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("filters")
+    @classmethod
+    def validate_filters(cls, value):
+        if any(key not in {"location", "industry", "company", "title", "keywords"} or len(text) > 200 for key, text in value.items()):
+            raise ValueError("Unsupported Discovery filter or value too long")
+        return value
 
 
 class LeadDecisionRequest(BaseModel):
@@ -79,6 +87,7 @@ async def create_discovery_endpoint(payload: CreateDiscoveryRequest, request: Re
             session_token,
             workspace_id=workspace_id,
             initiation=payload.initiation,
+            ui_filters=payload.filters,
         )
     except DiscoveryJobLifecycleError as error:
         raise HTTPException(status_code=error.status_code, detail=error.detail) from error

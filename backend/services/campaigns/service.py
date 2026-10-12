@@ -154,6 +154,7 @@ def load_campaigns(
         user_id,
         workspace_id=workspace_id,
         include_details=include_details,
+        strict=True,
     )
     return state["campaigns"]
 
@@ -197,7 +198,6 @@ async def _authorize_selected_lead(workspace_id: str, lead: dict[str, Any]) -> d
     if await WorkspaceLeadRepository().get_for_workspace(selected_id, workspace_id) is None:
         raise HTTPException(status_code=404, detail="Selected lead not found in this workspace")
     return {"id": selected_id, "workspace_lead_id": selected_id}
-
 
 
 async def create_campaign(
@@ -368,8 +368,9 @@ async def update_campaign(
     )
     from services.workspace.timeline import record_campaign_launched
 
+    campaigns = await asyncio.to_thread(load_campaigns, owner_id, workspace_id=workspace_id)
     target = next(
-        (campaign for campaign in load_campaigns(owner_id, workspace_id=workspace_id)
+        (campaign for campaign in campaigns
          if campaign.get("id") == campaign_id),
         None,
     )
@@ -396,8 +397,9 @@ async def update_campaign(
         target["status"] = status
         updates["status"] = status
         if status == "completed" and old_status != "completed":
+            drafts = await asyncio.to_thread(load_drafts_only, owner_id, workspace_id=workspace_id, strict=True)
             approved = [
-                draft for draft in load_drafts_only(owner_id, workspace_id=workspace_id)
+                draft for draft in drafts
                 if draft.get("campaign_id") == campaign_id and draft.get("status") == "approved"
             ]
             if not approved:
@@ -497,10 +499,11 @@ async def add_campaign_lead(
         owner_id,
         campaign_id,
         workspace_id=workspace_id,
+        strict=True,
     )
     if not target:
         raise HTTPException(status_code=404, detail="Campaign not found")
-    lead = dict(lead)
+    lead = dict(await _authorize_selected_lead(workspace_id, lead))
     candidate_email = str(lead.get("email") or "").strip().lower()
     lead_id = str(lead.get("id") or lead.get("linkedin_url") or candidate_email or uuid.uuid4())
     lead["id"] = lead_id
@@ -521,11 +524,6 @@ async def add_campaign_lead(
         target["discovery_id"] = discovery_id
         await persist_campaign_update_awaited(
             owner_id, campaign_id, {"discovery_id": discovery_id}, workspace_id=workspace_id,
-        )
-    if discovery_id:
-        await maybe_auto_strategy(
-            session_token, owner_id, campaign_id, str(target.get("objective") or "").strip(),
-            target, workspace_id=workspace_id,
         )
     publish(session_token, WMEventType.LEAD_DISCOVERED, {
         "id": lead_id, "name": lead.get("name", lead.get("full_name", "")),
@@ -597,13 +595,14 @@ async def attach_discovery(
     from services.discovery.service import get_discovery
     from services.workspace.state import (
         load_campaign_state,
-        persist_campaign_lead_id_awaited,
+        persist_campaign_lead_link_awaited,
         persist_campaign_update_awaited,
         remove_campaign_lead_links_awaited,
     )
 
+    campaigns = await asyncio.to_thread(load_campaigns, owner_id, workspace_id=workspace_id)
     target = next(
-        (campaign for campaign in load_campaigns(owner_id, workspace_id=workspace_id)
+        (campaign for campaign in campaigns
          if campaign.get("id") == campaign_id),
         None,
     )
@@ -613,58 +612,70 @@ async def attach_discovery(
     if not discovery:
         raise HTTPException(status_code=404, detail="Discovery not found")
     attached_ids: list[str] = []
+    created_link_ids: list[str] = []
     requested = 0
-    for link in discovery.get("discovery_leads") or []:
-        workspace_lead = link.get("workspace_lead") if isinstance(link, dict) else None
-        if not isinstance(workspace_lead, dict) or not workspace_lead.get("id"):
-            continue
-        requested += 1
-        lead = {
-            "id": workspace_lead.get("id"), "email": workspace_lead.get("email"),
-            "first_name": workspace_lead.get("first_name", ""),
-            "last_name": workspace_lead.get("last_name", ""),
-            "title": workspace_lead.get("title", ""),
-            "company": ((workspace_lead.get("company") or {}).get("name", "")
-                        if isinstance(workspace_lead.get("company"), dict) else ""),
-            "source": "discovery",
-        }
-        canonical_id = await persist_campaign_lead_id_awaited(
-            owner_id, campaign_id, lead, workspace_id=workspace_id,
-        )
-        if not canonical_id:
-            compensated = await remove_campaign_lead_links_awaited(
-                owner_id, campaign_id, attached_ids, workspace_id=workspace_id,
+    try:
+        for link in discovery.get("discovery_leads") or []:
+            workspace_lead = link.get("workspace_lead") if isinstance(link, dict) else None
+            if not isinstance(workspace_lead, dict) or not workspace_lead.get("id"):
+                continue
+            requested += 1
+            lead = {
+                "id": workspace_lead.get("id"), "email": workspace_lead.get("email"),
+                "first_name": workspace_lead.get("first_name", ""),
+                "last_name": workspace_lead.get("last_name", ""),
+                "title": workspace_lead.get("title", ""),
+                "company": ((workspace_lead.get("company") or {}).get("name", "")
+                            if isinstance(workspace_lead.get("company"), dict) else ""),
+                "source": "discovery",
+            }
+            persisted = await persist_campaign_lead_link_awaited(
+                owner_id, campaign_id, lead, workspace_id=workspace_id,
             )
-            detail = (
+            if persisted is None:
+                raise HTTPException(status_code=503, detail="Campaign attachment failed")
+            attached_ids.append(persisted.lead_id)
+            if persisted.created_link_id:
+                created_link_ids.append(persisted.created_link_id)
+        if requested != len(attached_ids):
+            raise HTTPException(status_code=503, detail="Campaign attachment could not be verified")
+        if attached_ids:
+            target["updated_at"] = datetime.now(timezone.utc).isoformat()
+            if str(target.get("discovery_id") or "") != discovery_id:
+                target["discovery_id"] = discovery_id
+                await persist_campaign_update_awaited(
+                    owner_id, campaign_id, {"discovery_id": discovery_id}, workspace_id=workspace_id,
+                )
+            publish(session_token, WMEventType.CAMPAIGN_UPDATED, {
+                "campaign_id": campaign_id,
+                "lead_count": (target.get("lead_count") or 0) + len(attached_ids),
+                "source_discovery_id": discovery_id,
+            }, actor="user")
+        campaign = await asyncio.to_thread(
+            load_campaign_state, owner_id, campaign_id, workspace_id=workspace_id, strict=True,
+        )
+        if campaign is None:
+            raise HTTPException(status_code=503, detail="Campaign could not be reloaded after attachment")
+        return {"ok": True, "campaign": campaign, "added": len(attached_ids)}
+    except Exception as error:
+        try:
+            compensated = await remove_campaign_lead_links_awaited(
+                owner_id, campaign_id, created_link_ids, workspace_id=workspace_id,
+            )
+        except Exception as rollback_error:
+            compensated = False
+            log.error("campaign_attachment_rollback_error campaign=%s workspace=%s error_type=%s original_error_type=%s",
+                      campaign_id, workspace_id, type(rollback_error).__name__, type(error).__name__)
+        if not compensated:
+            error.add_note("Campaign attachment rollback could not be confirmed")
+            log.error("campaign_attachment_rollback_unconfirmed campaign=%s workspace=%s link_ids=%s original_error_type=%s",
+                      campaign_id, workspace_id, created_link_ids, type(error).__name__)
+        if isinstance(error, HTTPException) and error.detail == "Campaign attachment failed":
+            error.detail = (
                 "Campaign attachment failed and was rolled back" if compensated
                 else "Campaign attachment failed and rollback could not be confirmed"
             )
-            raise HTTPException(status_code=503, detail=detail)
-        attached_ids.append(str(canonical_id))
-    if requested != len(attached_ids):
-        raise HTTPException(status_code=503, detail="Campaign attachment could not be verified")
-    if attached_ids:
-        target["updated_at"] = datetime.now(timezone.utc).isoformat()
-        if str(target.get("discovery_id") or "") != discovery_id:
-            target["discovery_id"] = discovery_id
-            await persist_campaign_update_awaited(
-                owner_id, campaign_id, {"discovery_id": discovery_id}, workspace_id=workspace_id,
-            )
-        await maybe_auto_strategy(
-            session_token, owner_id, campaign_id, str(target.get("objective") or "").strip(),
-            target, workspace_id=workspace_id,
-        )
-        publish(session_token, WMEventType.CAMPAIGN_UPDATED, {
-            "campaign_id": campaign_id,
-            "lead_count": (target.get("lead_count") or 0) + len(attached_ids),
-            "source_discovery_id": discovery_id,
-        }, actor="user")
-    campaign = await asyncio.to_thread(
-        load_campaign_state, owner_id, campaign_id, workspace_id=workspace_id,
-    )
-    if campaign is None:
-        raise HTTPException(status_code=503, detail="Campaign could not be reloaded after attachment")
-    return {"ok": True, "campaign": campaign, "added": len(attached_ids)}
+        raise
 
 
 async def persist_strategy_job_meta(owner_id: str, campaign_id: str, meta: dict, *, workspace_id: str) -> bool:
@@ -674,10 +685,7 @@ async def persist_strategy_job_meta(owner_id: str, campaign_id: str, meta: dict,
 
 async def load_strategy_job_meta(owner_id: str, campaign_id: str, *, workspace_id: str) -> dict | None:
     from services.workspace.state import load_campaign_state
-    try:
-        state = await asyncio.to_thread(load_campaign_state, owner_id, campaign_id, workspace_id=workspace_id)
-    except Exception:
-        return None
+    state = await asyncio.to_thread(load_campaign_state, owner_id, campaign_id, workspace_id=workspace_id, strict=True)
     return state.get("strategy_job") if isinstance(state, dict) and isinstance(state.get("strategy_job"), dict) else None
 
 
@@ -698,7 +706,7 @@ def register_strategy_workflow() -> None:
         registry.register(WorkflowRegistration(type="strategy", description="Campaign strategy generation", runner_fn=run_strategy_job))
 
 
-async def build_strategy_context(target: dict[str, Any]) -> dict[str, Any]:
+async def build_strategy_context(target: dict[str, Any], *, workspace_id: str = "") -> dict[str, Any]:
     context: dict[str, Any] = {}
     leads = [lead for lead in target.get("leads") or [] if isinstance(lead, dict)]
     if leads:
@@ -727,8 +735,10 @@ async def build_strategy_context(target: dict[str, Any]) -> dict[str, Any]:
     if discovery_id:
         try:
             from services.discovery.service import get_discovery
-            discovery = await asyncio.to_thread(get_discovery, discovery_id)
+            discovery = await asyncio.to_thread(get_discovery, discovery_id, workspace_id, strict=bool(workspace_id))
         except Exception:
+            if workspace_id:
+                raise
             discovery = None
         metadata = discovery.get("metadata") if isinstance(discovery, dict) else None
         plan = metadata.get("plan") if isinstance(metadata, dict) else None
@@ -757,11 +767,19 @@ async def run_strategy_job(job, _on_progress) -> dict[str, Any]:
     target, objective = dict(payload.get("target") or {}), str(payload.get("objective") or "")
     job_id, workspace_id = job.id, job.workspace_id
     try:
-        await persist_strategy_job_meta(job.user_id, job.campaign_id, {"id": job_id, "status": "running", "started_at": job.created_at.isoformat(), "finished_at": None, "error": None}, workspace_id=workspace_id)
-        context = await build_strategy_context(target)
+        if not workspace_id:
+            from services.persistence.launch import CampaignRepository
+            campaign = await CampaignRepository().get(job.campaign_id)
+            workspace_id = str(getattr(campaign, "workspace_id", "") or "")
+            if not workspace_id:
+                raise RuntimeError("Campaign workspace could not be loaded")
+        if not await persist_strategy_job_meta(job.user_id, job.campaign_id, {"id": job_id, "status": "running", "started_at": job.created_at.isoformat(), "finished_at": None, "error": None}, workspace_id=workspace_id):
+            raise RuntimeError("Strategy running status could not be persisted")
         from services.knowledge.context_adapter import retrieve_knowledge_context
         query = " ".join(str(item).strip() for item in (objective, target.get("search_query"), target.get("name")) if str(item or "").strip())
-        context["knowledge_context"] = (await retrieve_knowledge_context(job.user_id, query=query, categories=["company", "icp", "messaging", "sales_offer"], limit=8)).to_dict()
+        knowledge_context = (await retrieve_knowledge_context(job.user_id, query=query, categories=["company", "icp", "messaging", "sales_offer"], limit=8, workspace_id=workspace_id)).to_dict()
+        context = await build_strategy_context(target, workspace_id=workspace_id)
+        context["knowledge_context"] = knowledge_context
         from services.intelligence.ai import OpenAIError, generate_campaign_strategy
         try:
             strategy = await asyncio.to_thread(generate_campaign_strategy, objective, context)
@@ -772,13 +790,16 @@ async def run_strategy_job(job, _on_progress) -> dict[str, Any]:
         from services.workspace.state import persist_campaign_update_awaited
         if not await persist_campaign_update_awaited(job.user_id, job.campaign_id, {"strategy": strategy}, workspace_id=workspace_id):
             raise RuntimeError("Strategy could not be persisted")
-        await persist_strategy_job_meta(job.user_id, job.campaign_id, {"id": job_id, "status": "completed", "started_at": job.created_at.isoformat(), "finished_at": datetime.now(timezone.utc).isoformat(), "error": None}, workspace_id=workspace_id)
+        if not await persist_strategy_job_meta(job.user_id, job.campaign_id, {"id": job_id, "status": "completed", "started_at": job.created_at.isoformat(), "finished_at": datetime.now(timezone.utc).isoformat(), "error": None}, workspace_id=workspace_id):
+            raise RuntimeError("Strategy completion status could not be persisted")
         return {"ok": True, "result": {"strategy": strategy}}
     except Exception as error:
         try:
-            await persist_strategy_job_meta(job.user_id, job.campaign_id, {"id": job_id, "status": "failed", "started_at": job.created_at.isoformat(), "finished_at": datetime.now(timezone.utc).isoformat(), "error": str(error)[:200]}, workspace_id=workspace_id)
+            if not await persist_strategy_job_meta(job.user_id, job.campaign_id, {"id": job_id, "status": "failed", "started_at": job.created_at.isoformat(), "finished_at": datetime.now(timezone.utc).isoformat(), "error": str(error)[:200]}, workspace_id=workspace_id):
+                log.error("strategy_failure_status_unconfirmed campaign_id=%s job_id=%s original_error_type=%s", job.campaign_id, job_id, type(error).__name__)
         except Exception:
-            pass
+            log.exception("strategy_failure_status_persistence_failed campaign_id=%s job_id=%s", job.campaign_id, job_id)
+        log.exception("strategy_job_failed campaign_id=%s job_id=%s", job.campaign_id, job_id)
         return {"ok": False, "error": str(error)}
 
 

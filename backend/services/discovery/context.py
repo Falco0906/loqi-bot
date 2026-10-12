@@ -13,8 +13,12 @@ from typing import Any
 from services.knowledge.context_adapter import retrieve_knowledge_context
 
 
-async def retrieve_discovery_context(owner_id: str, query: str = "") -> dict[str, Any]:
-    """Return bounded, owner-scoped context; failures degrade to empty context."""
+async def retrieve_discovery_context(owner_id: str, query: str = "", *, workspace_id: str = "") -> dict[str, Any]:
+    """Return scoped context; explicit workspace failures remain observable.
+
+    Legacy callers without a selected workspace retain optional/fail-soft
+    context. An explicit workspace is authorized by each canonical reader.
+    """
     empty = {
         "query": query,
         "knowledge": {"items": [], "sources": [], "item_ids": [], "source_ids": []},
@@ -23,6 +27,9 @@ async def retrieve_discovery_context(owner_id: str, query: str = "") -> dict[str
         "provenance": {"query": query, "knowledge_item_ids": [], "knowledge_source_ids": [], "strategic_update_ids": []},
     }
     if not owner_id:
+        if workspace_id:
+            from services.workspace.access import WorkspaceAccessDenied
+            raise WorkspaceAccessDenied(workspace_id)
         return empty
 
     async def load_knowledge() -> dict[str, Any]:
@@ -32,16 +39,24 @@ async def retrieve_discovery_context(owner_id: str, query: str = "") -> dict[str
                 query=query,
                 categories=["company", "icp", "messaging"],
                 limit=8,
+                workspace_id=workspace_id,
             )
             return knowledge.to_dict()
         except Exception:
+            if workspace_id:
+                raise
             return empty["knowledge"]
 
     async def load_strategic_updates() -> list[dict[str, Any]]:
         try:
             from services.strategic.service import StrategicIntelligenceService
-            return (await StrategicIntelligenceService().list_updates(owner_id))[:6]
+            service = StrategicIntelligenceService()
+            if workspace_id:
+                return (await service.list_updates(owner_id, workspace_id=workspace_id))[:6]
+            return (await service.list_updates(owner_id))[:6]
         except Exception:
+            if workspace_id:
+                raise
             return []
 
     # These two bounded, workspace-scoped reads have no dependency on one

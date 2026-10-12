@@ -82,19 +82,21 @@ function providerWorkspaceLeadResult(
   const profile = isRecord(workspaceLead.lead) ? workspaceLead.lead : {};
   const metadata = recordFromJson(workspaceLead.metadata);
   const imported = recordFromJson(metadata.csv_import);
+  const providerContext = recordFromJson(metadata.provider_context);
   const company = companyById.get(String(workspaceLead.company_id || "")) || {};
   const provider = String(discoveryLead.source_provider || "Provider");
+  const text = (value: unknown) => typeof value === "string" ? value.trim() : "";
 
   return {
     id,
-    first_name: String(workspaceLead.first_name || profile.first_name || ""),
-    last_name: String(workspaceLead.last_name || profile.last_name || ""),
-    email: String(workspaceLead.email || profile.email || ""),
-    title: String(workspaceLead.title || profile.title || ""),
-    company: String(company.name || imported.company || profile.company_name || ""),
-    website: String(company.website || imported.website || ""),
-    location: String(company.location || imported.location || profile.location || ""),
-    industry: String(company.industry || imported.industry || ""),
+    first_name: text(workspaceLead.first_name) || text(profile.first_name),
+    last_name: text(workspaceLead.last_name) || text(profile.last_name),
+    email: text(workspaceLead.email) || text(profile.email),
+    title: text(workspaceLead.title) || text(profile.title),
+    company: text(imported.company) || text(company.name) || text(providerContext.company) || text(profile.company_name),
+    website: text(imported.website) || text(company.website) || text(providerContext.website) || text(company.domain) || text(providerContext.domain),
+    location: text(imported.location) || text(company.location) || text(providerContext.location) || text(profile.location),
+    industry: text(imported.industry) || text(company.industry) || text(providerContext.industry),
     source: "provider",
     sourceLabel: provider,
   };
@@ -992,12 +994,12 @@ export function workspaceLeadToRecommendation(
   };
 }
 
-export async function fetchDiscoveryList(): Promise<DiscoveryListItem[] | null> {
-  return memoizedFetch(sessionKey("discovery-list"), async () => {
+export async function fetchDiscoveryList(workspaceId = ""): Promise<DiscoveryListItem[] | null> {
+  return memoizedFetch(sessionKey(`discovery-list${workspaceId ? `:${workspaceId}` : ""}`), async () => {
     const token = getToken();
     if (!token) throw new Error("Your session is unavailable. Please sign in again.");
     try {
-      const res = await listDiscoveries(token);
+      const res = await listDiscoveries(token, workspaceId);
       const items = Array.isArray(res.discoveries) ? res.discoveries : [];
       return items.map((d) => ({
         id: String(d.id),
@@ -1026,9 +1028,9 @@ export async function fetchDiscoveryList(): Promise<DiscoveryListItem[] | null> 
  * Discovery history is a primary page surface. Always revalidate it on page
  * entry so an earlier empty response cannot hide searches created elsewhere.
  */
-export function fetchDiscoveryListFresh(): Promise<DiscoveryListItem[] | null> {
-  fetchCache.delete(sessionKey("discovery-list"));
-  return fetchDiscoveryList();
+export function fetchDiscoveryListFresh(workspaceId = ""): Promise<DiscoveryListItem[] | null> {
+  fetchCache.delete(sessionKey(`discovery-list${workspaceId ? `:${workspaceId}` : ""}`));
+  return fetchDiscoveryList(workspaceId);
 }
 
 export function prefetchDiscoveryList(): Promise<DiscoveryListItem[] | null> {
@@ -1039,12 +1041,12 @@ export function peekCachedDiscoveryList(): DiscoveryListItem[] | null {
   return peekCached<DiscoveryListItem[]>("discovery-list");
 }
 
-export async function fetchDiscovery(id: string): Promise<DiscoveryData | null> {
-  return memoizedFetch(sessionKey(`discovery:${id}`), async () => {
+export async function fetchDiscovery(id: string, workspaceId = ""): Promise<DiscoveryData | null> {
+  return memoizedFetch(sessionKey(`discovery:${id}${workspaceId ? `:${workspaceId}` : ""}`), async () => {
     const token = getToken();
     if (!token || !id) return null;
     try {
-      const res = await getDiscovery(token, id);
+      const res = await getDiscovery(token, id, workspaceId);
       const d = res.discovery;
       if (!d) return null;
 
@@ -1199,9 +1201,9 @@ export function peekCachedDiscovery(id: string): DiscoveryData | null {
  * polling loop while a run is in flight — the memoized fetch would otherwise
  * throttle real updates to the 20s cache TTL and the UI would look stuck.
  */
-export async function fetchDiscoveryFresh(id: string): Promise<DiscoveryData | null> {
-  fetchCache.delete(sessionKey(`discovery:${id}`));
-  return fetchDiscovery(id);
+export async function fetchDiscoveryFresh(id: string, workspaceId = ""): Promise<DiscoveryData | null> {
+  fetchCache.delete(sessionKey(`discovery:${id}${workspaceId ? `:${workspaceId}` : ""}`));
+  return fetchDiscovery(id, workspaceId);
 }
 
 export function invalidateDiscoveryCache(): void {
@@ -1211,6 +1213,8 @@ export function invalidateDiscoveryCache(): void {
 export async function startDiscoverySearch(
   rawQuery: string,
   initiation: "manual" | "automated" = "automated",
+  workspaceId = "",
+  filters?: Record<string, string>,
 ): Promise<{ jobId: string; discoveryId: string } | null> {
   const token = getToken();
   // PR-4.5: SINGLE normalization choke point — every Discovery creation
@@ -1224,7 +1228,7 @@ export async function startDiscoverySearch(
     console.log("[kickoff] startDiscoverySearch: ABORT (no token or empty query)");
     return null;
   }
-  const res = await startDiscoveryJob(token, query.trim(), initiation);
+  const res = await startDiscoveryJob(token, query.trim(), initiation, workspaceId, filters);
   console.log("[kickoff] startDiscoverySearch: startDiscoveryJob resolved", res);
   if (res && res.discovery_id) {
     invalidateDiscoveryCache();

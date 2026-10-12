@@ -142,11 +142,11 @@ async def test_generation_api_uses_the_same_authenticated_scope(monkeypatch):
     async def scope(_request):
         return "actor-a", "workspace-a"
 
-    async def generate(workspace_id, actor_user_id, lead_ids):
+    async def generate(workspace_id, actor_user_id, lead_ids, request_key):
         assert (workspace_id, actor_user_id, lead_ids) == ("workspace-a", "actor-a", ["lead-a"])
-        return {"results": []}
+        return {"ok": True, "results": []}
 
     monkeypatch.setattr(lead_api, "_scope", scope)
-    monkeypatch.setattr(lead_api, "generate_workspace_lead_strategy_drafts", generate)
-    response = await lead_api.generate_lead_strategy_drafts("_", lead_api.LeadAnalysisRequest(lead_ids=["lead-a"]), object())
+    monkeypatch.setattr("services.leads.generation.start_lead_generation", generate)
+    response = await lead_api.generate_lead_strategy_drafts("_", lead_api.LeadGenerationRequest(lead_ids=["lead-a"], request_key="intent"), object())
     assert response == {"ok": True, "results": []}

@@ -258,8 +258,7 @@ class TestCommunicationPersistenceHelpers:
         db = FakeClient()
         _seed(db, "outbound_messages", "ws-A", 2)
         _seed(db, "outbound_messages", "ws-B", 1)
-        cm = SupabaseConnectionManager(url="http://test", key="k")
-        cm._client = db
+        cm = SupabaseConnectionManager(client=db)
         set_connection_manager(cm)
         set_repository_provider(RepositoryProvider.SUPABASE)
         try:

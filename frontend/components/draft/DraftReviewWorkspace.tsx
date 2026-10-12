@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
+import { useIntelligenceWorkspace } from "../../hooks/useIntelligenceWorkspace";
+import { discoveryReturnUrl } from "../../lib/discovery-context";
 import { ApiError, TimeoutError } from "../../lib/api";
 import { swrFetch, peekCache, scopedKey, invalidateClientCache } from "../../lib/client-cache";
 import { getNavState, setNavState } from "../../lib/nav-state";
@@ -104,6 +106,22 @@ function describeDraftActionError(err: unknown, fallback: string): string {
 }
 
 export default function DraftReviewWorkspace() {
+  const params = useSearchParams();
+  const context = useIntelligenceWorkspace(params.get("workspace_id") || "", true);
+  const campaignId = params.get("campaign") || "";
+  if (!context.workspace) return <div role={context.error ? "alert" : "status"} className="p-6">{context.error || "Loading your workspace…"} <a href="/discovery">Return to Discover</a></div>;
+  let returnUrl = `/discovery?workspace_id=${encodeURIComponent(context.workspace)}`;
+  try { if (typeof window !== "undefined") returnUrl = discoveryReturnUrl(window.sessionStorage, context.scope, context.workspace); } catch { /* URL scope remains available. */ }
+  return <div className="flex h-full min-h-0 flex-col">
+    {campaignId && <a className="px-4 py-2 text-sm text-primary" href={`/campaigns/${encodeURIComponent(campaignId)}?workspace_id=${encodeURIComponent(context.workspace)}`}>Back to campaign</a>}
+    {!campaignId && <a className="px-4 py-2 text-sm text-primary" href={returnUrl}>Back to Discover</a>}
+    <ScopedDraftReview key={`${context.scope}:${campaignId}`} workspaceId={context.workspace} />
+  </div>;
+}
+
+function ScopedDraftReview({ workspaceId }: { workspaceId: string }) {
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const outboundDeliveryEnabled = useBetaFeature("outbound_delivery");
   const searchParams = useSearchParams();
   const campaignParam = searchParams?.get("campaign") || null;
@@ -164,7 +182,8 @@ export default function DraftReviewWorkspace() {
       let campaignReady = false;
       for (const d of pending) {
         try {
-          const res = await approveDraft(sessionToken, d.id);
+          const res = await approveDraft(sessionToken, d.id, workspaceId);
+          if (!mounted.current) return;
           if (res.ok) {
             const updated = res.draft as DraftEntry;
             setDrafts((prev) =>
@@ -199,18 +218,20 @@ export default function DraftReviewWorkspace() {
     }
     // PR-3C: stale-while-revalidate — if both lists are cached, render them
     // immediately (no skeleton) and refresh silently in the background.
-    const draftsKey = scopedKey(sessionToken, "drafts");
-    const campaignsKey = scopedKey(sessionToken, "campaigns-meta");
+    const draftsKey = scopedKey(sessionToken, "drafts", workspaceId);
+    const campaignsKey = scopedKey(sessionToken, "campaigns-meta", workspaceId);
     const fullyCached = !!peekCache<any>(draftsKey) && !!peekCache<any>(campaignsKey);
     if (!fullyCached) setLoading(true);
     setBackendError(false);
     try {
       const applyDrafts = (value: { ok: boolean; drafts: DraftEntry[] }) => {
+        if (!mounted.current) return;
         if (value.ok && Array.isArray(value.drafts)) {
           setDrafts(value.drafts as DraftEntry[]);
         }
       };
       const applyCampaigns = (value: { ok: boolean; campaigns: CampaignInfo[] }) => {
+        if (!mounted.current) return;
         if (value.ok && Array.isArray(value.campaigns)) {
           setCampaigns(value.campaigns as CampaignInfo[]);
         }
@@ -224,31 +245,33 @@ export default function DraftReviewWorkspace() {
       const [draftRes, campaignRes] = await Promise.allSettled([
         swrFetch<any>(
           draftsKey,
-          () => listDrafts(sessionToken),
+          () => listDrafts(sessionToken, workspaceId),
           draftStale ? { onStale: applyDrafts, onUpdate: applyDrafts } : { onUpdate: applyDrafts },
         ),
         swrFetch<any>(
           campaignsKey,
-          () => listCampaigns(sessionToken),
+          () => listCampaigns(sessionToken, workspaceId),
           metaStale ? { onStale: applyCampaigns, onUpdate: applyCampaigns } : { onUpdate: applyCampaigns },
         ),
       ]);
 
-      if (draftRes.status === "rejected" && campaignRes.status === "rejected") {
-        if (!fullyCached) setBackendError(true);
-        // Cached content stays visible when only the refresh failed.
+      if (!mounted.current) return;
+      if (draftRes.status === "rejected" || campaignRes.status === "rejected") {
+        setDrafts([]); setCampaigns([]); invalidateDraftCaches(); setBackendError(true);
+      } else if (campaignParam && !campaignRes.value.campaigns.some((campaign: CampaignInfo) => campaign.id === campaignParam)) {
+        setDrafts([]); setCampaigns([]); setBackendError(true);
       }
     } catch {
-      if (!fullyCached) setBackendError(true);
+      if (mounted.current) setBackendError(true);
     } finally {
-      setLoading(false);
+      if (mounted.current) setLoading(false);
     }
-  }, [sessionToken]);
+  }, [sessionToken, workspaceId, campaignParam]);
 
   function invalidateDraftCaches() {
     if (!sessionToken) return;
-    invalidateClientCache(scopedKey(sessionToken, "drafts"));
-    invalidateClientCache(scopedKey(sessionToken, "campaigns-meta"));
+    invalidateClientCache(scopedKey(sessionToken, "drafts", workspaceId));
+    invalidateClientCache(scopedKey(sessionToken, "campaigns-meta", workspaceId));
   }
 
   useEffect(() => {
@@ -355,14 +378,14 @@ export default function DraftReviewWorkspace() {
   // PR-3D: persist + restore the reviewed draft across navigation.
   useEffect(() => {
     const d = allSortedDrafts[selectedIndex]?.draft;
-    if (d?.id) setNavState("draft-review", "selectedDraftId", String(d.id));
+    if (d?.id) setNavState(`draft-review:${sessionToken}:${workspaceId}:${campaignParam || "all"}`, "selectedDraftId", String(d.id));
   }, [selectedIndex, allSortedDrafts]);
 
   const restoredSelectionRef = useRef(false);
   useEffect(() => {
     if (restoredSelectionRef.current || drafts.length === 0) return;
     restoredSelectionRef.current = true;
-    const remembered = getNavState<string>("draft-review", "selectedDraftId");
+    const remembered = getNavState<string>(`draft-review:${sessionToken}:${workspaceId}:${campaignParam || "all"}`, "selectedDraftId");
     if (!remembered) return;
     const idx = allSortedDrafts.findIndex(e => e.draft?.id === remembered);
     if (idx >= 0) setSelectedIndex(idx);
@@ -418,14 +441,14 @@ export default function DraftReviewWorkspace() {
 
   async function saveEdit() {
     if (!selected || !sessionToken) return;
-    const full = editSubject
-      ? `Subject: ${editSubject}\n\n${editBody}`
-      : editBody;
+    // Include an empty header too, so clearing a subject is a durable edit.
+    const full = `Subject: ${editSubject}\n\n${editBody}`;
     try {
-      await updateDraft(sessionToken, selected.id, full);
+      await updateDraft(sessionToken, selected.id, full, workspaceId);
+      if (!mounted.current) return;
       setDrafts((prev) =>
         prev.map((d) =>
-          d.id === selected.id ? { ...d, subject: editSubject, text: editBody } : d,
+          d.id === selected.id ? { ...d, subject: editSubject, text: editBody, status: "pending" } : d,
         ),
       );
       setEditing(false);
@@ -457,6 +480,8 @@ export default function DraftReviewWorkspace() {
         instructionMap[action] || action,
         selected.text,
         selected.lead,
+        undefined,
+        workspaceId,
       );
       if (res.ok) {
         const updated = res.draft as DraftEntry;
@@ -491,7 +516,7 @@ export default function DraftReviewWorkspace() {
     const expectedStatus = selected.status === "approved" ? "pending" : "approved";
     setApprovingId(draftId);
     try {
-      const res = await approveDraft(sessionToken, selected.id);
+      const res = await approveDraft(sessionToken, selected.id, workspaceId);
       if (res.ok) {
         const updated = res.draft as DraftEntry;
         setDrafts((prev) =>
@@ -513,7 +538,7 @@ export default function DraftReviewWorkspace() {
         setMessage("Approval is taking longer than expected. Checking the latest draft status…");
         try {
           await new Promise((resolve) => window.setTimeout(resolve, 3500));
-          const durable = await listDrafts(sessionToken);
+          const durable = await listDrafts(sessionToken, workspaceId);
           const persisted = (durable.drafts as DraftEntry[]).find((draft) => draft.id === draftId);
           if (persisted?.status === expectedStatus) {
             setDrafts((prev) => prev.map((draft) =>
@@ -577,7 +602,7 @@ export default function DraftReviewWorkspace() {
       if (waitForCompletion) {
         await new Promise((resolve) => window.setTimeout(resolve, 3500));
       }
-      const durable = await listDrafts(sessionToken);
+      const durable = await listDrafts(sessionToken, workspaceId);
       const persisted = (durable.drafts as DraftEntry[]).find(
         (draft) => draft.id === selected.id,
       );
@@ -696,7 +721,7 @@ export default function DraftReviewWorkspace() {
         setMessage("Scheduling is taking longer than expected. Checking the latest draft status…");
         try {
           await new Promise((resolve) => window.setTimeout(resolve, 3500));
-          const durable = await listDrafts(sessionToken);
+          const durable = await listDrafts(sessionToken, workspaceId);
           const persisted = (durable.drafts as DraftEntry[]).find((draft) => draft.id === draftId);
           if (persisted?.status === "scheduled") {
             setDrafts((prev) => prev.map((draft) =>
@@ -775,6 +800,7 @@ export default function DraftReviewWorkspace() {
           selected.text,
           lead,
           context,
+          workspaceId,
         );
         const rewritten = res.rewritten_text || "";
         if (rewritten) {
@@ -911,9 +937,9 @@ export default function DraftReviewWorkspace() {
         <div className="w-16 h-16 rounded-2xl bg-error/10 flex items-center justify-center text-error mb-4">
           <Icon name="warning" className="text-3xl" />
         </div>
-        <p className="text-body-lg text-on-surface-variant/80 font-medium">Backend unavailable</p>
+        <p className="text-body-lg text-on-surface-variant/80 font-medium">Draft context unavailable</p>
         <p className="mt-1.5 text-body-md text-on-surface-variant/50 max-w-sm leading-relaxed">
-          Could not load drafts. Make sure the backend server is running.
+          Could not load drafts in this workspace, or the selected campaign is no longer accessible. Retry or return to the originating page.
         </p>
         <button
           onClick={fetchData}
@@ -957,7 +983,7 @@ export default function DraftReviewWorkspace() {
           They will appear here.
         </p>
         <a
-          href="/discovery"
+          href={`/discovery?workspace_id=${encodeURIComponent(workspaceId)}`}
           className="mt-6 inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-on-primary transition-all duration-150 hover:brightness-110 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:outline-offset-2"
         >
           <Icon name="explore" className="text-sm" />

@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+import pytest
 from types import SimpleNamespace
 
 from services.campaigns import api as campaigns_api
 from services.drafts import api as drafts_api
 import services.drafts.service as drafts
 from services.job_engine.models import BatchItem, BatchItemStatus, Job, JobStatus
+from services.knowledge.context_adapter import KnowledgePromptContext
+
+
+@pytest.fixture(autouse=True)
+def valid_empty_workspace_knowledge(monkeypatch):
+    monkeypatch.setattr(drafts, "_recover_batch_draft", lambda *_args: asyncio.sleep(0, result=None))
+    async def context(*_args, **kwargs):
+        assert kwargs["workspace_id"] == "workspace-1"
+        return KnowledgePromptContext()
+    monkeypatch.setattr("services.knowledge.context_adapter.retrieve_knowledge_context", context)
 
 
 def _job(status: JobStatus = JobStatus.RUNNING) -> Job:
@@ -82,8 +93,8 @@ async def test_restart_resumes_only_incomplete_items_without_duplicate_drafts(mo
         def list_active_jobs_by_type(self, job_type):
             return [_job(JobStatus.RUNNING)] if job_type == "draft_batch" else []
 
-        def list_batch_resume_items(self, *_args): return [interrupted]
-        def list_batch_items(self, *_args): return all_items
+        def list_batch_resume_items(self, *_args, **_kwargs): return [interrupted]
+        def list_batch_items(self, *_args, **_kwargs): return all_items
         def reset_batch_items_for_resume(self, *_args):
             interrupted.status = BatchItemStatus.PENDING
             return True
@@ -107,7 +118,7 @@ async def test_restart_resumes_only_incomplete_items_without_duplicate_drafts(mo
 
     async def run_workflow(_loop, payload):
         workflow_leads.append(payload["lead"]["id"])
-        return {"message": "Draft ready: ---\nHello\n---", "subject": "Hi"}
+        return {"ok": True, "message": "Draft ready: ---\nHello\n---", "subject": "Hi"}
 
     monkeypatch.setattr(drafts, "_run_draft_with_retry", run_workflow)
     monkeypatch.setattr("services.workspace.state.load_campaign_state", lambda *_args, **_kwargs: {})

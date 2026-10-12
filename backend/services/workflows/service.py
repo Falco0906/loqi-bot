@@ -466,6 +466,7 @@ def generate_leads(input: dict) -> dict:
     service = input.get("service") or ""
     target = input.get("target") or ""
     user_id = input.get("user_id")
+    workspace_id = str(input.get("workspace_id") or "")
     workflow_session_id = input.get("workflow_session_id")
     print(f"[TRACE] 5b | ENTERED workflows.generate_leads | +0ms")
 
@@ -474,9 +475,11 @@ def generate_leads(input: dict) -> dict:
         try:
             from services.discovery.context import retrieve_discovery_context
             discovery_context = _run_async(
-                retrieve_discovery_context(user_id, query=f"{service} {target}".strip())
+                retrieve_discovery_context(user_id, query=f"{service} {target}".strip(), workspace_id=workspace_id)
             )
         except Exception as error:
+            if workspace_id:
+                raise
             print(f"[workflows] Discovery context retrieval skipped: {error}")
 
     result = search_with_expansion(service, target, context=discovery_context)

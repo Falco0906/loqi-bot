@@ -221,8 +221,7 @@ class TestDuplicateCampaignScoping:
         )
         from services.persistence.database import SupabaseConnectionManager
         db = _seed_two_tenants()
-        cm = SupabaseConnectionManager(url="http://test", key="k")
-        cm._client = db
+        cm = SupabaseConnectionManager(client=db)
         set_connection_manager(cm)
         set_repository_provider(RepositoryProvider.SUPABASE)
         try:
@@ -247,8 +246,7 @@ class TestDuplicateCampaignScoping:
         )
         from services.persistence.database import SupabaseConnectionManager
         db = _seed_two_tenants()
-        cm = SupabaseConnectionManager(url="http://test", key="k")
-        cm._client = db
+        cm = SupabaseConnectionManager(client=db)
         set_connection_manager(cm)
         set_repository_provider(RepositoryProvider.SUPABASE)
         try:
@@ -278,8 +276,7 @@ class TestUpdateScoping:
         )
         from services.persistence.database import SupabaseConnectionManager
         db = _seed_two_tenants()
-        cm = SupabaseConnectionManager(url="http://test", key="k")
-        cm._client = db
+        cm = SupabaseConnectionManager(client=db)
         set_connection_manager(cm)
         set_repository_provider(RepositoryProvider.SUPABASE)
         try:
@@ -302,8 +299,7 @@ class TestUpdateScoping:
         )
         from services.persistence.database import SupabaseConnectionManager
         db = _seed_two_tenants()
-        cm = SupabaseConnectionManager(url="http://test", key="k")
-        cm._client = db
+        cm = SupabaseConnectionManager(client=db)
         set_connection_manager(cm)
         set_repository_provider(RepositoryProvider.SUPABASE)
         try:

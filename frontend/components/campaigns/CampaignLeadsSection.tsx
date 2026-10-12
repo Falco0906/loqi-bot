@@ -26,6 +26,7 @@ type DiscoveryItem = {
 };
 
 type Props = {
+  workspaceId?: string;
   token: string | null;
   campaignId: string;
   campaignName: string;
@@ -115,6 +116,7 @@ function leadMeta(lead: Record<string, unknown>): string {
  * match exists, otherwise the user is guided to research new prospects.
  */
 export default memo(function CampaignLeadsSection({
+  workspaceId = "",
   token,
   campaignId,
   campaignName,
@@ -135,6 +137,7 @@ export default memo(function CampaignLeadsSection({
   const [addBusy, setAddBusy] = useState(false);
 
   const researchUrl = buildResearchUrl({
+    workspaceId,
     campaignId,
     campaignName,
     objective,
@@ -147,7 +150,7 @@ export default memo(function CampaignLeadsSection({
     if (!token) return;
     setLoadingDiscoveries(true);
     try {
-      const res = await listDiscoveries(token);
+      const res = await listDiscoveries(token, workspaceId);
       if (res.ok && Array.isArray(res.discoveries)) {
         const ranked = rankDiscoveries(
           (res.discoveries as Array<Record<string, unknown>>)
@@ -170,7 +173,7 @@ export default memo(function CampaignLeadsSection({
     } finally {
       setLoadingDiscoveries(false);
     }
-  }, [token, context]);
+  }, [token, context, workspaceId]);
 
   useEffect(() => {
     if (leads.length === 0) void loadDiscoveries();
@@ -187,7 +190,7 @@ export default memo(function CampaignLeadsSection({
     setAttachingId(id);
     let keepLocked = false;
     try {
-      const res = await attachDiscoveryToCampaign(token, campaignId, id);
+      const res = await attachDiscoveryToCampaign(token, campaignId, id, workspaceId);
       if (!res.ok) return;
       toast("success", `${res.added} lead${res.added === 1 ? "" : "s"} attached from Discovery`);
       await onLeadsChanged?.();
@@ -199,7 +202,7 @@ export default memo(function CampaignLeadsSection({
         toast("info", "Attaching leads is taking longer than expected. Checking the campaign…");
         try {
           await new Promise((resolve) => window.setTimeout(resolve, 3500));
-          const current = await getCampaign(token, campaignId);
+          const current = await getCampaign(token, campaignId, workspaceId);
           if (current.ok && campaignHasAttachedDiscovery(current.campaign, id)) {
             toast("success", "Discovery leads are attached to this campaign.");
             await onLeadsChanged?.();
@@ -227,7 +230,7 @@ export default memo(function CampaignLeadsSection({
     }
     setAddBusy(true);
     try {
-      const res = await addLeadToCampaign(token, campaignId, { ...newLead, source: "manual" });
+      const res = await addLeadToCampaign(token, campaignId, { ...newLead, source: "manual" }, workspaceId);
       if (!res.ok) return;
       toast("success", "Lead added");
       setNewLead({ name: "", email: "", title: "", company: "" });

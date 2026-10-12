@@ -1,6 +1,10 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import httpx
+import requests
+from postgrest.exceptions import APIError
+
 from services.job_engine.models import BatchItem, BatchItemStatus, Job, JobStatus
 from services.platform.supabase import get_supabase_client
 
@@ -9,10 +13,16 @@ def _log(msg: str) -> None:
     print(f"[job_storage] {msg}")
 
 
+class SearchResultPersistenceError(RuntimeError):
+    """Staged search results could not be durably written or read."""
+
+
 class JobStorage:
-    def create_job(self, job: Job) -> Optional[Job]:
+    def create_job(self, job: Job, *, strict: bool = False) -> Optional[Job]:
         client = get_supabase_client()
         if not client:
+            if strict:
+                raise RuntimeError("Job persistence unavailable")
             _log("create_job: no supabase client")
             return None
         try:
@@ -37,24 +47,38 @@ class JobStorage:
                 "created_at": job.created_at.isoformat(),
                 "updated_at": job.updated_at.isoformat(),
             }
-            client.table("jobs").insert(data).execute()
+            response = client.table("jobs").insert(data).execute()
+            if strict and not getattr(response, "data", None):
+                raise RuntimeError("Job creation was not confirmed")
             _log(f"create_job: {job.id} type={job.type}")
             return job
         except Exception as e:
+            if strict:
+                if isinstance(e, APIError) and e.code == "23505":
+                    existing = self.get_job(job.id, strict=True)
+                    if existing is not None:
+                        return existing
+                raise
             _log(f"create_job error: {e}")
             return None
 
-    def get_job(self, job_id: str) -> Optional[Job]:
+    def get_job(self, job_id: str, *, strict: bool = False) -> Optional[Job]:
         client = get_supabase_client()
         if not client:
+            if strict:
+                raise RuntimeError("Job persistence unavailable")
             return None
         try:
             result = client.table("jobs").select("*").eq("id", job_id).limit(1).execute()
-            rows = result.data if hasattr(result, "data") else []
+            rows = getattr(result, "data", None) if strict else getattr(result, "data", [])
+            if strict and not isinstance(rows, list):
+                raise RuntimeError("Invalid job read response")
             if not rows:
                 return None
             return Job.from_dict(rows[0])
         except Exception as e:
+            if strict:
+                raise
             _log(f"get_job error: {e}")
             return None
 
@@ -81,9 +105,13 @@ class JobStorage:
         result: Optional[dict] = None,
         completed_at: Optional[datetime] = None,
         clear_lease: bool = False,
+        strict: bool = False,
+        lease_owner: str = "",
     ) -> bool:
         client = get_supabase_client()
         if not client:
+            if strict:
+                raise RuntimeError("Job persistence unavailable")
             return False
         try:
             updates: dict = {
@@ -106,20 +134,29 @@ class JobStorage:
             if clear_lease or status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}:
                 updates["lease_owner"] = None
                 updates["lease_expires_at"] = None
-            client.table("jobs").update(updates).eq("id", job_id).execute()
+            query = client.table("jobs").update(updates).eq("id", job_id)
+            if lease_owner:
+                query = query.eq("lease_owner", lease_owner).eq("status", JobStatus.RUNNING.value)
+            response = query.execute()
+            if strict and not getattr(response, "data", None):
+                raise RuntimeError("Job update was not confirmed or its lease was lost")
             return True
         except Exception as e:
+            if strict:
+                raise
             _log(f"update_job error: {e}")
             return False
 
     def claim_due_jobs(
-        self, lease_owner: str, job_types: list[str], *, limit: int = 25, lease_seconds: int = 120,
+        self, lease_owner: str, job_types: list[str], *, limit: int = 25, lease_seconds: int = 120, strict: bool = False,
     ) -> list[Job]:
         """Atomically claim due delayed jobs through the database RPC."""
         if not lease_owner or not job_types:
             return []
         client = get_supabase_client()
         if not client:
+            if strict:
+                raise RuntimeError("Job claim persistence unavailable")
             return []
         try:
             result = client.rpc("claim_due_jobs", {
@@ -128,8 +165,12 @@ class JobStorage:
                 "p_limit": limit,
                 "p_lease_seconds": lease_seconds,
             }).execute()
+            if strict and not isinstance(getattr(result, "data", None), list):
+                raise RuntimeError("Invalid job claim response")
             return [Job.from_dict(row) for row in (getattr(result, "data", None) or [])]
         except Exception as error:
+            if strict:
+                raise
             _log(f"claim_due_jobs error: {error}")
             return []
 
@@ -185,9 +226,8 @@ class JobStorage:
             if rows:
                 client.table("search_results").insert(rows).execute()
             return True
-        except Exception as e:
-            _log(f"store_search_results error: {e}")
-            return False
+        except (httpx.HTTPError, requests.RequestException, APIError) as error:
+            raise SearchResultPersistenceError("Staged search results could not be saved") from error
 
     def append_search_results(self, job_id: str, leads: list[dict]) -> bool:
         """PR-4: incremental insert with explicit ranks (first-result path).
@@ -201,35 +241,31 @@ class JobStorage:
             rows = [
                 {
                     "job_id": job_id,
-                    "rank": lead.pop("_rank", i + 1),
-                    "lead_data": lead,
+                    "rank": lead.get("_rank", i + 1),
+                    "lead_data": {key: value for key, value in lead.items() if key != "_rank"},
                 }
                 for i, lead in enumerate(leads)
             ]
             if rows:
                 client.table("search_results").insert(rows).execute()
             return True
-        except Exception as e:
-            _log(f"append_search_results error: {e}")
-            return False
+        except (httpx.HTTPError, requests.RequestException, APIError) as error:
+            raise SearchResultPersistenceError("Staged search results could not be saved") from error
 
     def get_search_results(self, job_id: str) -> list[dict]:
         client = get_supabase_client()
         if not client:
-            return []
-        try:
-            result = (
-                client.table("search_results")
-                .select("*")
-                .eq("job_id", job_id)
-                .order("rank", desc=False)
-                .execute()
-            )
-            rows = result.data if hasattr(result, "data") else []
-            return [r["lead_data"] for r in rows]
-        except Exception as e:
-            _log(f"get_search_results error: {e}")
-            return []
+            raise SearchResultPersistenceError("Staged search results are unavailable")
+        result = (
+            client.table("search_results")
+            .select("*")
+            .eq("job_id", job_id)
+            .order("rank", desc=False)
+            .execute()
+        )
+        if not isinstance(result.data, list):
+            raise SearchResultPersistenceError("Staged search results have an invalid response shape")
+        return [row["lead_data"] for row in result.data]
 
     def list_active_jobs(self, user_id: str) -> list[Job]:
         client = get_supabase_client()
@@ -298,30 +334,42 @@ class JobStorage:
             _log(f"create_batch_items error: {error}")
             return False
 
-    def list_batch_resume_items(self, job_id: str, workspace_id: str) -> list[BatchItem]:
+    def list_batch_resume_items(self, job_id: str, workspace_id: str, *, strict: bool = False) -> list[BatchItem]:
         client = get_supabase_client()
         if not client:
+            if strict:
+                raise RuntimeError("Draft batch persistence unavailable")
             return []
         try:
             result = client.table("job_batch_items").select("*").eq("job_id", job_id).eq(
                 "workspace_id", workspace_id
             ).in_("status", ["pending", "generating", "failed"]).order("position").execute()
+            if strict and not isinstance(getattr(result, "data", None), list):
+                raise RuntimeError("Invalid draft batch read response")
             return [self._batch_item(row) for row in (getattr(result, "data", None) or [])]
         except Exception as error:
+            if strict:
+                raise
             _log(f"list_batch_resume_items error: {error}")
             return []
 
-    def list_batch_items(self, job_id: str, workspace_id: str) -> list[BatchItem]:
+    def list_batch_items(self, job_id: str, workspace_id: str, *, strict: bool = False) -> list[BatchItem]:
         """Return every persisted item for one workspace-scoped batch job."""
         client = get_supabase_client()
         if not client:
+            if strict:
+                raise RuntimeError("Draft batch persistence unavailable")
             return []
         try:
             result = client.table("job_batch_items").select("*").eq(
                 "job_id", job_id
             ).eq("workspace_id", workspace_id).order("position").execute()
+            if strict and not isinstance(getattr(result, "data", None), list):
+                raise RuntimeError("Invalid draft batch read response")
             return [self._batch_item(row) for row in (getattr(result, "data", None) or [])]
         except Exception as error:
+            if strict:
+                raise
             _log(f"list_batch_items error: {error}")
             return []
 

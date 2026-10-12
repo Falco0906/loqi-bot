@@ -2,6 +2,7 @@
 
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCampaignWorkspace } from "../../../../hooks/useCampaignWorkspace";
+import { discoveryReturnUrl } from "../../../../lib/discovery-context";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import WorkspaceContainer from "../../../../components/layout/WorkspaceContainer";
 import AppPage from "../../../../components/primitives/AppPage";
@@ -35,11 +36,12 @@ import ExecutionWorkspace from "../../../../components/campaigns/ExecutionWorksp
 import { buildResearchUrl } from "../../../../lib/discovery-mode";
 import Icon from "../../../../components/shared/Icon";
 
-function researchUrlForCampaign(data: CampaignData | null): string {
+function researchUrlForCampaign(data: CampaignData | null, workspaceId: string): string {
   if (!data?.id) return "/discovery";
   const strategy = data.strategy ?? {};
   return buildResearchUrl({
     campaignId: data.id,
+    workspaceId,
     campaignName: data.name,
     objective: data.objective,
     audience: String(strategy.audience || ""),
@@ -160,8 +162,8 @@ function CampaignDetailWorkspace({ campaignId, workspaceId, scope }: { campaignI
 
   useActionHandlers({
     generate_strategy: () => { void generateStrategy(); },
-    add_leads: () => { router.push(researchUrlForCampaign(data)); },
-    attach_discovery: () => { router.push(researchUrlForCampaign(data)); },
+    add_leads: () => { router.push(researchUrlForCampaign(data, workspaceId)); },
+    attach_discovery: () => { router.push(researchUrlForCampaign(data, workspaceId)); },
     open_campaign: () => { /* already here */ },
     duplicate_campaign: () => { void duplicateCampaignAction(); },
     delete_campaign: () => { void deleteCampaignAction(); },
@@ -178,7 +180,7 @@ function CampaignDetailWorkspace({ campaignId, workspaceId, scope }: { campaignI
       if (cancelled || pollBusy) return;
       pollBusy = true;
       try {
-        const status = await getCampaignGenerationStatus(token, campaignId);
+        const status = await getCampaignGenerationStatus(token, campaignId, workspaceId);
         if (!cancelled && !status.active) {
           setDraftGenerationStarting(false);
           void refreshCampaign();
@@ -192,7 +194,7 @@ function CampaignDetailWorkspace({ campaignId, workspaceId, scope }: { campaignI
     const timer = window.setInterval(() => void poll(), 2000);
     void poll();
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [campaignId, generationInProgress, token, refreshCampaign]);
+  }, [campaignId, workspaceId, generationInProgress, token, refreshCampaign]);
 
   const leads = useMemo(() => data?.leads || [], [data?.leads]);
   const strategy = useMemo(() => data?.strategy || {}, [data?.strategy]);
@@ -244,7 +246,8 @@ function CampaignDetailWorkspace({ campaignId, workspaceId, scope }: { campaignI
     setDraftGenerationStarting(true);
     toast("info", "Writing drafts for your leads…");
     try {
-      const result = await generateCampaignDrafts(token, campaignId);
+      const result = await generateCampaignDrafts(token, campaignId, workspaceId);
+      if (!mounted.current) return;
       if (!result.ok) {
         setDraftGenerationStarting(false);
         toast("error", "Draft generation could not be started.");
@@ -258,7 +261,8 @@ function CampaignDetailWorkspace({ campaignId, workspaceId, scope }: { campaignI
       // generation state: if a batch is running or finished, resume polling
       // instead of surfacing a false failure.
       try {
-        const status = await getCampaignGenerationStatus(token, campaignId);
+        if (!mounted.current) return;
+        const status = await getCampaignGenerationStatus(token, campaignId, workspaceId);
         if (status.ok && (status.active || status.status === "processing" || status.status === "completed")) {
           toast("info", "Draft generation is still processing.");
           await refreshCampaign();
@@ -279,7 +283,7 @@ function CampaignDetailWorkspace({ campaignId, workspaceId, scope }: { campaignI
   async function launchCampaign() {
     if (!token) return;
     try {
-      const result = await updateCampaign(token, campaignId, { status: "completed" });
+      const result = await updateCampaign(token, campaignId, { status: "completed" }, workspaceId);
       if (!result.ok) return;
       setLaunchStarted(true);
       setExecutionDismissed(false);
@@ -362,7 +366,7 @@ function CampaignDetailWorkspace({ campaignId, workspaceId, scope }: { campaignI
     const newName = window.prompt("Rename campaign", data?.name || "");
     if (!newName || newName.trim() === data?.name || !newName.trim()) return;
     try {
-      const res = await updateCampaign(token, campaignId, { name: newName.trim() });
+      const res = await updateCampaign(token, campaignId, { name: newName.trim() }, workspaceId);
       if (!res.ok) return;
       toast("success", "Campaign renamed");
       await refreshCampaign();
@@ -372,7 +376,7 @@ function CampaignDetailWorkspace({ campaignId, workspaceId, scope }: { campaignI
   async function archiveCampaignAction() {
     if (!token) return;
     try {
-      const res = await updateCampaign(token, campaignId, { status: "archived" });
+      const res = await updateCampaign(token, campaignId, { status: "archived" }, workspaceId);
       if (!res.ok) return;
       toast("success", "Campaign archived");
       await refreshCampaign();
@@ -382,7 +386,7 @@ function CampaignDetailWorkspace({ campaignId, workspaceId, scope }: { campaignI
   async function restoreCampaignAction() {
     if (!token) return;
     try {
-      const res = await updateCampaign(token, campaignId, { status: "planning" });
+      const res = await updateCampaign(token, campaignId, { status: "planning" }, workspaceId);
       if (!res.ok) return;
       toast("success", "Campaign restored");
       await refreshCampaign();
@@ -392,7 +396,7 @@ function CampaignDetailWorkspace({ campaignId, workspaceId, scope }: { campaignI
   async function duplicateCampaignAction() {
     if (!token) return;
     try {
-      const res = await duplicateCampaign(token, campaignId);
+      const res = await duplicateCampaign(token, campaignId, workspaceId);
       if (!res.ok) return;
       toast("success", "Campaign duplicated");
       invalidateMissionControlCache();
@@ -404,10 +408,11 @@ function CampaignDetailWorkspace({ campaignId, workspaceId, scope }: { campaignI
     if (!token) return;
     if (!window.confirm("Delete this campaign? This removes it from your workspace.")) return;
     try {
-      await deleteCampaign(token, campaignId);
+      await deleteCampaign(token, campaignId, workspaceId);
+      if (!mounted.current) return;
       toast("success", "Campaign deleted");
       invalidateMissionControlCache();
-      router.push("/campaigns");
+      router.push(`/campaigns?workspace_id=${encodeURIComponent(workspaceId)}`);
     } catch { toast("error", "Failed to delete campaign"); }
   }
 
@@ -419,11 +424,11 @@ function CampaignDetailWorkspace({ campaignId, workspaceId, scope }: { campaignI
           {/* ─── Campaign Header ─── */}
           <section className="animate-conversation-fade">
             <button
-              onClick={() => router.push("/campaigns")}
+              onClick={() => { let url = `/discovery?workspace_id=${encodeURIComponent(workspaceId)}`; try { url = discoveryReturnUrl(window.sessionStorage, scope, workspaceId); } catch { /* Storage is optional. */ } router.push(url); }}
               className="inline-flex items-center gap-1.5 text-xs text-on-surface-variant/60 hover:text-primary transition-colors mb-4"
             >
               <Icon name="chevron_right" className="text-sm rotate-180" />
-              All campaigns
+              Back to Discover
             </button>
             <div className="flex flex-wrap items-center justify-between gap-4 border-b border-outline-variant/20 pb-5">
               <div className="min-w-0">
@@ -524,7 +529,7 @@ function CampaignDetailWorkspace({ campaignId, workspaceId, scope }: { campaignI
               <CampaignStrategyGate
                 leadsCount={leads.length}
                 strategyBusy={strategyBusy}
-                researchUrl={researchUrlForCampaign(data)}
+                researchUrl={researchUrlForCampaign(data, workspaceId)}
                 onGenerateStrategy={() => void generateStrategy()}
               />
             )}
@@ -541,6 +546,7 @@ function CampaignDetailWorkspace({ campaignId, workspaceId, scope }: { campaignI
           {/* ─── Leads ─── */}
           <section className="animate-conversation-fade">
             <CampaignLeadsSection
+              workspaceId={workspaceId}
               token={token}
               campaignId={campaignId}
               campaignName={data.name}
@@ -555,6 +561,8 @@ function CampaignDetailWorkspace({ campaignId, workspaceId, scope }: { campaignI
           {/* ─── Drafts (appear when they exist — nothing disappears) ─── */}
           <section className="animate-conversation-fade">
             <CampaignDraftsSection
+              key={`${workspaceId}:${campaignId}`}
+              workspaceId={workspaceId}
               token={token}
               campaignId={campaignId}
               generating={generationInProgress}

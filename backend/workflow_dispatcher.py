@@ -89,6 +89,14 @@ def _search_with_progress(
 
 
 async def run_search_workflow(job: Job, on_progress) -> dict:
+    from services.capabilities.beta import beta_feature_enabled
+    from services.discovery.service import search_saved_workspace_leads
+
+    if job.payload.get("search_scope") == "workspace":
+        return await search_saved_workspace_leads(job, on_progress)
+    if not beta_feature_enabled("autonomous_lead_sourcing"):
+        return {"ok": False, "error": "Provider lead sourcing is disabled. Search your workspace's saved leads.",
+                "provider_error_kind": "permanent"}
     query = job.query.strip()
     if not query:
         return {"ok": False, "error": "Empty query"}

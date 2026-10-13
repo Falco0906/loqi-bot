@@ -47,6 +47,7 @@ from services.persistence.launch import (
     WorkspaceRepository,
 )
 from services.platform.supabase import get_supabase_client
+from services.workspace.lead_projection import workspace_lead_context, workspace_lead_fields
 
 
 @dataclass(frozen=True)
@@ -1113,11 +1114,11 @@ async def _normalize_lead(workspace_id: str, lead: dict[str, Any]) -> str | None
         lead_id=profile.id,
         company_id=company_id,
         email=email,
-        first_name=lead.get("first_name") or profile.first_name,
-        last_name=lead.get("last_name") or profile.last_name,
-        title=lead.get("title") or profile.title,
-        phone=lead.get("phone") or profile.phone,
-        linkedin_url=lead.get("linkedin_url") or profile.linkedin_url,
+        first_name=lead.get("first_name") or "",
+        last_name=lead.get("last_name") or "",
+        title=lead.get("title") or "",
+        phone=lead.get("phone") or "",
+        linkedin_url=lead.get("linkedin_url") or "",
         lead_status=_canonical_lead_status(lead.get("status") or lead.get("lead_status")),
         confidence=_to_float(lead.get("confidence")),
         source=source or str(lead.get("source") or ""),
@@ -1246,8 +1247,8 @@ async def _normalize_company_lead(workspace_id: str, lead: dict[str, Any]) -> st
         workspace_id=workspace_id,
         lead_id=profile.id,
         company_id=company_id,
-        first_name=profile.first_name,
-        last_name=profile.last_name,
+        first_name=str(lead.get("first_name") or ""),
+        last_name=str(lead.get("last_name") or ""),
         title=str(lead.get("title") or ""),
         linkedin_url=str(lead.get("linkedin_url") or ""),
         lead_status=_canonical_lead_status(lead.get("status") or lead.get("lead_status")),
@@ -1277,21 +1278,26 @@ def _qualification_metadata(lead: dict[str, Any], existing_metadata: dict[str, A
     breakdown = lead.get("commercial_score_breakdown")
     if isinstance(breakdown, dict):
         metadata["qualification"] = breakdown
-    # Keep provider display context on the workspace row as a fallback, not
-    # as a replacement for CSV facts or global canonical company records.
+    # Company facts belong to the workspace that acquired them. Global
+    # company identity does not authorize sharing another tenant's fields.
     if str(lead.get("source") or lead.get("provider") or "") != "csv_import":
         context = {
             key: value.strip() for key, value in lead.items()
-            if key in {"company", "website", "domain", "location", "industry"}
+            if key in {"company", "website", "domain", "location", "industry",
+                       "description", "city", "country", "revenue_band", "growth_stage", "company_size"}
             and isinstance(value, str) and value.strip()
         }
+        employee_count = _to_int_or_none(lead.get("employee_count"))
+        if employee_count is not None:
+            context["employee_count"] = employee_count
+        for key in ("buying_signals", "recent_events", "pain_points"):
+            if isinstance(lead.get(key), list):
+                context[key] = lead[key]
+        if isinstance(lead.get("technology"), dict):
+            context["technology"] = lead["technology"]
         previous = (existing_metadata or {}).get("provider_context")
         if isinstance(previous, dict):
-            context = {**context, **{
-                key: value for key, value in previous.items()
-                if key in {"company", "website", "domain", "location", "industry"}
-                and isinstance(value, str) and value.strip()
-            }}
+            context = {**context, **workspace_lead_context({"metadata": {"provider_context": previous}})}
         if context:
             metadata["provider_context"] = context
     # A CSV may contain useful workspace context even when there is no domain
@@ -1936,9 +1942,7 @@ async def _load_canonical_state(
     campaign_repo = CampaignRepository()
     draft_repo = DraftRepository()
     ws_lead_repo = WorkspaceLeadRepository()
-    lead_repo = LeadRepository()
     strategy_repo = StrategyRepository()
-    company_repo = CompanyRepository()
     cl_repo = CampaignLeadRepository()
 
     if campaign_id is not None:
@@ -2000,22 +2004,12 @@ async def _load_canonical_state(
     else:
         link_ids = list(dict.fromkeys(l.lead_id for links in links_by_campaign for l in links))
         ws_lead_rows = (
-            [w for w in (await asyncio.gather(*[ws_lead_repo.get(i) for i in link_ids])) if w is not None]
+            [w for w in (await asyncio.gather(*[
+                ws_lead_repo.get_for_workspace(i, workspace_id) for i in link_ids
+            ])) if w is not None and w.deleted_at is None]
             if link_ids else []
         )
         ws_lead_by_id = {w.id: w for w in ws_lead_rows}
-
-        lead_ids = list(dict.fromkeys(w.lead_id for w in ws_lead_rows if w.lead_id))
-        profiles = (
-            {p.id: p for p in (await asyncio.gather(*[lead_repo.get(i) for i in lead_ids])) if p is not None}
-            if lead_ids else {}
-        )
-
-        company_ids = list(dict.fromkeys(w.company_id for w in ws_lead_rows if w.company_id))
-        companies = (
-            {c.id: c for c in (await asyncio.gather(*[company_repo.get(i) for i in company_ids])) if c is not None}
-            if company_ids else {}
-        )
 
         async def _safe_strategy(campaign_id: str) -> Strategy | None:
             try:
@@ -2042,7 +2036,7 @@ async def _load_canonical_state(
                 "discovery_id": campaign.discovery_id or "",
                 "lead_count": len(ws_leads),
                 "leads": [
-                    _lead_as_dict(ws_lead, profiles.get(ws_lead.lead_id), companies)
+                    _lead_as_dict(ws_lead)
                     for ws_lead in ws_leads
                 ],
                 "strategy": _strategy_as_dict(strategies[campaign.id]),
@@ -2101,34 +2095,24 @@ def _draft_as_dict(draft: Any) -> dict[str, Any]:
     }
 
 
-def _lead_as_dict(ws_lead: WorkspaceLead, profile: Lead | None,
-                  companies: dict[str, Company]) -> dict[str, Any]:
-    company = companies.get(ws_lead.company_id or "")
-    first = ws_lead.first_name or (profile.first_name if profile else "")
-    last = ws_lead.last_name or (profile.last_name if profile else "")
+def _lead_as_dict(ws_lead: WorkspaceLead) -> dict[str, Any]:
+    fields = workspace_lead_fields(ws_lead)
+    context = workspace_lead_context(ws_lead)
+    first, last = fields["first_name"], fields["last_name"]
     name = " ".join(p for p in (first, last) if p)
-    email = ws_lead.email or (profile.email if profile else "")
-    title = ws_lead.title or (profile.title if profile else "")
-    phone = ws_lead.phone or (profile.phone if profile else "")
-    linkedin_url = ws_lead.linkedin_url or (profile.linkedin_url if profile else "")
     return {
         "id": ws_lead.id,
         "name": name,
         "first_name": first,
         "last_name": last,
-        "title": title,
-        "email": email,
-        "phone": phone,
-        "linkedin_url": linkedin_url,
-        "company": company.name if company else "",
-        "company_name": company.name if company else "",
-        "domain": company.domain if company else "",
-        "industry": company.industry if company else "",
-        "city": company.city if company else "",
-        "country": company.country if company else "",
-        "location_label": company.location if company else "",
-        "employee_count": company.employee_count if company else None,
-        "revenue_band": company.revenue_band if company else "",
+        **fields,
+        "company_name": fields["company"],
+        "domain": context.get("domain", ""),
+        "city": context.get("city", ""),
+        "country": context.get("country", ""),
+        "location_label": fields["location"],
+        "employee_count": context.get("employee_count"),
+        "revenue_band": context.get("revenue_band", ""),
         "status": ws_lead.lead_status,
         "lead_status": ws_lead.lead_status,
         "research_status": ws_lead.research_status,

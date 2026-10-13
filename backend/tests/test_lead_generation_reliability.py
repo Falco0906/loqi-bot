@@ -163,7 +163,7 @@ async def test_workspace_isolation_and_foreign_lead_rejection(durable_jobs):
 def test_csv_company_facts_are_present_without_global_projection():
     row = SimpleNamespace(id="one", first_name="Ada", last_name="", email="", title="CEO", phone="", linkedin_url="",
                           metadata={"csv_import": {"company": "Acme", "website": "https://acme.test", "industry": "Software", "location": "India"}, "source_provenance": ["csv"]})
-    lead = service._canonical_analysis_lead(row, None, None)
+    lead = service._canonical_analysis_lead(row)
     assert lead["company"] == "Acme" and lead["industry"] == "Software" and lead["source_provenance"] == ["csv"]
     assert {fact["label"]: fact["value"] for fact in service._facts(lead)}["Website"] == "https://acme.test"
 

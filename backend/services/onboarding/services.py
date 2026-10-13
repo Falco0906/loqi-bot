@@ -566,10 +566,17 @@ class OnboardingService:
         if orgs:
             org = orgs[0]
         else:
+            # Organizations currently have global unique indexes on name and
+            # slug. Neither a default nor a chosen workspace label identifies
+            # an account, so give this onboarding-owned organization a stable
+            # account-specific identity and retain the chosen display name.
+            # The client slug remains scoped to the workspace below; it must
+            # not become a globally contested organization slug.
+            organization_name = f"{workspace_name} {user_id}"
             org = await self._org_service.create_organization(
-                name=workspace_name,
+                name=organization_name,
                 created_by=user_id,
-                slug=slug or None,
+                slug=None,
                 display_name=workspace_name,
             )
 

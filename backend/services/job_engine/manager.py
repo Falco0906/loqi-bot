@@ -108,7 +108,7 @@ class JobManager:
                 _log(f"due-job poll failed: {error}")
             await asyncio.sleep(interval_seconds)
 
-    async def create_search_job(self, user_id: str, query: str, on_update=None, on_complete=None, discovery_id: str = "", *, workspace_id: str = "") -> Optional[dict]:
+    async def create_search_job(self, user_id: str, query: str, on_update=None, on_complete=None, discovery_id: str = "", *, workspace_id: str = "", search_scope: str = "provider") -> Optional[dict]:
         import asyncio
         from services.job_engine.registry import STAGES_SEARCH
 
@@ -122,7 +122,8 @@ class JobManager:
             query=query,
             discovery_id=discovery_id,
             workspace_id=workspace_id,
-            stage=STAGES_SEARCH[0],
+            payload={"search_scope": search_scope},
+            stage="Searching saved workspace leads" if search_scope == "workspace" else STAGES_SEARCH[0],
             progress=0,
         )
         _log(

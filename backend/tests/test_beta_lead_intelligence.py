@@ -20,7 +20,9 @@ def _workspace_lead(lead_id: str, workspace_id: str = "workspace-a"):
         title="COO",
         phone="",
         linkedin_url="",
-        metadata={},
+        metadata={"provider_context": {"company": "Acme", "website": "https://acme.example",
+                  "location": "United States", "industry": "Software",
+                  "description": "Workflow software", "employee_count": 120}},
         deleted_at=None,
     )
 
@@ -34,20 +36,6 @@ class _WorkspaceLeadRepo:
         return row if row and row.workspace_id == workspace_id else None
 
 
-class _ProfileRepo:
-    async def get(self, _lead_id):
-        return SimpleNamespace(first_name="", last_name="", email="", title="", phone="", linkedin_url="")
-
-
-class _CompanyRepo:
-    async def get(self, company_id):
-        return SimpleNamespace(
-            name="Acme", website="https://acme.example", location="United States",
-            industry="Software", description="Workflow software", employee_count=120,
-            revenue_band="", metadata={},
-        ) if company_id else None
-
-
 class _SignalRepo:
     async def list_for_lead(self, lead_id):
         return [SimpleNamespace(
@@ -58,8 +46,6 @@ class _SignalRepo:
 
 def _install_repositories(monkeypatch, rows):
     monkeypatch.setattr(lead_service, "WorkspaceLeadRepository", lambda: _WorkspaceLeadRepo(rows))
-    monkeypatch.setattr(lead_service, "LeadRepository", _ProfileRepo)
-    monkeypatch.setattr(lead_service, "CompanyRepository", _CompanyRepo)
     monkeypatch.setattr(lead_service, "LeadSignalRepository", _SignalRepo)
 
 

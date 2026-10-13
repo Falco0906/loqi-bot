@@ -32,7 +32,7 @@ async def _authorized_workspace(request: Request) -> tuple[str, str, str]:
     user_id, session_token = await identity_dependencies.resolve_web_session(request)
     if not user_id:
         raise HTTPException(status_code=401, detail="Valid session required")
-    workspace_id = await workspace_access.resolve_legacy_workspace_id(request, user_id)
+    workspace_id = await workspace_access.resolve_selected_workspace_id(request, user_id)
     return user_id, session_token, workspace_id
 
 

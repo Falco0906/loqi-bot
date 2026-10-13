@@ -276,7 +276,7 @@ export default function OnboardingPage() {
         setSessionToken(activeSessionToken);
       }
 
-      await createWorkspace(userId, "My Workspace", "my-workspace");
+      await createWorkspace(userId, "My Workspace", "");
       
       // Refresh user
       await refreshUser();

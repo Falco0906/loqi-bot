@@ -8,14 +8,10 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-from services.persistence.launch import (
-    CompanyRepository,
-    LeadRepository,
-    LeadSignalRepository,
-    WorkspaceLeadRepository,
-)
+from services.persistence.launch import LeadSignalRepository, WorkspaceLeadRepository
 from services.persistence.retry import classify_retryable
 from services.workspace.state import import_workspace_lead
+from services.workspace.lead_projection import workspace_lead_context, workspace_lead_fields
 from services.discovery.service import get_discovery_lead_provenance
 
 
@@ -196,30 +192,7 @@ async def _provider_sources_for_discovery(
     )
 
 
-def _canonical_display_fields(row: Any, profile: Any, company: Any) -> dict[str, str]:
-    """Shared persisted-field projection for search and selected intelligence."""
-    def text(value):
-        return value.strip() if isinstance(value, str) else ""
-
-    metadata = getattr(row, "metadata", {})
-    metadata = metadata if isinstance(metadata, dict) else {}
-    imported = metadata.get("csv_import")
-    imported = imported if isinstance(imported, dict) else {}
-    provider = metadata.get("provider_context")
-    provider = provider if isinstance(provider, dict) else {}
-    fields = {
-        field: text(getattr(row, field, "")) or text(getattr(profile, field, ""))
-        for field in ("first_name", "last_name", "email", "title", "phone", "linkedin_url")
-    }
-    for field, company_field in (("company", "name"), ("website", "website"),
-                                 ("location", "location"), ("industry", "industry")):
-        fields[field] = (text(imported.get(field)) or text(getattr(company, company_field, ""))
-                         or text(provider.get(field)))
-    fields["website"] = fields["website"] or text(getattr(company, "domain", "")) or text(provider.get("domain"))
-    return fields
-
-
-async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1, page_size: int = 50,
+async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1, page_size: int | None = 50,
                                filters: dict[str, str] | None = None,
                                discovery_id: str = "") -> dict[str, Any]:
     workspace_repository = WorkspaceLeadRepository()
@@ -240,38 +213,14 @@ async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1
         run_sources_by_lead = {}
         warnings.append("Saved search results could not be fully loaded. Available workspace matches are shown.")
 
-    # ``workspace_leads`` owns the Lead Database. Global lead/company rows
-    # enrich display fields when available, but must never make an imported
-    # workspace lead unreadable.
-    profile_by_id: dict[str, Any] = {}
-    company_by_id: dict[str, Any] = {}
-    try:
-        profiles = LeadRepository()
-        companies = CompanyRepository()
-        profile_rows, company_rows = await asyncio.gather(
-            profiles.list_by_ids(list({row.lead_id for row in workspace_rows if row.lead_id})),
-            companies.list_by_ids(list({row.company_id for row in workspace_rows if row.company_id})),
-        )
-        profile_by_id = {profile.id: profile for profile in profile_rows}
-        company_by_id = {company.id: company for company in company_rows}
-    except Exception as error:
-        # Projection is optional. Keep this warning separate from mandatory
-        # workspace-lead persistence failures; the canonical row is enough to
-        # render and search the database safely.
-        log.warning(
-            "workspace lead optional projection unavailable workspace_id=%s error_type=%s",
-            workspace_id, type(error).__name__,
-        )
     records: list[dict[str, Any]] = []
     needle = query.strip().lower(); filters = filters or {}
     keyword_needle = str(filters.get("keywords") or "").strip().lower()
     for row in workspace_rows:
-        profile = profile_by_id.get(row.lead_id)
-        company = company_by_id.get(row.company_id or "")
         sources = _source_provenance(row, run_sources_by_lead.get(row.id))
         source_kind, source_label = _source_presentation(sources)
         record = {
-            "id": row.id, **_canonical_display_fields(row, profile, company),
+            "id": row.id, **workspace_lead_fields(row),
             "status": row.lead_status,
             "source": str(getattr(row, "source", "") or ""),
             "source_provenance": sources,
@@ -297,8 +246,12 @@ async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1
         if (not needle or needle in searchable or included_by_discovery) and matches_filters and matches_keywords:
             records.append(record)
     records.sort(key=lambda record: (record["company"].lower(), record["last_name"].lower(), record["first_name"].lower(), record["id"]))
-    total = len(records); start = max(page - 1, 0) * page_size
-    response = {"leads": records[start:start + page_size], "total": total, "page": page, "page_size": page_size}
+    # The durable workspace-search worker requests the full matching set for
+    # staged IDs. HTTP callers retain bounded, stable result pages.
+    total = len(records)
+    start = max(page - 1, 0) * page_size if page_size is not None else 0
+    response = {"leads": records[start:start + page_size] if page_size is not None else records,
+                "total": total, "page": page, "page_size": page_size}
     if warnings:
         response["warnings"] = warnings
     return response
@@ -419,8 +372,6 @@ async def _load_selected_workspace_leads(
 ) -> list[dict[str, Any]]:
     """Load exactly the requested canonical workspace-lead records."""
     workspace_leads = WorkspaceLeadRepository()
-    profiles = LeadRepository()
-    companies = CompanyRepository()
     slots = asyncio.Semaphore(8)
 
     async def read(operation, *args):
@@ -431,28 +382,18 @@ async def _load_selected_workspace_leads(
     rows = [row for row in rows if row is not None and getattr(row, "deleted_at", None) is None]
     if len(rows) != len(lead_ids):
         raise LeadImportError("One or more selected leads are unavailable in this workspace")
-    profile_ids = list(dict.fromkeys(row.lead_id for row in rows if row.lead_id))
-    company_ids = list(dict.fromkeys(row.company_id for row in rows if row.company_id))
-    profile_values, company_values = await asyncio.gather(
-        asyncio.gather(*(read(profiles.get, identity) for identity in profile_ids)),
-        asyncio.gather(*(read(companies.get, identity) for identity in company_ids)),
-    )
-    profile_map, company_map = dict(zip(profile_ids, profile_values)), dict(zip(company_ids, company_values))
-    return [_canonical_analysis_lead(row, profile_map.get(row.lead_id), company_map.get(row.company_id)) for row in rows]
+    return [_canonical_analysis_lead(row) for row in rows]
 
 
-def _canonical_analysis_lead(row: Any, profile: Any, company: Any) -> dict[str, Any]:
+def _canonical_analysis_lead(row: Any) -> dict[str, Any]:
     """Make the bounded canonical record accepted by deterministic services."""
-    display = _canonical_display_fields(row, profile, company)
+    display = workspace_lead_fields(row)
     first_name, last_name = display["first_name"], display["last_name"]
     workspace_metadata = getattr(row, "metadata", {}) or {}
     workspace_metadata = workspace_metadata if isinstance(workspace_metadata, dict) else {}
-    imported = workspace_metadata.get("csv_import")
-    imported = imported if isinstance(imported, dict) else {}
-    company_size = imported.get("company_size")
+    context = workspace_lead_context(row)
+    company_size = context.get("company_size")
     industry = display["industry"]
-    company_metadata = getattr(company, "metadata", {}) or {}
-    company_metadata = company_metadata if isinstance(company_metadata, dict) else {}
     record = {
         "id": row.id,
         **display,
@@ -461,15 +402,15 @@ def _canonical_analysis_lead(row: Any, profile: Any, company: Any) -> dict[str, 
         "name": f"{first_name} {last_name}".strip(),
         "industry": industry,
         "company_industry": industry,
-        "company_description": getattr(company, "description", "") or "",
-        "company_employees": getattr(company, "employee_count", None) or 0,
+        "company_description": context.get("description") or "",
+        "company_employees": context.get("employee_count") or 0,
         "company_size": company_size.strip() if isinstance(company_size, str) else "",
-        "company_revenue_band": getattr(company, "revenue_band", "") or "",
-        "company_growth_stage": str(company_metadata.get("growth_stage") or ""),
-        "company_technology": company_metadata.get("technology") or {},
-        "buying_signals": list(company_metadata.get("buying_signals") or []),
-        "recent_events": list(company_metadata.get("recent_events") or []),
-        "pain_points": list(company_metadata.get("pain_points") or []),
+        "company_revenue_band": context.get("revenue_band") or "",
+        "company_growth_stage": str(context.get("growth_stage") or ""),
+        "company_technology": context.get("technology") or {},
+        "buying_signals": list(context.get("buying_signals") or []),
+        "recent_events": list(context.get("recent_events") or []),
+        "pain_points": list(context.get("pain_points") or []),
         "source_provenance": list(workspace_metadata.get("source_provenance") or []),
     }
     # The canonical normalizer stores provider qualification under this key.

@@ -12,6 +12,13 @@ from services.job_engine.models import Job, JobStatus
 from services.job_engine.runner import BackgroundRunner
 
 
+@pytest.fixture(autouse=True)
+def enable_deferred_provider_path(monkeypatch):
+    # These tests exercise the retained provider implementation. Beta's
+    # disabled worker/finalizer boundaries are tested in workspace isolation.
+    monkeypatch.setattr("services.capabilities.beta.beta_feature_enabled", lambda _feature: True)
+
+
 @pytest.fixture
 def workflow(monkeypatch):
     captured = {"writes": [], "progress": [], "events": [], "job_results": []}
@@ -97,6 +104,7 @@ def test_staging_database_errors_are_not_empty_success(monkeypatch, operation):
         def eq(self, *_args): return self
         def order(self, *_args, **_kwargs): return self
         def execute(self): raise httpx.ReadTimeout("local simulated timeout")
+        def range(self, *_args): return self
 
     monkeypatch.setattr(storage, "get_supabase_client", lambda: SimpleNamespace(table=lambda _name: Query()))
     args = ("job-1",) if operation == "get_search_results" else ("job-1", [{"id": "one"}])
@@ -152,6 +160,7 @@ async def test_finalization_distinguishes_empty_success_partial_and_unreadable(m
         assert any(update.get("status") == "failed" and update.get("error_kind") == "persistence" for update in updates)
         if failed_batches:
             summary = updates[-1]["summary"]
+            assert summary["error_kind"] == "persistence"
             assert summary["persisted_lead_count"] == len(staged)
             assert summary["failed_staging_batches"] == failed_batches
             assert summary["provider_lead_count"] == provider_count
@@ -189,6 +198,7 @@ def test_unexpected_staging_errors_propagate_unchanged(monkeypatch, operation):
         def eq(self, *_args): return self
         def order(self, *_args, **_kwargs): return self
         def execute(self): raise TypeError("local programming failure")
+        def range(self, *_args): return self
 
     monkeypatch.setattr(storage, "get_supabase_client", lambda: SimpleNamespace(table=lambda _name: Query()))
     args = ("job-1",) if operation == "get_search_results" else ("job-1", [{"id": "one"}])
@@ -225,7 +235,36 @@ def test_invalid_staged_response_cannot_be_empty_success(monkeypatch):
         def eq(self, *_args): return self
         def order(self, *_args, **_kwargs): return self
         def execute(self): return SimpleNamespace(data=None)
+        def range(self, *_args): return self
 
     monkeypatch.setattr(storage, "get_supabase_client", lambda: SimpleNamespace(table=lambda _name: Query()))
     with pytest.raises(storage.SearchResultPersistenceError, match="invalid response shape"):
         storage.JobStorage().get_search_results("job-1")
+
+
+def test_staged_results_read_all_pages_in_stable_order(monkeypatch):
+    rows = [{"lead_data": {"id": str(index)}} for index in range(1201)]
+    requests = []
+
+    class Query:
+        def __init__(self):
+            self.orders = []
+        def select(self, *_args): return self
+        def eq(self, key, value):
+            assert (key, value) == ("job_id", "job-1")
+            return self
+        def order(self, key, **_kwargs):
+            self.orders.append(key)
+            return self
+        def range(self, start, end):
+            self.bounds = (start, end)
+            return self
+        def execute(self):
+            assert self.orders == ["rank", "id"]
+            start, end = self.bounds
+            requests.append(self.bounds)
+            return SimpleNamespace(data=rows[start:end + 1])
+
+    monkeypatch.setattr(storage, "get_supabase_client", lambda: SimpleNamespace(table=lambda _name: Query()))
+    assert storage.JobStorage().get_search_results("job-1") == [row["lead_data"] for row in rows]
+    assert requests == [(0, 499), (500, 999), (1000, 1499)]

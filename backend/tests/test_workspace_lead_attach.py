@@ -99,6 +99,10 @@ class _FakeWorkspaceLeadRepo:
     async def get(self, entity_id: str):
         return self.rows.get(entity_id)
 
+    async def get_for_workspace(self, entity_id: str, workspace_id: str):
+        row = self.rows.get(entity_id)
+        return row if row and row.workspace_id == workspace_id else None
+
     async def find_in_workspace(self, workspace_id: str, lead_id: str):
         rows = self.rows.matching(
             lambda r: r.workspace_id == workspace_id and r.lead_id == lead_id

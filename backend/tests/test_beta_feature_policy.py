@@ -36,8 +36,8 @@ def test_discovery_sourcing_is_rejected_before_any_persistence_work():
 
 
 @pytest.mark.asyncio
-async def test_explicit_provider_search_uses_enabled_lead_search_without_enabling_automation(monkeypatch):
-    """A person-clicked search may use providers; automated callers remain gated."""
+async def test_explicit_search_queues_only_workspace_leads_without_enabling_sourcing(monkeypatch):
+    """Manual searches carry a durable workspace-only execution contract."""
     import services.discovery.service as discovery_service
 
     requested_capabilities: list[str] = []
@@ -50,11 +50,12 @@ async def test_explicit_provider_search_uses_enabled_lead_search_without_enablin
     monkeypatch.setattr(
         discovery_service,
         "create_discovery",
-        lambda workspace_id, *_args: {"id": f"discovery-{workspace_id}"},
+        lambda workspace_id, *_args, **_kwargs: {"id": f"discovery-{workspace_id}"},
     )
 
     async def create_job(**kwargs):
         assert kwargs["discovery_id"] == "discovery-workspace-a"
+        assert kwargs["search_scope"] == "workspace"
         return {"job_id": "job-a"}
 
     monkeypatch.setattr(discovery_service.job_manager, "create_search_job", create_job)

@@ -786,6 +786,62 @@ class TestDurableOnboardingCompletion:
         assert kwargs["slug"] == "acme"
 
     @pytest.mark.asyncio
+    async def test_onboarding_workspace_names_are_unique_per_account_and_retries_reuse_org(self, monkeypatch):
+        svc = self._wired_service()
+        await svc._user_service.save_user(User(id="user-one"))
+        await svc._user_service.save_user(User(id="user-two"))
+        await svc._user_service.save_user(User(id="user-three"))
+        await svc._user_service.save_user(User(id="user-four"))
+        workspace_orgs = {}
+
+        def ensure(user_id, *, organization_id, **_kwargs):
+            workspace_orgs[user_id] = organization_id
+            return f"workspace-{user_id}"
+
+        def accessible(_workspace_id, user_id):
+            return [{
+                "id": f"workspace-{user_id}",
+                "organization_id": workspace_orgs[user_id],
+                "status": "active",
+            }]
+
+        monkeypatch.setattr("services.workspace.state.ensure_workspace", ensure)
+        monkeypatch.setattr("services.workspace.access.workspaces_for_user", accessible)
+
+        first = await svc.create_workspace_and_finalize("user-one", {
+            "workspace_name": "My Workspace", "slug": "my-workspace",
+        })
+        second = await svc.create_workspace_and_finalize("user-two", {
+            "workspace_name": "My Workspace", "slug": "",
+        })
+        replay = await svc.create_workspace_and_finalize("user-one", {
+            "workspace_name": "My Workspace", "slug": "my-workspace",
+        })
+        custom_first = await svc.create_workspace_and_finalize("user-three", {
+            "workspace_name": "Acme", "slug": "acme",
+        })
+        custom_second = await svc.create_workspace_and_finalize("user-four", {
+            "workspace_name": "Acme", "slug": "acme",
+        })
+
+        assert first["organization_id"] != second["organization_id"]
+        assert first["organization_slug"] != second["organization_slug"]
+        assert replay["organization_id"] == first["organization_id"]
+        first_org = await svc._org_service.get_organization(first["organization_id"])
+        second_org = await svc._org_service.get_organization(second["organization_id"])
+        assert first_org.name != second_org.name
+        assert first_org.display_name == second_org.display_name == "My Workspace"
+        assert first_org.slug != "my-workspace"
+        assert custom_first["organization_id"] != custom_second["organization_id"]
+        assert custom_first["organization_slug"] != custom_second["organization_slug"]
+        assert custom_first["organization_slug"] != "acme"
+        assert custom_second["organization_slug"] != "acme"
+        assert (await svc._org_service.get_organization(custom_first["organization_id"])).display_name == "Acme"
+        assert (await svc._org_service.get_organization(custom_second["organization_id"])).display_name == "Acme"
+        assert len(await svc._org_service.list_user_organizations("user-one")) == 1
+        assert len(await svc._org_service.list_user_organizations("user-two")) == 1
+
+    @pytest.mark.asyncio
     async def test_wizard_data_round_trips_through_user_service(self):
         svc = self._wired_service()
         user_id = "wizard-user"

@@ -256,16 +256,25 @@ class JobStorage:
         client = get_supabase_client()
         if not client:
             raise SearchResultPersistenceError("Staged search results are unavailable")
-        result = (
-            client.table("search_results")
-            .select("*")
-            .eq("job_id", job_id)
-            .order("rank", desc=False)
-            .execute()
-        )
-        if not isinstance(result.data, list):
-            raise SearchResultPersistenceError("Staged search results have an invalid response shape")
-        return [row["lead_data"] for row in result.data]
+        leads = []
+        offset = 0
+        page_size = 500
+        while True:
+            result = (
+                client.table("search_results")
+                .select("*")
+                .eq("job_id", job_id)
+                .order("rank", desc=False)
+                .order("id", desc=False)
+                .range(offset, offset + page_size - 1)
+                .execute()
+            )
+            if not isinstance(result.data, list):
+                raise SearchResultPersistenceError("Staged search results have an invalid response shape")
+            leads.extend(row["lead_data"] for row in result.data)
+            if len(result.data) < page_size:
+                return leads
+            offset += page_size
 
     def list_active_jobs(self, user_id: str) -> list[Job]:
         client = get_supabase_client()

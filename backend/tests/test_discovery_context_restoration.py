@@ -24,10 +24,10 @@ def test_search_filter_snapshot_is_written_on_existing_discovery_row(monkeypatch
     monkeypatch.setattr(service, "get_supabase_client", lambda: SimpleNamespace(table=lambda name: Query() if name == "discoveries" else pytest.fail("unexpected table")))
     row = service.create_discovery("selected", "actor", "founders", ui_filters={"location": "India", "title": "Founder"})
     assert row["workspace_id"] == "selected"
-    assert row["metadata"] == {"ui_filters": {"location": "India", "title": "Founder"}}
+    assert row["metadata"] == {"search_scope": "provider", "ui_filters": {"location": "India", "title": "Founder"}}
     assert row["query"] == "founders"
     # Existing callers still get the previous default payload.
-    assert service.create_discovery("selected", "actor", "founders")["metadata"] == {}
+    assert service.create_discovery("selected", "actor", "founders")["metadata"] == {"search_scope": "provider"}
 
 
 @pytest.mark.asyncio

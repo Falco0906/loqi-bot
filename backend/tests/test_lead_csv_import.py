@@ -87,7 +87,7 @@ async def test_imports_a_fifteen_row_csv_through_the_canonical_workspace_lead_pa
 
 
 @pytest.mark.asyncio
-async def test_list_projects_canonical_workspace_leads_with_batched_related_reads(monkeypatch):
+async def test_list_never_fills_missing_fields_from_global_profiles(monkeypatch):
     rows = [
         SimpleNamespace(id="wl-1", lead_id="lead-1", company_id="company-1", email="", first_name="", last_name="", title="", phone="", linkedin_url="", lead_status="new", metadata={}),
         SimpleNamespace(id="wl-2", lead_id="lead-2", company_id=None, email="second@example.com", first_name="Second", last_name="Lead", title="COO", phone="", linkedin_url="", lead_status="new", metadata={"csv_import": {"company": "CSV Co", "location": "London", "industry": "SaaS"}}),
@@ -98,25 +98,14 @@ async def test_list_projects_canonical_workspace_leads_with_batched_related_read
             assert workspace_id == "workspace-a"
             return rows
 
-    class LeadRepo:
-        async def list_by_ids(self, ids):
-            assert set(ids) == {"lead-1", "lead-2"}
-            return [SimpleNamespace(id="lead-1", first_name="Ada", last_name="Lovelace", email="ada@example.com", title="Founder", phone="", linkedin_url="")]
-
-    class CompanyRepo:
-        async def list_by_ids(self, ids):
-            assert ids == ["company-1"]
-            return [SimpleNamespace(id="company-1", name="Analytical Engines", website="analytical.example", location="London", industry="Computing")]
-
     monkeypatch.setattr(lead_service, "WorkspaceLeadRepository", WorkspaceRepo)
-    monkeypatch.setattr(lead_service, "LeadRepository", LeadRepo)
-    monkeypatch.setattr(lead_service, "CompanyRepository", CompanyRepo)
 
     result = await lead_service.list_workspace_leads("workspace-a", query="", page=1)
 
     assert result["total"] == 2
     by_id = {lead["id"]: lead for lead in result["leads"]}
-    assert by_id["wl-1"]["company"] == "Analytical Engines"
+    assert by_id["wl-1"]["company"] == ""
+    assert by_id["wl-1"]["first_name"] == ""
     assert by_id["wl-2"]["company"] == "CSV Co"
     assert by_id["wl-2"]["location"] == "London"
 
@@ -137,17 +126,7 @@ async def test_list_reads_csv_imported_workspace_leads_when_global_projection_is
             assert workspace_id == "workspace-a"
             return rows
 
-    class UnavailableLeadProjection:
-        async def list_by_ids(self, ids):
-            raise RuntimeError("global leads projection is unavailable")
-
-    class UnavailableCompanyProjection:
-        async def list_by_ids(self, ids):
-            raise RuntimeError("global companies projection is unavailable")
-
     monkeypatch.setattr(lead_service, "WorkspaceLeadRepository", WorkspaceRepo)
-    monkeypatch.setattr(lead_service, "LeadRepository", UnavailableLeadProjection)
-    monkeypatch.setattr(lead_service, "CompanyRepository", UnavailableCompanyProjection)
 
     result = await lead_service.list_workspace_leads("workspace-a", query="person", page=1)
 
@@ -259,13 +238,7 @@ async def test_keyword_filter_searches_canonical_workspace_lead_fields(monkeypat
             assert workspace_id == "workspace-a"
             return rows
 
-    class EmptyProjection:
-        async def list_by_ids(self, _ids):
-            return []
-
     monkeypatch.setattr(lead_service, "WorkspaceLeadRepository", WorkspaceRepo)
-    monkeypatch.setattr(lead_service, "LeadRepository", EmptyProjection)
-    monkeypatch.setattr(lead_service, "CompanyRepository", EmptyProjection)
 
     result = await lead_service.list_workspace_leads(
         "workspace-a", filters={"keywords": "revenue"},
@@ -370,17 +343,11 @@ async def test_discovery_results_are_canonical_deduplicated_and_keep_provider_pr
             assert workspace_id == "workspace-a"
             return rows
 
-    class EmptyProjection:
-        async def list_by_ids(self, _ids):
-            return []
-
     def provenance(discovery_id, workspace_id):
         assert (discovery_id, workspace_id) == ("discovery-a", "workspace-a")
         return {"shared": ["apollo"], "provider-only": ["pdl"]}
 
     monkeypatch.setattr(lead_service, "WorkspaceLeadRepository", WorkspaceRepo)
-    monkeypatch.setattr(lead_service, "LeadRepository", EmptyProjection)
-    monkeypatch.setattr(lead_service, "CompanyRepository", EmptyProjection)
     monkeypatch.setattr(lead_service, "get_discovery_lead_provenance", provenance)
 
     result = await lead_service.list_workspace_leads(
@@ -416,13 +383,7 @@ async def test_discovery_union_is_counted_and_paginated_before_the_response_is_s
         async def list_for_workspace(self, _workspace_id):
             return rows
 
-    class EmptyProjection:
-        async def list_by_ids(self, _ids):
-            return []
-
     monkeypatch.setattr(lead_service, "WorkspaceLeadRepository", WorkspaceRepo)
-    monkeypatch.setattr(lead_service, "LeadRepository", EmptyProjection)
-    monkeypatch.setattr(lead_service, "CompanyRepository", EmptyProjection)
     monkeypatch.setattr(
         lead_service,
         "get_discovery_lead_provenance",
@@ -456,16 +417,10 @@ async def test_provider_projection_failure_does_not_hide_workspace_results(monke
         async def list_for_workspace(self, _workspace_id):
             return [_workspace_lead("workspace-only", name="Workspace")]
 
-    class EmptyProjection:
-        async def list_by_ids(self, _ids):
-            return []
-
     def unavailable(_discovery_id, _workspace_id):
         raise RuntimeError("discovery projection unavailable")
 
     monkeypatch.setattr(lead_service, "WorkspaceLeadRepository", WorkspaceRepo)
-    monkeypatch.setattr(lead_service, "LeadRepository", EmptyProjection)
-    monkeypatch.setattr(lead_service, "CompanyRepository", EmptyProjection)
     monkeypatch.setattr(lead_service, "get_discovery_lead_provenance", unavailable)
 
     result = await lead_service.list_workspace_leads(

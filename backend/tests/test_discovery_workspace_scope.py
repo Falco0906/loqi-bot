@@ -63,7 +63,7 @@ async def test_discovery_create_list_and_get_share_authenticated_workspace(monke
         return {"id": discovery_id, "workspace_id": workspace_id}
 
     monkeypatch.setattr(discovery_api.identity_dependencies, "resolve_web_session", resolve_user)
-    monkeypatch.setattr(discovery_api.workspace_access, "resolve_legacy_workspace_id", resolve_workspace)
+    monkeypatch.setattr(discovery_api.workspace_access, "resolve_selected_workspace_id", resolve_workspace)
     monkeypatch.setattr(discovery_api, "create_search_run", create_run)
     monkeypatch.setattr(discovery_api, "list_discoveries", list_rows)
     monkeypatch.setattr(discovery_api, "get_discovery", get_row)
@@ -106,7 +106,7 @@ async def test_explicit_discovery_provider_search_passes_manual_initiation(monke
         return {"discovery_id": "discovery-1", "job_id": "job-1"}
 
     monkeypatch.setattr(discovery_api.identity_dependencies, "resolve_web_session", resolve_user)
-    monkeypatch.setattr(discovery_api.workspace_access, "resolve_legacy_workspace_id", resolve_workspace)
+    monkeypatch.setattr(discovery_api.workspace_access, "resolve_selected_workspace_id", resolve_workspace)
     monkeypatch.setattr(discovery_api, "create_search_run", create_run)
 
     response = await discovery_api.create_discovery_endpoint(
@@ -183,7 +183,7 @@ async def test_discovery_read_routes_keep_their_registered_http_contract(monkeyp
         return "workspace-selected"
 
     monkeypatch.setattr(discovery_api.identity_dependencies, "resolve_web_session", resolve_user)
-    monkeypatch.setattr(discovery_api.workspace_access, "resolve_legacy_workspace_id", resolve_workspace)
+    monkeypatch.setattr(discovery_api.workspace_access, "resolve_selected_workspace_id", resolve_workspace)
     monkeypatch.setattr(discovery_api, "get_discovery", lambda *_args: None)
 
     with pytest.raises(HTTPException) as error:
@@ -220,7 +220,7 @@ async def test_discovery_lead_decision_uses_selected_workspace_and_service(monke
         return {"ok": True, "lead": lead, "approved": approved}
 
     monkeypatch.setattr(discovery_api.identity_dependencies, "resolve_web_session", resolve_user)
-    monkeypatch.setattr(discovery_api.workspace_access, "resolve_legacy_workspace_id", resolve_workspace)
+    monkeypatch.setattr(discovery_api.workspace_access, "resolve_selected_workspace_id", resolve_workspace)
     monkeypatch.setattr(discovery_api, "decide_discovery_lead", decide)
 
     response = await discovery_api.decide_discovery_lead_endpoint(
@@ -257,7 +257,7 @@ def test_discovery_lead_decision_route_returns_http_200(monkeypatch):
         return {"ok": True, "lead": lead, "approved": approved}
 
     monkeypatch.setattr(discovery_api.identity_dependencies, "resolve_web_session", resolve_user)
-    monkeypatch.setattr(discovery_api.workspace_access, "resolve_legacy_workspace_id", resolve_workspace)
+    monkeypatch.setattr(discovery_api.workspace_access, "resolve_selected_workspace_id", resolve_workspace)
     monkeypatch.setattr(discovery_api, "decide_discovery_lead", decide)
 
     with TestClient(main.app) as client:
@@ -547,7 +547,7 @@ async def test_create_search_run_keeps_explicit_workspace(monkeypatch):
     monkeypatch.setattr(beta_policy, "beta_feature_enabled", lambda _feature: True)
     persisted: dict[str, str] = {}
 
-    def create_discovery(workspace_id, owner_id, query, display_title=None):
+    def create_discovery(workspace_id, owner_id, query, display_title=None, **_kwargs):
         persisted.update({"workspace_id": workspace_id, "owner_id": owner_id, "query": query})
         return {"id": "discovery-1"}
 

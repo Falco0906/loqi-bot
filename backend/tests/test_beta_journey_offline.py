@@ -56,9 +56,9 @@ def canonical_data(monkeypatch):
 
     empty_companies = lambda: SimpleNamespace(get=AsyncMock(return_value=None), list_by_ids=AsyncMock(return_value=[]))
     for module in (state, leads):
-        monkeypatch.setattr(module, "LeadRepository", Profiles)
         monkeypatch.setattr(module, "WorkspaceLeadRepository", WorkspaceLeads)
-        monkeypatch.setattr(module, "CompanyRepository", empty_companies)
+    monkeypatch.setattr(state, "LeadRepository", Profiles)
+    monkeypatch.setattr(state, "CompanyRepository", empty_companies)
     monkeypatch.setattr("services.persistence.launch.repositories.WorkspaceLeadRepository", WorkspaceLeads)
     monkeypatch.setattr(state, "_lead_domain", lambda _: None)
     monkeypatch.setattr(leads, "LeadSignalRepository", lambda: SimpleNamespace(list_for_lead=AsyncMock(return_value=[])))

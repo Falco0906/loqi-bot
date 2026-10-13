@@ -30,6 +30,7 @@ from uuid import uuid4
 
 from services.job_engine import job_manager
 from services.platform.supabase import get_supabase_client
+from services.workspace.lead_projection import workspace_lead_context
 
 _DISCOVERY_SELECT = (
     "id, workspace_id, query, status, title, description, favorite, "
@@ -125,6 +126,7 @@ def create_discovery(
     query: str,
     title: Optional[str] = None,
     ui_filters: dict[str, str] | None = None,
+    search_scope: str = "provider",
 ) -> Optional[dict]:
     """Persist a new discovery row (no job link yet).
 
@@ -150,7 +152,7 @@ def create_discovery(
         "last_viewed_at": now,
         "last_refreshed_at": now,
         "summary": {},
-        "metadata": {"ui_filters": ui_filters} if ui_filters else {},
+        "metadata": {"search_scope": search_scope, **({"ui_filters": ui_filters} if ui_filters else {})},
         "filters": [],
         "provider_provenance": {},
         "created_by": user_id,
@@ -186,11 +188,8 @@ async def create_search_run(
     """
     from services.capabilities.beta import beta_feature_enabled, beta_feature_unavailable_message
 
-    # A durable job is an execution boundary, not necessarily autonomous
-    # behavior. A person explicitly starting provider Discovery is governed by
-    # Beta's enabled ``lead_search`` capability. Existing campaign, Copilot,
-    # onboarding, and service callers retain the default automated initiation
-    # and remain behind the disabled autonomous-sourcing capability.
+    # Manual Beta searches read only the selected workspace's saved leads.
+    # Provider acquisition remains behind the disabled sourcing capability.
     required_capability = (
         "lead_search" if initiation == "manual" else "autonomous_lead_sourcing"
     )
@@ -200,6 +199,8 @@ async def create_search_run(
             beta_feature_unavailable_message(required_capability),
         )
 
+    if initiation == "manual" and not workspace_id:
+        raise DiscoveryJobLifecycleError(400, "Select an authorized workspace before searching")
     if not workspace_id:
         from services.workspace.state import ensure_workspace
 
@@ -217,6 +218,7 @@ async def create_search_run(
             user_id,
             query,
             display_title,
+            search_scope="workspace" if initiation == "manual" else "provider",
             **({"ui_filters": ui_filters} if ui_filters else {}),
         )
     discovery_id = str((discovery or {}).get("id") or "")
@@ -298,6 +300,7 @@ async def create_search_run(
         query=query,
         discovery_id=discovery_id,
         workspace_id=workspace_id,
+        search_scope="workspace" if initiation == "manual" else "provider",
         on_update=handle_update,
         on_complete=finalize_discovery,
     )
@@ -650,12 +653,11 @@ def get_discovery(discovery_id: str, workspace_id: str = "", *, strict: bool = F
             .select(
                 f"{_DISCOVERY_SELECT}, "
                 "discovery_companies(rank, match_score, "
-                "company_id, company:companies(*)), "
+                "company_id), "
                 "discovery_leads(rank, match_score, status, source_provider, "
                 "lead_id, workspace_lead:workspace_leads("
-                "id, company_id, email, first_name, last_name, title, phone, "
-                "linkedin_url, lead_status, source, metadata, "
-                "lead:leads(*)))"
+                "id, workspace_id, deleted_at, company_id, email, first_name, last_name, title, phone, "
+                "linkedin_url, lead_status, source, metadata))"
             )
             .eq("id", discovery_id)
         )
@@ -665,12 +667,44 @@ def get_discovery(discovery_id: str, workspace_id: str = "", *, strict: bool = F
         if strict and not isinstance(getattr(result, "data", None), list):
             raise RuntimeError("Discovery context read returned invalid data")
         rows = getattr(result, "data", None) or []
-        return rows[0] if rows else None
+        if not rows:
+            return None
+        return _workspace_discovery_results(rows[0])
     except Exception as e:
         if strict:
             raise
         _log(f"get_discovery error: {e}")
         return None
+
+
+def _workspace_discovery_results(row: dict) -> dict:
+    """Expose only facts acquired in the Discovery's own workspace.
+
+    Discovery links do not establish ownership of a global company/person
+    payload. Build the compatible company projection from local lead context.
+    Reject foreign or deleted nested links, even if old stored links are bad.
+    """
+    row = dict(row)
+    leads = []
+    companies = {}
+    for link in row.get("discovery_leads") or []:
+        lead = link.get("workspace_lead") or {}
+        if lead.get("workspace_id") != row.get("workspace_id") or lead.get("deleted_at"):
+            continue
+        lead = {key: value for key, value in lead.items() if key != "lead"}
+        leads.append({**link, "workspace_lead": lead})
+        if lead.get("company_id"):
+            context = workspace_lead_context(lead)
+            companies[lead["company_id"]] = {
+                "id": lead["company_id"], **context, "name": context.get("company", ""),
+            }
+    row["discovery_leads"] = leads
+    row["discovery_companies"] = [
+        {**link, "company": companies[link["company_id"]]}
+        for link in row.get("discovery_companies") or []
+        if link.get("company_id") in companies
+    ]
+    return row
 
 
 def get_discovery_lead_provenance(
@@ -755,6 +789,36 @@ def mark_discovery_status(
         return False
 
 
+async def search_saved_workspace_leads(job, on_progress) -> dict:
+    """Run manual Discovery over authorized, already-persisted workspace rows.
+
+    Reuse the durable search job/staging/finalization contract. Staging holds
+    canonical IDs, never provider records to import. No AI or sourcing calls.
+    """
+    from services.job_engine.storage import JobStorage, SearchResultPersistenceError
+    from services.leads.service import list_workspace_leads
+    from services.workspace.access import resolve_workspace_context
+
+    if not job.workspace_id or not job.query.strip():
+        raise ValueError("A workspace and search query are required")
+    await asyncio.to_thread(resolve_workspace_context, None, job.user_id, job.workspace_id)
+    discovery = await asyncio.to_thread(get_discovery, job.discovery_id, job.workspace_id, strict=True)
+    if not discovery or discovery.get("created_by") != job.user_id:
+        raise ValueError("Search is unavailable in this workspace")
+    metadata = discovery.get("metadata") or {}
+    filters = metadata.get("ui_filters") or {}
+    await asyncio.to_thread(on_progress, job.id, "Searching your workspace's saved leads", 10)
+    result = await list_workspace_leads(job.workspace_id, job.query, page_size=None, filters=filters)
+    staged = [
+        {"workspace_lead_id": lead["id"], "id": lead["id"], "source": "lead_database", "_rank": i + 1}
+        for i, lead in enumerate(result["leads"])
+    ]
+    if not await asyncio.to_thread(JobStorage().store_search_results, job.id, staged):
+        raise SearchResultPersistenceError("Saved search results could not be recorded")
+    await asyncio.to_thread(on_progress, job.id, "Saving your workspace search", 90)
+    return {"ok": True, "result": {"search_scope": "workspace", "matched_lead_count": len(staged)}}
+
+
 async def finalize_discovery(job) -> bool:
     """Move a discovery to ``completed`` using its job's stored results.
 
@@ -799,6 +863,18 @@ async def finalize_discovery(job) -> bool:
             await asyncio.to_thread(mark_discovery_status, discovery_id, "failed", "No workspace")
             return False
 
+        from services.capabilities.beta import beta_feature_enabled
+        workspace_search = (getattr(job, "payload", None) or {}).get("search_scope") == "workspace"
+        if getattr(job, "workspace_id", "") and job.workspace_id != workspace_id:
+            raise ValueError("Search workspace does not match its Discovery")
+        if row.get("deleted_at"):
+            return False
+        if not workspace_search and not beta_feature_enabled("autonomous_lead_sourcing"):
+            await asyncio.to_thread(mark_discovery_status, discovery_id, "failed",
+                                   "Provider sourcing is disabled. Search your saved workspace leads.",
+                                   error_kind="permanent")
+            return False
+
         from services.job_engine.storage import JobStorage
         leads = await asyncio.to_thread(JobStorage().get_search_results, job.id)
         _log(f"[kickoff] finalize_discovery: search_results={len(leads) if leads else 0} for job {getattr(job, 'id', '')}")
@@ -836,6 +912,15 @@ async def finalize_discovery(job) -> bool:
         normalization_locks: dict[str, asyncio.Lock] = {}
 
         async def normalize_one(lead: dict) -> str | Exception | None:
+            if workspace_search:
+                from services.persistence.launch import WorkspaceLeadRepository
+                async with semaphore:
+                    saved = await WorkspaceLeadRepository().get_for_workspace(
+                        str(lead.get("workspace_lead_id") or ""), workspace_id,
+                    )
+                if saved is None or saved.deleted_at is not None:
+                    return ValueError("A saved lead is no longer available in this workspace")
+                return saved.id
             identity = _normalization_lock_key(lead)
             if identity is None:
                 return None
@@ -894,6 +979,7 @@ async def finalize_discovery(job) -> bool:
         error = "; ".join(reasons) or "Discovery persistence failed"
         summary = {
             "error": error,
+            "error_kind": "persistence",
             "provider_lead_count": staging.get("provider_lead_count", len(leads)),
             "persisted_lead_count": len(ws_lead_ids),
             "skipped_provider_record_count": skipped_records,
@@ -1016,6 +1102,8 @@ def _link_companies(
         wl_result = (
             client.table("workspace_leads")
             .select("company_id, source")
+            .eq("workspace_id", workspace_id)
+            .is_("deleted_at", "null")
             .in_("id", ws_lead_ids)
             .not_.is_("company_id", "null")
             .execute()

@@ -12,6 +12,7 @@ import {
 import { useBetaFeature } from "../../../contexts/BetaFeaturesContext";
 import { listWorkspaceLeads, type WorkspaceLeadRecord } from "../../../lib/api";
 import { parseDiscoveryMode } from "../../../lib/discovery-mode";
+import { terminalDiscoveryMessage } from "../../../lib/discovery-status";
 import { useIntelligenceWorkspace } from "../../../hooks/useIntelligenceWorkspace";
 import { getNavState, setNavState } from "../../../lib/nav-state";
 import { DISCOVERY_CONTEXT_KEY, discoverySelectionScope, discoveryResponseIsCurrent, discoverySavedFilters, rememberDiscoveryContext, restoredDiscoveryContext } from "../../../lib/discovery-context";
@@ -33,9 +34,9 @@ const FILTERS = [
 ] as const;
 
 const SUGGESTIONS = [
-  "Find SaaS founders in the US",
-  "Find heads of sales at growing startups",
-  "Find operations leaders at e-commerce companies",
+  "Founder",
+  "Head of Sales",
+  "Operations",
 ];
 
 function activeSessionToken(): string {
@@ -47,22 +48,6 @@ function forgetRememberedDiscovery(): void {
     window.sessionStorage.removeItem(DISCOVERY_CONTEXT_KEY);
   } catch {
     // See rememberDiscovery.
-  }
-}
-
-function terminalDiscoveryMessage(run: DiscoveryData): string {
-  if (run.status === "cancelled") {
-    return "This search was stopped before it completed. Your saved leads are still available.";
-  }
-  switch (run.failure?.kind) {
-    case "timeout":
-      return "The provider did not respond in time after its retry budget. Your saved leads are still available.";
-    case "permanent":
-      return "The configured provider could not accept this search. Check its connection and try again.";
-    case "persistence":
-      return "Matching leads were found, but their results could not be saved. Please try the search again.";
-    default:
-      return "This search failed before it completed. Your saved leads are still available.";
   }
 }
 
@@ -275,6 +260,10 @@ function DiscoverySearchStatus({
         {error}
       </div>
     );
+  }
+
+  if (starting || run?.metadata?.search_scope === "workspace") {
+    return <p role="status" className="text-sm text-on-surface-variant">Searching saved leads in this workspace…</p>;
   }
 
   const progress: DiscoveryProgress | undefined = starting && !run
@@ -545,6 +534,7 @@ function DiscoveryWorkspace({ workspaceId, scope }: { workspaceId: string; scope
           void resultLoader.current();
         } else if (next?.status === "failed" || next?.status === "cancelled") {
           providerErrorWriter.current(terminalDiscoveryMessage(next));
+          void resultLoader.current();
         }
       } catch {
         if (active && currentRunId.current === providerDiscoveryId && !startingSearchRef.current && !pendingSearch.current) providerErrorWriter.current("Discovery search could not be loaded.");
@@ -677,10 +667,10 @@ function DiscoveryWorkspace({ workspaceId, scope }: { workspaceId: string; scope
       <div className="flex min-w-0 flex-1 items-center gap-3 rounded-xl border border-outline-variant/25 bg-surface-lowest px-4 py-3 shadow-sm focus-within:border-primary/50">
         <span className="text-lg text-primary">✦</span>
         <input
-          aria-label="Describe the leads you're looking for"
+          aria-label="Search saved leads"
           value={draftQuery}
           onChange={(event) => setDraftQuery(event.target.value)}
-          placeholder="Describe the leads you're looking for..."
+          placeholder="Search by name, company, email, or job title…"
           className="min-w-0 flex-1 bg-transparent text-base text-on-surface outline-none placeholder:text-on-surface-variant/45"
         />
         {hasSearch && (
@@ -726,9 +716,10 @@ function DiscoveryWorkspace({ workspaceId, scope }: { workspaceId: string; scope
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Discover</p>
               </div>
               <h1 className="mt-3 font-serif text-4xl tracking-tight text-on-surface md:text-5xl">Who are you looking for?</h1>
+              <p className="mt-3 text-sm text-on-surface-variant">Search leads saved in this workspace. To add your own data, <Link className="text-primary underline" href={`/contacts?workspace_id=${encodeURIComponent(workspaceId)}`}>import a CSV</Link>.</p>
               <div className="mt-8">{searchForm}</div>
               <div className="mt-9">
-                <p className="mb-3 text-sm font-medium text-on-surface-variant">Suggested for you</p>
+                <p className="mb-3 text-sm font-medium text-on-surface-variant">Example searches</p>
                 <div className="space-y-2">
                   {SUGGESTIONS.map((suggestion) => (
                     <button
@@ -755,7 +746,9 @@ function DiscoveryWorkspace({ workspaceId, scope }: { workspaceId: string; scope
                 {runIsActive && <DiscoverySearchStatus query={pendingQuery || (startingSearch ? draftQuery : query)} run={providerRun} starting={startingSearch} error={providerError} />}
                 {!runIsActive && providerError && <DiscoverySearchStatus query={query} run={providerRun} starting={false} error={providerError} />}
                 {!runIsActive && providerRun?.status === "completed" && (
-                  <DiscoveryResearchBriefing view={providerRun} resultCount={workspaceTotal} />
+                  providerRun.metadata?.search_scope === "workspace"
+                    ? <p role="status" className="text-sm text-on-surface-variant">Search completed over this workspace’s saved leads.</p>
+                    : <DiscoveryResearchBriefing view={providerRun} resultCount={workspaceTotal} />
                 )}
 
                 {!runIsActive && loadedScope === currentResultScope.current && resultWarning && <p role="alert" className="text-sm text-on-surface-variant">{resultWarning}</p>}
@@ -787,7 +780,7 @@ function DiscoveryWorkspace({ workspaceId, scope }: { workspaceId: string; scope
                     ) : workspaceLeads.length === 0 ? (
                       <div className="flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed border-outline-variant/30 bg-surface-lowest p-8 text-center">
                         <p className="font-medium text-on-surface">{resultWarning ? "Search results are temporarily incomplete." : "No leads match this search."}</p>
-                        <p className="mt-1 text-sm text-on-surface-variant">Try a broader query or adjust the filters.</p>
+                        <p className="mt-1 text-sm text-on-surface-variant">Try another keyword or filter. If this workspace has no leads yet, <Link className="text-primary underline" href={`/contacts?workspace_id=${encodeURIComponent(workspaceId)}`}>import a CSV</Link>.</p>
                       </div>
                     ) : (
                       <>

@@ -366,6 +366,27 @@ class TestOrganizationWorkspaceRelationship:
         assert db.tables["workspace_members"][0]["workspace_id"] == ws_id
 
     @pytest.mark.asyncio
+    async def test_explicit_organization_never_reparents_another_workspace(self):
+        from services.workspace.state import ensure_workspace
+        from unittest.mock import patch
+
+        db = FakeClient()
+        _attach_client(db)
+        set_repository_provider(RepositoryProvider.SUPABASE)
+        with patch("services.workspace.state.get_supabase_client", return_value=db):
+            first = ensure_workspace("u1", organization_id="org-a")
+            second = ensure_workspace("u1", organization_id="org-b")
+            repeated = ensure_workspace("u1", organization_id="org-b")
+
+        assert first != second
+        assert repeated == second
+        assert {row["id"]: row["organization_id"] for row in db.tables["workspaces"]} == {
+            first: "org-a",
+            second: "org-b",
+        }
+        assert {row["workspace_id"] for row in db.tables["workspace_members"]} == {first, second}
+
+    @pytest.mark.asyncio
     async def test_workspace_resolves_org_from_membership_when_not_supplied(self):
         from services.workspace.state import ensure_workspace
         db = FakeClient({
@@ -421,6 +442,10 @@ class TestOrganizationWorkspaceRelationship:
             "services.workspace.state.ensure_workspace",
             lambda *a, **kw: calls.append((a, kw)) or "ws-reused",
         )
+        monkeypatch.setattr(
+            "services.workspace.access.workspaces_for_user",
+            lambda *_args: [{"id": "ws-reused", "organization_id": "org-existing", "status": "active"}],
+        )
         result = await onboarding.create_workspace_and_finalize("u1", {
             "workspace_name": "Acme", "slug": "acme",
         })
@@ -457,9 +482,14 @@ class TestOrganizationWorkspaceRelationship:
             user_service=user_svc,
         )
         await user_svc.save_user(User(id="u1", display_name="Ada"))
+        org = await org_svc.create_organization("Acme", "u1")
         monkeypatch.setattr(
             "services.workspace.state.ensure_workspace",
             lambda *a, **kw: "ws-1",
+        )
+        monkeypatch.setattr(
+            "services.workspace.access.workspaces_for_user",
+            lambda *_args: [{"id": "ws-1", "organization_id": org.id, "status": "active"}],
         )
         first = await onboarding.create_workspace_and_finalize("u1", {"workspace_name": "Acme"})
         second = await onboarding.create_workspace_and_finalize("u1", {"workspace_name": "Acme"})

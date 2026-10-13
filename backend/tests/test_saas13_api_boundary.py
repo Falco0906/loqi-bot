@@ -62,8 +62,15 @@ class _DummyEmail:
 
 @pytest.fixture(autouse=True)
 def _reset():
+    from services.onboarding.api import reset_onboarding_service
+
     reset_crypto_service()
     reset_auth_service()
+    reset_onboarding_service()
+    yield
+    reset_onboarding_service()
+    reset_auth_service()
+    reset_crypto_service()
 
 
 @pytest.fixture
@@ -206,8 +213,16 @@ class TestStrategicIntelligenceBoundary:
         )
         assert resp.status_code == 401
 
-    def test_generate_binds_actor_ignores_payload_user_id(self, client):
+    def test_generate_binds_actor_ignores_payload_user_id(self, client, monkeypatch):
         stub = self._stub_onboarding(client)
+        class _Generator:
+            async def generate_profile(self, **_kwargs):
+                return {"COMPANY_SUMMARY": "Acme sells widgets"}
+
+        monkeypatch.setattr(
+            "services.strategic.profile.service.get_profile_generator",
+            lambda: _Generator(),
+        )
         svc, _ = _build_service()
         complete = asyncio.run(_register_user(svc, "strat@example.com"))
         resp = client.post(
@@ -272,6 +287,59 @@ class TestStrategicIntelligenceBoundary:
             "strategicProfile": body["profile"],
             "strategicProfileGeneratedAt": body["generated_at"],
         }]
+
+    def test_generate_accepts_grounded_core_profile_with_missing_optional_sections(self, client, monkeypatch):
+        stub = self._stub_onboarding(client)
+        monkeypatch.setattr(
+            "services.strategic.profile.generator._send_openai_request",
+            lambda *_: '{"COMPANY_SUMMARY":"A planning tool","ICP":"Founders",'
+                       '"DIFFERENTIATION":"Faster setup","PRIMARY_OBJECTIVE":"Grow",'
+                       '"CURRENT_CONSTRAINTS":"Awareness"}',
+        )
+        svc, _ = _build_service()
+        complete = asyncio.run(_register_user(svc, "strategic-core@example.com"))
+        response = client.post(
+            "/api/v1/strategic-intelligence/generate",
+            json={
+                "company_description": "A planning tool",
+                "ideal_customer": "Founders",
+                "differentiation": "Faster setup",
+                "annual_goal": "Grow",
+                "biggest_obstacle": "Awareness",
+            },
+            headers=_headers(complete.session.id),
+        )
+        assert response.status_code == 200
+        assert response.json()["profile"]["INDUSTRY"] == "Unknown"
+        assert stub.saved_user_ids == [complete.user.id]
+
+    def test_generate_invalid_model_output_keeps_safe_status_and_redacted_body(self, client, monkeypatch):
+        from services.intelligence.ai import OpenAIError
+
+        self._stub_onboarding(client)
+        class _Generator:
+            async def generate_profile(self, **_kwargs):
+                raise OpenAIError("provider-private-payload", kind="invalid_output")
+
+        monkeypatch.setattr(
+            "services.strategic.profile.service.get_profile_generator",
+            lambda: _Generator(),
+        )
+        svc, _ = _build_service()
+        complete = asyncio.run(_register_user(svc, "strategic-invalid@example.com"))
+        response = client.post(
+            "/api/v1/strategic-intelligence/generate",
+            json={
+                "company_description": "A planning tool",
+                "ideal_customer": "Founders",
+                "differentiation": "Faster setup",
+                "annual_goal": "Grow",
+                "biggest_obstacle": "Awareness",
+            },
+            headers=_headers(complete.session.id),
+        )
+        assert response.status_code == 502
+        assert response.json() == {"detail": "Internal Server Error"}
 
     def test_generate_keeps_success_when_profile_persistence_fails(self, client, monkeypatch):
         from services.onboarding import api as onboarding_api

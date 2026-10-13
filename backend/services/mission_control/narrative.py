@@ -8,6 +8,8 @@ It builds a ``BriefingContext`` from the incoming snapshot + recommendations
 and delegates all natural-language generation to ``NarrativeEngine``.
 """
 
+import hashlib
+import json
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -51,7 +53,8 @@ def _make_cache_key(snapshot: dict, user_timezone: str, greeting: str) -> str:
     tl = snapshot.get("timeline", [])
     delta = snapshot.get("_delta", {})
     dk = delta.get("event_count", 0) if delta else "0"
-    return f"{len(campaigns)}:{drafts.get('pending', 0)}:{drafts.get('approved', 0)}:{len(tl)}:{dk}:{user_timezone}:{greeting}"
+    memory_hash = hashlib.sha256(json.dumps(snapshot.get("memory", {}), sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+    return f"{len(campaigns)}:{drafts.get('pending', 0)}:{drafts.get('approved', 0)}:{len(tl)}:{dk}:{memory_hash}:{user_timezone}:{greeting}"
 
 
 def generate_brief(

@@ -47,7 +47,9 @@ class OpenAIError(Exception):
         self.retryable = retryable
 
 
-def _request_openai_text(system_text: str, user_text: str, *, timeout: int) -> str:
+def _request_openai_text(
+    system_text: str, user_text: str, *, timeout: int, response_format: dict | None = None,
+) -> str:
     """Send one OpenAI Responses text request or raise ``OpenAIError``."""
     if not OPENAI_API_KEY:
         raise OpenAIError("OPENAI_API_KEY not configured. AI unavailable.", kind="credentials")
@@ -65,6 +67,8 @@ def _request_openai_text(system_text: str, user_text: str, *, timeout: int) -> s
             },
         ],
     }
+    if response_format is not None:
+        payload["text"] = {"format": response_format}
     headers = {
         "Authorization": f"Bearer {OPENAI_API_KEY}",
         "Content-Type": "application/json",
@@ -115,9 +119,11 @@ def _request_openai_text(system_text: str, user_text: str, *, timeout: int) -> s
         raise OpenAIError("OpenAI returned malformed response data", kind="invalid_output") from error
 
 
-def _send_openai_request(system_text: str, user_text: str) -> str:
+def _send_openai_request(
+    system_text: str, user_text: str, response_format: dict | None = None,
+) -> str:
     """Existing raising text-transport contract with its historical 30s timeout."""
-    return _request_openai_text(system_text, user_text, timeout=30)
+    return _request_openai_text(system_text, user_text, timeout=30, response_format=response_format)
 
 
 def try_send_openai_request(system_text: str, user_text: str, *, timeout: int = 30) -> str | None:

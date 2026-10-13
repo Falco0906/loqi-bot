@@ -85,7 +85,8 @@ async def test_explicit_strategy_action_queues_existing_authorized_workflow(monk
     monkeypatch.setattr(service, "load_campaigns", lambda _actor, **kwargs: [{"id": "campaign", "objective": "Meet buyers", "leads": [{"id": "saved"}]}])
     enqueue = AsyncMock(return_value=("strategy-job", "queued"))
     monkeypatch.setattr(service, "enqueue_strategy_job", enqueue)
-    response = await api.generate_campaign_strategy("_", "campaign", api.RegenerateStrategyRequest(force=False), SimpleNamespace())
+    async def fake_body(): return b'{"force": false}'
+    response = await api.generate_campaign_strategy("_", "campaign", SimpleNamespace(body=fake_body))
     assert response == {"ok": True, "job_id": "strategy-job", "status": "queued"}
     assert enqueue.await_args.kwargs == {"workspace_id": "selected"}
 

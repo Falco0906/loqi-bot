@@ -121,23 +121,46 @@ export type WorkspaceCreateResponse = {
   organization_slug: string;
 };
 
+export type OnboardingTurn = {
+  field: "companyDescription" | "idealCustomer" | "differentiation" | "annualGoal" | "biggestObstacle";
+  answer: string;
+  reply: string;
+  mode: "ai" | "guided";
+  next_field: OnboardingTurn["field"] | null;
+  complete: boolean;
+};
+
+export async function sendOnboardingTurn(userId: string, field: OnboardingTurn["field"], answer: string): Promise<OnboardingTurn> {
+  const res = await fetch(`${API_BASE}/api/v1/onboarding/conversation/turn?user_id=${encodeURIComponent(userId)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...sessionHeaders() },
+    body: JSON.stringify({ field, answer }),
+  });
+  if (!res.ok) {
+    const body: unknown = await res.json().catch(() => null);
+    const detail = body && typeof body === "object" && "detail" in body ? body.detail : null;
+    throw new Error(typeof detail === "string" ? detail : "We couldn't confirm your answer. Retry to recover it safely.");
+  }
+  return res.json();
+}
+
 export async function createWorkspace(
   userId: string,
   workspaceName: string,
   slug: string,
-  sessionToken = "",
 ): Promise<WorkspaceCreateResponse> {
   const res = await fetch(
     `${API_BASE}/api/v1/onboarding/workspace/create?user_id=${encodeURIComponent(userId)}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json", ...sessionHeaders() },
-      body: JSON.stringify({ workspace_name: workspaceName, slug, session_token: sessionToken }),
+      body: JSON.stringify({ workspace_name: workspaceName, slug }),
     },
   );
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(err || "Failed to create workspace");
+    const body: unknown = await res.json().catch(() => null);
+    const detail = body && typeof body === "object" && "detail" in body ? body.detail : null;
+    throw new Error(typeof detail === "string" ? detail : "Failed to create workspace");
   }
   return res.json();
 }

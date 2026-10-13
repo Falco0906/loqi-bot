@@ -687,11 +687,15 @@ class TestDurableOnboardingCompletion:
         )
 
     @pytest.mark.asyncio
-    async def test_finalize_persists_through_user_service_only(self):
+    async def test_finalize_persists_through_user_service_only(self, monkeypatch):
         svc = self._wired_service()
         user_id = "finalize-user"
         await svc._user_service.save_user(User(id=user_id, display_name="Final"))
         assert await svc._user_service.get_user(user_id) is not None
+        org = await svc._org_service.create_organization("Acme", user_id, slug="acme")
+        monkeypatch.setattr("services.workspace.state.ensure_workspace", lambda *_args, **_kwargs: "workspace-1")
+        monkeypatch.setattr("services.workspace.access.workspaces_for_user", lambda *_args: [{"id": "workspace-1", "organization_id": org.id, "status": "active"}])
+        await svc.save_wizard_data(user_id, {"companyDescription": "Revenue intelligence", "idealCustomer": "CTOs"})
 
         result = await svc.create_workspace_and_finalize(user_id, {
             "workspace_name": "Acme",
@@ -703,6 +707,38 @@ class TestDurableOnboardingCompletion:
         user = await svc._user_service.get_user(user_id)
         assert user.is_onboarding_complete is True
         assert user.onboarding_data_dict["company_name"] == "Acme"
+        assert user.onboarding_data_dict["companyDescription"] == "Revenue intelligence"
+        assert user.onboarding_data_dict["idealCustomer"] == "CTOs"
+        assert user.onboarding_data_dict["onboarding_workspace_id"] == "workspace-1"
+        assert user.onboarding_data_dict["onboarding_step"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_workspace_creation_failure_does_not_complete_onboarding(self, monkeypatch):
+        svc = self._wired_service()
+        user_id = "workspace-failed-user"
+        await svc._user_service.save_user(User(id=user_id, display_name="New user"))
+        await svc.save_wizard_data(user_id, {"companyDescription": "Revenue intelligence"})
+        monkeypatch.setattr("services.workspace.state.ensure_workspace", lambda *_args, **_kwargs: None)
+
+        with pytest.raises(RuntimeError, match="Workspace creation could not be confirmed"):
+            await svc.create_workspace_and_finalize(user_id, {"workspace_name": "My Workspace"})
+
+        user = await svc._user_service.get_user(user_id)
+        assert user.is_onboarding_complete is False
+        assert user.onboarding_data_dict["companyDescription"] == "Revenue intelligence"
+
+    @pytest.mark.asyncio
+    async def test_workspace_id_without_accessible_row_does_not_complete_onboarding(self, monkeypatch):
+        svc = self._wired_service()
+        user_id = "unpersisted-workspace-user"
+        await svc._user_service.save_user(User(id=user_id))
+        monkeypatch.setattr("services.workspace.state.ensure_workspace", lambda *_args, **_kwargs: "phantom-workspace")
+        monkeypatch.setattr("services.workspace.access.workspaces_for_user", lambda *_args: [])
+
+        with pytest.raises(RuntimeError, match="Workspace creation could not be confirmed"):
+            await svc.create_workspace_and_finalize(user_id, {"workspace_name": "My Workspace"})
+
+        assert not (await svc._user_service.get_user(user_id)).is_onboarding_complete
 
     @pytest.mark.asyncio
     async def test_finalize_does_not_require_a_gmail_connection(self, monkeypatch):
@@ -710,7 +746,9 @@ class TestDurableOnboardingCompletion:
         svc = self._wired_service()
         user_id = "no-gmail-onboarding-user"
         await svc._user_service.save_user(User(id=user_id, display_name="No Gmail"))
+        org = await svc._org_service.create_organization("No Gmail Workspace", user_id, slug="no-gmail-workspace")
         monkeypatch.setattr("services.workspace.state.ensure_workspace", lambda *_args, **_kwargs: "workspace-1")
+        monkeypatch.setattr("services.workspace.access.workspaces_for_user", lambda *_args: [{"id": "workspace-1", "organization_id": org.id, "status": "active"}])
 
         await svc.create_workspace_and_finalize(user_id, {
             "workspace_name": "No Gmail Workspace",
@@ -729,10 +767,12 @@ class TestDurableOnboardingCompletion:
         svc = self._wired_service()
         user_id = "finalize-ws-user"
         await svc._user_service.save_user(User(id=user_id, display_name="Final"))
+        org = await svc._org_service.create_organization("Acme", user_id, slug="acme")
 
         calls = []
         mock_ensure = MagicMock(side_effect=lambda *a, **kw: calls.append((a, kw)) or "wsid")
         monkeypatch.setattr("services.workspace.state.ensure_workspace", mock_ensure)
+        monkeypatch.setattr("services.workspace.access.workspaces_for_user", lambda *_args: [{"id": "wsid", "organization_id": org.id, "status": "active"}])
 
         result = await svc.create_workspace_and_finalize(user_id, {
             "workspace_name": "Acme",

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 
 # ─── Validation types ──────────────────────────────────────────────────
@@ -88,3 +90,22 @@ class WizardSaveResponse(BaseModel):
     data: dict
     onboarding_complete: bool
     validation_errors: list[ValidationError] | None = None
+
+
+OnboardingField = Literal[
+    "companyDescription", "idealCustomer", "differentiation", "annualGoal", "biggestObstacle",
+]
+
+
+class ConversationTurnRequest(BaseModel):
+    field: OnboardingField
+    answer: str = Field(min_length=1, max_length=2000)
+
+
+class ConversationTurnResponse(BaseModel):
+    field: OnboardingField
+    answer: str
+    reply: str
+    mode: Literal["ai", "guided"]
+    next_field: OnboardingField | None
+    complete: bool

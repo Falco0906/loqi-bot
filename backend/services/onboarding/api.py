@@ -22,6 +22,8 @@ from services.onboarding.repositories import (
 )
 from services.onboarding.schemas import (
     CompleteStepRequest,
+    ConversationTurnRequest,
+    ConversationTurnResponse,
     OnboardingProgressResponse,
     ProfileRequest,
     WizardDataResponse,
@@ -31,7 +33,7 @@ from services.onboarding.schemas import (
     WorkspaceCreateResponse,
     WorkspaceRequest,
 )
-from services.onboarding.services import LifecycleService, OnboardingService
+from services.onboarding.services import LifecycleService, OnboardingService, WorkspaceProvisioningError
 
 router = APIRouter(prefix="/api/v1/onboarding", tags=["Onboarding"])
 
@@ -60,6 +62,22 @@ def _get_service() -> OnboardingService:
 def get_onboarding_service() -> OnboardingService:
     """Return the application-configured onboarding service."""
     return _get_service()
+
+
+@router.post("/conversation/turn", response_model=ConversationTurnResponse)
+async def answer_conversation_turn(
+    request: Request,
+    payload: ConversationTurnRequest,
+    user_id: str = "",
+):
+    """Persist one authenticated onboarding answer and request grounded wording."""
+    from services.onboarding.conversation import answer_turn
+
+    actor_id = await _resolve_user_id(request, user_id)
+    try:
+        return await answer_turn(_get_service(), actor_id, payload.field, payload.answer)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 def set_onboarding_service(svc: OnboardingService | None) -> None:
@@ -240,18 +258,8 @@ async def create_workspace(request: Request, user_id: str = "", payload: Workspa
         ) from exc
     except (OrganizationSlugTaken, OrganizationNameTaken) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    try:
-        wizard_data = await svc.get_wizard_data(user_id)
-        await svc.launch_initial_research(
-            user_id,
-            wizard_data,
-            str(_data.get("session_token", "")),
-        )
-    except Exception as exc:
-        # Workspace creation is durable; surface the research failure via
-        # workflow events and let the user enter Mission Control.
-        import logging
-        logging.getLogger("loqi.onboarding").exception("Initial research dispatch failed: %s", exc)
+    except WorkspaceProvisioningError as exc:
+        raise HTTPException(status_code=503, detail="Your workspace could not be set up. Please retry.") from exc
     return result
 
 

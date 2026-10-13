@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from services.intelligence.ai import OpenAIError
 from services.identity.dependencies import AuthContext, get_current_auth
 from services.onboarding.api import get_onboarding_service
 from services.strategic.profile import service as profile_service
 
 
 router = APIRouter(prefix="/api/v1/strategic-intelligence", tags=["Strategic Intelligence"])
+log = logging.getLogger(__name__)
 
 
 class GenerateProfileRequest(BaseModel):
@@ -68,8 +71,28 @@ async def generate_strategic_profile(
             onboarding_service=get_onboarding_service(),
         )
         return GenerateProfileResponse(**result)
+    except OpenAIError as error:
+        # Provider details can contain sensitive content. Log only the failure
+        # category and return a stable, actionable message to the client.
+        log.warning("strategic_profile_generation_failed kind=%s", error.kind)
+        status = {
+            "credentials": 503,
+            "rate_limit": 503,
+            "connection": 503,
+            "provider_timeout": 504,
+            "invalid_output": 502,
+        }.get(error.kind, 502)
+        detail = (
+            "The AI profile service is unavailable. Your answers are saved; retry or continue without a profile."
+            if status == 503 else
+            "Profile generation timed out. Your answers are saved; retry or continue without a profile."
+            if status == 504 else
+            "The AI did not return a usable profile. Your answers are saved; retry or continue without a profile."
+        )
+        raise HTTPException(status_code=status, detail=detail) from error
     except Exception as error:
-        raise HTTPException(status_code=500, detail="Failed to generate profile") from error
+        log.error("strategic_profile_generation_failed error_type=%s", type(error).__name__)
+        raise HTTPException(status_code=500, detail="Profile generation failed. Your answers are saved; you can continue without a profile.") from error
 
 
 @router.get(

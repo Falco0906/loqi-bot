@@ -86,11 +86,16 @@ test("campaign creation and attachment preserve workspace; review edits and clea
   expect(api.calls.find(call => call.path.endsWith(`/${ids.campaign}/leads`))?.body.lead.workspace_lead_id).toBe(lead(1).id);
   await page.getByRole("checkbox", { name: "Select Ada Person 2", exact: true }).check();
   await page.getByRole("button", { name: "Create campaign with selected leads", exact: true }).click();
-  await page.getByRole("textbox", { name: "New campaign name" }).fill("Selected prospects");
+  await expect(page).toHaveURL(url => url.pathname === "/campaigns/new"
+    && url.searchParams.get("workspace_id") === ids.a
+    && url.searchParams.get("lead_ids") === lead(2).id);
+  await page.getByRole("textbox", { name: "Campaign name", exact: true }).fill("Selected prospects");
+  await page.getByRole("textbox", { name: "Campaign description", exact: true }).fill("Introduce our product to selected SaaS prospects.");
   await page.getByRole("button", { name: "Create campaign", exact: true }).click();
-  await expect(page.getByText("Campaign created with the selected leads.", { exact: false })).toBeVisible();
-  await page.getByRole("link", { name: "View campaign", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`campaigns/${ids.campaign}\\?workspace_id=${ids.a}`));
+  const creation = api.calls.find(call => call.path.endsWith("/campaigns") && call.body?.name === "Selected prospects");
+  expect(creation?.body.objective).toBe("Introduce our product to selected SaaS prospects.");
+  expect(creation?.body.leads).toEqual([{ id: lead(2).id, workspace_lead_id: lead(2).id }]);
   await expect(page.getByRole("heading", { name: "Selected prospects", exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Open Draft Workspace →", exact: true }).click();
   await expect(page).toHaveURL(/\/draft\?/);

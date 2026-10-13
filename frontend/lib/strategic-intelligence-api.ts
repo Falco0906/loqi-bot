@@ -60,8 +60,23 @@ export async function generateStrategicProfile(
   );
 
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(error || "Failed to generate strategic profile");
+    // The backend intentionally redacts all 5xx bodies. Status remains
+    // meaningful without exposing provider responses or internal exceptions.
+    if (response.status === 502) {
+      throw new Error("The AI did not return a usable profile. Your answers are saved; retry or continue without a profile.");
+    }
+    if (response.status === 503) {
+      throw new Error("The AI profile service is unavailable. Your answers are saved; retry or continue without a profile.");
+    }
+    if (response.status === 504) {
+      throw new Error("Profile generation timed out. Your answers are saved; retry or continue without a profile.");
+    }
+    if (response.status >= 500) {
+      throw new Error("Profile generation failed. Your answers are saved; you can continue without a profile.");
+    }
+    const body: unknown = await response.json().catch(() => null);
+    const detail = body && typeof body === "object" && "detail" in body ? body.detail : null;
+    throw new Error(typeof detail === "string" ? detail : "Profile generation failed. Your answers are saved; you can continue without a profile.");
   }
 
   return response.json();

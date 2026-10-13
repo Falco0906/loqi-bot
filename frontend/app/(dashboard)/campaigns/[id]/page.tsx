@@ -205,13 +205,30 @@ function CampaignDetailWorkspace({ campaignId, workspaceId, scope }: { campaignI
   async function generateStrategy(force = false) {
     if (!token) return;
     setStrategyBusy(true);
+    // A background refresh failure must never downgrade a real success into
+    // a "failed" toast — generation already succeeded even if this fetch
+    // didn't. It only ever shows a softer, separate notice.
+    async function refreshAfterSuccess() {
+      try {
+        await refreshCampaign();
+      } catch {
+        if (mounted.current) toast("info", "Strategy saved. Refresh the page to see it.");
+      }
+    }
+    let started: Awaited<ReturnType<typeof generateCampaignStrategy>>;
     try {
-      const started = await generateCampaignStrategy(token, campaignId, force, workspaceId);
-      if (!mounted.current) return;
-      if (!started.ok) return;
+      started = await generateCampaignStrategy(token, campaignId, force, workspaceId);
+    } catch {
+      if (mounted.current) toast("error", "Strategy generation could not be started. Please try again.");
+      setStrategyBusy(false);
+      return;
+    }
+    if (!mounted.current) return;
+    if (!started.ok) { setStrategyBusy(false); return; }
+    try {
       if (started.reused || !started.job_id) {
         if (started.reused) toast("success", "Strategy already covers this objective");
-        await refreshCampaign();
+        await refreshAfterSuccess();
         return;
       }
       toast("success", "Strategy generation started");
@@ -221,11 +238,20 @@ function CampaignDetailWorkspace({ campaignId, workspaceId, scope }: { campaignI
         await new Promise((resolve) => setTimeout(resolve, 2000));
         attempts += 1;
         if (strategyPollAborted.current) return;
-        const status = await getStrategyGenerationStatus(token, campaignId, started.job_id, workspaceId);
+        // A single poll request failing (network blip, transient 5xx) is not
+        // the same as the job itself failing. Skip this attempt and keep
+        // polling within the existing attempt budget instead of treating it
+        // as "generation failed" — the backend job may be running fine.
+        let status: Awaited<ReturnType<typeof getStrategyGenerationStatus>>;
+        try {
+          status = await getStrategyGenerationStatus(token, campaignId, started.job_id, workspaceId);
+        } catch {
+          continue;
+        }
         if (strategyPollAborted.current) return;
         if (status.status === "completed") {
           toast("success", "Strategy generated");
-          await refreshCampaign();
+          await refreshAfterSuccess();
           return;
         }
         if (status.status === "failed") {
@@ -234,8 +260,6 @@ function CampaignDetailWorkspace({ campaignId, workspaceId, scope }: { campaignI
         }
       }
       toast("info", "Strategy generation is still running. You can return to this campaign later.");
-    } catch {
-      toast("error", "Strategy generation failed");
     } finally {
       setStrategyBusy(false);
     }

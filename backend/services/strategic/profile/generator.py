@@ -12,39 +12,77 @@ from services.intelligence.ai import OpenAIError, _send_openai_request
 class StrategicProfileGenerator:
     """Generates structured strategic profiles from onboarding conversation data."""
 
+    _TEXT_FIELDS = (
+        "COMPANY_SUMMARY", "INDUSTRY", "BUSINESS_MODEL", "PRODUCT", "ICP",
+        "DIFFERENTIATION", "MARKET_POSITION", "COMPETITIVE_LANDSCAPE",
+        "PRIMARY_OBJECTIVE", "CURRENT_CONSTRAINTS", "MESSAGING",
+    )
+    _LIST_FIELDS = ("RISKS", "GROWTH_OPPORTUNITIES", "KNOWN_UNKNOWNS")
+    RESPONSE_FORMAT = {
+        "type": "json_schema",
+        "name": "onboarding_strategic_profile",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                **{key: {"type": "string"} for key in _TEXT_FIELDS},
+                **{key: {"type": "array", "items": {"type": "string"}} for key in _LIST_FIELDS},
+                "BUYER_PERSONAS": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {key: {"type": "string"} for key in ("name", "title", "motivation", "objections")},
+                        "required": ["name", "title", "motivation", "objections"],
+                        "additionalProperties": False,
+                    },
+                },
+                "CONFIDENCE_LEVELS": {
+                    "type": "object",
+                    "properties": {"overall": {"type": "string"}},
+                    "required": ["overall"],
+                    "additionalProperties": False,
+                },
+            },
+            "required": [
+                *_TEXT_FIELDS, *_LIST_FIELDS, "BUYER_PERSONAS", "CONFIDENCE_LEVELS",
+            ],
+            "additionalProperties": False,
+        },
+    }
+
     SYSTEM_PROMPT = """You are Loqi, an AI Chief of Staff for B2B companies. Your task is to analyze onboarding conversation data and generate a structured strategic organization profile.
 
-Analyze the following information:
+Analyze only the following user-provided information:
 - Company description (what they do)
 - Ideal customer (who buys from them)
 - Differentiation (why they're better)
 - Annual goal (what they want to achieve)
 - Biggest obstacle (what's blocking them)
-- Website content (if provided)
+- Website URL (if provided; its contents have NOT been retrieved)
+
+Separate user statements from interpretation. Do not invent market research,
+competitors, customer pain, or industry facts absent from these answers.
+Use "Unknown" or KNOWN_UNKNOWNS when the evidence is insufficient.
 
 Generate a strategic profile with the following structure:
 
-1. COMPANY_SUMMARY: One-sentence executive summary of what they do (not just repeating their description, but synthesizing it into a market position)
+1. COMPANY_SUMMARY: One-sentence summary grounded in their answer; do not invent a market position
 
-2. INDUSTRY: Industry category with specific vertical (e.g., "B2B SaaS - Sales Automation")
+2. INDUSTRY: Industry category only if supported by the answers, otherwise "Unknown"
 
-3. BUSINESS_MODEL: How they make money (e.g., "SaaS subscription", "Agency services", "Product + Services")
+3. BUSINESS_MODEL: How they make money if stated or clear from the answer, otherwise "Unknown"
 
 4. PRODUCT: Core product/service offering in 1-2 sentences
 
-5. ICP: Ideal Customer Profile - who they sell to, including:
-   - Company size/tier
-   - Industry focus
-   - Job titles of buyers
-   - Key pain points they solve
+5. ICP: Ideal Customer Profile using only stated size, industry, titles, and pains; mark unknowns plainly
 
-6. BUYER_PERSONAS: 2-3 specific buyer personas with names, titles, motivations, and objections
+6. BUYER_PERSONAS: Personas only where the answers support them; never invent real names or details; use [] if unknown
 
 7. DIFFERENTIATION: Their competitive advantage expressed as strategic positioning (not just features)
 
-8. MARKET_POSITION: Where they sit in the competitive landscape (e.g., "Challenger in a crowded market, differentiated by...")
+8. MARKET_POSITION: Where they sit only if supported, otherwise "Unknown"
 
-9. COMPETITIVE_LANDSCAPE: Who they compete against and how
+9. COMPETITIVE_LANDSCAPE: Known alternatives only; otherwise "Unknown"
 
 10. PRIMARY_OBJECTIVE: Their stated goal translated into strategic terms
 
@@ -60,38 +98,7 @@ Generate a strategic profile with the following structure:
 
 16. KNOWN_UNKNOWNS: What information is missing that would improve the profile
 
-Output ONLY valid JSON with these exact keys. Be concise but insightful. Think like a founder-level operator giving strategic advice, not a chatbot summarizing inputs."""
-
-    def _fallback_profile(
-        self,
-        company_description: str,
-        ideal_customer: str,
-        differentiation: str,
-        annual_goal: str,
-        biggest_obstacle: str,
-        error: str | None = None,
-    ) -> dict[str, Any]:
-        profile: dict[str, Any] = {
-            "COMPANY_SUMMARY": (company_description or "")[:200],
-            "INDUSTRY": "Technology",
-            "BUSINESS_MODEL": "Unknown",
-            "PRODUCT": (company_description or "")[:200],
-            "ICP": (ideal_customer or "")[:200],
-            "BUYER_PERSONAS": [],
-            "DIFFERENTIATION": (differentiation or "")[:200],
-            "MARKET_POSITION": "Undifferentiated",
-            "COMPETITIVE_LANDSCAPE": "Not analyzed",
-            "PRIMARY_OBJECTIVE": (annual_goal or "")[:200],
-            "CURRENT_CONSTRAINTS": (biggest_obstacle or "")[:200],
-            "RISKS": ["Unknown"],
-            "GROWTH_OPPORTUNITIES": [],
-            "MESSAGING": "To be determined",
-            "CONFIDENCE_LEVELS": {"overall": "low"},
-            "KNOWN_UNKNOWNS": ["Strategic profile generation failed"],
-        }
-        if error:
-            profile["_error"] = error
-        return profile
+Output ONLY valid JSON with these exact keys. Keep each string concise. Use "Unknown" for unsupported text claims and [] for unsupported lists. For CONFIDENCE_LEVELS, provide an overall high/medium/low assessment. Think like a founder-level operator giving strategic advice, not a chatbot summarizing inputs."""
 
     def _parse_profile_json(self, content: str) -> dict[str, Any]:
         text = content.strip()
@@ -99,7 +106,31 @@ Output ONLY valid JSON with these exact keys. Be concise but insightful. Think l
             text = text.split("```json", 1)[1].split("```", 1)[0].strip()
         elif "```" in text:
             text = text.split("```", 1)[1].split("```", 1)[0].strip()
-        return json.loads(text)
+        profile = json.loads(text)
+        # These are the fields the onboarding review actually needs. Secondary
+        # sections can be absent when the model has no evidence for them.
+        required_text = (
+            "COMPANY_SUMMARY", "ICP", "DIFFERENTIATION",
+            "PRIMARY_OBJECTIVE", "CURRENT_CONSTRAINTS",
+        )
+        if (not isinstance(profile, dict)
+                or any(not isinstance(profile.get(key), str) or not profile[key].strip()
+                       for key in required_text)):
+            raise OpenAIError("Strategic profile response was incomplete", kind="invalid_output")
+        optional_text = (
+            "INDUSTRY", "BUSINESS_MODEL", "PRODUCT", "MARKET_POSITION",
+            "COMPETITIVE_LANDSCAPE", "MESSAGING",
+        )
+        optional_lists = ("BUYER_PERSONAS", "RISKS", "GROWTH_OPPORTUNITIES", "KNOWN_UNKNOWNS")
+        for key in optional_text:
+            if not isinstance(profile.get(key), str) or not profile[key].strip():
+                profile[key] = "Unknown"
+        for key in optional_lists:
+            if not isinstance(profile.get(key), list):
+                profile[key] = []
+        if not isinstance(profile.get("CONFIDENCE_LEVELS"), dict):
+            profile["CONFIDENCE_LEVELS"] = {}
+        return profile
 
     async def generate_profile(
         self,
@@ -132,35 +163,11 @@ Generate a strategic organization profile based on this data."""
                 _send_openai_request,
                 self.SYSTEM_PROMPT,
                 user_text,
+                self.RESPONSE_FORMAT,
             )
             return self._parse_profile_json(content)
-        except json.JSONDecodeError as e:
-            return self._fallback_profile(
-                company_description,
-                ideal_customer,
-                differentiation,
-                annual_goal,
-                biggest_obstacle,
-                error=str(e),
-            )
-        except OpenAIError as e:
-            return self._fallback_profile(
-                company_description,
-                ideal_customer,
-                differentiation,
-                annual_goal,
-                biggest_obstacle,
-                error=str(e),
-            )
-        except Exception as e:
-            return self._fallback_profile(
-                company_description,
-                ideal_customer,
-                differentiation,
-                annual_goal,
-                biggest_obstacle,
-                error=str(e),
-            )
+        except json.JSONDecodeError as error:
+            raise OpenAIError("Strategic profile response was not valid JSON", kind="invalid_output") from error
 
 
 _profile_generator: StrategicProfileGenerator | None = None

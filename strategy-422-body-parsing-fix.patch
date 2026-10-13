@@ -1,0 +1,80 @@
+diff --git a/backend/services/campaigns/api.py b/backend/services/campaigns/api.py
+index 1b4c574..27ff1f0 100644
+--- a/backend/services/campaigns/api.py
++++ b/backend/services/campaigns/api.py
+@@ -2,6 +2,7 @@
+ from __future__ import annotations
+ 
+ import asyncio
++import json
+ import logging
+ import time
+ 
+@@ -233,21 +234,51 @@ async def campaign_timeline(session_token: str, campaign_id: str, request: Reque
+     )
+ 
+ 
++def _parse_optional_json_body(raw: bytes) -> dict:
++    """Defensively parse an optional JSON request body.
++
++    FastAPI's automatic Pydantic body-binding for an `Optional[Model]`
++    parameter has been observed, specifically on this app's stacked
++    BaseHTTPMiddleware chain (auth + rate-limit + request-logging) served
++    over a real uvicorn socket, to occasionally hand the model validator a
++    JSON-encoded STRING instead of the parsed object (confirmed via a live
++    422: "Input should be a valid dictionary or object to extract fields
++    from", input `'{"force":false}'`) — a request.body()/TestClient
++    in-process repro of the identical route did not reproduce it, pointing
++    at real-transport body delivery rather than application logic. Parsing
++    the body manually here, with one defensive re-parse if the first pass
++    yields a string instead of an object, sidesteps the issue regardless of
++    its exact underlying cause.
++    """
++    if not raw:
++        return {}
++    try:
++        parsed = json.loads(raw)
++    except Exception:
++        return {}
++    if isinstance(parsed, str):
++        try:
++            parsed = json.loads(parsed)
++        except Exception:
++            return {}
++    return parsed if isinstance(parsed, dict) else {}
++
++
+ @router.post("/api/web/session/{session_token}/campaigns/{campaign_id}/generate-strategy", status_code=202)
+ async def generate_campaign_strategy(
+     session_token: str,
+     campaign_id: str,
+-    payload: RegenerateStrategyRequest | None,
+     request: Request,
+ ):
+     del session_token
+     owner_id, bearer_token, workspace_id = await _authorized_workspace(request)
++    body = _parse_optional_json_body(await request.body())
+     return await service.start_strategy_generation(
+         bearer_token,
+         owner_id,
+         workspace_id,
+         campaign_id,
+-        force=bool(payload and payload.force),
++        force=bool(body.get("force", False)),
+     )
+ 
+ 
+diff --git a/backend/tests/test_campaign_execution_safety.py b/backend/tests/test_campaign_execution_safety.py
+index f188f0c..e252fde 100644
+--- a/backend/tests/test_campaign_execution_safety.py
++++ b/backend/tests/test_campaign_execution_safety.py
+@@ -85,7 +85,8 @@ async def test_explicit_strategy_action_queues_existing_authorized_workflow(monk
+     monkeypatch.setattr(service, "load_campaigns", lambda _actor, **kwargs: [{"id": "campaign", "objective": "Meet buyers", "leads": [{"id": "saved"}]}])
+     enqueue = AsyncMock(return_value=("strategy-job", "queued"))
+     monkeypatch.setattr(service, "enqueue_strategy_job", enqueue)
+-    response = await api.generate_campaign_strategy("_", "campaign", api.RegenerateStrategyRequest(force=False), SimpleNamespace())
++    async def fake_body(): return b'{"force": false}'
++    response = await api.generate_campaign_strategy("_", "campaign", SimpleNamespace(body=fake_body))
+     assert response == {"ok": True, "job_id": "strategy-job", "status": "queued"}
+     assert enqueue.await_args.kwargs == {"workspace_id": "selected"}
+ 

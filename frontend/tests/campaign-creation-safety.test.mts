@@ -40,10 +40,10 @@ test("creation owners retain keys across lost responses; recovery is explicit", 
   assert.match(page, /useRef\(searchParams\?\.get\("creation_key"\)/);
   assert.match(page, /creationKey.current,/);
   assert.match(page, /if \(savingRef.current\) return/);
-  assert.match(actions, /campaign_creation_key/);
-  assert.match(actions, /undefined, intent.key, workspaceId\)/);
-  assert.match(actions, /Recover campaign creation/);
-  assert.match(actions, /await createSelectedCampaign\(creationIntent.current\)/);
+  assert.match(actions, /router.push\(`\/campaigns\/new\?/);
+  assert.match(actions, /lead_ids: leadIds.join\(","\)/);
+  assert.doesNotMatch(actions, /saveCampaign|createSelectedCampaign/);
+  assert.match(page, /creationKey.current,\s*workspaceId,/);
 });
 
 test("campaign page no longer waits for implicit strategy generation, explicit actions remain", async () => {

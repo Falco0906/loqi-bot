@@ -167,11 +167,15 @@ test("campaign pages use the campaign-only scope adapter and retain duplicate-su
   assert.match(create, /savingRef.current = true/);
   assert.match(create, /savingRef.current = false/);
   assert.match(create, /creationKey.current,\s*workspaceId,/);
-  assert.match(create, /key=\{context.scope\}/);
+  assert.match(create, /const selectedIds = searchParams.get\("lead_ids"\)/);
+  assert.match(create, /new Set\(selectedIds.split\(","\)/);
+  assert.match(create, /selectedLeads,\s*discoveryId \|\| undefined/);
+  assert.match(create, /objective.trim\(\)/);
+  assert.match(create, /key=\{`\$\{context.scope\}:\$\{params.get\("lead_ids"\)/);
   assert.match(detail, /key=\{`\$\{context.scope\}:\$\{campaignId\}`\}/);
 });
 
-test("actual campaign form suppresses duplicate submits and retries with its original URL intent", async () => {
+test("actual standalone campaign form requires description and retries with its original intent", async () => {
   const source = await readFile(new URL("../app/(dashboard)/campaigns/new/page.tsx", import.meta.url), "utf8");
   const slots: any[] = [];
   let cursor = 0;
@@ -222,9 +226,15 @@ test("actual campaign form suppresses duplicate submits and retries with its ori
     }
   };
   let tree = render();
+  assert.equal(find(tree, "input").props.required, true);
+  assert.equal(find(tree, "textarea").props.required, true);
   find(tree, "input").props.onChange({ target: { value: "Campaign" } });
+  await find(render(), "form").props.onSubmit({ preventDefault() {} });
+  assert.equal(calls.length, 0); // A name alone must never create a campaign.
   find(tree, "textarea").props.onChange({ target: { value: "Objective" } });
   tree = render();
+  assert.equal(find(tree, "input").props.value, "Campaign");
+  assert.equal(find(tree, "textarea").props.value, "Objective");
   const submit = find(tree, "form").props.onSubmit;
   const first = submit({ preventDefault() {} });
   await submit({ preventDefault() {} });
@@ -234,9 +244,51 @@ test("actual campaign form suppresses duplicate submits and retries with its ori
   await find(render(), "form").props.onSubmit({ preventDefault() {} });
   assert.equal(calls.length, 2);
   assert.deepEqual(calls[0], calls[1]);
+  assert.equal(calls[1][1], "Campaign");
+  assert.equal(calls[1][2], "Objective");
+  assert.equal(calls[1][4], 0);
+  assert.equal(calls[1][7].length, 0);
   assert.equal(calls[1][9], "new-intent");
   assert.equal(calls[1][10], "selected");
   assert.equal(replacements.length, 1);
   assert.equal(new URL(replacements[0]).searchParams.get("creation_key"), "new-intent");
   assert.deepEqual(pushed, ["/campaigns/recovered?workspace_id=selected"]);
+});
+
+test("Discovery creation navigates to the universal form with canonical IDs and does not create a campaign inline", async () => {
+  const source = await readFile(new URL("../components/dashboard/DiscoveryCampaignActions.tsx", import.meta.url), "utf8");
+  const pushed: string[] = [];
+  const exports: any = {};
+  const react = {
+    createElement: (type: any, props: any, ...children: any[]) => ({ type, props: { ...props, children } }),
+    useState: (initial: any) => [initial, () => {}],
+    useRef: (initial: any) => ({ current: initial }),
+    useEffect() {},
+  };
+  runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React } }).outputText, {
+    exports, React: react, URLSearchParams,
+    require(name: string) {
+      if (name === "react") return react;
+      if (name === "next/navigation") return { useRouter: () => ({ push: (url: string) => pushed.push(url) }) };
+      if (name === "next/link") return { default: "link" };
+      if (name.endsWith("lib/api")) return new Proxy({}, { get: () => () => { throw new Error("Creation handoff must not call an API"); } });
+      if (name.endsWith("campaign-attachment-reconciliation")) return {};
+      throw new Error(`Unexpected Discovery creation dependency: ${name}`);
+    },
+  });
+  const tree = exports.default({ leadIds: ["lead-1", "lead-2"], campaignContext: null, workspaceId: "selected", onComplete() { throw new Error("Selection must survive navigation"); }, onBusy() {} });
+  const buttons = (node: any): any[] => {
+    if (!node || typeof node !== "object") return [];
+    return [...(node.type === "button" ? [node] : []), ...(node.props?.children?.flat(Infinity) || []).flatMap(buttons)];
+  };
+  const create = buttons(tree).find(button => button.props.children.includes("Create campaign with selected leads"));
+  assert.ok(create);
+  create.props.onClick();
+  assert.equal(pushed.length, 1);
+  const url = new URL(pushed[0], "http://offline.invalid");
+  assert.equal(url.pathname, "/campaigns/new");
+  assert.equal(url.searchParams.get("workspace_id"), "selected");
+  assert.equal(url.searchParams.get("lead_ids"), "lead-1,lead-2");
+  assert.equal(url.searchParams.get("return"), "discovery");
+  assert.doesNotMatch(source, /New campaign name|saveCampaign|createSelectedCampaign/);
 });

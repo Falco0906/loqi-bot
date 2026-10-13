@@ -809,7 +809,15 @@ async def enqueue_strategy_job(session_token: str, owner_id: str, campaign_id: s
     register_strategy_workflow()
     active = await asyncio.to_thread(job_manager._storage.list_active_jobs_by_type, "strategy")
     for current in active:
-        if current.campaign_id == campaign_id and current.workspace_id == workspace_id:
+        # Must also match the owner: strategy_job_status() rejects a job
+        # whose user_id differs from the polling caller, so reusing a job
+        # across owners here would hand back an ID the caller can never
+        # successfully poll (a 404 masquerading as "generation failed").
+        if (
+            current.campaign_id == campaign_id
+            and current.workspace_id == workspace_id
+            and current.user_id == owner_id
+        ):
             return current.id, current.status.value
     job = Job(user_id=owner_id, type="strategy", workspace_id=workspace_id, campaign_id=campaign_id, payload={"objective": objective, "target": target})
     if (await persist_strategy_job_meta(owner_id, campaign_id, {"id": job.id, "status": "queued", "started_at": job.created_at.isoformat(), "finished_at": None, "error": None}, workspace_id=workspace_id)) is False:

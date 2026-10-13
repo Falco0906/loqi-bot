@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -180,6 +181,10 @@ class LifecycleService:
 
 
 # ─── OnboardingService ───────────────────────────────────────────────
+
+
+class WorkspaceProvisioningError(RuntimeError):
+    """Onboarding cannot complete until the workspace is accessible."""
 
 
 class OnboardingService:
@@ -498,13 +503,19 @@ class OnboardingService:
 
     async def get_wizard_data(self, user_id: str) -> dict[str, object]:
         if self._user_service is not None:
-            try:
-                user = await self._user_service.get_user(user_id)
-                if user is not None and user.onboarding_data_dict:
-                    return dict(user.onboarding_data_dict)
-            except Exception:
-                pass
+            user = await self._user_service.get_user(user_id)
+            if user is not None and user.onboarding_data_dict:
+                return dict(user.onboarding_data_dict)
         return {}
+
+    async def get_wizard_data_strict(self, user_id: str) -> dict[str, object]:
+        """Read durable answers for a turn; failure must not look like an empty conversation."""
+        if self._user_service is None:
+            raise RuntimeError("Onboarding user service is unavailable")
+        user = await self._user_service.get_user(user_id)
+        if user is None:
+            raise RuntimeError("Onboarding user record is unavailable")
+        return dict(user.onboarding_data_dict)
 
     async def complete_wizard(
         self, user_id: str, data: dict[str, object],
@@ -564,20 +575,36 @@ class OnboardingService:
 
         # Every user auto-owns a Personal Workspace within the org so the
         # canonical ownership chain (Org → Workspace → campaigns) holds.
-        try:
-            from services.workspace.state import ensure_workspace
-            ensure_workspace(
-                user_id,
-                name=workspace_name,
-                organization_id=org.id,
-                slug=slug,
-            )
-        except Exception:
-            pass
+        from services.workspace.state import ensure_workspace
+
+        workspace_id = await asyncio.to_thread(
+            ensure_workspace,
+            user_id,
+            name=workspace_name,
+            organization_id=org.id,
+            slug=slug,
+        )
+        if not workspace_id:
+            raise WorkspaceProvisioningError("Workspace creation could not be confirmed")
+        from services.workspace.access import workspaces_for_user
+        accessible = await asyncio.to_thread(workspaces_for_user, None, user_id)
+        if not any(
+            row.get("id") == workspace_id
+            and row.get("organization_id") == org.id
+            and row.get("status") == "active"
+            for row in accessible
+        ):
+            raise WorkspaceProvisioningError("Workspace creation could not be confirmed")
 
         if user is not None and self._user_service is not None:
             user.onboarding_completed_at = datetime.now(timezone.utc)
-            user.set_onboarding_data(data)
+            workspace_data = {key: value for key, value in data.items() if key != "session_token"}
+            user.set_onboarding_data({
+                **user.onboarding_data_dict,
+                **workspace_data,
+                "onboarding_workspace_id": workspace_id,
+                "onboarding_step": "completed",
+            })
             await self._user_service.save_user(user)
 
         # save_user() above is the single durable persistence path for

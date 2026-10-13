@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import time
 from typing import Any
 
@@ -32,6 +33,36 @@ from services.world_model.state import CampaignState, DraftState, WorkspaceDelta
 _payload_cache: dict[tuple, dict[str, Any]] = {}
 _inflight: dict[tuple, asyncio.Future] = {}
 _MAX_ENTRIES = 8
+log = logging.getLogger(__name__)
+
+
+async def _onboarding_memory(user_id: str, workspace_id: str) -> dict[str, str]:
+    """Read the user's saved answers for the first workspace briefing."""
+    from services.persistence.repositories.user_repository import SupabaseUserRepository
+
+    try:
+        user = await SupabaseUserRepository().get(user_id)
+    except Exception as error:
+        # Onboarding answers enrich the briefing; canonical workspace state
+        # remains available when this optional identity read fails.
+        log.warning("onboarding_memory_read_failed error_type=%s", type(error).__name__)
+        return {}
+    data = user.onboarding_data_dict if user else {}
+    if data.get("onboarding_workspace_id") != workspace_id:
+        return {}
+    fields = {
+        "company_description": "companyDescription",
+        "ideal_customer": "idealCustomer",
+        "differentiation": "differentiation",
+        "annual_goal": "annualGoal",
+        "biggest_obstacle": "biggestObstacle",
+        "website": "website",
+    }
+    return {
+        target: value.strip()
+        for target, source in fields.items()
+        if isinstance(value := data.get(source), str) and value.strip()
+    }
 
 
 def embed_delta_into_snapshot(snapshot: dict, delta: WorkspaceDelta) -> None:
@@ -230,6 +261,11 @@ async def compute_shared_payload(
     drafts = state["drafts"]
     total_leads = sum(c.get("lead_count", 0) or 0 for c in campaigns)
 
+    onboarding_memory = await _onboarding_memory(actor_user_id, workspace_id)
+    onboarding_fingerprint = hashlib.sha256(
+        json.dumps(onboarding_memory, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+
     delta = await _read_durable_delta(workspace_id, actor_user_id)
 
     resolved_timezone = normalize_timezone(user_timezone)
@@ -238,6 +274,7 @@ async def compute_shared_payload(
         owner_id,
         workspace_id,
         _content_fingerprint(campaigns, drafts),
+        onboarding_fingerprint,
         _delta_fingerprint(delta),
         resolved_timezone,
         greeting,
@@ -266,6 +303,7 @@ async def compute_shared_payload(
                     user_id=actor_user_id,
                     workspace_id=workspace_id,
                 )
+                snap = {**snap, "memory": {**snap.get("memory", {}), **onboarding_memory}}
                 embed_delta_into_snapshot(snap, delta)
                 recs = generate_recommendations(snap, use_narrative=include_narrative)
                 if include_narrative:

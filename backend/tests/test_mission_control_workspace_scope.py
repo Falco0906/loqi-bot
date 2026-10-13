@@ -128,6 +128,80 @@ async def test_shared_payload_scopes_canonical_reads_snapshots_and_cache(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_saved_onboarding_answers_reach_the_briefing_and_invalidate_its_cache(monkeypatch):
+    from services.mission_control import payload
+    from services.persistence.repositories.user_repository import SupabaseUserRepository
+    from services.identity.models import User
+
+    payload._payload_cache.clear()
+    payload._inflight.clear()
+    user = User(id="user-a")
+    user.set_onboarding_data({"companyDescription": "Revenue intelligence", "idealCustomer": "CTOs", "onboarding_workspace_id": "workspace-a"})
+
+    async def get_user(_repository, user_id):
+        assert user_id == "user-a"
+        return user
+
+    monkeypatch.setattr(SupabaseUserRepository, "get", get_user)
+    monkeypatch.setattr("services.workspace.state.load_workspace_state", lambda *_args, **_kwargs: {"campaigns": [], "drafts": []})
+    monkeypatch.setattr("services.workspace.snapshot.build_snapshot", lambda *_args, **_kwargs: {"memory": {}, "analysis": {}, "campaigns": [], "drafts": {"total": 0}})
+    monkeypatch.setattr("services.mission_control.recommendations.generate_recommendations", lambda *_args, **_kwargs: [])
+
+    first = await payload.compute_shared_payload("user-a", "workspace-a", "user-a", "token", include_narrative=False)
+    assert first["snapshot"]["memory"]["company_description"] == "Revenue intelligence"
+    assert first["snapshot"]["memory"]["ideal_customer"] == "CTOs"
+
+    user.set_onboarding_data({"companyDescription": "Pipeline intelligence", "idealCustomer": "Founders", "onboarding_workspace_id": "workspace-a"})
+    second = await payload.compute_shared_payload("user-a", "workspace-a", "user-a", "token", include_narrative=False)
+    assert second is not first
+    assert second["snapshot"]["memory"]["company_description"] == "Pipeline intelligence"
+    assert second["snapshot"]["memory"]["ideal_customer"] == "Founders"
+
+    other = await payload.compute_shared_payload("user-a", "workspace-b", "user-a", "token", include_narrative=False)
+    assert "company_description" not in other["snapshot"]["memory"]
+
+
+@pytest.mark.asyncio
+async def test_optional_onboarding_context_failure_does_not_block_canonical_briefing(monkeypatch, caplog):
+    from services.mission_control import payload
+    from services.persistence.repositories.user_repository import SupabaseUserRepository
+
+    payload._payload_cache.clear()
+    payload._inflight.clear()
+
+    async def unavailable(_repository, _user_id):
+        raise RuntimeError("identity read unavailable")
+
+    monkeypatch.setattr(SupabaseUserRepository, "get", unavailable)
+    monkeypatch.setattr("services.workspace.state.load_workspace_state", lambda *_args, **_kwargs: {"campaigns": [], "drafts": []})
+    monkeypatch.setattr("services.workspace.snapshot.build_snapshot", lambda *_args, **_kwargs: {"memory": {}, "analysis": {}, "campaigns": [], "drafts": {"total": 0}})
+    monkeypatch.setattr("services.mission_control.recommendations.generate_recommendations", lambda *_args, **_kwargs: [])
+
+    result = await payload.compute_shared_payload("user-a", "workspace-a", "user-a", "token", include_narrative=False)
+
+    assert result["snapshot"]["memory"] == {}
+    assert result["campaigns"] == []
+    assert "onboarding_memory_read_failed error_type=RuntimeError" in caplog.text
+    assert "identity read unavailable" not in caplog.text
+
+
+def test_first_visit_fallback_uses_saved_onboarding_facts_without_generation():
+    from services.mission_control.narrative_engine import NarrativeEngine
+    from services.reasoning.briefing_context import BriefingContext
+
+    context = BriefingContext(
+        greeting="Good morning",
+        workspace_delta={"first_visit": True},
+        memory={"company_description": "Revenue intelligence", "ideal_customer": "CTOs"},
+    )
+    brief = NarrativeEngine()._fallback_brief(context)
+
+    assert "Revenue intelligence" in " ".join(brief["lines"])
+    assert "CTOs" in " ".join(brief["lines"])
+    assert "researching prospects" not in " ".join(brief["lines"])
+
+
+@pytest.mark.asyncio
 async def test_selected_workspace_payload_excludes_session_scoped_world_model_delta(monkeypatch):
     from services.mission_control import payload
     from services.world_model import EventType, get_store, publish

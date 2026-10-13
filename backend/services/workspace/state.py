@@ -575,10 +575,21 @@ async def _async_workspace(
             await _ws_cache_set(user_id, workspace_id or "", ws.id)
             return ws.id
         return None
-    existing = await repo.find_active_by_owner(user_id)
-    if existing is not None:
-        await _attach_canonical_org(existing, organization_id)
-        return existing.id
+    if organization_id:
+        existing = await repo.find_active_by_owner_and_org(user_id, organization_id)
+        if existing is not None:
+            return existing.id
+        # Only a legacy workspace without an organization may be attached.
+        # An owned workspace in another organization is a different tenant.
+        existing = await repo.find_active_by_owner(user_id)
+        if existing is not None and not existing.organization_id:
+            await _attach_canonical_org(existing, organization_id)
+            return existing.id
+    else:
+        existing = await repo.find_active_by_owner(user_id)
+        if existing is not None:
+            await _attach_canonical_org(existing, organization_id)
+            return existing.id
 
     org_id = organization_id or await _canonical_organization_id(user_id)
     workspace_id = str(uuid4())
@@ -589,8 +600,10 @@ async def _async_workspace(
     # Re-resolve after create so a concurrent first-touch converges on one
     # workspace even without a DB-level unique constraint (added in a later
     # phase once legacy duplicates are reconciled).
-    found = await repo.find_active_by_owner(user_id)
-    found = await repo.find_active_by_owner(user_id)
+    found = (
+        await repo.find_active_by_owner_and_org(user_id, organization_id)
+        if organization_id else await repo.find_active_by_owner(user_id)
+    )
     return found.id if found is not None else workspace_id
 
 

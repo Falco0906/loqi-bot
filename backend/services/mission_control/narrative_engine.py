@@ -12,13 +12,22 @@ def _build_brief_user_text(context: BriefingContext) -> str:
 
     company = context.memory.get("company_description")
     icp = context.memory.get("ideal_customer")
-    if company or icp:
+    differentiation = context.memory.get("differentiation")
+    goal = context.memory.get("annual_goal")
+    obstacle = context.memory.get("biggest_obstacle")
+    if any((company, icp, differentiation, goal, obstacle)):
         parts.append("")
         parts.append("ONBOARDING CONTEXT:")
         if company:
             parts.append(f"  - Business: {company}")
         if icp:
             parts.append(f"  - Ideal customer: {icp}")
+        if differentiation:
+            parts.append(f"  - Differentiation: {differentiation}")
+        if goal:
+            parts.append(f"  - Stated goal: {goal}")
+        if obstacle:
+            parts.append(f"  - Stated obstacle: {obstacle}")
         parts.append("Reference this context naturally so the user can see it was remembered.")
 
     # ── Delta section (pre-computed, no judgment) ──
@@ -238,7 +247,13 @@ class NarrativeEngine:
             if context.jobs.get("running"):
                 lines.append("Welcome to Loqi. I've started researching prospects that match your profile, and I'll bring a shortlist back as soon as it's ready.")
             else:
-                lines.append("Welcome to Loqi. I've been setting up your workspace.")
+                company = context.memory.get("company_description")
+                icp = context.memory.get("ideal_customer")
+                lines.append("Welcome to Loqi. Your workspace is ready.")
+                if company:
+                    lines.append(f"You described your business as {company}.")
+                if icp:
+                    lines.append(f"Your ideal customers are {icp}.")
         elif not context.has_delta():
             lines.append("Nothing new since your last visit. Everything is running smoothly.")
         else:

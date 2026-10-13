@@ -19,7 +19,7 @@ class _OnboardingRecorder:
 
 
 @pytest.mark.asyncio
-async def test_workspace_completion_invokes_the_onboarding_research_use_case(monkeypatch):
+async def test_workspace_completion_does_not_launch_research_implicitly(monkeypatch):
     calls = []
 
     class _CompletionService:
@@ -49,8 +49,6 @@ async def test_workspace_completion_invokes_the_onboarding_research_use_case(mon
     assert result == {"organization_id": "org-1"}
     assert calls == [
         ("finalize", "user-1", {"workspace_name": "Acme", "slug": "", "session_token": "session-1"}),
-        ("wizard", "user-1"),
-        ("research", "user-1", {"description": "Revenue intelligence"}, "session-1"),
     ]
 
 

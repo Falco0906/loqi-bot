@@ -8,9 +8,9 @@ const page = await readFile(new URL("../app/(dashboard)/discovery/page.tsx", imp
 const actions = await readFile(new URL("../components/dashboard/DiscoveryCampaignActions.tsx", import.meta.url), "utf8");
 const detail = await readFile(new URL("../app/(dashboard)/discovery/[id]/page.tsx", import.meta.url), "utf8");
 
-test("unified Discovery exposes campaign actions and optional intelligence independently", () => {
+test("unified Discovery exposes campaign actions without forcing an intelligence handoff", () => {
   assert.match(page, /DiscoveryCampaignActions/);
-  assert.match(page, /Analyze with Loqi/);
+  assert.doesNotMatch(page, /Analyze with Loqi|lead-intelligence/);
   assert.match(actions, /Add to existing campaign/);
   assert.match(actions, /Create campaign with selected leads/);
   assert.doesNotMatch(actions, /decideLead|generateStrategy|lead-intelligence|startDiscoverySearch/);
@@ -18,8 +18,9 @@ test("unified Discovery exposes campaign actions and optional intelligence indep
 
 test("existing campaign contracts receive only canonical selected IDs", () => {
   assert.match(actions, /addLeadToCampaign\(token\(\), destination, \{ id, workspace_lead_id: id \}/);
-  assert.match(actions, /saveCampaign\(token\(\), intent.name/);
-  assert.match(actions, /intent.ids.map\(\(id\) => \(\{ id, workspace_lead_id: id \}\)\)/);
+  assert.match(actions, /lead_ids: leadIds.join\(","\)/);
+  assert.match(actions, /router.push\(`\/campaigns\/new\?/);
+  assert.doesNotMatch(actions, /saveCampaign|New campaign name|createSelectedCampaign/);
   assert.match(actions, /if \(busyRef.current \|\| !leadIds.length/);
   assert.match(actions, /Promise.allSettled/);
 });
@@ -53,9 +54,8 @@ test("lost attachment responses reconcile read-only, never automatically repeat 
   assert.equal(campaignContainsLeadIds({ leads: [{ id: "a" }] }, ["a", "b"]), false);
   assert.match(actions, /Check attachment status/);
   assert.match(actions, /checkAttachment\(uncertain.campaignId, uncertain.leadIds\)/);
-  assert.match(actions, /Campaign creation outcome is unknown/);
   assert.equal((actions.match(/addLeadToCampaign\(token/g) || []).length, 1);
-  assert.equal((actions.match(/saveCampaign\(token/g) || []).length, 1);
+  assert.equal((actions.match(/saveCampaign\(token/g) || []).length, 0);
 });
 
 test("explicit discovery remains manual and beta capabilities remain authoritative", () => {

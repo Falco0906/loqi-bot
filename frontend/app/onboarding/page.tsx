@@ -7,7 +7,9 @@ import {
   createWorkspace,
   getOnboardingProgress,
   saveWizardData,
+  sendOnboardingTurn,
 } from "../../lib/onboarding-api";
+import type { OnboardingTurn } from "../../lib/onboarding-api";
 import { createSession, getGmailAuthUrl } from "../../lib/api";
 import { isTrustedGmailOAuthMessage, openGmailAuthPopup } from "../../lib/gmail-oauth";
 import { generateStrategicProfile } from "../../lib/strategic-intelligence-api";
@@ -16,7 +18,6 @@ import { ProfileValue } from "../../components/shared/ProfileValue";
 import { usePageTitle } from "../../hooks/usePageTitle";
 
 const ACTIVE_SESSION_KEY = "loqi_active_session_token";
-const ONBOARDING_MESSAGES_KEY = "loqi_onboarding_messages";
 
 type OnboardingState =
   | "conversational-discovery"
@@ -30,6 +31,7 @@ export default function OnboardingPage() {
   const { user, isLoading: authLoading, refreshUser } = useAuth();
   const [state, setState] = useState<OnboardingState>("conversational-discovery");
   const [profile, setProfile] = useState<OnboardingProfile | null>(null);
+  const [wizardData, setWizardData] = useState<Record<string, unknown>>({});
   const [strategicProfile, setStrategicProfile] = useState<StrategicProfile | null>(null);
   const [isGeneratingProfile, setIsGeneratingProfile] = useState(false);
   const [sessionToken, setSessionToken] = useState<string | null>(null);
@@ -37,9 +39,10 @@ export default function OnboardingPage() {
   const [connectError, setConnectError] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState<string | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [savingValidation, setSavingValidation] = useState(false);
   const [loadingInitial, setLoadingInitial] = useState(true);
   const [initializationError, setInitializationError] = useState<string | null>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
 
   const userId = user && "id" in user ? user.id : "";
 
@@ -65,43 +68,30 @@ export default function OnboardingPage() {
           return;
         }
         const data = progress.wizard_data || {};
+        setWizardData(data);
+        // Old browser-wide transcripts were not bound to an account.
+        try { localStorage.removeItem("loqi_onboarding_messages"); } catch { /* storage unavailable */ }
         if (data.strategicProfile) {
           setStrategicProfile(data.strategicProfile as StrategicProfile);
         }
-        const restoredProfile: Partial<OnboardingProfile> = {};
-        if (data.companyDescription) restoredProfile.companyDescription = data.companyDescription as string;
-        if (data.idealCustomer) restoredProfile.idealCustomer = data.idealCustomer as string;
-        if (data.differentiation) restoredProfile.differentiation = data.differentiation as string;
-        if (data.annualGoal) restoredProfile.annualGoal = data.annualGoal as string;
-        if (data.biggestObstacle) restoredProfile.biggestObstacle = data.biggestObstacle as string;
-        if (data.website) restoredProfile.website = data.website as string;
-        if (Object.keys(restoredProfile).length > 0) {
-          setProfile(restoredProfile as OnboardingProfile);
-        }
+        const restoredProfile: OnboardingProfile = {
+          companyDescription: typeof data.companyDescription === "string" ? data.companyDescription : "",
+          idealCustomer: typeof data.idealCustomer === "string" ? data.idealCustomer : "",
+          differentiation: typeof data.differentiation === "string" ? data.differentiation : "",
+          annualGoal: typeof data.annualGoal === "string" ? data.annualGoal : "",
+          biggestObstacle: typeof data.biggestObstacle === "string" ? data.biggestObstacle : "",
+          website: typeof data.website === "string" ? data.website : null,
+        };
+        const hasAllAnswers = PROFILE_FIELDS.every((field) => restoredProfile[field].trim());
+        if (hasAllAnswers) setProfile(restoredProfile);
 
-        // Backend progress is authoritative. Only restore a client-side step
-        // after confirming that the account is still incomplete server-side.
-        const restoredStep = sessionStorage.getItem("loqi_onboarding_step");
-        if (restoredStep) {
-          sessionStorage.removeItem("loqi_onboarding_step");
-          if (
-            (restoredStep === "knowledge-validation" || restoredStep === "executive-briefing") &&
-            Object.keys(restoredProfile).length === 0
-          ) {
-            setState("conversational-discovery");
-          } else {
-            setState(restoredStep as OnboardingState);
-          }
-          setLoadingInitial(false);
-          return;
-        }
-
+        // Wizard progress on the backend, not a stale browser step, owns recovery.
         const savedStep = data.onboarding_step as string | undefined;
-        if (savedStep === "knowledge-validation" && Object.keys(restoredProfile).length > 0) {
+        if (savedStep === "knowledge-validation" && hasAllAnswers) {
           setState("knowledge-validation");
-        } else if (savedStep === "workspace-connection" && Object.keys(restoredProfile).length > 0) {
+        } else if (savedStep === "workspace-connection" && hasAllAnswers) {
           setState("workspace-connection");
-        } else if (savedStep === "executive-briefing" && Object.keys(restoredProfile).length > 0) {
+        } else if (savedStep === "executive-briefing" && hasAllAnswers) {
           setState("executive-briefing");
         }
       } catch {
@@ -130,7 +120,7 @@ export default function OnboardingPage() {
   }, []);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    window.scrollTo({ top: 0, behavior: "auto" });
   }, [state]);
 
   // Listen for Gmail OAuth callback from popup
@@ -159,7 +149,7 @@ export default function OnboardingPage() {
 
   // Generate strategic profile from conversation data
   const generateProfile = async (p: OnboardingProfile) => {
-    if (!userId) return null;
+    if (!userId) throw new Error("Your session is unavailable. Please sign in again.");
     setIsGeneratingProfile(true);
     try {
       const response = await generateStrategicProfile({
@@ -173,75 +163,50 @@ export default function OnboardingPage() {
       });
       setStrategicProfile(response.profile);
       return response.profile;
-    } catch (err) {
-      console.error("Failed to generate strategic profile:", err);
-      return null;
     } finally {
       setIsGeneratingProfile(false);
     }
   };
 
-  // Persist profile to backend after knowledge validation
-  const persistProfile = async (p: OnboardingProfile) => {
-    if (!userId) return false;
-    try {
-      await saveWizardData(userId, {
-        companyDescription: p.companyDescription,
-        idealCustomer: p.idealCustomer,
-        differentiation: p.differentiation,
-        annualGoal: p.annualGoal,
-        biggestObstacle: p.biggestObstacle,
-        website: p.website,
-      }, false);
-      return true;
-    } catch (err) {
-      console.error("Failed to persist profile:", err);
-      return false;
-    }
-  };
-
   const handleDiscoveryGenerate = async (p: OnboardingProfile): Promise<StrategicProfile | null> => {
     setProfile(p);
-    try { localStorage.removeItem(ONBOARDING_MESSAGES_KEY); } catch { /* ignore */ }
     // Generate strategic profile from the conversation
     const generated = await generateProfile(p);
     // Persist strategic profile to backend wizard data
     if (generated && userId) {
-      try {
-        await saveWizardData(userId, {
-          strategicProfile: generated,
-          onboarding_step: "knowledge-validation",
-        }, false);
-      } catch (err) {
-        console.error("Failed to persist strategic profile:", err);
-      }
+      await saveWizardData(userId, { strategicProfile: generated, onboarding_step: "knowledge-validation" }, false);
     }
-    // Persist raw profile before advancing
-    await persistProfile(p);
     return generated;
   };
 
   const handleDiscoveryComplete = (completedProfile: OnboardingProfile) => {
-    // A browser-resumed conversation may already be complete even when the
-    // backend wizard record is missing (for example after a dev-server
-    // restart). Carry the child component's profile into the parent before
-    // advancing so profile-dependent states can never render blank.
     setProfile(completedProfile);
-    void persistProfile(completedProfile);
     setState("knowledge-validation");
   };
 
   const handleValidationProceed = async (updated: OnboardingProfile) => {
-    setProfile(updated);
-    // Persist updated profile before advancing
-    await persistProfile(updated);
-    // Persist step for restoration
-    if (userId) {
-      try {
-        await saveWizardData(userId, { onboarding_step: "workspace-connection" }, false);
-      } catch { /* step save is best-effort */ }
+    if (!userId || savingValidation) return;
+    if (PROFILE_FIELDS.some((field) => !updated[field].trim())) {
+      setValidationError("Please keep an answer for each question before continuing.");
+      return;
     }
-    setState("workspace-connection");
+    setSavingValidation(true);
+    setValidationError(null);
+    const changed = JSON.stringify(updated) !== JSON.stringify(profile);
+    try {
+      await saveWizardData(userId, {
+        ...updated,
+        onboarding_step: "workspace-connection",
+        ...(changed ? { strategicProfile: null, strategicProfileGeneratedAt: null, onboardingConversation: [] } : {}),
+      }, false);
+      setProfile(updated);
+      if (changed) setStrategicProfile(null);
+      setState("workspace-connection");
+    } catch {
+      setValidationError("Your changes could not be saved. Please try again.");
+    } finally {
+      setSavingValidation(false);
+    }
   };
 
   const handleConnect = async () => {
@@ -292,20 +257,17 @@ export default function OnboardingPage() {
         annualGoal: profile.annualGoal,
         biggestObstacle: profile.biggestObstacle,
         website: profile.website,
-        onboarding_step: "completed",
+        onboarding_step: "executive-briefing",
       };
       if (strategicProfile) {
         finalData.strategicProfile = strategicProfile;
       }
       
-      // Mark wizard complete (saves + advances lifecycle)
-      const wizardRes = await saveWizardData(userId, finalData, true);
-      if (!wizardRes) {
-        throw new Error("Failed to save onboarding data");
-      }
+      // Save the answers first. The backend marks onboarding complete only
+      // after it has confirmed the user's workspace exists.
+      await saveWizardData(userId, finalData, false);
       
-      // Ensure Mission Control has a session-specific event stream before the
-      // backend dispatches the automatic research job.
+      // Ensure Mission Control has a session-specific event stream.
       let activeSessionToken = sessionToken;
       if (!activeSessionToken) {
         const created = await createSession("Loqi Operator");
@@ -314,8 +276,7 @@ export default function OnboardingPage() {
         setSessionToken(activeSessionToken);
       }
 
-      // Finalization automatically starts research from the saved profile.
-      await createWorkspace(userId, "My Workspace", "my-workspace", activeSessionToken);
+      await createWorkspace(userId, "My Workspace", "my-workspace");
       
       // Refresh user
       await refreshUser();
@@ -365,6 +326,8 @@ export default function OnboardingPage() {
     <main className="onb-dark relative z-10 w-full min-h-screen onb-surface">
       {state === "conversational-discovery" && (
         <ConversationalDiscovery
+          userId={userId}
+          initialData={wizardData}
           onGenerate={handleDiscoveryGenerate}
           onComplete={handleDiscoveryComplete}
         />
@@ -374,6 +337,8 @@ export default function OnboardingPage() {
           profile={profile}
           strategicProfile={strategicProfile}
           isLoading={isGeneratingProfile}
+          saving={savingValidation}
+          error={validationError}
           onProceed={handleValidationProceed}
         />
       )}
@@ -394,7 +359,6 @@ export default function OnboardingPage() {
           onEnterMissionControl={handleEnterMissionControl}
         />
       )}
-      <div ref={bottomRef} />
     </main>
   );
 }
@@ -403,6 +367,7 @@ export default function OnboardingPage() {
 type Message = {
   role: "loqi" | "user";
   text: string;
+  mode?: "ai" | "guided";
 };
 
 type OnboardingProfile = {
@@ -415,38 +380,22 @@ type OnboardingProfile = {
 };
 
 const QUESTIONS = [
-  "What does your company do?",
-  "Who usually buys your product?",
-  "What problem do you solve better than anyone else?",
-  "What is your biggest goal over the next 12 months?",
-  "What is the biggest obstacle preventing that?",
+  "What does your company do, and who is it for?",
+  "Who usually decides to buy from you?",
+  "What do customers choose you for over an alternative?",
+  "What would meaningful progress look like over the next year?",
+  "What is the biggest obstacle to that goal right now?",
 ];
-
-const STRATEGIC_RESPONSES = [
-  (answer: string) => {
-    const topic = answer.length > 60 ? answer.slice(0, answer.lastIndexOf(" ", 60)) + "\u2026" : answer;
-    return `Understood. You\u2019re building ${topic}. Who usually buys your product?`;
-  },
-  (answer: string) => {
-    return `So your buyers are ${answer.toLowerCase()}. What problem do you solve better than anyone else?`;
-  },
-  (answer: string) => {
-    const edge = answer.length > 60 ? answer.slice(0, answer.lastIndexOf(" ", 60)) + "\u2026" : answer;
-    return `${edge}. That\u2019s your differentiator. What is your biggest goal over the next 12 months?`;
-  },
-  (answer: string) => {
-    const goal = answer.length > 60 ? answer.slice(0, answer.lastIndexOf(" ", 60)) + "\u2026" : answer;
-    return `So your north star is ${goal.toLowerCase()}. What is the biggest obstacle preventing that?`;
-  },
-  (answer: string) => {
-    return `Understood. Thank you\u2014I have enough context to begin building your strategic profile. I\u2019ll process what you\u2019ve shared.`;
-  },
-];
+const PROFILE_FIELDS = ["companyDescription", "idealCustomer", "differentiation", "annualGoal", "biggestObstacle"] as const;
 
 function ConversationalDiscovery({
+  userId,
+  initialData,
   onGenerate,
   onComplete,
 }: {
+  userId: string;
+  initialData: Record<string, unknown>;
   onGenerate: (profile: OnboardingProfile) => Promise<StrategicProfile | null>;
   onComplete: (profile: OnboardingProfile) => void;
 }) {
@@ -456,8 +405,9 @@ function ConversationalDiscovery({
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisComplete, setAnalysisComplete] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [turnError, setTurnError] = useState<string | null>(null);
+  const [pendingTurn, setPendingTurn] = useState<{ field: typeof PROFILE_FIELDS[number]; answer: string } | null>(null);
   const [loqiIsResponding, setLoqiIsResponding] = useState(false);
-  const [hasWebsite, setHasWebsite] = useState(false);
   const [profile, setProfile] = useState<OnboardingProfile>({
     companyDescription: "",
     idealCustomer: "",
@@ -466,80 +416,55 @@ function ConversationalDiscovery({
     biggestObstacle: "",
     website: null,
   });
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const restoredRef = useRef(false);
+  const submittingRef = useRef(false);
 
   useEffect(() => {
-    if (restoredRef.current) return;
-    restoredRef.current = true;
-    try {
-      const raw = localStorage.getItem(ONBOARDING_MESSAGES_KEY);
-      if (raw) {
-        const saved = JSON.parse(raw);
-        if (saved.messages && saved.messages.length > 0) {
-          setMessages(saved.messages);
-          setCurrentQ(saved.currentQ ?? 0);
-          if (saved.profile) setProfile(saved.profile);
-          if (saved.hasWebsite) setHasWebsite(true);
-          if (saved.isAnalyzing && !saved.analysisComplete) {
-            // A refresh happened mid-analysis: resume the real generation.
-            setIsAnalyzing(true);
-            const resumed = (saved.profile as OnboardingProfile | undefined) ?? profile;
-            void runProfileGeneration(resumed);
-          } else {
-            if (saved.isAnalyzing) setIsAnalyzing(true);
-            if (saved.analysisComplete) setAnalysisComplete(true);
-          }
-          return;
-        }
-      }
-    } catch { /* ignore corrupted data */ }
-    if (messages.length === 0) {
-      setMessages([{ role: "loqi", text: QUESTIONS[0] }]);
+    const answer = (field: typeof PROFILE_FIELDS[number]) => typeof initialData[field] === "string" ? initialData[field] as string : "";
+    const restored: OnboardingProfile = {
+      companyDescription: answer("companyDescription"),
+      idealCustomer: answer("idealCustomer"),
+      differentiation: answer("differentiation"),
+      annualGoal: answer("annualGoal"),
+      biggestObstacle: answer("biggestObstacle"),
+      website: typeof initialData.website === "string" ? initialData.website : null,
+    };
+    const turns = Array.isArray(initialData.onboardingConversation) ? initialData.onboardingConversation : [];
+    const restoredMessages: Message[] = [{ role: "loqi", text: QUESTIONS[0] }];
+    let completed = 0;
+    for (const field of PROFILE_FIELDS) {
+      const answer = restored[field];
+      if (!answer.trim()) break;
+      const turn = turns.find((item): item is OnboardingTurn => Boolean(item && typeof item === "object" && "field" in item && item.field === field));
+      restoredMessages.push({ role: "user", text: answer });
+      completed += 1;
+      restoredMessages.push({
+        role: "loqi",
+        text: turn?.reply || (completed < QUESTIONS.length ? `Your answer was saved. ${QUESTIONS[completed]}` : "Your answers are saved. You can generate your profile when you're ready."),
+        mode: turn?.mode || "guided",
+      });
     }
-  }, []);
-
-  useEffect(() => {
-    if (messages.length === 0) return;
-    try {
-      localStorage.setItem(ONBOARDING_MESSAGES_KEY, JSON.stringify({
-        messages,
-        currentQ,
-        profile,
-        hasWebsite,
-        isAnalyzing,
-        analysisComplete,
-        loqiIsResponding,
-      }));
-    } catch { /* storage full or unavailable */ }
-  }, [messages, currentQ, profile, hasWebsite, isAnalyzing, analysisComplete]);
+    setMessages(restoredMessages);
+    setCurrentQ(completed);
+    setProfile(restored);
+    setAnalysisComplete(Boolean(initialData.strategicProfile) && completed === QUESTIONS.length);
+    // Restoring a page never starts a model request.
+  }, [initialData]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isAnalyzing, analysisComplete, loqiIsResponding]);
 
   useEffect(() => {
-    if (!isAnalyzing && !analysisComplete && !loqiIsResponding) {
+    if (!isAnalyzing && !analysisComplete && !loqiIsResponding && currentQ < QUESTIONS.length) {
       inputRef.current?.focus();
     }
-  }, [messages, isAnalyzing, analysisComplete, loqiIsResponding]);
+  }, [messages, isAnalyzing, analysisComplete, loqiIsResponding, currentQ]);
 
   const extractWebsite = (text: string): string | null => {
     const match = text.match(/https?:\/\/[^\s,;)]+/);
     return match ? match[0] : null;
-  };
-
-  const deliverResponse = (responseText: string, callback?: () => void) => {
-    setLoqiIsResponding(true);
-    const typingDelay = Math.min(600 + responseText.length * 8, 2000);
-    setTimeout(() => {
-      setLoqiIsResponding(false);
-      const updated = [...messages];
-      updated[updated.length - 1] = { role: "loqi", text: responseText };
-      setMessages(updated);
-      if (callback) callback();
-    }, typingDelay);
   };
 
   const runProfileGeneration = async (nextProfile: OnboardingProfile) => {
@@ -558,44 +483,37 @@ function ConversationalDiscovery({
     }
   };
 
+  const submitTurn = async (field: typeof PROFILE_FIELDS[number], text: string, retry = false) => {
+    if (!userId || submittingRef.current) return;
+    submittingRef.current = true;
+    setLoqiIsResponding(true);
+    setTurnError(null);
+    if (!retry) {
+      setPendingTurn({ field, answer: text });
+      setMessages((previous) => [...previous, { role: "user", text }, { role: "loqi", text: "" }]);
+      setInputValue("");
+    }
+    try {
+      const turn = await sendOnboardingTurn(userId, field, text);
+      const nextProfile = { ...profile, [field]: text };
+      const site = extractWebsite(text);
+      if (site) nextProfile.website = site;
+      setProfile(nextProfile);
+      setMessages((previous) => [...previous.slice(0, -1), { role: "loqi", text: turn.reply, mode: turn.mode }]);
+      setCurrentQ((previous) => Math.max(previous, PROFILE_FIELDS.indexOf(field) + 1));
+      setPendingTurn(null);
+    } catch (error) {
+      setTurnError(error instanceof Error ? error.message : "Your answer was not confirmed. Please retry.");
+    } finally {
+      submittingRef.current = false;
+      setLoqiIsResponding(false);
+    }
+  };
+
   const handleSend = () => {
     const text = inputValue.trim();
-    if (!text || loqiIsResponding) return;
-
-    const updatedProfile = { ...profile };
-    const keys: (keyof OnboardingProfile)[] = [
-      "companyDescription",
-      "idealCustomer",
-      "differentiation",
-      "annualGoal",
-      "biggestObstacle",
-    ];
-    updatedProfile[keys[currentQ]] = text;
-
-    const site = extractWebsite(text);
-    if (site) {
-      updatedProfile.website = site;
-      setHasWebsite(true);
-    }
-    setProfile(updatedProfile);
-
-    const userMsg: Message = { role: "user", text };
-    const updated = [...messages, userMsg];
-    setMessages(updated);
-    setInputValue("");
-
-    if (currentQ < QUESTIONS.length - 1) {
-      const next = currentQ + 1;
-      setMessages([...updated, { role: "loqi", text: "" }]);
-      setCurrentQ(next);
-      deliverResponse(STRATEGIC_RESPONSES[currentQ](text));
-    } else {
-      setMessages([...updated, { role: "loqi", text: "" }]);
-      deliverResponse(STRATEGIC_RESPONSES[currentQ](text), () => {
-        // The visible state is driven by the real profile-generation request.
-        void runProfileGeneration(updatedProfile);
-      });
-    }
+    if (!text || currentQ >= PROFILE_FIELDS.length || pendingTurn || submittingRef.current) return;
+    void submitTurn(PROFILE_FIELDS[currentQ], text);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -607,7 +525,7 @@ function ConversationalDiscovery({
 
   return (
     <>
-      <header className="fixed top-0 left-0 w-full z-50 bg-[#fdf8f8]/80 backdrop-blur-md px-6 py-6 flex justify-between items-center">
+      <header className="fixed top-0 left-0 w-full z-50 bg-[#fdf8f8]/80 backdrop-blur-md px-4 sm:px-6 py-4 sm:py-6 flex justify-between items-center">
         <div className="flex items-center space-x-3">
           <div className="flex items-center gap-2">
             <span className="font-['Libre_Caslon_Text'] text-[24px] leading-[1.4] font-bold text-[#000000] tracking-tight">
@@ -624,12 +542,12 @@ function ConversationalDiscovery({
         </div>
         <div className="flex items-center gap-4">
           <span className="font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] text-[#444748] italic font-medium">
-            Onboarding phase 1 of 4
+            {Math.min(currentQ + 1, QUESTIONS.length)} of {QUESTIONS.length} answers
           </span>
         </div>
       </header>
 
-      <div className="pt-32 pb-48 px-6">
+      <div className="pt-28 sm:pt-32 pb-48 px-4 sm:px-6">
         <div className="max-w-[720px] mx-auto">
           <div className="mb-12 opacity-60">
             <span className="font-['Geist'] text-[11px] leading-[1.2] tracking-[0.05em] font-semibold text-[#444748] uppercase block mb-2">
@@ -645,20 +563,20 @@ function ConversationalDiscovery({
               if (msg.text === "" && msg.role === "loqi") {
                 return (
                   <article key={i} className="py-8">
-                    <div className="flex items-baseline gap-8">
-                      <div className="w-24 shrink-0 font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] text-[#444748] uppercase tracking-widest text-right font-medium">
+                    <div className="flex items-baseline gap-3 sm:gap-8">
+                      <div className="w-12 sm:w-24 shrink-0 font-['Geist'] text-[11px] sm:text-[13px] leading-[1.2] tracking-[0.02em] text-[#444748] uppercase tracking-widest text-right font-medium">
                         Loqi
                       </div>
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
                           <span className="font-['Libre_Caslon_Text'] text-[24px] leading-[1.4] italic text-[#444748] font-normal">
-                            Thinking
+                            {turnError ? "Answer not confirmed" : "Saving your answer…"}
                           </span>
-                          <span className="flex gap-1">
+                          {loqiIsResponding && <span className="flex gap-1" aria-hidden="true">
                             <span className="w-1.5 h-1.5 bg-[#444748] rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
                             <span className="w-1.5 h-1.5 bg-[#444748] rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
                             <span className="w-1.5 h-1.5 bg-[#444748] rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
-                          </span>
+                          </span>}
                         </div>
                       </div>
                     </div>
@@ -670,13 +588,13 @@ function ConversationalDiscovery({
                   key={i}
                   className={`py-8 border-b border-[#747878]/15 ${i < 4 && "onb-fade-in"} onb-stagger-${(i % 5) + 1}`}
                 >
-                <div className="flex items-baseline gap-8">
-                  <div className="w-24 shrink-0 font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] text-[#444748] uppercase tracking-widest text-right font-medium">
+                <div className="flex items-baseline gap-3 sm:gap-8">
+                  <div className="w-12 sm:w-24 shrink-0 font-['Geist'] text-[11px] sm:text-[13px] leading-[1.2] tracking-[0.02em] text-[#444748] uppercase tracking-widest text-right font-medium">
                     {msg.role === "loqi" ? "Loqi" : "User"}
                   </div>
                   <div className="flex-1">
                     {msg.role === "loqi" ? (
-                      <h2 className="font-['Libre_Caslon_Text'] text-[24px] leading-[1.4] italic text-[#000000] leading-tight font-normal whitespace-pre-line">
+                      <h2 className="font-['Libre_Caslon_Text'] text-[20px] sm:text-[24px] leading-[1.4] italic text-[#000000] font-normal whitespace-pre-line">
                         &ldquo;{msg.text}&rdquo;
                       </h2>
                     ) : (
@@ -684,12 +602,22 @@ function ConversationalDiscovery({
                         {msg.text}
                       </p>
                     )}
+                    {msg.mode === "guided" && <span className="mt-2 inline-block text-xs text-[#576660]">Guided mode · your answer was saved</span>}
                   </div>
                 </div>
               </article>
               );
             })}
 
+            {currentQ === QUESTIONS.length && !isAnalyzing && !analysisComplete && !analysisError && (
+              <div className="mt-10 text-center space-y-4">
+                <p className="text-sm text-[#444748]">Your answers are saved. An AI profile is optional; you can continue now or generate one first.</p>
+                <button type="button" onClick={() => void runProfileGeneration(profile)} className="px-8 py-4 bg-[#000000] text-[#ffffff] rounded-lg disabled:opacity-50">
+                  Generate strategic profile
+                </button>
+                <button type="button" onClick={() => onComplete(profile)} className="block mx-auto text-sm underline text-[#444748]">Continue with saved answers</button>
+              </div>
+            )}
             {(isAnalyzing || analysisError || analysisComplete) && (
               <div className="mt-16 onb-fade-in">
                 <div className="flex items-start gap-8">
@@ -699,7 +627,7 @@ function ConversationalDiscovery({
                   <div className="flex-1">
                     <div className="mb-8">
                       <p className="font-['Libre_Caslon_Text'] text-[24px] leading-[1.4] italic text-[#444748] mb-6 font-normal">
-                        {analysisComplete ? "Your strategic profile is ready." : analysisError ? "Your strategic profile could not be generated." : "Synthesizing your strategic profile&hellip;"}
+                        {analysisComplete ? "Your strategic profile is ready." : analysisError ? "Your strategic profile could not be generated." : "Synthesizing your strategic profile…"}
                       </p>
                     </div>
 
@@ -762,32 +690,43 @@ function ConversationalDiscovery({
                 >
                   Retry profile generation
                 </button>
+                <button type="button" onClick={() => onComplete(profile)} className="block mx-auto mt-4 text-sm underline text-[#444748]">Continue with saved answers</button>
               </div>
             )}
+            {turnError && pendingTurn && (
+              <div role="alert" className="mt-8 ml-0 sm:ml-32 rounded-lg border border-[#b91c1c]/30 bg-[#fff5f5] p-4 text-sm text-[#991b1b]">
+                <p>{turnError}</p>
+                <button type="button" disabled={loqiIsResponding} onClick={() => void submitTurn(pendingTurn.field, pendingTurn.answer, true)} className="mt-2 underline disabled:opacity-50">Retry saving this answer</button>
+              </div>
+            )}
+            <div ref={bottomRef} />
           </div>
         </div>
       </div>
 
-      {!isAnalyzing && !analysisComplete && (
-        <footer className="fixed bottom-0 left-0 w-full px-6 z-50">
+      {!isAnalyzing && !analysisComplete && currentQ < QUESTIONS.length && (
+        <footer className="fixed bottom-0 left-0 w-full px-4 sm:px-6 pb-4 z-50">
           <div className="max-w-[720px] mx-auto">
-            <div className={`bg-[#ffffff]/80 backdrop-blur-xl rounded-full onb-ambient-shadow border ${loqiIsResponding ? "border-[#c4c7c7]/10 opacity-60" : "border-[#c4c7c7]/20"} p-2 flex items-center gap-4 transition-all`}>
-              <div className="pl-6 flex-1">
-                  <input
+            <div className={`bg-[#ffffff]/95 backdrop-blur-xl rounded-2xl onb-ambient-shadow border ${loqiIsResponding ? "border-[#c4c7c7]/10 opacity-60" : "border-[#c4c7c7]/20"} p-2 flex items-end gap-2 transition-all`}>
+              <div className="pl-3 sm:pl-6 flex-1">
+                  <textarea
                   ref={inputRef}
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  disabled={loqiIsResponding}
-                  className="w-full bg-transparent border-none focus:ring-0 font-['Inter'] text-[16px] leading-[1.5] text-[#1c1b1b] placeholder:text-[#444748]/40 py-3 outline-none disabled:cursor-not-allowed"
-                  placeholder="Respond to Loqi..."
-                  type="text"
+                  disabled={loqiIsResponding || Boolean(pendingTurn)}
+                  maxLength={2000}
+                  rows={2}
+                  aria-label="Your answer"
+                  className="w-full resize-none bg-transparent border-none focus:ring-0 font-['Inter'] text-[16px] leading-[1.5] text-[#1c1b1b] placeholder:text-[#444748]/60 py-2 outline-none disabled:cursor-not-allowed"
+                  placeholder="Write your answer…"
                 />
               </div>
               <div className="flex items-center gap-2 pr-2">
                 <button
                   onClick={handleSend}
-                  className="bg-[#000000] text-[#ffffff] px-6 py-3 rounded-full font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] font-medium font-bold active:scale-95 transition-all"
+                  disabled={!inputValue.trim() || loqiIsResponding || Boolean(pendingTurn)}
+                  className="bg-[#000000] text-[#ffffff] px-4 sm:px-6 py-3 rounded-full font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] font-medium font-bold active:scale-95 transition-all disabled:opacity-40"
                 >
                   SEND
                 </button>
@@ -810,17 +749,21 @@ function KnowledgeValidation({
   profile,
   strategicProfile,
   isLoading,
+  saving,
+  error,
   onProceed,
 }: {
   profile: OnboardingProfile;
   strategicProfile: StrategicProfile | null;
   isLoading: boolean;
+  saving: boolean;
+  error: string | null;
   onProceed: (updated: OnboardingProfile) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [local, setLocal] = useState(profile);
 
-  const source = profile.website ? "Conversation + Website" : "Conversation";
+  const source = profile.website ? "Your answers, including a website URL you provided" : "Your answers";
 
   const cards = [
     {
@@ -893,10 +836,12 @@ function KnowledgeValidation({
             </p>
             <button
               onClick={() => onProceed(local)}
+              disabled={saving}
               className="px-8 py-4 bg-[#000000] text-[#ffffff] rounded-lg font-['Inter'] text-[16px] leading-[1.5] transition-all duration-300 hover:bg-[#444748] active:scale-95"
             >
-              Continue with conversation data
+              {saving ? "Saving…" : "Continue with saved answers"}
             </button>
+            {error && <p role="alert" className="text-sm text-[#b91c1c]">{error}</p>}
           </div>
         </div>
       </div>
@@ -921,10 +866,7 @@ function KnowledgeValidation({
                 Loqi &middot; Strategic Intelligence
               </p>
               <p className="font-['Libre_Caslon_Text'] text-[24px] leading-[1.4] text-[#000000] italic font-normal">
-                &ldquo;I think I understand enough to investigate further...
-                I&rsquo;ve processed the foundational data from your domain.
-                Here is what I currently believe about your strategic
-                position.&rdquo;
+                &ldquo;Here is a first interpretation of what you told me. Please correct anything I got wrong before we continue.&rdquo;
               </p>
             </div>
           </div>
@@ -1002,9 +944,10 @@ function KnowledgeValidation({
               {editing ? (
                 <button
                   onClick={() => onProceed(local)}
+                  disabled={saving}
                   className="group relative px-8 py-4 bg-[#000000] text-[#ffffff] rounded-lg font-['Inter'] text-[16px] leading-[1.5] transition-all duration-300 hover:bg-[#444748] active:scale-95 flex items-center gap-2 overflow-hidden"
                 >
-                  <span>Confirm changes</span>
+                  <span>{saving ? "Saving…" : "Confirm changes"}</span>
                   <span className="material-symbols-outlined text-sm group-hover:translate-x-1 transition-transform">
                     arrow_forward
                   </span>
@@ -1013,9 +956,10 @@ function KnowledgeValidation({
                 <>
                   <button
                     onClick={() => onProceed(local)}
+                    disabled={saving}
                     className="group relative px-8 py-4 bg-[#000000] text-[#ffffff] rounded-lg font-['Inter'] text-[16px] leading-[1.5] transition-all duration-300 hover:bg-[#444748] active:scale-95 flex items-center gap-2 overflow-hidden"
                   >
-                    <span>Yes, proceed with investigation</span>
+                    <span>{saving ? "Saving…" : "Yes, this looks right"}</span>
                     <span className="material-symbols-outlined text-sm group-hover:translate-x-1 transition-transform">
                       arrow_forward
                     </span>
@@ -1029,6 +973,7 @@ function KnowledgeValidation({
                 </>
               )}
             </div>
+            {error && <p role="alert" className="mt-4 text-sm text-[#b91c1c]">{error}</p>}
           </div>
         </section>
       </div>
@@ -1090,7 +1035,7 @@ function WorkspaceConnection({
                   Google Workspace
                 </h3>
                 <p className="font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] text-[#444748] font-medium">
-                  Secure, read-write access to Drafts &amp; Calendar
+                  Optional in Beta. Connecting does not enable automatic sending.
                 </p>
               </div>
             </div>
@@ -1159,7 +1104,7 @@ function ExecutiveBriefing({
   const icp = sp?.ICP || profile.idealCustomer;
   const differentiation = sp?.DIFFERENTIATION || profile.differentiation;
   const hasData = !!(companySummary || objective || constraints);
-  const source = profile.website ? "Conversation + Website" : "Conversation";
+  const source = profile.website ? "Your answers (website URL provided, not researched)" : "Your answers";
 
   return (
     <div className="min-h-screen py-16 px-6 flex flex-col items-center">
@@ -1185,8 +1130,7 @@ function ExecutiveBriefing({
 
         <div className="mb-12 onb-fade-in">
           <p className="font-['Inter'] text-[18px] leading-[1.6] text-[#1c1b1b]">
-            &ldquo;I&rsquo;ve processed our session. Here is your executive briefing
-            based on the strategic position we established.&rdquo;
+            &ldquo;Here is a working summary based on your answers. You can refine it as your workspace develops.&rdquo;
           </p>
         </div>
 
@@ -1267,7 +1211,7 @@ function ExecutiveBriefing({
                 </div>
                 <div className="pt-4 border-t border-[#c4c7c7]/20">
                   <span className="font-['Geist'] text-[13px] leading-[1.2] tracking-[0.02em] text-[#747878] italic font-medium">
-                    Confidence: {sp?.CONFIDENCE_LEVELS?.overall || "Medium"}
+                    Confidence: {sp?.CONFIDENCE_LEVELS?.overall || "Not assessed"}
                   </span>
                 </div>
               </div>

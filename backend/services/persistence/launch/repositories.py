@@ -366,6 +366,21 @@ class WorkspaceLeadRepository(LaunchRepository[WorkspaceLead]):
             ("workspace_id", "eq", workspace_id),
         ])
 
+    async def update_qualification_for_workspace(self, entity_id: str, workspace_id: str,
+                                                 metadata: dict[str, Any]) -> bool:
+        """Update assessment metadata only; never insert/resurrect/move a lead."""
+        client = self._client()
+        if client is None:
+            raise RuntimeError("Workspace lead persistence is not configured")
+        response = await asyncio.to_thread(
+            lambda: client.table(self._table_name).update({"metadata": metadata})
+            .eq("id", entity_id).eq("workspace_id", workspace_id)
+            .is_("deleted_at", "null").execute()
+        )
+        if not isinstance(response.data, list):
+            raise RuntimeError("Workspace assessment write returned invalid data")
+        return len(response.data) == 1 and response.data[0].get("id") == entity_id
+
     async def list_for_workspace(self, workspace_id: str) -> list[WorkspaceLead]:
         # PostgREST caps each response; increasing limit alone does not make
         # search complete. Read bounded pages in a unique, stable order.

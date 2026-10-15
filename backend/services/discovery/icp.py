@@ -13,6 +13,86 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 
 
+# Bounded prospect vocabulary, not the sales extractor's inferred buyer personas.
+PROSPECT_ROLE_FAMILIES = {
+    "operations": (r"\boperations?\s+(?:leaders?|managers?|directors?|heads?)\b|\bheads? of operations\b|\b(?:coo|chief operating officer|vp of operations|vp operations|director of operations)\b",
+                   ["Head of Operations", "Operations Manager", "Operations Director", "Director of Operations", "VP Operations", "VP of Operations", "COO", "Chief Operating Officer", "Operations Leader"]),
+    "sales": (r"\bsales\s+(?:leaders?|managers?|directors?)\b|\bheads? of sales\b|\bvp sales\b",
+              ["Head of Sales", "Sales Manager", "Sales Director", "Director of Sales", "VP Sales", "VP of Sales", "Chief Sales Officer"]),
+    "founders": (r"\b(?:co )?founders?\b", ["Founder", "Co-Founder"]),
+}
+
+
+def normalize_prospect_text(value: str) -> str:
+    value = re.sub(r"\be[ -]?commerce\b", "ecommerce", str(value or "").lower())
+    value = re.sub(r"\b(?:usa|u\.s\.?|us)\b", "united states", value)
+    value = re.sub(r"\b(?:uk|u\.k\.?)\b", "united kingdom", value)
+    return " ".join(re.findall(r"[a-z0-9]+", value))
+
+
+def extract_prospect_search(query: str, existing_context: Optional[dict] = None) -> dict:
+    """Extract only stated search constraints; never infer an offering from a role.
+
+    Unknown phrases remain required literal phrases and are reported as uncertain.
+    Knowledge is retained separately with attribution, never merged into constraints.
+    This deterministic contract makes no provider/model request.
+    """
+    remaining = normalize_prospect_text(query)
+    roles, industries, locations, companies = [], [], [], []
+    for pattern, alternatives in PROSPECT_ROLE_FAMILIES.values():
+        if re.search(pattern, remaining):
+            roles.extend(alternatives)
+            remaining = re.sub(pattern, " ", remaining)
+    # Preserve explicit titles that are not members of the small role vocabulary.
+    title = re.search(r"\b(?:engineers?|cto|ceo|cfo|chief technology officer)\b", remaining)
+    if title:
+        roles.append(title.group().rstrip("s") if title.group().endswith("s") else title.group())
+        remaining = remaining[:title.start()] + " " + remaining[title.end():]
+    for industry, aliases in {"ecommerce": ["ecommerce", "online retail"], "SaaS": ["saas"],
+                              "retail": ["retail"], "healthcare": ["healthcare"],
+                              "manufacturing": ["manufacturing"], "logistics": ["logistics"]}.items():
+        for alias in aliases:
+            pattern = rf"\b{re.escape(alias)}\b"
+            if re.search(pattern, remaining):
+                industries.append(industry)
+                remaining = re.sub(pattern, " ", remaining)
+    location = re.search(r"\b(?:in|based in|located in)\s+([a-z0-9 ]+)$", remaining)
+    known_locations = {"united states", "united kingdom", "canada", "germany", "france", "australia",
+                       "singapore", "uae", "dubai", "london", "toronto", "berlin", "paris", "new york"}
+    if location and location.group(1).strip() in known_locations:
+        locations.append(location.group(1).strip())
+        remaining = remaining[:location.start()]
+    # Named companies are explicit scope, not product names. Avoid treating the
+    # generic 'at companies' left after industry extraction as a company name.
+    company = re.search(r"\bat\s+([a-z0-9 ]+)$", remaining)
+    if company and company.group(1).strip() not in ("", "companies", "company"):
+        companies.append(company.group(1).strip())
+        remaining = remaining[:company.start()]
+    remaining = re.sub(r"^(?:please )?(?:find|show|get|search(?: for)?|list|research)\s+", "", remaining.strip())
+    remaining = re.sub(r"\b(?:me|my|our|all|the|a|an|saved|imported|existing|leads?|prospects?|contacts?|companies|company|people|at|in|for|from|with|and)\b", " ", remaining)
+    unresolved = " ".join(remaining.split())
+    context = existing_context or {}
+    guidance = []
+    for item in ((context.get("knowledge") or {}).get("items") or [])[:8]:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content") or {}
+        if not isinstance(content, dict):
+            continue
+        product = content.get("offering") or content.get("product") or content.get("offer")
+        if isinstance(product, str) and product.strip():
+            guidance.append({"offering": product.strip(), "knowledge_item_id": item.get("id"),
+                             "knowledge_source_id": item.get("source_id")})
+    generic_listing = not (roles or industries or locations or companies or unresolved) and bool(
+        re.search(r"\b(?:leads?|prospects?|contacts?|companies|people)\b", query, re.I))
+    return {"roles": _dedupe_and_cap(roles, 20), "industries": _dedupe_and_cap(industries),
+            "locations": locations, "companies": companies,
+            "unresolved_constraints": [unresolved] if unresolved else [],
+            "generic_listing": generic_listing,
+            "product_guidance": guidance,
+            "interpretation_status": "understood" if not unresolved and (roles or industries or locations or companies or generic_listing) else "uncertain"}
+
+
 def _log(message: str) -> None:
     print(f"[icp_extractor] {message}")
 
@@ -600,7 +680,7 @@ Rules:
         if existing_context.get("target"):
             context_info += f"Previous target: {existing_context['target']}\n"
         try:
-            from backend.services.discovery.discovery_context import format_discovery_context
+            from services.discovery.context import format_discovery_context
             context_info += format_discovery_context(existing_context)
         except Exception:
             pass

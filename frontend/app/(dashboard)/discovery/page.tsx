@@ -10,7 +10,7 @@ import {
   DiscoveryResearchBriefing,
 } from "../../../components/dashboard/DiscoveryDetailWorkspace";
 import { useBetaFeature } from "../../../contexts/BetaFeaturesContext";
-import { listWorkspaceLeads, type WorkspaceLeadRecord } from "../../../lib/api";
+import { listWorkspaceLeads, TimeoutError, type WorkspaceLeadRecord } from "../../../lib/api";
 import { parseDiscoveryMode } from "../../../lib/discovery-mode";
 import { terminalDiscoveryMessage } from "../../../lib/discovery-status";
 import { useIntelligenceWorkspace } from "../../../hooks/useIntelligenceWorkspace";
@@ -34,9 +34,9 @@ const FILTERS = [
 ] as const;
 
 const SUGGESTIONS = [
-  "Founder",
-  "Head of Sales",
-  "Operations",
+  "Find SaaS founders in the US",
+  "Find heads of sales at growing startups",
+  "Find operations leaders at e-commerce companies",
 ];
 
 function activeSessionToken(): string {
@@ -262,10 +262,6 @@ function DiscoverySearchStatus({
     );
   }
 
-  if (starting || run?.metadata?.search_scope === "workspace") {
-    return <p role="status" className="text-sm text-on-surface-variant">Searching saved leads in this workspace…</p>;
-  }
-
   const progress: DiscoveryProgress | undefined = starting && !run
     ? { stage: "Preparing your search", progress: 6 }
     : run?.progress;
@@ -282,7 +278,7 @@ function DiscoverySearchStatus({
       <DiscoveryExecutionPanel
         progress={progress}
         plan={run?.plan}
-        narrative="Searching available sources and matching results to your target."
+        narrative="Interpreting your target and assessing matching leads saved in this workspace."
       />
     </section>
   );
@@ -472,12 +468,14 @@ function DiscoveryWorkspace({ workspaceId, scope }: { workspaceId: string; scope
       setWorkspaceTotal(result.total);
       setResultWarning((result.warnings || []).join(" "));
       setLoadedScope(resultScope);
-    } catch {
+    } catch (loadError) {
       if (!isCurrent()) return;
       setWorkspaceLeads([]);
       setWorkspaceTotal(0);
       setResultWarning("");
-      setError("Could not load search results. Please try again.");
+      setError(loadError instanceof TimeoutError
+        ? "Loading saved leads timed out. This does not mean the search failed. Retry loading the results."
+        : "Could not load search results. Please try again.");
     } finally {
       if (isCurrent()) setLoading(false);
     }
@@ -564,7 +562,7 @@ function DiscoveryWorkspace({ workspaceId, scope }: { workspaceId: string; scope
     setProviderError("");
 
     if (!providerSearchEnabled) {
-      writeState({ ...filters, q: nextQuery, page: "1" }, "", "push");
+      setProviderError("Search capabilities could not be confirmed. Reload the page and try again.");
       setPendingQuery("");
       startingSearchRef.current = false;
       return;
@@ -577,10 +575,12 @@ function DiscoveryWorkspace({ workspaceId, scope }: { workspaceId: string; scope
       if (!mounted.current || revision !== intent.current) return;
       if (!started?.discoveryId) throw new Error("Search could not be started.");
       writeState({ ...filters, q: nextQuery, page: "1" }, started.discoveryId, "push");
-    } catch {
+    } catch (startError) {
       if (!mounted.current || revision !== intent.current) return;
       // A run failure never removes the user's canonical workspace results.
-      setProviderError("Discovery search could not be started.", `${nextQuery}:`);
+      setProviderError(startError instanceof TimeoutError
+        ? "The search-start response timed out. The search may already be running; check Search history before starting another."
+        : "Discovery search could not be started.", `${nextQuery}:`);
       writeState({ ...filters, q: nextQuery, page: "1" }, "", "push");
       setPendingQuery("");
     } finally {
@@ -667,10 +667,10 @@ function DiscoveryWorkspace({ workspaceId, scope }: { workspaceId: string; scope
       <div className="flex min-w-0 flex-1 items-center gap-3 rounded-xl border border-outline-variant/25 bg-surface-lowest px-4 py-3 shadow-sm focus-within:border-primary/50">
         <span className="text-lg text-primary">✦</span>
         <input
-          aria-label="Search saved leads"
+          aria-label="Describe the leads you're looking for"
           value={draftQuery}
           onChange={(event) => setDraftQuery(event.target.value)}
-          placeholder="Search by name, company, email, or job title…"
+          placeholder="Describe the leads you're looking for..."
           className="min-w-0 flex-1 bg-transparent text-base text-on-surface outline-none placeholder:text-on-surface-variant/45"
         />
         {hasSearch && (
@@ -719,7 +719,7 @@ function DiscoveryWorkspace({ workspaceId, scope }: { workspaceId: string; scope
               <p className="mt-3 text-sm text-on-surface-variant">Search leads saved in this workspace. To add your own data, <Link className="text-primary underline" href={`/contacts?workspace_id=${encodeURIComponent(workspaceId)}`}>import a CSV</Link>.</p>
               <div className="mt-8">{searchForm}</div>
               <div className="mt-9">
-                <p className="mb-3 text-sm font-medium text-on-surface-variant">Example searches</p>
+                <p className="mb-3 text-sm font-medium text-on-surface-variant">Suggested for you</p>
                 <div className="space-y-2">
                   {SUGGESTIONS.map((suggestion) => (
                     <button
@@ -746,9 +746,7 @@ function DiscoveryWorkspace({ workspaceId, scope }: { workspaceId: string; scope
                 {runIsActive && <DiscoverySearchStatus query={pendingQuery || (startingSearch ? draftQuery : query)} run={providerRun} starting={startingSearch} error={providerError} />}
                 {!runIsActive && providerError && <DiscoverySearchStatus query={query} run={providerRun} starting={false} error={providerError} />}
                 {!runIsActive && providerRun?.status === "completed" && (
-                  providerRun.metadata?.search_scope === "workspace"
-                    ? <p role="status" className="text-sm text-on-surface-variant">Search completed over this workspace’s saved leads.</p>
-                    : <DiscoveryResearchBriefing view={providerRun} resultCount={workspaceTotal} />
+                  <DiscoveryResearchBriefing view={providerRun} resultCount={workspaceTotal} />
                 )}
 
                 {!runIsActive && loadedScope === currentResultScope.current && resultWarning && <p role="alert" className="text-sm text-on-surface-variant">{resultWarning}</p>}

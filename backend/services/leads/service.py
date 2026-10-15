@@ -194,7 +194,7 @@ async def _provider_sources_for_discovery(
 
 async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1, page_size: int | None = 50,
                                filters: dict[str, str] | None = None,
-                               discovery_id: str = "") -> dict[str, Any]:
+                               discovery_id: str = "", include_outcomes: bool = False) -> dict[str, Any]:
     workspace_repository = WorkspaceLeadRepository()
     _require_repository_client(workspace_repository)
     try:
@@ -214,6 +214,7 @@ async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1
         warnings.append("Saved search results could not be fully loaded. Available workspace matches are shown.")
 
     records: list[dict[str, Any]] = []
+    exclusions = {"explicit_filter": 0, "explicit_keywords": 0, "literal_query": 0}
     needle = query.strip().lower(); filters = filters or {}
     keyword_needle = str(filters.get("keywords") or "").strip().lower()
     for row in workspace_rows:
@@ -226,6 +227,8 @@ async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1
             "source_provenance": sources,
             "source_kind": source_kind,
             "source_label": source_label,
+            **({"metadata": {"qualification": row.metadata["qualification"]}}
+               if isinstance(row.metadata, dict) and isinstance(row.metadata.get("qualification"), dict) else {}),
         }
         # Internal IDs/status and provenance labels are not prospect keywords.
         searchable = " ".join(record[field] for field in (
@@ -243,7 +246,13 @@ async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1
         # slicing, so every page and total remains internally consistent.
         included_by_discovery = row.id in run_sources_by_lead
         matches_keywords = not keyword_needle or keyword_needle in searchable
-        if (not needle or needle in searchable or included_by_discovery) and matches_filters and matches_keywords:
+        if not matches_filters:
+            exclusions["explicit_filter"] += 1
+        elif not matches_keywords:
+            exclusions["explicit_keywords"] += 1
+        elif not (not needle or needle in searchable or included_by_discovery):
+            exclusions["literal_query"] += 1
+        else:
             records.append(record)
     records.sort(key=lambda record: (record["company"].lower(), record["last_name"].lower(), record["first_name"].lower(), record["id"]))
     # The durable workspace-search worker requests the full matching set for
@@ -254,6 +263,9 @@ async def list_workspace_leads(workspace_id: str, query: str = "", page: int = 1
                 "total": total, "page": page, "page_size": page_size}
     if warnings:
         response["warnings"] = warnings
+    if include_outcomes:
+        response["candidate_outcomes"] = {"retrieved_count": len(workspace_rows),
+                                          "filtered_candidate_count": total, "exclusions": exclusions}
     return response
 
 

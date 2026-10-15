@@ -378,6 +378,16 @@ export function DiscoveryResearchBriefing({
   view: DiscoveryData;
   resultCount: number;
 }) {
+  const hasPlan = view.plan && Object.values(view.plan).some((value) =>
+    Array.isArray(value) ? value.length > 0 : typeof value === "string" && value.trim().length > 0,
+  );
+  const savedFilters = view.metadata?.ui_filters;
+  const appliedFilters = savedFilters && typeof savedFilters === "object" && !Array.isArray(savedFilters)
+    ? Object.entries(savedFilters).filter(([key, value]) =>
+      ["location", "industry", "company", "title", "keywords"].includes(key)
+      && typeof value === "string" && value.trim().length > 0,
+    )
+    : [];
   return (
     <section className="w-full animate-fade-in">
       <div className="overflow-hidden rounded-xl border border-outline-variant/20 bg-surface-lowest ambient-shadow">
@@ -401,8 +411,8 @@ export function DiscoveryResearchBriefing({
             )}
           </div>
         </div>
-        <div className="grid gap-8 px-6 py-6 md:px-8 md:py-8 lg:grid-cols-3">
-          <div className="min-w-0 space-y-4 lg:col-span-2">
+        <div className="px-6 py-6 md:px-8 md:py-8">
+          <div className="min-w-0 space-y-4">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant/50">
               Searching for: {view.query}
             </p>
@@ -425,13 +435,40 @@ export function DiscoveryResearchBriefing({
                 </div>
               </ExpandableRow>
             )}
-            {view.plan && (
-              <ExpandableRow label="View interpreted ICP and target criteria">
-                <ResearchPlan plan={view.plan} embedded />
+            <section aria-label="Interpreted ICP and target criteria" className="rounded-xl border border-primary/20 bg-primary/5 p-5 space-y-4">
+              <ExpandableRow label="Ideal customer profile (ICP)">
+                <p className="text-xs leading-relaxed text-on-surface-variant">
+                  The target interpreted for this search—not verified facts about every lead.
+                </p>
+                {hasPlan ? <ResearchPlan plan={view.plan} embedded /> : (
+                  <p className="text-sm text-on-surface-variant">
+                    No interpreted ICP was saved for this search. Start a new search to generate one.
+                  </p>
+                )}
+                {view.metadata?.search_scope === "workspace" && (
+                  <p className="text-xs leading-relaxed text-on-surface-variant">
+                    Saved leads are matched by the search text or interpreted role, industry and geography.
+                    Other ICP criteria describe the target; they are not additional hard filters.
+                  </p>
+                )}
               </ExpandableRow>
-            )}
+              <div className="border-t border-outline-variant/20 pt-4">
+                <h4 className="text-xs font-semibold text-on-surface mb-2">Applied search filters</h4>
+                {appliedFilters.length > 0 ? (
+                  <dl className="grid gap-3 sm:grid-cols-2">
+                    {appliedFilters.map(([key, value]) => (
+                      <div key={key}>
+                        <dt className="text-xs capitalize text-on-surface-variant">{key}</dt>
+                        <dd className="text-sm text-on-surface">{String(value)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                ) : (
+                  <p className="text-xs text-on-surface-variant">No additional search filters were recorded for this run.</p>
+                )}
+              </div>
+            </section>
           </div>
-          <AtGlancePanel plan={view.plan} />
         </div>
       </div>
     </section>

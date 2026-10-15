@@ -961,31 +961,41 @@ export function workspaceLeadToRecommendation(
   const name = [firstName, lastName].filter(Boolean).join(" ");
   const title = String(wl.title || profile.title || "");
   const profileMetadata = recordFromJson(profile.metadata);
-  const qualification: DiscoveryRecommendation["qualification"] | null =
-    qualificationFromPersistedMetadata(wl.metadata) as DiscoveryRecommendation["qualification"] | null;
+  const persistedQualification = qualificationFromPersistedMetadata(wl.metadata);
+  const qualification = persistedQualification as DiscoveryRecommendation["qualification"] | null;
+  const context = {
+    ...recordFromJson(profileMetadata.provider_context),
+    ...recordFromJson(profileMetadata.csv_import),
+  };
+  const highlights = Array.isArray(persistedQualification?.highlights)
+    ? persistedQualification.highlights.filter((value: unknown): value is string => typeof value === "string")
+    : [];
   return {
     id: String(wl.id || `lead-${index}`),
     company: String(
       profile.company_name
+      || wl.company
+      || context.company
        || profileMetadata.company
       || name
       || "Unknown company",
     ),
-    match: _scoreToMatch(wl.match_score, Math.max(55, 90 - index * 3)),
+    match: _scoreToMatch(wl.match_score ?? persistedQualification?.final_score, Math.max(55, 90 - index * 3)),
     subtitle: title || name || "Prospect",
     stage: String(profile.seniority || wl.lead_status || "Prospect"),
     location: String(
       profile.location
       || profile.city
       || wl.location
+      || context.location
       || "Unknown",
     ),
-    reasoning: [
+    reasoning: highlights.length ? highlights.join(". ") : [
       name && title ? `${name} (${title})` : name || title,
       wl.linkedin_url || profile.linkedin_url ? "LinkedIn profile available" : null,
       wl.email ? "Email on file" : null,
-    ].filter(Boolean).join(". ") || "Matched from research results.",
-    buyingSignal: String(profile.buying_signal || profile.signal || "Research match"),
+    ].filter(Boolean).join(". ") || "No additional assessment evidence recorded.",
+    buyingSignal: String(profile.buying_signal || profile.signal || "No additional buying signal recorded"),
     signalDetail: String(profile.buying_signal_detail || profile.snippet || profile.headline || ""),
     funding: String(profile.funding || "—"),
     hiring: String(profile.hiring || "—"),
@@ -1137,7 +1147,7 @@ export async function fetchDiscovery(id: string, workspaceId = ""): Promise<Disc
             workspaceLeadIdByCompany.get(String(c.company_id || (c.company as Record<string, unknown> | undefined)?.id || "")),
           ),
         );
-        if (recommendations.length === 0 && leads.length > 0) {
+        if (metadata.search_scope === "workspace" || (recommendations.length === 0 && leads.length > 0)) {
           recommendations = leads.map((l, i) =>
             workspaceLeadToRecommendation(l.workspace_lead || {}, i),
           );
@@ -1145,7 +1155,9 @@ export async function fetchDiscovery(id: string, workspaceId = ""): Promise<Disc
         const companyCount = companies.length;
         narrativeTitle = "Research complete";
         narrativeLines = [
-          companyCount > 0
+          metadata.search_scope === "workspace"
+            ? `I matched ${leads.length} saved lead${leads.length === 1 ? "" : "s"} in this workspace to your search.`
+            : companyCount > 0
             ? `I surfaced ${companyCount} compan${companyCount === 1 ? "y" : "ies"} worth your attention.`
             : "No new prospects matched your ICP this time.",
           "Review the recommendations below and decide who to pursue.",

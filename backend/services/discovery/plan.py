@@ -1,5 +1,9 @@
 """Discovery Plan — the structured intelligence item behind every search.
 
+Saved-workspace prospect mode extracts stated constraints deterministically,
+keeps attributed Knowledge product guidance separate, and invents no offering.
+The retained sales/provider mode below continues to interpret campaign intent.
+
 The raw campaign objective is NEVER handed to a search provider. Instead,
 ``derive_discovery_plan`` turns the objective into a complete structured plan:
 
@@ -18,7 +22,7 @@ the ONLY thing the provider pipeline (``lead_provider.search_with_expansion``,
 ``search_expansion.expand_search_intent``, providers) consumes. The campaign
 objective itself is reserved for strategy generation.
 
-Derivation is deterministic wherever possible; the LLM is used ONCE, inside
+Sales-mode derivation is deterministic wherever possible; the LLM is used ONCE, inside
 the canonical ICP extractor, purely for semantic extraction (buyer roles /
 industries / keywords). Every semantic field degrades to a deterministic
 table — a plan always exists even without an AI key.
@@ -31,6 +35,9 @@ from pydantic import BaseModel, Field
 
 
 class DiscoveryPlan(BaseModel):
+    interpretation_mode: str = "sales"
+    search_constraints: dict = Field(default_factory=dict)
+    product_guidance: list[dict] = Field(default_factory=list)
     offering: str = ""
     primary_services: list[str] = Field(default_factory=list)
     target_audience: str = ""
@@ -430,7 +437,7 @@ def _build_persona(roles: list[str], industries: list[str]) -> list[str]:
     return personas[:12]
 
 
-def derive_discovery_plan(query: str, existing_context: Optional[dict] = None) -> DiscoveryPlan:
+def derive_discovery_plan(query: str, existing_context: Optional[dict] = None, *, prospect_search: bool = False) -> DiscoveryPlan:
     """Derive the structured Discovery Plan from a raw free-text objective.
 
     The pull-step pushes every data point into the canonical plan. When no
@@ -440,6 +447,18 @@ def derive_discovery_plan(query: str, existing_context: Optional[dict] = None) -
     query = (query or "").strip()
     if not query:
         return DiscoveryPlan()
+
+    if prospect_search:
+        from services.discovery.icp import extract_prospect_search
+        constraints = extract_prospect_search(query, existing_context)
+        guidance = constraints.pop("product_guidance")
+        return DiscoveryPlan(
+            interpretation_mode="prospect_search", search_constraints=constraints,
+            product_guidance=guidance, offering=guidance[0]["offering"] if guidance else "",
+            target_audience=query, decision_maker_roles=constraints["roles"],
+            industries=constraints["industries"], geography=constraints["locations"],
+            icp_summary=f"Search saved prospects: {query}",
+        )
 
     from services.discovery.icp import extract_structured_icp
 
@@ -453,8 +472,6 @@ def derive_discovery_plan(query: str, existing_context: Optional[dict] = None) -
         _, target_audience = _split_intent(query)
 
     industries = _dedupe(icp.get("buyer_industries") or [])[:4]
-    if not industries and target_audience:
-        industries = _dedupe([target_audience])[:1]
     roles = _dedupe(icp.get("buyer_roles") or [])[:10]
     exclusions = _dedupe(icp.get("excluded_roles") or [])
     keywords = _dedupe((icp.get("keywords") or []) + (icp.get("search_hints") or []))[:12]
@@ -512,6 +529,98 @@ def derive_discovery_plan(query: str, existing_context: Optional[dict] = None) -
         f"keywords={len(plan.company_keywords)} negatives={len(plan.negative_keywords)}"
     )
     return plan
+
+
+def prospect_match_outcome(lead: dict, constraints: dict) -> dict:
+    """One exclusive exclusion reason plus non-exclusive missing-fact notices.
+
+    Query industry/location are soft on missing facts, strict on contradictions.
+    Explicit UI filters have already been enforced separately by lead retrieval.
+    Unknown phrases never silently turn into an all-workspace search.
+    """
+    from services.discovery.icp import normalize_prospect_text
+
+    def contains(value, term):
+        return f" {normalize_prospect_text(term)} " in f" {normalize_prospect_text(value)} "
+
+    unverified = []
+    for field, key, reason in (("title", "roles", "role"), ("industry", "industries", "industry"),
+                               ("location", "locations", "location"), ("company", "companies", "company")):
+        terms = constraints.get(key) or []
+        if not terms:
+            continue
+        value = str(lead.get(field) or "")
+        if not value.strip() and field in ("industry", "location"):
+            unverified.append(field)
+        elif not any(contains(value, term) for term in terms):
+            return {"matched": False, "reason": reason, "unverified_fields": unverified}
+    phrases = constraints.get("unresolved_constraints") or []
+    # Match an unrecognized phrase within one saved field, not unrelated words
+    # scattered across the record. It stays visible in the persisted plan.
+    if any(not any(contains(lead.get(field) or "", phrase) for field in (
+            "first_name", "last_name", "email", "title", "company", "website", "industry", "location"))
+           for phrase in phrases):
+        return {"matched": False, "reason": "unrecognized_constraint", "unverified_fields": unverified}
+    if not any(constraints.get(key) for key in ("roles", "industries", "locations", "companies", "unresolved_constraints")) and not constraints.get("generic_listing"):
+        return {"matched": False, "reason": "empty_intent", "unverified_fields": unverified}
+    return {"matched": True, "reason": "matched", "unverified_fields": unverified}
+
+
+def workspace_search_matches(lead: dict, query: str, plan: dict) -> bool:
+    """Match interpreted target criteria against persisted workspace facts only.
+
+    Literal names/emails still work. Only criteria stated in the query become
+    required dimensions; expanded ICP suggestions are not hard filters.
+    Natural-language searches match ANY term within a dimension and ALL
+    specified dimensions. Missing facts do
+    not become matches; model-suggested pain points are not prospect evidence.
+    This does not acquire, enrich, or manufacture leads.
+    """
+    if plan.get("interpretation_mode") == "prospect_search":
+        return prospect_match_outcome(lead, plan.get("search_constraints") or {})["matched"]
+
+    def normalized(value: str) -> str:
+        value = re.sub(r"\b(?:usa|u\.s\.?|us)\b", "united states", value.lower())
+        value = re.sub(r"\b(?:uk|u\.k\.?)\b", "united kingdom", value)
+        value = value.replace("e-commerce", "ecommerce").replace("co-founder", "founder")
+        return " ".join(word[:-1] if word.endswith("s") and len(word) > 3 else word
+                        for word in re.findall(r"[a-z0-9]+", value))
+
+    def contains(value: str, term: str) -> bool:
+        return bool(term) and f" {normalized(term)} " in f" {normalized(value)} "
+
+    text = " ".join(str(lead.get(key) or "") for key in (
+        "first_name", "last_name", "email", "title", "company", "website", "industry", "location",
+    ))
+    if contains(text, query):
+        return True
+    dimensions = (
+        (str(lead.get("title") or ""), plan.get("decision_maker_roles") or []),
+        (str(lead.get("industry") or ""), plan.get("industries") or []),
+        (str(lead.get("location") or ""), plan.get("geography") or []),
+    )
+    criteria = []
+    for value, terms in dimensions:
+        explicit_terms = [term for term in terms if isinstance(term, str) and contains(query, term)]
+        if explicit_terms:
+            criteria.append((value, explicit_terms))
+    if criteria and not all(any(contains(value, term) for term in terms) for value, terms in criteria):
+        return False
+
+    # With no explicit structured dimension, search the user's meaningful
+    # words across saved fields, not the entire conversational sentence.
+    # A bare request to show saved leads deliberately lists the workspace;
+    # unknown terms still require matches and never become an all-leads fallback.
+    target = re.sub(r"^(?:please\s+)?(?:find|show|get|search(?:\s+for)?|list|research)\s+", "", query.strip(), flags=re.I)
+    target = re.sub(r"\b(?:me|my|our|all|the|a|an|saved|imported|existing|leads?|prospects?|contacts?|companies|people|at|in|for|from|with|and)\b", " ", target, flags=re.I)
+    remaining = f" {normalized(target)} "
+    for _value, terms in criteria:
+        for term in terms:
+            remaining = remaining.replace(f" {normalized(term)} ", " ")
+    words = remaining.split()
+    if words:
+        return all(contains(text, word) for word in words)
+    return bool(criteria) or bool(re.search(r"\b(?:leads?|prospects?|contacts?|companies|people)\b", query, re.I))
 
 
 def icp_from_plan(plan: dict) -> dict:

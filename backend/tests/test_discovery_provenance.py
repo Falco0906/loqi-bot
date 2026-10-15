@@ -63,29 +63,43 @@ def test_search_workflow_passes_provenance_to_discovery_plan_writer(monkeypatch)
     }
     captured = []
 
-    async def fake_context(owner_id, query):
+    async def fake_context(owner_id, query, *, workspace_id):
+        assert owner_id == "owner-a"
+        assert workspace_id == "workspace-a"
         return {"provenance": provenance, "knowledge_icp": {}, "knowledge": {}, "strategic_observations": []}
 
-    class Plan:
-        def to_dict(self):
-            return {"industries": ["advisory firms"]}
+    class WorkspaceLeads:
+        async def list_for_workspace(self, workspace_id):
+            assert workspace_id == "workspace-a"
+            return []
 
-    def fake_search(service, target, plan, context, on_progress, persist_partial):
-        assert context["provenance"] == provenance
-        return {"ok": True, "leads": []}
+    def authorize(_client, actor, workspace):
+        assert (actor, workspace) == ("owner-a", "workspace-a")
+        return SimpleNamespace(workspace_id=workspace)
+
+    def forbid_provider(*_args, **_kwargs):
+        raise AssertionError("Saved-workspace search must not source provider leads")
 
     def fake_store(discovery_id, plan, context_provenance=None):
         captured.append((discovery_id, plan, context_provenance))
         return True
 
     monkeypatch.setattr("services.discovery.context.retrieve_discovery_context", fake_context)
-    monkeypatch.setattr("services.discovery.plan.derive_discovery_plan", lambda query, existing_context=None: Plan())
-    monkeypatch.setattr("workflow_dispatcher._search_with_progress", fake_search)
+    monkeypatch.setattr("services.workspace.access.resolve_workspace_context", authorize)
+    monkeypatch.setattr("services.leads.service.WorkspaceLeadRepository", WorkspaceLeads)
+    monkeypatch.setattr("services.discovery.service.get_discovery", lambda *_a, **_k: {
+        "id": "discovery-1", "workspace_id": "workspace-a", "created_by": "owner-a", "metadata": {}})
+    monkeypatch.setattr("services.discovery.service._merge_metadata", lambda *_a: True)
+    monkeypatch.setattr("services.job_engine.storage.JobStorage.store_search_results", lambda *_a: True)
+    monkeypatch.setattr("workflow_dispatcher._search_with_progress", forbid_provider)
     monkeypatch.setattr("services.discovery.service.store_discovery_plan", fake_store)
 
-    job = Job(user_id="owner-a", query="crm for advisory firms", discovery_id="discovery-1")
+    job = Job(user_id="owner-a", workspace_id="workspace-a", query="advisory firms", discovery_id="discovery-1",
+              payload={"search_scope": "workspace"})
     result = asyncio.run(__import__("workflow_dispatcher").run_search_workflow(job, lambda *args: None))
 
     assert result["ok"] is True
     assert captured[0][0] == "discovery-1"
+    assert captured[0][1]["interpretation_mode"] == "prospect_search"
+    assert captured[0][1]["offering"] == captured[0][1]["messaging_angle"] == ""
     assert captured[0][2] == provenance

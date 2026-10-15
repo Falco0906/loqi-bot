@@ -793,11 +793,17 @@ async def search_saved_workspace_leads(job, on_progress) -> dict:
     """Run manual Discovery over authorized, already-persisted workspace rows.
 
     Reuse the durable search job/staging/finalization contract. Staging holds
-    canonical IDs, never provider records to import. No AI or sourcing calls.
+    canonical IDs, never provider records to import. Interpret prospect intent
+    and qualify deterministically, with no model or provider sourcing calls.
     """
     from services.job_engine.storage import JobStorage, SearchResultPersistenceError
     from services.leads.service import list_workspace_leads
     from services.workspace.access import resolve_workspace_context
+    from services.discovery.context import retrieve_discovery_context
+    from services.discovery.plan import derive_discovery_plan, icp_from_plan, prospect_match_outcome
+    from services.discovery.qualification import score_lead
+    from services.persistence.launch import WorkspaceLeadRepository
+    from services.workspace.lead_projection import workspace_lead_fields
 
     if not job.workspace_id or not job.query.strip():
         raise ValueError("A workspace and search query are required")
@@ -807,16 +813,60 @@ async def search_saved_workspace_leads(job, on_progress) -> dict:
         raise ValueError("Search is unavailable in this workspace")
     metadata = discovery.get("metadata") or {}
     filters = metadata.get("ui_filters") or {}
-    await asyncio.to_thread(on_progress, job.id, "Searching your workspace's saved leads", 10)
-    result = await list_workspace_leads(job.workspace_id, job.query, page_size=None, filters=filters)
-    staged = [
-        {"workspace_lead_id": lead["id"], "id": lead["id"], "source": "lead_database", "_rank": i + 1}
-        for i, lead in enumerate(result["leads"])
-    ]
+    await asyncio.to_thread(on_progress, job.id, "Understanding target market", 10)
+    context = await retrieve_discovery_context(job.user_id, query=job.query, workspace_id=job.workspace_id)
+    plan = await asyncio.to_thread(derive_discovery_plan, job.query, existing_context=context, prospect_search=True)
+    plan_dict = plan.to_dict()
+    if not await asyncio.to_thread(store_discovery_plan, job.discovery_id, plan_dict, context.get("provenance") or {}):
+        raise SearchResultPersistenceError("Interpreted search criteria could not be saved")
+    await asyncio.to_thread(on_progress, job.id, "Finding matching companies", 40)
+    result = await list_workspace_leads(job.workspace_id, "", page_size=None, filters=filters, include_outcomes=True)
+    outcomes = result["candidate_outcomes"]
+    outcomes["evaluated_count"] = len(result["leads"])
+    decisions = {}
+    matches = []
+    for lead in result["leads"]:
+        decision = prospect_match_outcome(lead, plan_dict["search_constraints"])
+        decisions[lead["id"]] = decision
+        if decision["matched"]:
+            matches.append(lead)
+        else:
+            reason = decision["reason"]
+            outcomes["exclusions"][reason] = outcomes["exclusions"].get(reason, 0) + 1
+    outcomes["matched_count"] = len(matches)
+    outcomes["unverified_match_count"] = sum(bool(decisions[lead["id"]]["unverified_fields"]) for lead in matches)
+    outcomes["interpretation_status"] = (plan_dict.get("search_constraints") or {}).get("interpretation_status", "unknown")
+    # Retain measured outcomes even if a later assessment/staging write fails.
+    job.result = {**(job.result or {}), "candidate_outcomes": outcomes}
+    if not await asyncio.to_thread(_merge_metadata, job.discovery_id, {"candidate_outcomes": outcomes}):
+        raise SearchResultPersistenceError("Search candidate outcomes could not be saved")
+    await asyncio.to_thread(on_progress, job.id, "Ranking prospects", 65)
+    icp = icp_from_plan(plan_dict)
+    repository = WorkspaceLeadRepository()
+    staged = []
+    # Qualification is existing canonical workspace metadata, not shared global
+    # enrichment. No per-lead model/provider call, and no selected-lead generation.
+    async def assess_lead(lead):
+        saved = await repository.get_for_workspace(lead["id"], job.workspace_id)
+        if saved is None or saved.deleted_at is not None:
+            raise SearchResultPersistenceError("A matching lead is no longer available in this workspace")
+        fields = workspace_lead_fields(saved)
+        qualification = score_lead({**fields, "name": f"{fields['first_name']} {fields['last_name']}".strip()}, icp, context)
+        qualification["search_match"] = {"unverified_fields": decisions[lead["id"]]["unverified_fields"]}
+        metadata = {**(saved.metadata or {}), "qualification": qualification}
+        if not await repository.update_qualification_for_workspace(saved.id, job.workspace_id, metadata):
+            raise SearchResultPersistenceError("A matching lead's assessment could not be saved")
+        return {"workspace_lead_id": saved.id, "id": saved.id, "source": "lead_database",
+                "commercial_score": qualification["final_score"]}
+
+    for start in range(0, len(matches), 4):
+        staged.extend(await asyncio.gather(*(assess_lead(lead) for lead in matches[start:start + 4])))
+    staged.sort(key=lambda lead: (-lead["commercial_score"], lead["id"]))
     if not await asyncio.to_thread(JobStorage().store_search_results, job.id, staged):
         raise SearchResultPersistenceError("Saved search results could not be recorded")
-    await asyncio.to_thread(on_progress, job.id, "Saving your workspace search", 90)
-    return {"ok": True, "result": {"search_scope": "workspace", "matched_lead_count": len(staged)}}
+    await asyncio.to_thread(on_progress, job.id, "Preparing recommendations", 90)
+    return {"ok": True, "result": {"search_scope": "workspace", "matched_lead_count": len(staged),
+                                   "candidate_outcomes": outcomes}}
 
 
 async def finalize_discovery(job) -> bool:
@@ -962,6 +1012,17 @@ async def finalize_discovery(job) -> bool:
             )
         return False
 
+    candidate_outcomes = None
+    if workspace_search:
+        candidate_outcomes = ((getattr(job, "result", None) or {}).get("candidate_outcomes")
+                              or (row.get("metadata") or {}).get("candidate_outcomes"))
+        if candidate_outcomes is not None:
+            # Matching, staging and canonical linking are different stages.
+            # A missing/truncated stage must not become a completed zero search.
+            matched = candidate_outcomes.get("matched_count")
+            if matched != len(leads) or matched != len(ws_lead_ids):
+                normalization_errors.append("Search candidate counts do not match staged canonical results")
+
     linked = await asyncio.to_thread(_link_leads, discovery_id, normalized_leads, ws_lead_ids)
     companies_linked = await asyncio.to_thread(
         _link_companies, discovery_id, workspace_id, ws_lead_ids
@@ -987,6 +1048,8 @@ async def finalize_discovery(job) -> bool:
             "staged_lead_count": len(leads),
             "failed_staging_batches": staging.get("failed_batches", 0),
         }
+        if workspace_search:
+            summary["candidate_outcomes"] = candidate_outcomes
         await asyncio.to_thread(
             mark_discovery_status,
             discovery_id,
@@ -1023,6 +1086,8 @@ async def finalize_discovery(job) -> bool:
         "provider_lead_count": len(leads),
         "skipped_provider_record_count": skipped_records,
     }
+    if workspace_search:
+        summary["candidate_outcomes"] = candidate_outcomes
     updates: dict[str, Any] = {
         "status": "completed",
         "completed_at": _now(),

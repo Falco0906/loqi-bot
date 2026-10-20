@@ -20,9 +20,13 @@ async function open(page: Page) {
 }
 
 async function submit(page: Page, value = query) {
-  await page.getByRole("textbox", { name: "Describe the leads you're looking for" }).fill(value);
+  const input = page.getByRole("textbox", { name: "Describe the leads you're looking for" });
+  const search = page.getByRole("button", { name: "Search", exact: true });
+  await input.fill(value);
+  await expect(input).toHaveValue(value);
+  await expect(search).toBeEnabled();
   const reply = page.waitForResponse(r => new URL(r.url()).pathname === "/api/discoveries" && r.request().method() === "POST");
-  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await search.click();
   const response = await reply;
   expect(response.status()).toBe(200);
   return (await response.json()).discovery_id as string;
@@ -79,7 +83,12 @@ for (const scenario of [
     await open(page);
     if (scenario.filter) {
       await page.getByRole("button", { name: new RegExp(`^${scenario.filter}\\b`) }).click();
-      await page.getByRole("textbox", { name: `Filter by ${scenario.filter}`, exact: true }).fill(scenario.value!);
+      const filter = page.getByRole("textbox", { name: `Filter by ${scenario.filter}`, exact: true });
+      await filter.fill(scenario.value!);
+      await expect(page).toHaveURL(url => url.pathname === "/discovery"
+        && url.searchParams.get("workspace_id") === workspace
+        && url.searchParams.get(scenario.filter!.toLowerCase()) === scenario.value);
+      await expect(filter).toHaveValue(scenario.value!);
     }
     const id = await submit(page);
     await expect(page.getByRole("heading", { name: "Research complete", exact: true })).toBeVisible();
@@ -132,7 +141,9 @@ for (const scenario of [
       await page.getByRole("menuitemradio", { name: /Alpha Synthetic/ }).click();
       await expect.poll(() => new URL(page.url()).searchParams.get("workspace_id")).toBe(workspace);
       await expect(visible(page)).toHaveCount(0);
-      await page.getByRole("link", { name: "Search history", exact: true }).click();
+      const history = page.getByRole("link", { name: "Search history history", exact: true });
+      await expect(history).toHaveAttribute("href", `/discovery/history?workspace_id=${workspace}`);
+      await history.click();
       const runLink = page.locator(`a[href*="provider_discovery=${id}"]`);
       await expect(runLink).toHaveCount(1);
       const beforeReturn = largeUI.requests.length;

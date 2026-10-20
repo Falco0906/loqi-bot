@@ -18,6 +18,7 @@ frontend/node_modules/
 node_modules/
 backend/.simulate_replies.json
 backend/.conversations.json
+backend/.conversation_intelligence_memories.json
 # Generated legacy workflow runtime snapshots; never source fixtures.
 backend/services/data/workflows/*.json
 .DS_Store

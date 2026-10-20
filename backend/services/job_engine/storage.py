@@ -310,16 +310,22 @@ class JobStorage:
             _log(f"list_recent_jobs error: {error}")
             return []
 
-    def list_active_jobs_by_type(self, job_type: str) -> list[Job]:
+    def list_active_jobs_by_type(self, job_type: str, *, strict: bool = False) -> list[Job]:
         client = get_supabase_client()
         if not client:
+            if strict:
+                raise RuntimeError("Job persistence unavailable")
             return []
         try:
             result = client.table("jobs").select("*").eq("type", job_type).in_(
                 "status", ["queued", "running"]
             ).order("created_at", desc=False).execute()
+            if strict and not isinstance(getattr(result, "data", None), list):
+                raise RuntimeError("Invalid active job read response")
             return [Job.from_dict(row) for row in (getattr(result, "data", None) or [])]
         except Exception as error:
+            if strict:
+                raise
             _log(f"list_active_jobs_by_type error: {error}")
             return []
 

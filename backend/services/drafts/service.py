@@ -333,7 +333,11 @@ async def active_draft_batch(owner_id: str, workspace_id: str, campaign_id: str)
     """Return the caller's active durable batch for one campaign, if any."""
     from services.job_engine import job_manager
 
-    jobs = await asyncio.to_thread(job_manager._storage.list_active_jobs_by_type, "draft_batch")
+    try:
+        jobs = await asyncio.to_thread(job_manager._storage.list_active_jobs_by_type, "draft_batch", strict=True)
+    except Exception as error:
+        log.warning("draft_batch_lookup_failed error_type=%s", type(error).__name__)
+        raise HTTPException(503, "Draft generation status is temporarily unavailable") from error
     for job in jobs:
         if job.user_id == owner_id and job.workspace_id == workspace_id and job.campaign_id == campaign_id:
             return {"batch_id": job.id, "total": int((job.payload or {}).get("total") or 0), "status": job.status.value}
@@ -347,7 +351,7 @@ async def run_draft_batch_job(job, on_progress) -> dict[str, Any]:
     from services.workspace.state import (
         load_campaign_state,
         load_workspace_state,
-        persist_campaign_update,
+        persist_campaign_update_awaited,
         persist_draft_awaited,
     )
 
@@ -359,8 +363,9 @@ async def run_draft_batch_job(job, on_progress) -> dict[str, Any]:
     ) if job.campaign_id else {}
     strategy = dict((campaign or {}).get("strategy") or {})
     all_items = await asyncio.to_thread(storage.list_batch_items, job.id, job.workspace_id, strict=True)
-    total = len(all_items)
-    completed = sum(1 for item in all_items if item.status.value in {"completed", "failed"})
+    total = int((job.payload or {}).get("total") or len(all_items))
+    if len(all_items) != total:
+        raise RuntimeError("Draft batch item count does not match its persisted total")
     loop = asyncio.get_running_loop()
     draft_message_input: dict[str, Any] = {
         "type": "draft_message",
@@ -397,7 +402,6 @@ async def run_draft_batch_job(job, on_progress) -> dict[str, Any]:
             if existing is not None:
                 if not await asyncio.to_thread(storage.mark_batch_item_completed, job.id, item.idempotency_key, draft_id):
                     raise RuntimeError("Recovered draft completion could not be persisted")
-                completed += 1
                 continue
             result = await _run_draft_with_retry(loop, {**draft_message_input, "lead": lead})
             body = _validated_draft_body(result)
@@ -421,7 +425,6 @@ async def run_draft_batch_job(job, on_progress) -> dict[str, Any]:
                 raise RuntimeError("Draft could not be persisted")
             if not await asyncio.to_thread(storage.mark_batch_item_completed, job.id, item.idempotency_key, draft["id"]):
                 raise RuntimeError("Draft completion could not be persisted")
-            completed += 1
             item_completed = True
             source_key = f"draft_batch:{job.id}:{item.idempotency_key}:generated"
             activity_payload = {
@@ -471,7 +474,6 @@ async def run_draft_batch_job(job, on_progress) -> dict[str, Any]:
             safe_error = "Outreach generation failed" if isinstance(error, OpenAIError) else "Draft generation or persistence failed"
             if not await asyncio.to_thread(storage.mark_batch_item_failed, item.id, safe_error):
                 raise RuntimeError("Draft failure state could not be persisted") from error
-            completed += 1
             publish(session_token, WMEventType.DRAFT_FAILED, {
                 "lead_index": item.position, "lead_name": name, "error": safe_error,
                 "campaign_id": job.campaign_id,
@@ -486,6 +488,9 @@ async def run_draft_batch_job(job, on_progress) -> dict[str, Any]:
     persisted_items = await asyncio.to_thread(storage.list_batch_items, job.id, job.workspace_id, strict=True)
     generated = [item for item in persisted_items if item.status.value == "completed"]
     failed = sum(item.status.value == "failed" for item in persisted_items)
+    completed = len(generated) + failed
+    if len(persisted_items) != total or completed != total:
+        raise RuntimeError("Draft batch still has unfinished items")
     if job.campaign_id:
         now = datetime.now(timezone.utc).isoformat()
         generation = {
@@ -499,8 +504,7 @@ async def run_draft_batch_job(job, on_progress) -> dict[str, Any]:
             "started_at": job.created_at.isoformat() if job.created_at else None,
             "finished_at": now,
         }
-        persisted = await asyncio.to_thread(
-            persist_campaign_update,
+        persisted = await persist_campaign_update_awaited(
             job.user_id,
             job.campaign_id,
             {"generation": generation},
@@ -575,10 +579,14 @@ async def draft_batch_status(owner_id: str, workspace_id: str, batch_id: str) ->
     """Return the legacy batch-status shape from the authorized durable job."""
     from services.job_engine import job_manager
 
-    job = await asyncio.to_thread(job_manager._storage.get_job, batch_id)
-    if not job or job.type != "draft_batch" or job.user_id != owner_id or job.workspace_id != workspace_id:
-        return None
-    items = await asyncio.to_thread(job_manager._storage.list_batch_items, job.id, workspace_id)
+    try:
+        job = await asyncio.to_thread(job_manager._storage.get_job, batch_id, strict=True)
+        if not job or job.type != "draft_batch" or job.user_id != owner_id or job.workspace_id != workspace_id:
+            return None
+        items = await asyncio.to_thread(job_manager._storage.list_batch_items, job.id, workspace_id, strict=True)
+    except Exception as error:
+        log.warning("draft_batch_status_failed error_type=%s", type(error).__name__)
+        raise HTTPException(503, "Draft generation status is temporarily unavailable") from error
     return _legacy_batch_status(job, items)
 
 
@@ -661,7 +669,7 @@ async def campaign_draft_generation_status(
     active_job = await active_draft_batch(owner_id, workspace_id, campaign_id)
     if active_job:
         status = await draft_batch_status(owner_id, workspace_id, active_job["batch_id"])
-        if status:
+        if status and status.get("status", "processing") == "processing":
             return {
                 "ok": True,
                 "active": True,
@@ -676,19 +684,75 @@ async def campaign_draft_generation_status(
         owner_id,
         campaign_id,
         workspace_id=workspace_id,
+        strict=True,
     )
     if not target:
         return {"ok": True, "active": False, "status": "unknown", "jobs": []}
     generation = target.get("generation")
     generation = generation if isinstance(generation, dict) else {}
+    if generation.get("status") == "processing":
+        generation, active = await _reconcile_campaign_draft_generation(
+            owner_id, workspace_id, campaign_id, generation,
+        )
+    else:
+        active = False
     return {
         "ok": True,
-        "active": False,
+        "active": active,
         "status": generation.get("status", "unknown"),
         "total": generation.get("total", 0),
         "completed": generation.get("completed", 0),
         "batch_id": generation.get("batch_id"),
     }
+
+
+async def _reconcile_campaign_draft_generation(
+    owner_id: str, workspace_id: str, campaign_id: str, generation: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """Repair stale campaign metadata using strict, scoped durable job/items.
+
+    Called when the active scan finds nothing. A worker can have terminated
+    before its final campaign write; an unavailable read is never job absence.
+    """
+    from services.job_engine import job_manager
+    from services.persistence.launch import CampaignRepository
+
+    storage = job_manager._storage
+    batch_id = generation.get("batch_id")
+    try:
+        job = await asyncio.to_thread(storage.get_job, batch_id, strict=True) if batch_id else None
+        if job and (job.type != "draft_batch" or job.user_id != owner_id
+                    or job.workspace_id != workspace_id or job.campaign_id != campaign_id):
+            return {"batch_id": batch_id, "status": "unknown", "total": 0, "completed": 0}, False
+        items = await asyncio.to_thread(storage.list_batch_items, job.id, workspace_id, strict=True) if job else []
+        if any(item.job_id != job.id or item.workspace_id != workspace_id or item.campaign_id != campaign_id for item in items):
+            raise RuntimeError("Draft batch items are outside the campaign scope")
+        generated = sum(item.status.value == "completed" for item in items)
+        failed = sum(item.status.value == "failed" for item in items)
+        total = max(len(items), int((job.payload or {}).get("total") or 0) if job else 0,
+                    int(generation.get("total") or 0))
+        if job and job.status.value in {"queued", "running"}:
+            # A job can appear after the active scan, so consult its exact row.
+            return {**generation, "total": total, "completed": generated + failed}, True
+
+        complete = bool(job and job.status.value == "completed" and total > 0
+                        and len(items) == total and generated + failed == total and generated)
+        status = "completed" if complete else "cancelled" if job and job.status.value == "cancelled" else "failed"
+        repaired = {
+            **generation, "status": status, "total": total, "completed": generated + failed,
+            "generated": generated, "failed": failed,
+            "outcome": "unknown" if not job else "partial" if generated and generated < total else status,
+            "error": None if complete else "Draft generation was interrupted or its batch is unavailable",
+            "finished_at": job.completed_at.isoformat() if job and job.completed_at else datetime.now(timezone.utc).isoformat(),
+        }
+        if not await CampaignRepository().reconcile_generation_for_workspace(
+            campaign_id, workspace_id, batch_id, repaired, expected_generation=generation,
+        ):
+            raise RuntimeError("Campaign changed during draft generation reconciliation")
+        return repaired, False
+    except Exception as error:
+        log.warning("draft_generation_reconciliation_failed campaign_id=%s error_type=%s", campaign_id, type(error).__name__)
+        raise HTTPException(503, "Draft generation status is temporarily unavailable") from error
 
 
 async def reconcile_stale_draft_batch_jobs() -> int:

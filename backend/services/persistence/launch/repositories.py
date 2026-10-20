@@ -496,6 +496,31 @@ class CampaignRepository(LaunchRepository[Campaign]):
             raise RuntimeError("Invalid campaign creation read response")
         return self._from_row(result.data[0]) if result.data else None
 
+    async def reconcile_generation_for_workspace(
+        self, campaign_id: str, workspace_id: str, batch_id: str | None, generation: dict[str, Any],
+        *, expected_generation: dict[str, Any],
+    ) -> bool:
+        """Repair a processing projection without overwriting a newer batch/settings.
+
+        Compare the generation used to derive the repair, then condition the
+        write on all settings read below. Changes in either window cause retry.
+        """
+        campaign = await self.get_creation(campaign_id, workspace_id)
+        if campaign is None or campaign.deleted_at is not None:
+            return False
+        settings = dict(campaign.settings or {})
+        current = settings.get("generation") or {}
+        if (current != expected_generation or current.get("batch_id") != batch_id
+                or current.get("status") != "processing"):
+            return False
+        updates = {"settings": {**settings, "generation": generation}}
+        result = await asyncio.to_thread(lambda: self._client().table("campaigns").update(updates)
+            .eq("id", campaign_id).eq("workspace_id", workspace_id)
+            .eq("settings", json.dumps(settings)).is_("deleted_at", "null").execute())
+        if not isinstance(getattr(result, "data", None), list):
+            raise RuntimeError("Campaign generation reconciliation was not confirmed")
+        return bool(result.data)
+
     async def create_once(self, *, campaign_id: str, workspace_id: str, actor_user_id: str,
                           request_hash: str, campaign: dict[str, Any], lead_ids: list[str]) -> tuple[Campaign, bool]:
         """Atomically commit one campaign + attachments, or recover its prior commit."""

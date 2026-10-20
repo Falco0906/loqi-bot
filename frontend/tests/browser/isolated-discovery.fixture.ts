@@ -36,8 +36,18 @@ export async function backendRequest(method: string, path: string, body?: string
   });
 }
 
-export const test = base.extend<{ isolated: { runId: string } }>({
-  isolated: [async ({ context, baseURL }, use) => {
+export type IsolatedCall = { method: string; path: string; workspace: string; url: URL };
+type IsolatedReply = { status: number; body: string };
+type Transport = {
+  calls: IsolatedCall[];
+  delivered: IsolatedCall[];
+  before?: (call: IsolatedCall) => Promise<IsolatedReply | undefined>;
+  after?: (call: IsolatedCall, reply: IsolatedReply) => Promise<void>;
+};
+
+export const test = base.extend<{ isolated: { runId: string }; transport: Transport }>({
+  transport: async ({}, use) => { await use({ calls: [], delivered: [] }); },
+  isolated: [async ({ context, baseURL, transport }, use) => {
     if (process.env.LOQI_RUN_DISCOVERY_HTTP !== "1" || !baseURL
       || !/^http:\/\/(?:127\.0\.0\.1|localhost):3000\/?$/.test(baseURL)) throw new Error("Explicit isolated HTTP test opt-in and loopback frontend are required");
     const expected = process.env.LOQI_ISOLATED_BACKEND_RUN_ID;
@@ -53,6 +63,12 @@ export const test = base.extend<{ isolated: { runId: string } }>({
     await context.route("**/*", async route => {
       const request = route.request();
       const url = new URL(request.url());
+      if (url.origin === frontend && url.pathname === "/__nextjs_original-stack-frames" && request.method() === "POST") {
+        // Expected HTTP errors invoke Next's local development error overlay.
+        // Its supported 204 fallback retains the error without fetching source
+        // mappings. Never forward diagnostics to any server or log their body.
+        await route.fulfill({ status: 204, body: "" }); return;
+      }
       if (["fonts.googleapis.com", "fonts.gstatic.com"].includes(url.hostname)) {
         await route.fulfill({ body: "", contentType: "text/css" }); return;
       }
@@ -71,8 +87,16 @@ export const test = base.extend<{ isolated: { runId: string } }>({
             if (value) headers[name] = value;
           }
           if (headers.authorization && headers.authorization !== `Bearer ${session}`) throw new Error("Only synthetic credentials may be forwarded");
-          const response = await backendRequest(request.method(), url.pathname + url.search, request.postData() || undefined, headers);
-          await route.fulfill({ status: response.status, body: response.body, contentType: "application/json", headers: { "access-control-allow-origin": frontend } }); return;
+          // Faults/delays run only AFTER the existing origin, route and credential
+          // checks. They cannot select a destination or intercept the run probe.
+          const call = { method: request.method(), path: url.pathname, workspace: headers["x-workspace-id"] || "", url };
+          transport.calls.push(call);
+          const response = await transport.before?.(call)
+            ?? await backendRequest(request.method(), url.pathname + url.search, request.postData() || undefined, headers);
+          await transport.after?.(call, response);
+          await route.fulfill({ status: response.status, body: response.body, contentType: "application/json", headers: { "access-control-allow-origin": frontend } });
+          transport.delivered.push(call);
+          return;
         }
         // Only existing, declared shell mocks may answer ancillary requests.
         // Discovery/leads/workspaces cannot fall back to MockApi's canned data.

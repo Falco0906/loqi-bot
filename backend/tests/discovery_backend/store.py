@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from threading import RLock
 from types import SimpleNamespace
 from uuid import uuid4
+from tests.discovery_backend.datasets import build_workspace_leads, lead_row, validate_profile
 
 USER = "10000000-0000-4000-8000-000000000001"
 ORG = "10000000-0000-4000-8000-000000000002"
@@ -21,7 +22,8 @@ TABLES = {"users", "identity_users", "memberships", "workspaces", "workspace_lea
 
 
 class SyntheticStore:
-    def __init__(self):
+    def __init__(self, profile="small"):
+        self.profile = validate_profile(profile)
         self.lock = RLock()
         self.run_id = str(uuid4())
         self.tables = {name: [] for name in TABLES}
@@ -33,22 +35,14 @@ class SyntheticStore:
             "owner_user_id": USER, "name": name, "status": "active", "deleted_at": None}
             for workspace, org, name in [(A, ORG, "Alpha Synthetic"), (B, ORG, "Beta Synthetic"),
                                          (FOREIGN, "other-org", "Inaccessible Synthetic")]]
-        for index in range(1, 55):
-            self.add_lead(index, A, ["Head of Operations", "Operations Manager", "COO"][(index - 1) % 3])
-        self.add_lead(55, A, "COO", location="Toronto")
-        self.add_lead(56, A, "COO", industry="", location="")
-        self.add_lead(57, A, "Engineer")
-        self.add_lead(58, A, "COO", industry="Retail")
-        self.add_lead(59, B, "COO")
-        self.add_lead(60, FOREIGN, "COO")
+        self.tables["workspace_leads"] = build_workspace_leads(self.profile, A, B, FOREIGN)
+        self.fixture_counts = {"workspace_a": sum(row["workspace_id"] == A for row in self.tables["workspace_leads"]),
+                               "workspace_b": sum(row["workspace_id"] == B for row in self.tables["workspace_leads"]),
+                               "foreign": sum(row["workspace_id"] == FOREIGN for row in self.tables["workspace_leads"]),
+                               "total": len(self.tables["workspace_leads"])}
 
     def add_lead(self, index, workspace, title, industry="ecommerce", location="London"):
-        self.tables["workspace_leads"].append({
-            "id": f"70000000-0000-4000-8000-{index:012d}", "workspace_id": workspace,
-            "first_name": "Synthetic", "last_name": f"Person {index}", "title": title,
-            "email": f"person{index}@example.invalid", "deleted_at": None, "source": "csv_import",
-            "metadata": {"csv_import": {"company": "Synthetic Shop", "industry": industry, "location": location}},
-        })
+        self.tables["workspace_leads"].append(lead_row(index, workspace, title, industry, location))
 
     def table(self, name):
         if name not in TABLES:

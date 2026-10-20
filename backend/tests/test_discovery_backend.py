@@ -9,9 +9,9 @@ from tests.discovery_backend.store import A, B, FOREIGN, SESSION
 
 
 @pytest.fixture
-def isolated(monkeypatch):
+def isolated(monkeypatch, request):
     monkeypatch.delenv("REDIS_URL", raising=False)
-    app = create_app()
+    app = create_app(profile=getattr(request, "param", "small"))
     with TestClient(app) as client:
         client.headers["authorization"] = f"Bearer {SESSION}"
         client.headers["x-workspace-id"] = A
@@ -95,6 +95,37 @@ def test_target_auth_and_outbound_guards(isolated):
     with pytest.raises(RuntimeError, match="Outbound connections"):
         socket.create_connection(("production.invalid", 443))
     assert app.state.blocked == ["outbound connection"]
+
+
+@pytest.mark.parametrize("origin", ["http://127.0.0.1:3000", "http://localhost:3000"])
+def test_cors_allows_run_header_only_for_approved_origins(isolated, origin):
+    client, app = isolated
+    headers = {"origin": origin, "access-control-request-method": "POST",
+               "access-control-request-headers": "authorization,content-type,x-workspace-id,x-loqi-test-run-id"}
+    response = client.options("/api/discoveries", headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.headers["access-control-allow-origin"] == origin
+    allowed = {value.strip().lower() for value in response.headers["access-control-allow-headers"].split(",")}
+    assert allowed == {"accept", "accept-language", "content-language", "content-type",
+                       "authorization", "x-workspace-id", "x-loqi-test-run-id"}
+    # CORS permission to send the header does not authorize its value.
+    for approval in ("", "unapproved-run"):
+        rejected = client.get("/api/web/session/_/leads", headers={
+            "origin": origin, "x-loqi-test-run-id": approval,
+        })
+        assert rejected.status_code == 412
+        assert rejected.headers["access-control-allow-origin"] == origin
+    invalid_header = client.options("/api/discoveries", headers={
+        **headers, "access-control-request-headers": "x-unapproved-header",
+    })
+    assert invalid_header.status_code == 400
+    for foreign_origin in ("http://127.0.0.1:3001", "https://unapproved.invalid"):
+        rejected = client.options("/api/discoveries", headers={**headers, "origin": foreign_origin})
+        assert rejected.status_code == 400
+        assert "access-control-allow-origin" not in rejected.headers
+    assert app.state.synthetic.tables["jobs"] == []
+    assert app.state.synthetic.tables["discoveries"] == []
+    assert app.state.blocked == []
 
 
 def test_opt_in_and_inherited_configuration_fail_before_bootstrap(monkeypatch):

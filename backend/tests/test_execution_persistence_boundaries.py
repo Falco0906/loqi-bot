@@ -14,6 +14,13 @@ import pytest
 from fastapi import HTTPException
 
 
+@pytest.fixture(autouse=True)
+def mocked_provider_execution(monkeypatch):
+    """Exercise deferred provider persistence with offline provider doubles only."""
+    from services.capabilities import beta
+    monkeypatch.setattr(beta, "BETA_FEATURES", {**beta.BETA_FEATURES, "autonomous_lead_sourcing": True})
+
+
 @pytest.mark.asyncio
 async def test_search_job_is_not_created_when_discovery_insert_fails(monkeypatch):
     import services.discovery.service as discovery
@@ -25,7 +32,7 @@ async def test_search_job_is_not_created_when_discovery_insert_fails(monkeypatch
     monkeypatch.setattr(discovery.job_manager, "create_search_job", create_job)
 
     with pytest.raises(discovery.DiscoveryJobLifecycleError) as error:
-        await discovery.create_search_run("owner-1", "cafe owners", initiation="manual")
+        await discovery.create_search_run("owner-1", "cafe owners", workspace_id="workspace-1", initiation="manual")
 
     assert error.value.status_code == 503
     create_job.assert_not_awaited()

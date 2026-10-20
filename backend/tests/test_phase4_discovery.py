@@ -235,10 +235,14 @@ async def test_distinct_queries_reach_the_same_provider_workflow_without_a_defau
     """Discovery must use each explicit query, never a recovered hard-coded target."""
     import workflow_dispatcher
     from services.job_engine.models import Job
+    from services.capabilities import beta
+
+    # The provider itself is mocked below; production Beta sourcing stays off.
+    monkeypatch.setattr(beta, "BETA_FEATURES", {**beta.BETA_FEATURES, "autonomous_lead_sourcing": True})
 
     captured: list[tuple[str, str]] = []
 
-    async def context(_owner_id, query=""):
+    async def context(_owner_id, query="", *, workspace_id=""):
         return {"query": query, "provenance": {}}
 
     def search(service, target, _plan, _context, _progress, _on_results):

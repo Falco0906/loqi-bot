@@ -29,6 +29,10 @@ from services.job_engine.models import Job
 def pipeline(monkeypatch):
     import workflow_dispatcher as wd
     from services.job_engine import runner as runner_mod
+    from services.capabilities import beta
+
+    # Deferred provider orchestration is exercised only with the fakes below.
+    monkeypatch.setattr(beta, "BETA_FEATURES", {**beta.BETA_FEATURES, "autonomous_lead_sourcing": True})
 
     captured = {
         "appended": [],          # (job_id, ranked_leads)

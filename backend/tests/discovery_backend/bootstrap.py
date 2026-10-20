@@ -29,7 +29,10 @@ def prepare_runtime():
     activate_test_runtime()
     import sys
     def audit(event, _args):
-        if event in {"socket.connect", "socket.sendto", "socket.sendmsg", "subprocess.Popen", "os.system", "os.posix_spawn"}:
+        # Block new connections and sendto, not sendmsg: asyncio uses sendmsg
+        # for buffered responses on accepted TCP sockets. This hook does not
+        # distinguish or block explicit-destination sends made via sendmsg.
+        if event in {"socket.connect", "socket.sendto", "subprocess.Popen", "os.system", "os.posix_spawn"}:
             raise RuntimeError("Outbound connections and child processes are forbidden in the isolated backend")
         if event in {"socket.getaddrinfo", "socket.gethostbyname", "socket.gethostbyaddr"} and _args[0] not in {HOST, "localhost", "::1", None}:
             raise RuntimeError("Unapproved DNS lookup in the isolated backend")

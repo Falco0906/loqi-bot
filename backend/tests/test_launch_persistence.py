@@ -371,8 +371,9 @@ class TestWorkspaceStateCanonicalFlip:
             "workspace_leads": [{
                 "id": "wsl1", "workspace_id": "ws1", "lead_id": "gl1",
                 "company_id": "comp1", "email": "ada@acme.com",
-                "first_name": "", "last_name": "", "title": "",
-                "phone": "", "linkedin_url": "", "lead_status": "approved",
+                "first_name": "Ada", "last_name": "Lovelace", "title": "Engineer",
+                "phone": "+1", "linkedin_url": "in/ada", "lead_status": "approved",
+                "metadata": {"provider_context": {"company": "Acme", "domain": "acme.com"}},
                 "research_status": "researched",
                 "verification_status": "verified", "confidence": 0.9,
                 "source": "apollo", "created_at": t, "updated_at": t,

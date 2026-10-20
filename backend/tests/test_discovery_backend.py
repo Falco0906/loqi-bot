@@ -138,7 +138,7 @@ def test_opt_in_and_inherited_configuration_fail_before_bootstrap(monkeypatch):
         prepare_runtime()
 
 
-def test_sendmsg_audit_guard_rejects_before_application_imports():
+def test_sendmsg_allowed_but_outbound_audit_events_rejected_before_application_imports():
     """Exercise the installed hook without creating a socket or sending a packet."""
     import os
     import subprocess
@@ -151,23 +151,25 @@ from tests.discovery_backend.bootstrap import prepare_runtime
 prepare_runtime()
 assert 'fastapi' not in sys.modules
 assert 'services.discovery.api' not in sys.modules
-# Emit the pre-send audit event directly: no socket or native send is invoked,
-# even if the guard regresses. Use a numeric documentation-only destination.
-try:
-    sys.audit('socket.sendmsg', object(), ('192.0.2.1', 9))
-except RuntimeError as error:
-    assert str(error) == 'Outbound connections and child processes are forbidden in the isolated backend'
-else:
-    raise AssertionError('socket.sendmsg must be rejected before native dispatch')
+# Emit audit events only: no socket, native send or child process is invoked.
+# Buffered TCP response writes must not be rejected merely for using sendmsg.
+sys.audit('socket.sendmsg', object(), None)
+for event in ('socket.connect', 'socket.sendto', 'subprocess.Popen', 'os.system', 'os.posix_spawn'):
+    try:
+        sys.audit(event, object(), ('192.0.2.1', 9))
+    except RuntimeError as error:
+        assert str(error) == 'Outbound connections and child processes are forbidden in the isolated backend'
+    else:
+        raise AssertionError(event + ' must be rejected before native dispatch')
 assert 'fastapi' not in sys.modules
 assert 'services.discovery.api' not in sys.modules
-print('sendmsg-audit-blocked-before-startup')
+print('response-sendmsg-allowed-outbound-events-blocked-before-startup')
 """
     result = subprocess.run([sys.executable, "-B", "-c", code], cwd=Path(__file__).resolve().parents[1],
         env={"PATH": os.defpath, "LANG": "C", "LOQI_ISOLATED_DISCOVERY_ENABLED": "1"},
         capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, result.stderr
-    assert "sendmsg-audit-blocked-before-startup" in result.stdout
+    assert "response-sendmsg-allowed-outbound-events-blocked-before-startup" in result.stdout
 
 
 def test_clean_bootstrap_audit_guards_before_lifespan():

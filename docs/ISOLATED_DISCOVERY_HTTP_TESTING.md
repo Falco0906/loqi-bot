@@ -30,9 +30,13 @@ The command does not inherit service configuration or load `.env`. The bootstrap
 rejects inherited Supabase/PostgreSQL/OpenAI/Google/Gmail/Redis settings before
 application imports. It activates the existing irreversible process-owned test
 guard, installs only explicit offline doubles, and never authorizes a hosted
-client. A process audit hook rejects outbound socket connections, unapproved DNS,
-UDP sends and subprocess execution. Lifespan additionally blocks Python socket
-connection APIs. Uvicorn uses one asyncio worker, no reload, numeric loopback only.
+client. A process audit hook rejects new outbound socket connections, unapproved
+DNS, `socket.sendto` sends and subprocess execution. It deliberately leaves
+`socket.sendmsg` unblocked because asyncio uses it for buffered HTTP responses on
+accepted TCP sockets. Raw explicit-destination UDP sends via `sendmsg` are not
+blocked by this hook; it is not a complete network sandbox. Lifespan additionally
+blocks Python socket connection APIs. Uvicorn uses one asyncio worker, no reload,
+numeric loopback only.
 These controls prevent accidental application/network bypass, not malicious
 native code running in the process. There is no native SQL driver execution path.
 

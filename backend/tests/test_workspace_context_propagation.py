@@ -18,6 +18,13 @@ from services.strategic.service import StrategicIntelligenceService
 
 
 @pytest.fixture
+def provider_worker(monkeypatch):
+    """Allow only this test's mocked deferred provider execution path."""
+    from services.capabilities import beta
+    monkeypatch.setattr(beta, "BETA_FEATURES", {**beta.BETA_FEATURES, "autonomous_lead_sourcing": True})
+
+
+@pytest.fixture
 def scoped_readers(monkeypatch):
     reads = []
     def authorized(_client, actor, workspace):
@@ -112,7 +119,7 @@ async def test_job_creation_retains_selected_workspace(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_search_kickoff_forwards_request_workspace_to_job(monkeypatch):
-    monkeypatch.setattr(discovery, "create_discovery", lambda *_args: {"id": "discovery-1"})
+    monkeypatch.setattr(discovery, "create_discovery", lambda *_args, **_kwargs: {"id": "discovery-1"})
     create = AsyncMock(return_value={"job_id": "job-1"})
     monkeypatch.setattr(discovery.job_manager, "create_search_job", create)
     await discovery.create_search_run("actor", "founders", workspace_id="selected", initiation="manual")
@@ -121,7 +128,7 @@ async def test_search_kickoff_forwards_request_workspace_to_job(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("legacy_job", [False, True])
-async def test_worker_uses_selected_or_durable_discovery_scope(monkeypatch, legacy_job):
+async def test_worker_uses_selected_or_durable_discovery_scope(monkeypatch, legacy_job, provider_worker):
     load = lambda *_args, **kwargs: {"workspace_id": "selected"} if kwargs["strict"] else None
     monkeypatch.setattr(discovery, "get_discovery", load)
     retrieval = AsyncMock(return_value={})
@@ -134,7 +141,7 @@ async def test_worker_uses_selected_or_durable_discovery_scope(monkeypatch, lega
 
 
 @pytest.mark.asyncio
-async def test_worker_context_failure_never_searches_with_default(monkeypatch):
+async def test_worker_context_failure_never_searches_with_default(monkeypatch, provider_worker):
     monkeypatch.setattr(context, "retrieve_discovery_context", AsyncMock(side_effect=httpx.ReadTimeout("local timeout")))
     monkeypatch.setattr(dispatcher, "_search_with_progress", lambda *_args: pytest.fail("context failure must not search"))
     with pytest.raises(httpx.ReadTimeout):
@@ -142,7 +149,7 @@ async def test_worker_context_failure_never_searches_with_default(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_old_job_missing_discovery_scope_never_uses_default(monkeypatch):
+async def test_old_job_missing_discovery_scope_never_uses_default(monkeypatch, provider_worker):
     monkeypatch.setattr(discovery, "get_discovery", lambda *_args, **_kwargs: None)
     with pytest.raises(RuntimeError, match="workspace could not be loaded"):
         await dispatcher.run_search_workflow(Job(user_id="actor", query="founders", discovery_id="missing"), lambda *_args: None)

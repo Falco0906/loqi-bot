@@ -68,8 +68,9 @@ def test_search_and_intelligence_use_same_csv_facts_and_provider_fallback():
                         metadata={"csv_import": {"company": "Imported Co", "industry": "SaaS", "company_size": "50–500"},
                                   "provider_context": {"company": "Provider Co", "website": "acme.example"}})
     company = SimpleNamespace(name="Global Co", metadata=None, industry=None, location=[])
-    display = leads._canonical_display_fields(row, None, company)
-    analysis = leads._canonical_analysis_lead(row, None, company)
+    # Global company/profile records no longer supply workspace-owned facts.
+    display = leads.workspace_lead_fields(row)
+    analysis = leads._canonical_analysis_lead(row)
     assert display["company"] == "Imported Co"
     assert display["website"] == "acme.example"
     assert display["location"] == ""
@@ -78,7 +79,7 @@ def test_search_and_intelligence_use_same_csv_facts_and_provider_fallback():
     assert analysis["company_size"] == "50–500"
     assert {"label": "Company size", "value": "50–500", "source": "canonical workspace lead data"} in leads._facts(analysis)
     row.metadata = {"csv_import": ["malformed"]}
-    assert leads._canonical_analysis_lead(row, None, None)["company"] == ""
+    assert leads._canonical_analysis_lead(row)["company"] == ""
 
 
 @pytest.mark.asyncio
@@ -87,10 +88,7 @@ async def test_filters_and_stable_pages_ignore_repository_row_order(monkeypatch)
                           metadata={"csv_import": {"company": "Acme", "location": "London", "industry": "SaaS"}})
             for i in range(105)]
     repo = SimpleNamespace(list_for_workspace=AsyncMock(side_effect=lambda _: list(reversed(rows))))
-    projection = SimpleNamespace(list_by_ids=AsyncMock(return_value=[]))
     monkeypatch.setattr(leads, "WorkspaceLeadRepository", lambda: repo)
-    monkeypatch.setattr(leads, "LeadRepository", lambda: projection)
-    monkeypatch.setattr(leads, "CompanyRepository", lambda: projection)
     filters = {"company": "acme", "title": "coo", "industry": "saas", "location": "london", "keywords": "same"}
     pages = [await leads.list_workspace_leads("selected", page=p, filters=filters) for p in (1, 2, 3)]
     assert [item["id"] for page in pages for item in page["leads"]] == [row.id for row in rows]
@@ -102,9 +100,6 @@ async def test_filters_and_stable_pages_ignore_repository_row_order(monkeypatch)
 @pytest.mark.asyncio
 async def test_saved_run_failure_is_not_silent_zero_result_success(monkeypatch):
     monkeypatch.setattr(leads, "WorkspaceLeadRepository", lambda: SimpleNamespace(list_for_workspace=AsyncMock(return_value=[])))
-    projection = SimpleNamespace(list_by_ids=AsyncMock(return_value=[]))
-    monkeypatch.setattr(leads, "LeadRepository", lambda: projection)
-    monkeypatch.setattr(leads, "CompanyRepository", lambda: projection)
     def failure(*_): raise RuntimeError("projection failure")
     monkeypatch.setattr(leads, "get_discovery_lead_provenance", failure)
     failed = await leads.list_workspace_leads("selected", discovery_id="run")
@@ -166,6 +161,8 @@ async def test_csv_workspace_fields_win_over_an_existing_global_profile(monkeypa
 async def test_duplicate_sources_normalize_once_per_source_but_count_one_canonical_lead(monkeypatch):
     import services.discovery.service as discovery
     from services.job_engine.storage import JobStorage
+    from services.capabilities import beta
+    monkeypatch.setattr(beta, "BETA_FEATURES", {**beta.BETA_FEATURES, "autonomous_lead_sourcing": True})
     row = {"id": "run", "workspace_id": "selected", "status": "searching"}
     updates, sources = [], []
     class Query:
